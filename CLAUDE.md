@@ -557,3 +557,27 @@ deferral removes nothing that exists. And the public headers are not C: the two
 that matter carry C++ linkage, default arguments and an overload set, so the C
 ABI is mechanical work that must happen early because the batch entry point
 design depends on it.
+
+## C# is the customer's language, and that is a design input rather than a binding
+
+Glenn, 2026-08-21, verbatim: "it will be callable from C#" — "whether it is
+implemented in C# or a mix of C++ and C# (likely) is an implementation decision
+we will work out, depending on performance. But it will definitely be designed
+for Dean to call it from C# efficiently, because that's where Dean works right
+now."
+
+Two things to separate. **Efficiently callable from C# is a requirement**, fixed
+now, and it shapes the API rather than being satisfied by a binding layer bolted
+on afterwards: batch-shaped entry points instead of one call per small thing,
+buffers that arrive as spans over native memory rather than marshalled copies,
+and no design that assumes a transition is free. **What the library is written
+in is open** — C++ throughout with a thin boundary, or a genuine mix with parts
+in C# — and is decided by measurement when there is something to measure.
+
+Worth stating why the mix is plausible rather than a compromise. The kernel-bypass
+path must be native and is not negotiable. Above it, modern C# with spans,
+stack allocation, unchecked pointer work and vector intrinsics is fast enough
+that the question is genuinely open, and every piece implemented in C# is a
+boundary crossing that does not happen for the customer whose code is C#. That
+is an argument to be tested, not assumed, and the API should be designed so that
+the answer can change without the interface changing.
