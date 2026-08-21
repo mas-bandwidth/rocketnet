@@ -704,3 +704,26 @@ binding generator can read. Note this sits comfortably with the open question
 recorded earlier about parts eventually being implemented in C# — that question
 is about where a boundary crossing costs less, and the C surface is what keeps
 the answer changeable.
+
+**Bindings, not ports — and this corrects an earlier line in this file.** Glenn:
+"it is just referred to from other languages through that interface, vs. being
+fully re-implemented in those languages." — "which is better, because C++ is
+faster and more low-level."
+
+Earlier this record said "multi-language, with C++ and C# native first", which
+reads as though RocketNet follows the serialize family's pattern of a genuine
+reimplementation per language. It does not, and the distinction is the whole
+point of the C interface. There is ONE implementation. Other languages reach it
+through the interface rather than repeating it.
+
+The reason is the library's entire purpose. Maximum IO means being close to the
+kernel interfaces, and a reimplementation in a managed language gives that up
+in exactly the place it matters most. serialize can be ported because bit packing
+is arithmetic on a buffer and any language does it about as well; a transport
+cannot, because its speed comes from what the platform lets you do rather than
+from what you compute.
+
+So "multi-language" here means callable from many languages, not written in many.
+That is a smaller promise to keep and a much better property to have: one body
+of code to fix a bug in, one place a performance win lands, and no possibility
+of two implementations disagreeing on the wire.
