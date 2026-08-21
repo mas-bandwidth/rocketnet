@@ -679,3 +679,28 @@ a language port of this library should be a small piece of work rather than a
 rewrite, and that property is worth defending against every future feature that
 would be more convenient if the transport just understood a little bit about the
 payload.
+
+The contrast, stated precisely: "vs. yojimbo which has the need for the full
+serialize streams in the interface due to messages."
+
+That is the diagnosis, and it is worth stating without disparaging the design it
+describes. yojimbo's message system was its feature, not its mistake — but a
+message system means messages serialize themselves, which means the serialization
+streams appear in the public interface, which means anyone binding the library to
+another language must reproduce the whole serialization model before they can
+send a single packet. The portability cost was not a flaw in the implementation;
+it followed inevitably from where the message boundary was drawn.
+
+RocketNet draws that boundary one layer lower and pays nothing for it, because
+the layers above — serialize, delta, replicant — already exist to do the job
+yojimbo's message system was doing.
+
+Implementation language, decided the same day: "this way rocketnet is probably a
+C-like C++ implementation". So C++ as the compiler, written in a C-like style,
+exposing a C interface. Not idiomatic C++ with classes and templates at the
+boundary, and not C for its own sake. The internals may use what C++ gives them
+where it genuinely helps; the surface stays something a C compiler accepts and a
+binding generator can read. Note this sits comfortably with the open question
+recorded earlier about parts eventually being implemented in C# — that question
+is about where a boundary crossing costs less, and the C surface is what keeps
+the answer changeable.
