@@ -604,3 +604,20 @@ The buffer ownership design already drafted (in the private engagement repo)
 proposes exactly this: prefixed free functions, an opaque handle returned from
 claim, and explicit release, with batch forms so a caller that has many buffers
 to reclaim does not pay a transition per buffer.
+
+And the rule for how material arrives, verbatim: "so it is easily used from other
+languages like C# callable." — "So as we port across parts of flow, it should
+turn into C-like API".
+
+So porting is conversion rather than copying. flow's public headers today carry
+C++ linkage, default arguments and an overload set, and none of that survives the
+crossing. Each piece arrives in rocketnet already wearing the target idiom, at
+the moment it arrives, rather than being moved first and cleaned up in a later
+pass.
+
+That ordering is worth defending when it feels slower, because the alternative
+is a single large API rewrite at the end, performed on a body of code that by
+then has consumers. Converting as you port also means every piece is callable
+from C# the day it lands, so the binding is exercised continuously instead of
+being discovered to be wrong late. A file that arrives still speaking C++ is
+technical debt with a customer attached.
