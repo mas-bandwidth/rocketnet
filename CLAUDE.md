@@ -621,3 +621,27 @@ then has consumers. Converting as you port also means every piece is callable
 from C# the day it lands, so the binding is exercised continuously instead of
 being discovered to be wrong late. A file that arrives still speaking C++ is
 technical debt with a customer attached.
+
+And the expectation to set before anyone is surprised by it: "this is enough of
+a transform that we will surface and find bugs."
+
+That is not a risk to mitigate, it is the mechanism working. Moving code across
+a boundary forces every implicit thing to become explicit — what a function
+assumed about its caller, what a member was quietly carrying, which invariant
+was held by convention rather than by construction — and implicit assumptions
+are exactly where bugs live. An API rewrite is a very effective bug detector
+disguised as clerical work.
+
+There is same-day evidence rather than only a principle. Retiring the space
+game's forked serializer was precisely this kind of transform, and it surfaced a
+live defect that had been in production networking: the fork's stream carried a
+packet index as a private member, and moving that out of the stream revealed
+that it stashed the compacted received-packet index while acknowledgement looked
+it up by the raw receive-buffer slot, so one skipped packet made every later
+acknowledgement in the batch read the wrong endpoint header. Nobody was looking
+for it. The move found it. It also found signed-overflow undefined behaviour the
+optimizer exploits, and a floating-point contraction hazard the build was only
+avoiding by accident.
+
+So budget for finding things, treat each one as the port paying for itself, and
+do not let a discovered bug be filed as a delay.
