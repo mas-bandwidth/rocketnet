@@ -801,3 +801,28 @@ more it must hold, because being higher is the offer to have decided already. An
 opinionated transport is an obstacle; a structure-free high-level library is a
 pile of parts. Each library should be the right one of those, and this one is
 the transport.
+
+**Sharpened, because "structure-free" can be over-read.** Glenn: "the lower-level
+ones like rocketnet need to have as few opinions as possible, aside from what is
+vitally important for performance across multiple games (zero copy, AF_XDP,
+multicast ideas, unicast and multicast flows and subscription to them)".
+
+So this library is not opinion-free, and pretending otherwise would produce a
+worse one. It holds a small number of opinions and every one of them is there
+because performance demands it for any game, not because it makes some
+particular game tidier:
+
+- **Zero copy**, which is why the API is claim, write, commit rather than a call
+  that takes your buffer. That is a genuine constraint on how a caller writes
+  its send path, imposed deliberately.
+- **Kernel bypass** where the platform offers it, which shapes the threading
+  model, the queue-per-core structure and the buffer ownership underneath.
+- **Flows, unicast and multicast, and subscription to them**, which is structure
+  in the API — a caller organises its sending around flows rather than around
+  destinations. That is the opinion that makes fan-out possible at all, and it
+  is what a thousand players needs.
+
+The test for any future opinion is therefore not "does this add structure" but
+"is this required for performance that every game benefits from". Zero copy
+passes. A flow model passes. An idea about how a game organises its objects,
+what its messages mean, or when it should send them does not, and belongs above.
