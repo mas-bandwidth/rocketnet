@@ -645,3 +645,13 @@ avoiding by accident.
 
 So budget for finding things, treat each one as the port paying for itself, and
 do not let a discovered bug be filed as a delay.
+
+Naming, specified: `rocketnet_client_create` and so on. The full library name as
+the prefix on every public symbol, then the subject, then the verb, exactly as
+netcode.io does it — `rocketnet_client_create`, `rocketnet_client_destroy`,
+`rocketnet_client_update`, `rocketnet_server_create`, and the send and receive
+calls in the same shape. Types follow: `rocketnet_client_t`, `rocketnet_server_t`.
+
+Not an abbreviation. A reader of someone else's code should be able to tell what
+library a call belongs to without looking anything up, which is most of what a
+long prefix buys and all of what a short one throws away.
