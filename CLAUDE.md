@@ -581,3 +581,26 @@ that the question is genuinely open, and every piece implemented in C# is a
 boundary crossing that does not happen for the customer whose code is C#. That
 is an argument to be tested, not assumed, and the API should be designed so that
 the answer can change without the interface changing.
+
+## The API idiom
+
+Glenn, 2026-08-21: "I desire that rocketnet is a C-like API like netcode".
+
+So this is not only "C-callable so C# can reach it". It is netcode.io's idiom
+throughout: a prefix on every symbol, opaque structs the caller only ever holds
+a pointer to, plain functions taking that pointer first, creation and destruction
+as explicit paired calls, an update call driven by the caller's loop, no classes,
+no templates, no inheritance, no exceptions, no allocation the caller did not ask
+for. A header a C compiler accepts and a binding generator can read without help.
+
+Two reasons this is the right call beyond taste. It is the shape that has already
+worked at scale in this author's own libraries, so it is proven rather than
+chosen. And it is what makes the C# story cheap: a C-idiom surface binds without
+a wrapper layer, and the claim-and-commit calls stay eligible for the fast
+managed-to-native transition, which a surface built on classes or defaulted
+arguments would not be.
+
+The buffer ownership design already drafted (in the private engagement repo)
+proposes exactly this: prefixed free functions, an opaque handle returned from
+claim, and explicit release, with batch forms so a caller that has many buffers
+to reclaim does not pay a transition per buffer.
