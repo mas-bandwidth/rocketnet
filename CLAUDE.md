@@ -655,3 +655,27 @@ calls in the same shape. Types follow: `rocketnet_client_t`, `rocketnet_server_t
 Not an abbreviation. A reader of someone else's code should be able to tell what
 library a call belongs to without looking anything up, which is most of what a
 long prefix buys and all of what a short one throws away.
+
+The pattern named twice over: "like netcode API, and network next API" — "this
+is the pattern for how we want to deliver rocketnet" — "and the byte buffer only
+design decision, makes the interface nice and portable".
+
+Both precedents are the same shape and both are this author's, so the idiom is
+proven rather than borrowed. What the last clause adds is the reason the two
+decisions belong together rather than being separate preferences.
+
+**Byte buffers are the one datatype every language already has.** Because the API
+carries opaque bytes and never a message type, a schema, or a serializer, the
+entire public surface reduces to pointers, lengths and integers. There is nothing
+in it that a binding has to mirror, translate or keep in sync — no type hierarchy
+to reproduce in C#, no serialization contract to reimplement per language, no
+version skew between a library's idea of a message and a binding's. A binding
+becomes a thin declaration of functions rather than a project.
+
+So the C idiom and the byte-buffer rule reinforce each other: the idiom makes the
+calls reachable from anywhere, and the byte buffer makes there be nothing else to
+reach. Either one alone would be half a portable interface. Together they are why
+a language port of this library should be a small piece of work rather than a
+rewrite, and that property is worth defending against every future feature that
+would be more convenient if the transport just understood a little bit about the
+payload.
