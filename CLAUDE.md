@@ -727,3 +727,59 @@ So "multi-language" here means callable from many languages, not written in many
 That is a smaller promise to keep and a much better property to have: one body
 of code to fix a bug in, one place a performance win lands, and no possibility
 of two implementations disagreeing on the wire.
+
+## The Network Next SDK, reviewed as the pattern to follow
+
+Glenn: "please review the network next SDK here: https://github.com/networknext/next" —
+"find the sdk dir and review it. that's the style of API we aim for with rocketnet."
+And the scope of it: "only rocketnet gets the full C-API treatment."
+
+Read at sdk/include/next.h — **513 lines, 58 exported functions**, which is the
+scale worth aiming at. A public header a person can read in one sitting.
+
+**What to take, essentially unchanged:**
+
+The export machinery. Every public function carries a macro resolving to
+`extern "C"` plus the platform's dllexport, dllimport or visibility attribute, so
+one header serves static linking, a shared library, and its consumers.
+
+Opaque handles. `struct next_client_t;` and `struct next_server_t;` are forward
+declarations only — the caller never sees a field. The only transparent structs
+are configuration and statistics, which are plain data passed by pointer and
+filled by the library.
+
+The naming Glenn already specified: prefix, subject, verb. `next_client_create`,
+`next_client_destroy`, `next_client_update`, `next_client_send_packet`, and the
+server mirror of each.
+
+Explicit lifecycle at two levels: a global `next_init` and `next_term`, then
+`_create` and `_destroy` per object. No implicit initialization, no atexit magic.
+
+A caller-driven `_update`. The library does not own the caller's loop.
+
+Global hooks set as function pointers — allocator, logger, assert handler — so
+the library imposes neither malloc nor a logging system on its host.
+
+A `void * context` threaded through creation and handed back in every callback,
+which is how a C API avoids globals and lets one process host several instances.
+
+A config struct with a `next_default_config()` filler, so adding a field later
+does not break existing callers.
+
+Statistics read into a caller-provided struct returning a bool, never allocated.
+
+**Where RocketNet must deliberately differ, and it is one place.** Next's send is
+`next_server_send_packet( server, to_address, data, bytes )` — a copy-in call.
+That is the right shape for a routing SDK and the wrong one here, because
+claim, write, commit is the whole performance story. So RocketNet keeps every
+convention above and replaces exactly that one call with the claim and commit
+pair, plus the broadcast form Next has no equivalent of.
+
+**And one thing it settles for us.** The buffer-ownership design left the
+receive-side lifetime contract open, noting the fastest and the safest answers
+differ. Next answers it with a callback: the received pointer is valid for the
+duration of the call and not after. That is simple, enforceable, costs nothing,
+and survives a managed binding cleanly because the C# side copies out or acts
+within the callback and never holds a pointer the collector cannot see. It is a
+strong candidate for the default, with a batch receive returning handles as the
+opt-in for callers who genuinely need to hold buffers longer.
