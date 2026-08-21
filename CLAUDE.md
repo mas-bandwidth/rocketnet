@@ -783,3 +783,21 @@ and survives a managed binding cleanly because the C# side copies out or acts
 within the callback and never holds a pointer the collector cannot see. It is a
 strong candidate for the default, with a batch receive returning handles as the
 opt-in for callers who genuinely need to hold buffers longer.
+
+## Structure-free, by contrast with the layer above
+
+Glenn, 2026-08-21: "rocketnet is a much more low-level and structure free
+library."
+
+Said while settling delta's character, which is the opposite: delta is
+high-level and deliberately opinionated, describing the structure a game's
+replication code is written inside. rocketnet holds no such opinions and must
+not acquire any. Opaque bytes, a C interface, no view about what a payload means
+or how a game is organised.
+
+The rule underneath both: the lower a layer sits, the fewer opinions it should
+hold, because everything above has to live with them. The higher it sits, the
+more it must hold, because being higher is the offer to have decided already. An
+opinionated transport is an obstacle; a structure-free high-level library is a
+pile of parts. Each library should be the right one of those, and this one is
+the transport.
