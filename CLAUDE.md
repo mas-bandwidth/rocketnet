@@ -826,3 +826,25 @@ The test for any future opinion is therefore not "does this add structure" but
 "is this required for performance that every game benefits from". Zero copy
 passes. A flow model passes. An idea about how a game organises its objects,
 what its messages mean, or when it should send them does not, and belongs above.
+
+**And reduced to one sentence, which is the version to hold.** Glenn: "the only
+opinion that rocketnet will have is, this API is the way it is, to enable zero
+copy and multicast flows." — "because that's the correct way to work the most
+efficiently at high scale."
+
+One opinion, then: the shape of the API. Two things it exists to enable: zero
+copy, and multicast flows. One reason: that is how you work most efficiently at
+high scale. Everything else this library does should follow from those and
+nothing else should be added to the list.
+
+That is the test in its final form. A proposed constraint either serves zero copy
+or serves flows, or it is not rocketnet's to hold.
+
+---
+
+*Note for whoever next works on this file: it was written across one long
+conversation on 2026-08-21 and reads in the order the decisions arrived rather
+than the order a newcomer needs them. Everything in it is current, but it wants a
+reorganising pass — the settled shape first, the reasoning behind each choice
+after — before it is handed to anyone who was not present for the conversation.
+Do not lose Glenn's verbatim quotes in that pass; they are the record.*
