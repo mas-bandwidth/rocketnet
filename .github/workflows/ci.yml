@@ -1,0 +1,59 @@
+# RocketNet. Copyright 2026 Mas Bandwidth LLC.
+#
+# Stage 1 CI: build the library and both examples, run the tests, and run
+# the examples end to end on ubuntu and macos. The client cannot connect in
+# stage 1 — the workflow asserts it fails CLEANLY through the documented
+# state machine and exits 0, and that the server ticks and shuts down
+# cleanly on SIGINT. Windows joins when the windows platform leg is
+# exercised for real.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Build library, tests and examples
+        run: make
+
+      - name: Run tests
+        run: ./dist/test
+
+      - name: Run examples
+        run: |
+          ./dist/simple_server > server.log 2>&1 &
+          SERVER_PID=$!
+
+          # the client runs its full connect attempt (~10s), times out
+          # through the state machine, and exits 0
+          ./dist/simple_client > client.log 2>&1
+          CLIENT_EXIT=$?
+
+          sleep 1
+          kill -INT $SERVER_PID
+          wait $SERVER_PID
+          SERVER_EXIT=$?
+
+          echo "--- client ---"
+          cat client.log
+          echo "--- server (tail) ---"
+          tail -5 server.log
+
+          test $CLIENT_EXIT -eq 0
+          test $SERVER_EXIT -eq 0
+          grep -q "connecting to 127.0.0.1:40000" client.log
+          grep -q "connection failed, state -2" client.log
+          grep -q "shutting down" client.log
+          grep -q "server listening on port 40000" server.log
+          grep -q "shutting down" server.log
