@@ -401,18 +401,24 @@ before the sealed data.
 
 **There are four sending sequences per connection: one for each direction of
 each key phase.** Handshake and session packets do not share a counter. Each of
-the four starts at zero and increments by one per packet sent under that key.
+the four starts at one and increments by one per packet sent under that key.
+
+**Sequence zero is never sent and never valid: a receiver MUST ignore any
+packet whose reconstructed sequence is zero.** Zero is what an uninitialized
+counter, a zeroed structure or a forgotten field produces, so making it invalid
+on the wire turns that whole class of implementation bug into an immediate,
+visible rejection instead of a silently accepted packet.
 
 A receiver tracks, per key phase and per direction, the **highest sequence it
 has successfully opened**, and its replay window. At the start of a phase the
-highest-opened value is zero and every window entry is unmarked. The first
-packet of a phase carries wire value zero, reconstructs to zero, is not yet
-marked in the window, and is therefore accepted; zero is a value like any
-other, not a sentinel.
+highest-opened value is zero — which, since zero is never a real sequence,
+unambiguously means nothing has been opened yet — and every window entry is
+unmarked.
 
 The value used as the AEAD nonce is the full **64-bit** sequence, reconstructed
 from the 4 wire bytes as follows. Let `expected` be the highest successfully
-opened sequence plus one. The candidates are the 64-bit values whose low 32
+opened sequence plus one — which is 1 when nothing has been opened yet, with no
+special case. The candidates are the 64-bit values whose low 32
 bits equal the wire value; take the candidate nearest to `expected`, and if two
 are exactly equidistant — the wire value sits exactly 2^31 away in both
 directions — take the larger. A wrong reconstruction produces a failed open and
@@ -1040,7 +1046,7 @@ In this exact order:
 
 ## Replay Protection
 
-Sealed packets carry sequence numbers starting at zero and increasing by one per
+Sealed packets carry sequence numbers starting at one and increasing by one per
 packet sent. The sequence is on the wire and read before opening; it is the AEAD
 nonce, so any modification fails the tag.
 
@@ -1332,7 +1338,8 @@ dropped packet, in either direction, is repaired by the next send interval.
 * Generate the connection salt: 8 bytes from a cryptographically secure random
   source, fresh for this attempt.
 * Generate the client ephemeral X25519 keypair, fresh for this attempt.
-* Zero the sending sequences for both key phases, with empty replay state.
+* Initialize the sending sequences for both key phases so the first packet
+  sent under each key carries sequence 1, with empty replay state.
 * Enter _requesting cookie_ and send a connection request with an all-zero
   return cookie field at the send rate.
 
@@ -1615,7 +1622,7 @@ In this exact order, on a _connection request packet_:
   being reused across a rotation window, as soon as the four keys exist.
 * If no client slots are available, respond with a _connection denied packet_ —
   sealed under the handshake server-to-client key just derived, at sequence
-  zero, carrying the session nonce in the clear — and stop. No mapping is
+  one, carrying the session nonce in the clear — and stop. No mapping is
   created, so a retransmitted request runs this path again and is denied again.
   *The slot check is placed here rather than earlier because a denied packet is
   sealed, and before this point no keys exist to seal it with.*
@@ -2369,3 +2376,201 @@ implementation agrees with itself; only vectors prove two implementations agree
 with each other. The failure this prevents is the expensive one — two correct
 readings of an ambiguous sentence, and a handshake that silently never
 completes.
+
+## Appendix A: Known-answer test vectors
+
+These vectors satisfy the requirement in _Demonstrating conformance_. Every
+input is fixed and stated here; an implementation reproduces the deterministic
+outputs exactly, and verifies the frozen token. All values are hex bytes in
+wire order.
+
+**Fixed inputs.** The test backend and server keypairs and the test title tag
+are the published values from _Development without a backend_ and _The
+Prefilter Header_. In addition:
+
+    protocol id                 0x1122334455667788
+    client id                   0x0123456789abcdef
+    create timestamp            1756166400
+    expire timestamp            1756166700
+    timeout seconds             10
+    token client-to-server key  01 02 .. 20   (bytes 0x01 through 0x20)
+    token server-to-client key  a1 a2 .. c0   (bytes 0xa1 through 0xc0)
+    connection salt             53 41 4c 54 30 30 30 31
+    session nonce               4e 4f 4e 43 45 30 30 31
+    client ephemeral secret     c1 c2 .. e0   (bytes 0xc1 through 0xe0)
+    server ephemeral secret     e1 e2 .. ff 00
+    server cookie key           10 20 30 40 50 60 70 80 90 a0 b0 c0 d0 e0 f0 00
+                                0f 1f 2f 3f 4f 5f 6f 7f 8f 9f af bf cf df ef ff
+    server address              203.0.113.10:40000 (IPv4, in the token)
+    client source address       198.51.100.7:56789 (IPv4, for the cookie MAC)
+    cookie expire               1756166403 (create + 3)
+    user data                   256 zero bytes
+    keep-alive fields           client index 3, max clients 1000
+    payload plaintext           68 65 6c 6c 6f
+
+The ephemeral public keys below are `crypto_scalarmult_base` of the stated
+secrets; the shared secret is checked equal from both sides before use.
+
+**Deterministic outputs.**
+
+    client ephemeral secret (32 bytes):
+    c1 c2 c3 c4 c5 c6 c7 c8 c9 ca cb cc cd ce cf d0
+    d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df e0
+
+    client ephemeral public (32 bytes):
+    3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d a1 ad
+    93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c be 24
+
+    server ephemeral secret (32 bytes):
+    e1 e2 e3 e4 e5 e6 e7 e8 e9 ea eb ec ed ee ef f0
+    f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff 00
+
+    server ephemeral public (32 bytes):
+    48 9c eb ba 7a 16 6c 61 98 35 fe 12 ee dc 58 1d
+    bf c1 b3 6d e1 0c 83 0e 4f 0b c1 c4 87 34 86 4b
+
+    shared secret (32 bytes):
+    57 5f d8 2f 7c 53 8e 42 33 8f 74 8f 9d 35 39 ea
+    01 ed 0d 38 4d 73 b3 02 36 3f b2 65 8f 1a 9f 1b
+
+    handshake client-to-server key (32 bytes):
+    4b 4d 63 0c db 00 c8 7b 73 d4 6b 34 21 d8 91 c2
+    4c fd 0a b9 28 c9 87 51 5a ab bb d7 8b e2 73 50
+
+    handshake server-to-client key (32 bytes):
+    86 04 5b 5f 8e 2d a9 4d bf 44 5a 65 80 86 d6 3d
+    50 b7 3b 1e 66 6c 76 c4 95 2f ab f9 98 c0 c0 e0
+
+    session client-to-server key (32 bytes):
+    ae dc 46 56 e3 f8 2b 7e 87 91 27 95 88 c7 f6 20
+    4e d2 c1 bc 0c 17 ba 97 79 c0 4e 3b 1c 9e f4 3c
+
+    session server-to-client key (32 bytes):
+    3c 63 7e 37 b1 01 b8 2c 9e da a9 a3 b5 5a 31 a8
+    a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0
+
+    cookie mac input (23 bytes):
+    01 c6 33 64 07 d5 dd 53 41 4c 54 30 30 30 31 03
+    f9 ac 68 00 00 00 00
+
+    cookie mac (16 bytes):
+    0f b2 b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9
+
+    == connection challenge (type 2, handshake s2c, seq 1) ==
+    associated data (53 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+    54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+    4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+    fd a1 4c be 24
+
+    sealed (48 bytes):
+    68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
+    20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
+    3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
+
+    == connection denied, response path (type 1, handshake s2c, seq 2) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 01 53 41 4c
+    54 30 30 30 31
+
+    sealed (16 bytes):
+    e7 12 b8 8e e2 36 cf d9 05 38 7c bc 0f 9d ee 13
+
+    == connection response (type 3, handshake c2s, seq 1) ==
+    associated data (53 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+    54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+    4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+    fd a1 4c be 24
+
+    sealed (40 bytes):
+    9c 08 60 98 96 b9 d4 05 d5 14 9e 1e d9 da e4 dc
+    2b d2 4a e4 cd a1 93 10 5c bf a9 ce 74 61 b3 97
+    ce 4b 50 c0 1b 2f 8f 7e
+
+    == connection keep-alive (type 4, session s2c, seq 1) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 04 53 41 4c
+    54 30 30 30 31
+
+    sealed (24 bytes):
+    d1 48 d8 10 58 6a 78 86 ae 2e 0e 01 46 a4 5a ba
+    a0 a0 1d da bd 24 f1 65
+
+    == connection payload (type 5, session c2s, seq 3) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
+    54 30 30 30 31
+
+    sealed (21 bytes):
+    8b 83 8d c7 a7 34 bc e2 37 04 65 48 35 a2 13 cf
+    c2 f6 5a 12 11
+
+    == connection disconnect (type 6, session c2s, seq 4) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 06 53 41 4c
+    54 30 30 30 31
+
+    sealed (16 bytes):
+    9a b0 80 30 1b 70 95 59 85 f3 97 88 87 d9 13 f5
+
+    token identifier (16 bytes):
+    07 c9 19 dc f8 2f 78 79 e5 91 70 48 3f fc 9a 1b
+
+    frozen connect token (768 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+    00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
+    01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
+    29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
+    0c f2 21 5f 76 14 f4 80 1c f6 7d 13 8d e8 d3 b7
+    5b f7 d9 0d 3c 95 95 97 70 4d cc 75 1a 41 2a 27
+    ee 54 e0 5c 39 f5 dd a5 48 4e bc b3 a3 ab 31 9e
+    b4 92 ce c5 57 46 a4 95 c1 2d c8 7a 43 1f e5 11
+    1c 8d 20 cf b1 9d c5 d3 e5 73 3e 0e a5 ac 4f d0
+    1b 71 54 ae 1a 6b 5b 88 32 82 a7 ce 89 d1 7d 02
+    9a 0a e1 fe cd aa ba 72 75 ea 8b 92 b1 65 5d 58
+    36 73 c3 0e 84 9b 6f 14 43 1c 07 2b f2 ce 36 9b
+    eb 4a c0 aa 4a 66 f0 fa 3b 3f fc 98 ee 27 ef a0
+    ff db 81 2a 76 37 64 d9 0c bc 18 27 6b 9a 46 bd
+    35 02 6c 7b fa 93 13 32 84 f7 a2 7b 8b ee 4f a3
+    49 12 6c b5 0f 6a 3a fb b9 55 35 db e1 e3 68 a0
+    6c 72 d8 2e cc 1b 75 e9 4a 8d b7 bd a1 c1 0c d2
+    46 46 ce 61 ce 31 ac 10 33 4f a1 79 4c 9b 8a a3
+    bf db a0 41 36 b4 a4 74 b8 92 c1 ed f5 6e 5d f5
+    e0 0b c6 61 88 01 0c 6e f1 a1 c2 08 7e 2e c3 1f
+    4b 11 68 ce da fd f6 08 f1 17 06 ae e8 8c 79 29
+    e6 11 09 fa 96 48 cb 0d 5e 37 d7 06 0e d6 22 85
+    b7 09 39 7a 62 4e f2 85 ad c5 44 e2 3e 98 f1 d4
+    55 95 3b 1a df 41 58 7d cb e0 df 37 cc 70 58 72
+    c4 3f 36 64 f9 78 06 f1 20 b1 d1 98 e7 1c e1 35
+    ff 2a a1 3f e3 b4 d2 9a 00 0f 30 ba 0c 15 2f 33
+    04 3c 94 cc 55 a3 e4 d2 d1 9c 18 e7 63 41 48 4d
+    42 1b 3f f3 40 00 9c 2e 98 36 84 74 30 30 74 a5
+    5d 44 0c c9 cb 2b 88 c6 33 36 4b 94 ab bc 72 3f
+    80 c5 67 dd ed e8 99 7d 1b c2 a3 8d bf c7 c5 37
+    e0 fe 2d 5f f4 8a be 9e 7a 36 76 25 c3 93 02 ae
+    c8 8d 9c fd 83 82 4e 82 47 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    a2 a2 b2 3b c1 e8 da a2 44 c1 60 02 fb 32 eb 25
+    f0 d5 e0 12 d9 be 9b 29 a7 b1 1e 9e 69 76 e9 1e
+    6f 06 e4 89 9f 51 f5 20 ba fc cc d6 df c1 36 da
+    51 91 fa 44 57 18 46 8d 7f 88 86 34 39 58 fd 0a
+    01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
+    11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
+    a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
+    b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+**The frozen connect token** above is not reproducible byte-for-byte — sealing
+draws randomness — so its vector runs the other way: a conforming server-side
+implementation verifies its signature against the test backend public key,
+opens its sealed block with the test server keypair, and recovers exactly the
+private fields listed in the fixed inputs. The token identifier printed above
+is the 16-byte unkeyed `crypto_generichash` of its first 576 bytes and is
+deterministic.
