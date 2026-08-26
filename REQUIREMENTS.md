@@ -89,11 +89,11 @@ Hall. Two-for-one.
 
 * Scale: 1000 players or above on a single server.
 
-* Network identity is not tied to an IPv4/IPv6 address struct. An endpoint
-  is a string with some maximum size, so transports are free to name
-  whatever they route by — this way new and interesting transports can be
-  created. The data passed in to the client on connect is a string that may
-  not conform to an IP address — more like a base64 token or something. TBD.
+* 1.0 endpoints are IP addresses only — an IPv4 or IPv6 address and a port —
+  ruled 2026-08-26. Dean has no requirement for exotic transports with
+  arbitrary string addresses. Endpoints as opaque strings, freeing transports
+  to name whatever they route by, remain a future direction under a new
+  protocol version; nothing in 1.0 is shaped for them.
 
 * IPv6, designed in properly from day one: a server listens on both IPv4
   and IPv6 addresses, and clients connect over either family. A reasonable
