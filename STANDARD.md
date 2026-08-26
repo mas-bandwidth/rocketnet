@@ -289,9 +289,12 @@ of filtering at all, because the type byte is needed regardless.
 
 **The tag is generated per title.** A tool takes a per-title seed and emits the
 filter as code in both forms from one seed — the userspace check and the XDP
-program — so no two titles share a tag and nobody can write a universal
-RocketNet matcher (issue #17). That is what the per-title generation buys: not
-strength, but non-universality.
+program — so no two titles share a tag (issue #17). That is what per-title
+generation buys, and the claim should be stated no wider: **it prevents a single
+universal RocketNet matcher; it does not prevent fingerprinting.** The tag is
+stable for a title by construction, so anyone willing to look at one packet of a
+title's traffic has a signature for all of it. Nothing unkeyed can do better, and
+a protocol should not claim otherwise.
 
 A receiver drops any packet smaller than the minimum for its type, larger than
 1232 bytes, or whose title tag does not match.
@@ -534,8 +537,13 @@ slot. It is a cookie, not an encrypted token.
     [cookie mac] (16 bytes)
 
     cookie mac = crypto_generichash( 16 bytes,
-                                     client address ‖ client id ‖ cookie expire,
+                                     client address ‖ client id ‖ connection salt
+                                                    ‖ cookie expire,
                                      server cookie key )
+
+The connection salt is in the input so a cookie belongs to one connection
+attempt rather than being a bearer token for an address and client id over its
+whole lifetime. It costs nothing and it narrows what a captured cookie is worth.
 
 24 bytes on the wire. The server sends it in the _connection challenge_ packet;
 the client echoes it unchanged in the _connection response_; the server
@@ -1046,15 +1054,86 @@ authentication break.** An on-path observer can capture a connection request and
 replay it from its own address; it cannot complete the handshake, because the
 challenge returns sealed under a key it does not hold. If its replay arrives
 first, the used-token history binds that token to the attacker's address and the
-legitimate client must obtain a fresh token. Inherited from netcode unchanged,
-and mild: it requires an on-path position, from which simply dropping the
-client's packets is a strictly better attack.
+legitimate client must obtain a fresh token. Inherited from netcode unchanged. It
+requires an on-path position, from which simply dropping the client's packets is
+a more effective attack — but it is not equivalent, because it is harder to
+attribute: dropped packets look like a broken network and get investigated as
+one, while this looks to the player like the game's own backend misbehaving. Mild
+in effect, quieter than the alternative.
 
-**The challenge is a small reflection primitive.** A spoofed request can make a
-server emit 48 bytes at a victim. It is bounded — the response is far smaller
-than the request that provoked it, and the used-token history stops repeats from
-a second spoofed source — but the CPU is spent before the history is consulted,
-which is why the ordering above puts every free check first.
+**No response may be larger than the packet that provoked it.** This is a
+normative invariant of the protocol, not inherited advice, and every packet type
+must be checked against it as the protocol grows. Today the widest margins are a
+676-byte request answered by a 48-byte challenge or a 28-byte cookie. At those
+ratios the challenge is not usefully a reflection primitive: an attacker
+spoofing a victim's address to place 48 bytes there spends 676 to do it and is
+strictly worse off than sending the 676 at the victim directly. The cost of a
+spoofed request is CPU, which the cookie exchange addresses, rather than
+reflected bytes.
+
+**The backend is the real admission control.** A server allocates an encryption
+mapping only for a request carrying a valid backend signature, so the number of
+mappings an attacker can create is bounded by the number of real tokens they
+hold, not by the packets they can send. That is a strong bound and it is the
+backend's to maintain: **a deployment that issues connect tokens freely has
+removed the only limit that works against a determined attacker.** Token
+issuance policy is outside this standard and inside its security argument.
+
+**Bound the token lifetime.** A deployment SHOULD keep `expire - create` short —
+minutes, for a matchmaker that assigns a server at request time. Token lifetime
+is the revocation latency of this design: if a server's X25519 secret key leaks,
+tokens already sealed to it stay openable until they expire, and nothing can
+recall them. It also bounds how large a used-token history must be to be useful.
+
+**Clamp the timeout.** `timeout seconds` is signed, with negative disabling
+timeouts for development. It is inside the signed data so a client cannot forge
+it, but a backend bug or a leaked development token can produce a connection
+that never times out and never frees its slot. A server SHOULD hold a configured
+maximum and clamp the token's value to it, and SHOULD reject non-positive values
+unless explicitly configured to accept them.
+
+**Require a strict Ed25519 verification profile.** Ed25519 verifiers disagree in
+practice on non-canonical scalars, small-order points, and cofactored versus
+cofactorless equations, so two implementations can differ on whether a signature
+is valid. A conforming implementation MUST reject non-canonical `S` values and
+small-order public keys — the behavior libsodium's `crypto_sign_verify_detached`
+already has. This matters more here than in a closed implementation, because this
+document invites independent ones.
+
+**The AEAD is not swappable.** ChaCha20-Poly1305's confidentiality limit is
+larger than the number of packets a connection can carry, which is why this
+protocol needs no key update mechanism at all. That reasoning does not survive
+substitution: AES-GCM's confidentiality limit is about 8.4 million encrypted
+packets, which at the packet rates this standard contemplates is **minutes**, and
+responding to it requires a key update this protocol does not have. An
+implementation MUST NOT substitute another AEAD without adding one.
+
+**There is no 0-RTT and no session resumption, deliberately.** Both add a replay
+surface that the standards containing them spend chapters bounding, and the
+strongest advice in those chapters is that disabling the feature is the most
+effective defense. A game connects once per match, so the round trip it would
+save is not worth the class of attack it opens.
+
+**No stateless reset, for a structural reason rather than an oversight.** A
+peer's crash is discovered here by timeout, where QUIC discovers it immediately
+via a stateless reset token. That mechanism requires a static key shared across
+a server fleet — which is exactly the fleet-wide shared secret this design exists
+to eliminate. Omitting it follows from the central commitment. Graceful close is
+already covered by the sealed, redundantly sent _connection disconnect_; only the
+crash case waits out a timeout, and a game reporting a lost connection after a
+few seconds is acceptable.
+
+**If connection migration is ever added, three things must arrive together.** A
+connection identifier alone would be a regression. It needs path validation
+before the server sends anything to a new address, or an off-path attacker who
+reads the identifier can redirect a session onto a victim; the cookie in this
+protocol is already exactly that primitive. It needs header protection or
+identifier rotation, or the identifier becomes a permanent cleartext tag that
+follows a player across every network they join — strictly worse for privacy than
+today's address keying, which offers nothing to link. And **if header protection
+is ever added, the replay check must move to after the open**: it is placed
+before the open here precisely because the sequence is already in the clear, so
+an early drop leaks nothing and costs a window lookup instead of an AEAD.
 
 ## Conformance
 
