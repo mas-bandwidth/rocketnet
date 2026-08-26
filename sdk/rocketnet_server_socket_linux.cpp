@@ -46,6 +46,12 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
     size_t packet_bytes;
 };
 
+// IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
+// between walls is touched by a different thread, and without the walls those fields
+// would share cache lines and false sharing would destroy multithreaded send and
+// receive performance. Nothing goes wrong if you remove them -- it just gets slow.
+// Do not remove them.
+
 struct rocketnet_server_socket_send_buffer_t
 {
     uint8_t padding_0[4096];
