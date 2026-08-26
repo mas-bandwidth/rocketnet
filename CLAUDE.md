@@ -2,9 +2,13 @@
 
 ## What this is
 
-The next-generation networking library: network next + yojimbo + reliable +
-netcode consolidated into one. The reason it exists is the XDP dataplane —
-hitting **1000 concurrent players** on a single server.
+RocketNet is a merger of flow's good transport bits and zero copy API with a
+netcode-like connection protocol and security: a packet level transport
+library worthy of a **1000 player (or above)** game. The space game's
+transport goodness, productized for Dean Hall (RocketWerkz), and once done
+re-integrated into the space game as its foundation. The requirements are
+locked in [REQUIREMENTS.md](REQUIREMENTS.md); scope questions argue against
+that file.
 
 **Messages are opaque byte buffers.** rocketnet does not own serialization. That is
 the central design decision and it shapes everything: at 1000 players, trading
@@ -44,11 +48,12 @@ array-sizing constant.
 ## Current state: direct mode only, by ruling
 
 Direct mode is the library: a client connects to a server address and
-exchanges raw packets. The network next era machinery — client_backend, both
-token formats, the multi-backend init race — was excised on Glenn's 2026-08-26
-ruling (issue #6); flow's repo preserves all of it. The whitelist control
-plane and node architecture that eventually replace it are recorded on issue
-#2 and are not present in this codebase yet.
+exchanges raw packets. The network next era machinery is gone; flow's repo
+preserves all of it. What comes next is REQUIREMENTS.md's order of
+operations: the minimal secure connect — netcode-style connect tokens on
+public key crypto, no secret shared between backend and servers, hydrogen if
+possible — then platform transports behind an easy-to-extend seam, then
+reliability, flows and broadcast at the end.
 
 Practical consequence today: a direct client is `CONNECTED` at create time
 before a byte moves, and the server has no notion of a client at all. That is
