@@ -689,8 +689,16 @@ for it. What remains for the response to prove is possession of the handshake
 key, and an empty sealed packet proves exactly that: a party who captured the
 request bytes but cannot open the challenge cannot produce one.
 
-That is why the response carries no data at all, and why there is only one
-cookie construction in this protocol rather than two.
+That is why there is only one cookie construction in this protocol rather than
+two.
+
+**The response carries 24 bytes of required zero padding, and the padding is
+there for anti-amplification.** Having removed the cookie, the response became
+smaller than the keep-alive it provokes, which would have made a connected
+client a small reflector. The padding restores the invariant that no response
+exceeds the packet that provoked it. **A receiver MUST check both the size and
+that the padding is zero** — padding that is merely permitted rather than
+required is no protection at all, since an attacker simply omits it.
 
 **Step 3 is still necessary, and it is worth saying what it stops.** Without it
 a server would assign a slot at the end of step 2, and an on-path attacker who
@@ -770,6 +778,14 @@ explained under _Per-connection keys_.
 A client that receives one stores the 32 bytes and puts them in the return
 cookie field of every subsequent request in this attempt.
 
+**A cookie packet does not provoke a reply.** A client that receives one stores
+it and includes it in its next *scheduled* request; it MUST NOT send a request
+because a cookie arrived. Otherwise the packet becomes an amplifier pointed at
+the server — 44 bytes in, 724 out — that anyone able to see a client's salt
+could drive at whatever rate they chose. With the rule, the client's request
+rate is its own retransmit rate no matter how many cookie packets arrive, and
+the pair is not a provoked pair at all.
+
 **A client MUST discard a cookie packet whose connection salt does not match its
 current attempt**, which is why the salt is echoed in the clear alongside the
 cookie. Without that check the packet is an off-path denial of service and not a
@@ -800,7 +816,9 @@ _connection challenge_:
 
     [server ephemeral public key] (32 bytes)
 
-_connection response_: no data.
+_connection response_:
+
+    [padding] (24 bytes)                // MUST be zero, and MUST be checked
 
 _connection keep-alive_:
 
@@ -895,7 +913,7 @@ In this exact order:
   the packet:
   * 0 bytes — _connection denied_
   * 32 bytes — _connection challenge_
-  * 0 bytes — _connection response_
+  * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
   * [1,1208] bytes — _connection payload_
   * 0 bytes — _connection disconnect_
@@ -1388,8 +1406,30 @@ one, while this looks to the player like the game's own backend misbehaving. Mil
 in effect, quieter than the alternative.
 
 **No response may be larger than the packet that provoked it.** This is a
-normative invariant of the protocol, not inherited advice, and every packet type
-must be checked against it as the protocol grows. Today the widest margins are a
+normative invariant, not inherited advice, and **every packet type MUST be
+re-checked against it whenever any size changes.** It is easy to break by
+accident and hard to notice: an earlier draft removed a field from the
+_connection response_, which made that packet smaller than the keep-alive it
+provokes and turned a connected client into a small reflector. The removal was
+correct; the failure was not re-running this table afterwards.
+
+| Provoking packet | Size | Response | Size | |
+|---|---|---|---|---|
+| connection request | 724 | connection cookie | 44 | ok |
+| connection request | 724 | connection challenge | 56 | ok |
+| connection request | 724 | connection denied | 24 | ok |
+| connection challenge | 56 | connection response | 48 | ok |
+| connection response | 48 | connection keep-alive | 32 | ok |
+| connection response | 48 | connection denied | 24 | ok |
+| connection cookie | 44 | *nothing* | — | see below |
+
+Two rules keep the table true rather than merely accurate today. **Padding used
+to satisfy it MUST be required on read**, checked for both length and content,
+because padding that is optional is padding an attacker omits. And **a server
+MUST NOT answer a request it has rejected** — every failure path in _Processing
+Connection Requests_ ignores the packet silently, and the single exception is the
+cookie, which is 44 bytes against 724 and is the price of address validation
+having to start somewhere. Today the widest margins are a
 724-byte request answered by a 56-byte challenge or a 44-byte cookie. At those
 ratios the challenge is not usefully a reflection primitive: an attacker
 spoofing a victim's address to place 56 bytes there spends 724 to do it and is
