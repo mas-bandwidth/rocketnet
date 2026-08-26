@@ -8,7 +8,7 @@ specified separately.
 
 It is netcode 1.02 rebuilt on public key cryptography, and simplified where the
 simplification costs no security. The shape is netcode's — connect token,
-two-RTT handshake, address challenge, sealed packets, per-client slots. Two
+address-validated handshake, address challenge, sealed packets, per-client slots. Two
 things change and they run through everything below.
 
 **There is no secret shared between the backend and the dedicated servers.** The
@@ -31,10 +31,10 @@ Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 * Ed25519 signatures (`crypto_sign`) — backend token authenticity.
 * Sealed boxes (`crypto_box_seal`, X25519) — delivering the session keys to the
   server confidentially through the untrusted client.
-* BLAKE2b key derivation (`crypto_kdf`) — per-connection keys.
 * BLAKE2b keyed hashing (`crypto_generichash`) — the address validation cookie,
   and session key derivation.
 * X25519 (`crypto_scalarmult`) — the ephemeral exchange giving forward secrecy.
+* SipHash-2-4 (`crypto_shorthash`) — keying the server's client lookup tables.
 * ChaCha20-Poly1305 IETF AEAD (`crypto_aead_chacha20poly1305_ietf`) — every
   sealed packet.
 
@@ -80,6 +80,12 @@ Every party holds only keys whose exposure it can afford:
 * Each **client** holds the backend's public key as configuration, and the
   per-session keys handed to it inside a connect token.
 
+* **Both** hold, per connection attempt, an ephemeral X25519 keypair whose
+  secret half is erased as required under _Per-connection keys_.
+
+* A **server** additionally holds a per-run secret keying its client lookup
+  tables, described under _No lookup may be linear in the number of clients_.
+
 There is no key in the system that is both shared and secret. This is the
 load-bearing difference from netcode 1.02.
 
@@ -108,8 +114,6 @@ own headers rather than trusting this document:
     crypto_box_PUBLICKEYBYTES                    32   // X25519
     crypto_box_SECRETKEYBYTES                    32
     crypto_box_SEALBYTES                         48   // 32 ephemeral pk + 16 mac
-    crypto_kdf_KEYBYTES                          32
-    crypto_kdf_CONTEXTBYTES                       8
     crypto_generichash_KEYBYTES                  32
     crypto_aead_chacha20poly1305_ietf_KEYBYTES   32
     crypto_aead_chacha20poly1305_ietf_NPUBBYTES  12
@@ -205,7 +209,7 @@ session keys, carrying an identifier so the server need not trial-decrypt agains
 every connected client, and followed by the same cookie round trip to the new
 address that the connection made at connect time — which is the anti-redirection
 protection QUIC's path validation provides. Cost on ordinary packets: nothing.
-Cost when it fires: one round trip, rarely. **Packet types 7 through 255 are
+Cost when it fires: one round trip, rarely. **Packet types 8 through 255 are
 reserved and MUST be ignored by a conforming receiver**, so a later
 implementation adding migration degrades gracefully against an earlier one: the
 packet is ignored and the client reconnects, which is exactly today's behavior.
@@ -275,9 +279,9 @@ filter can address is *unaimed* traffic: internet background noise, scanners,
 and floods of random bytes at the port. Against that, a 3-byte tag admits one
 packet in 16.7 million, and a false pass costs almost nothing, because the next
 step is a fixed size check (connection requests) or an encryption-mapping lookup
-that fails for an unknown source (sealed packets). Even a 10 Gbps flood of
-random small packets would put roughly one packet per twenty seconds in front of
-a check that rejects it in a handful of instructions.
+that fails for an unknown source (sealed packets). Even a 10 Gbps flood of minimum-size
+frames — about 14.9 million packets per second — puts roughly one packet per
+second in front of a check that rejects it in a handful of instructions.
 
 *What the earlier design spent for that.* netcode's Network Next ancestor
 smeared a 64-bit hash across 15 bytes plus a 2-byte checksum, each byte
@@ -316,7 +320,7 @@ and this protocol makes the better answer available.* Steam Datagram Relay
 populates its relay whitelist with the client address the backend observed
 during the backend conversation — which inherits the same-address assumption
 above, and fails wherever that assumption does. A RocketNet server does not need
-to guess: the two-RTT handshake ends with the server holding the client's actual
+to guess: the address-validated handshake ends with the server holding the client's actual
 UDP source address, **proven** by the cookie round trip rather than assumed. A
 whitelist populated after the handshake, from verified addresses, is correct
 under CGNAT address pools and dual-stack mismatch alike. Populating one from a
@@ -350,8 +354,14 @@ to spare, by design.
 ## Sequence numbers
 
 Sealed packets carry a **fixed 4-byte sequence number**, sent in the clear
-before the sealed data. Each direction of each connection has its own sequence,
-starting at zero and incrementing by one per packet sent.
+before the sealed data.
+
+**There are four sending sequences per connection: one for each direction of
+each key phase.** Handshake and session packets do not share a counter. Each of
+the four starts at zero and increments by one per packet sent under that key.
+A receiver tracks, per key phase and per direction, the highest sequence it has
+successfully opened — initialized such that the first packet of a phase, with
+wire value zero, reconstructs to zero — and its own replay window.
 
 The value used as the AEAD nonce is the full **64-bit** sequence. The receiver
 reconstructs the high 32 bits: it tracks the highest sequence it has
@@ -368,14 +378,21 @@ the sequence was consumed, and a read order that dropped every connection
 request because its type byte's high nibble is zero. A fixed field deletes the
 encoding, the range check, the dependent arithmetic, and both defect classes.
 
-*Why not a fixed 8 bytes.* RocketNet does not assume a 60Hz packet rate. A game
-sending fragmented state at 10 Mbps sends tens of thousands of packets per
-second per direction, where four extra bytes per packet is a percent of the link.
+*Why not a fixed 8 bytes.* **It is not this protocol's business to decide how
+often an application sends.** A transport that assumes a packet rate becomes the
+thing an application has to work around, and the rates differ by orders of
+magnitude between a turn-based game, a shooter at 60Hz, and a simulation
+fragmenting large state across many packets per frame. Four extra bytes on every
+packet is negligible at the low end and a measurable fraction of the link at the
+high end, so the choice is made where it costs nothing either way: four bytes on
+the wire, a 64-bit value reconstructed, and no rate assumed.
 Four bytes on the wire with a reconstructed 64-bit value costs about ten lines
 and never wraps.
 
-*Why not two bytes.* At tens of thousands of packets per second a 16-bit
-sequence wraps in seconds, leaving no room for reordering or loss bursts.
+*Why not two bytes.* A 16-bit sequence wraps quickly enough at high send rates
+to leave no room for reordering or a loss burst, which would put a ceiling on
+the application's send rate — exactly the constraint this protocol must not
+impose.
 
 ## Connect Token
 
@@ -524,8 +541,9 @@ its own keys.
 
 The client generates a random 8-byte **connection salt** for every connection
 attempt and sends it in the clear in the connection request. Both sides then
-derive four keys with `crypto_kdf_derive_from_key`, using the salt as the subkey
-id and the following 8-byte contexts:
+derive four keys with `crypto_generichash`, keyed with the relevant token key,
+over the inputs below. Every context string is exactly 8 ASCII bytes with no
+terminating null.
 
     handshake client to server = crypto_generichash(
                                      32 bytes,
@@ -661,7 +679,7 @@ Tampering with the salt in flight makes the two sides derive different keys and
 the handshake fails. That requires an on-path attacker, who can drop the packets
 instead; no key is exposed and nothing is accepted.
 
-## The two-step handshake, and why it is two steps and not three
+## The handshake, and why the third exchange carries no cookie
 
 The address is proved once, by the cookie exchange, and never again.
 
@@ -732,13 +750,13 @@ packet type. The type byte carries the type and nothing else.
 
 The connection request (0) is not sealed. After the prefilter header:
 
-    [return cookie] (40 bytes)          // zero if the client holds none
+    [return cookie] (32 bytes)          // zero if the client holds none
     [connection salt] (8 bytes)         // client-generated, this attempt
     [client ephemeral public key] (32 bytes)
     [signed connect data] (576 bytes)   // from the token, verbatim
     [signature] (64 bytes)              // from the token, verbatim
 
-A fixed 720 bytes after the prefilter header, 724 bytes on the wire.
+A fixed 712 bytes after the prefilter header, 716 bytes on the wire.
 
 The connection salt and the client ephemeral public key sit outside the
 signature, because the backend fixed the signed data when it issued the token
@@ -771,17 +789,24 @@ doing any work that would give it a key, and before allocating any state at all:
 
 The **server nonce** is the server's contribution to key derivation, and it is
 the reason this packet exists in the key schedule rather than only in address
-validation. A server MUST NOT issue the same nonce twice within a run; a
-counter is sufficient and a random 64-bit value is acceptable. Its purpose is
+validation. **A server MUST NOT issue the same nonce twice, and the requirement spans
+restarts rather than runs.** A random 64-bit value satisfies this and is the
+recommended implementation. A counter does **not**, unless it is seeded from
+persistent state or from randomness at start: a counter beginning at zero on
+every start reissues the same nonces after a restart, and a client replaying an
+unexpired token would then meet identical handshake keys with the sending
+sequence beginning again at zero — which is netcode's restart hazard, reached by
+the very mechanism introduced to remove it. Its purpose is
 explained under _Per-connection keys_.
 
-A client that receives one stores the 32 bytes and puts them in the return
-cookie field of every subsequent request in this attempt.
+A client that receives one stores its last 32 bytes — the server nonce, the
+expire timestamp and the MAC, but not the echoed salt, which the request already
+carries in its own field — and puts them in the return cookie field of every subsequent request in this attempt.
 
 **A cookie packet does not provoke a reply.** A client that receives one stores
 it and includes it in its next *scheduled* request; it MUST NOT send a request
 because a cookie arrived. Otherwise the packet becomes an amplifier pointed at
-the server — 44 bytes in, 724 out — that anyone able to see a client's salt
+the server — 44 bytes in, 716 out — that anyone able to see a client's salt
 could drive at whatever rate they chose. With the rule, the client's request
 rate is its own retransmit rate no matter how many cookie packets arrive, and
 the pair is not a provoked pair at all.
@@ -803,7 +828,7 @@ that signature — never the fact that the sealed block opens.
 
 ### Sealed packets
 
-All packet types >= 1 are sealed. Prior to sealing, after the prefilter header:
+Packet types 1 through 6 are sealed. Type 7, the connection cookie, is not. Prior to sealing, after the prefilter header:
 
     [sequence number] (4 bytes)
     [per-packet type data] (variable length according to packet type)
@@ -840,10 +865,12 @@ them:
     [protocol id] (uint64)
     [packet type] (uint8)               // binds the type; altering it fails the tag
     [connection salt] (8 bytes)
-    [client ephemeral public key] (32 bytes)   // handshake packet types only
+    [client ephemeral public key] (32 bytes)   // types 2 and 3 only
 
-**The client's ephemeral public key is in the associated data of the handshake
-packet types**, types 2 and 3, and is omitted from the session types 4, 5 and 6 —
+**The client's ephemeral public key is in the associated data of the connection
+challenge and the connection response**, types 2 and 3 only. It is omitted from
+the connection denied packet, type 1, which is handshake-keyed but may be sent
+before the ephemeral has been validated, and from the session types 4, 5 and 6 —
 so it costs nothing on any game packet. It is there because the client ephemeral
 travels in the clear, outside the signature, and without this binding an on-path
 attacker who alters it in flight achieves something worse than a dropped packet:
@@ -906,8 +933,10 @@ In this exact order:
   (handshake or session), the associated data above, and the sequence-derived
   nonce, ignore the packet.
 
-* Advance the replay-protection most-recent sequence number, for those same
-  three types.
+* For those same three types, **mark this sequence as received in the replay
+  window and then advance the most-recent sequence number.** Both steps are
+  required: advancing the high-water mark without setting the window entry
+  leaves a receiver that accepts duplicates arriving within the window.
 
 * If the opened data size does not match the expected size for the type, ignore
   the packet:
@@ -957,10 +986,10 @@ the RFCs require it regardless, and it is four lines.
 ### Replay window sizing
 
 A replay buffer of 256 entries per client is a floor, not a recommendation.
-RocketNet does not assume a low packet rate: a game sending fragmented state at
-tens of thousands of packets per second per direction needs a buffer sized to at
-least one second of its maximum per-client receive rate, and an implementation
-serving such a title MUST size it accordingly. An undersized buffer discards
+**The application decides its packet rate and this protocol does not constrain
+it, so the buffer is sized from that rate rather than from any assumption made
+here:** an implementation MUST size it to at least one second of the maximum
+per-client receive rate the deployment intends to support. An undersized buffer discards
 legitimate packets; it never accepts a replay, so the failure is lost traffic
 rather than lost security.
 
@@ -1065,6 +1094,8 @@ rather than assume it.** Where certainty is wanted, the alternatives are to
 compute a keyed hash inside the program and index an array map directly, taking
 full control of placement, or to key the map by something the server assigns
 rather than something the client presents.
+
+**Two rules keep this safe.** A transport that rejects early MUST reject exactly
 what the full sequence would have rejected: no more, or it discards legitimate
 traffic that the userspace path would have accepted; no less, or the guarantee is
 weaker than specified. And the userspace path MUST NOT assume an earlier stage
@@ -1220,7 +1251,7 @@ amplification is not a threat.
 
 In this exact order, on a _connection request packet_:
 
-* If the packet, less the prefilter header, is not 720 bytes, ignore it.
+* If the packet, less the prefilter header, is not 712 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
 * If the version is not 0x4E7C1A93, ignore it.
@@ -1244,7 +1275,7 @@ In this exact order, on a _connection request packet_:
   cookie packet for any datagram carrying the right title tag and a zero type
   byte, making the server a packet-rate reflector for garbage and spending a hash
   and a system call on every piece of it. Everything below it is expensive — the
-  used-token lookup hashes 576 bytes, and the two asymmetric operations follow —
+  used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
   so nothing below may run for an address that has not answered.
 * If the token identifier already appears in the used-token history bound to a
   different source address and port, ignore it. **The token identifier is the
@@ -1268,39 +1299,32 @@ In this exact order, on a _connection request packet_:
   it — a token admits one connection per server run.
 * Record the token identifier with this source address and port in the used-token
   history.
-* If no slots are available, respond with a _connection denied packet_.
+
 * **Compute `shared = crypto_scalarmult( server ephemeral secret, client
   ephemeral public )`. If it returns non-zero, ignore the packet.** libsodium
   returns an error for a small-order peer key, and this check must happen here —
   before any mapping is created — so that a client offering such a point never
-  obtains a mapping. This is the second asymmetric operation on this path and it
+  obtains a mapping. This is the third asymmetric operation on this path and it
   is deliberately after both the cookie and the signature verification.
 * Derive the four per-connection keys: the two handshake keys from the token
   keys, the salt and the server nonce; the two session keys from those plus the
   shared secret and both ephemeral public keys.
 * **Erase the shared secret**, and the server's ephemeral secret if it is not
   being reused across a rotation window, as soon as the four keys exist.
-* **If an encryption mapping already exists for this source address and port
-  whose salt and server nonce both match this request, the server reuses it
-  unchanged** — its keys, its sequence numbers and its replay state — and answers
-  with a challenge sealed under that mapping's keys. This is the ordinary
-  retransmission case: a client resends its request at about 10Hz with the same
-  salt and the same returned cookie, so a lost challenge produces an identical
-  request.
+* If no client slots are available, respond with a _connection denied packet_,
+  sealed under the handshake server-to-client key just derived, at sequence
+  zero. *The slot check is placed here rather than earlier because a denied
+  packet is sealed, and before this point no keys exist to seal it with.*
 
-  *Correctness no longer rests on this rule.* Because the server nonce is part
-  of the key derivation and is never reissued, a mapping created with different
-  inputs has different keys, so a sequence starting again at zero cannot repeat a
-  (key, nonce) pair. The rule exists to keep replay state and sequence continuity
-  across a retransmission, not to prevent nonce reuse. An implementation that
-  evicted mappings under pressure, or expired one and rebuilt it, would still be
-  safe.
-* Otherwise add an encryption mapping for the source address and port, holding
-  the derived keys, the connection salt, the client id and the user data. It
+* Add an encryption mapping for the source address and port, holding the four
+  derived keys, the connection salt, the server nonce, the server ephemeral
+  public key, the challenge packet as sent, the client id, the user data, and
+  the sending sequence and replay state for both key phases. It
   expires after _timeout_ seconds without traffic, or if the connection is not
   established within _timeout_ seconds. If it cannot be added, ignore the packet.
-* Respond with a _connection challenge packet_ carrying a freshly computed
-  cookie.
+* Respond with a _connection challenge packet_ carrying the server's ephemeral
+  public key, and store that packet in the mapping so a retransmission can be
+  answered with a byte-identical copy.
 
 **The used-token history** is a fixed-size structure. An implementation MUST
 document its capacity and eviction policy, and SHOULD size it to at least eight
@@ -1321,8 +1345,8 @@ only data already verified.
 
 ### Processing Connection Response Packets
 
-* The packet opened under this mapping's handshake key, which is all the
-  response has to prove: the address was validated in step 1 and the token was
+* The packet has already opened under this mapping's handshake key, which is all
+  the response has to prove: the address was validated in step 1 and the token was
   verified in step 2.
 * If a client from the source address and port is already connected, ignore it.
 * If a client with that client id is already connected, ignore it.
@@ -1361,11 +1385,13 @@ here rather than hidden.
 | **CPU cost of one unauthenticated request** | **one symmetric open, ~1 µs** | **Ed25519 verify + seal-open, ~100 µs** | **weaker** |
 
 **The last row is a real and deliberate weakening, and it is the price of
-removing the shared secret.** It is stated rather than argued away. The
-mitigations are normative and specified above: the prefilter rejects at line
-rate, every cheap check including the already-connected test runs before any
-asymmetric work, the used-token history bounds repeats, and rate limiting is
-required with its own limits named. Every other row is equal or better.
+removing the shared secret.** It is stated rather than argued away. **The mitigation is the cookie, and it is the only one of them that changes the
+attacker's cost.** A request without a valid cookie is refused after one keyed
+hash, so the row above measures a cost an attacker reaches only from an address
+it genuinely holds. The prefilter, the used-token history and per-source rate
+limiting are all real and all specified above, but none of them binds a
+spoofing attacker, and this document says so where each is described. Every
+other row is equal or better.
 
 ### Security considerations specific to this design
 
@@ -1415,24 +1441,24 @@ correct; the failure was not re-running this table afterwards.
 
 | Provoking packet | Size | Response | Size | |
 |---|---|---|---|---|
-| connection request | 724 | connection cookie | 44 | ok |
-| connection request | 724 | connection challenge | 56 | ok |
-| connection request | 724 | connection denied | 24 | ok |
+| connection request | 716 | connection cookie | 44 | ok |
+| connection request | 716 | connection challenge | 56 | ok |
+| connection request | 716 | connection denied | 24 | ok |
 | connection challenge | 56 | connection response | 48 | ok |
 | connection response | 48 | connection keep-alive | 32 | ok |
 | connection response | 48 | connection denied | 24 | ok |
-| connection cookie | 44 | *nothing* | — | see below |
+| connection cookie | 44 | *nothing* | — | see _Connection cookie packet_ |
 
 Two rules keep the table true rather than merely accurate today. **Padding used
 to satisfy it MUST be required on read**, checked for both length and content,
 because padding that is optional is padding an attacker omits. And **a server
 MUST NOT answer a request it has rejected** — every failure path in _Processing
 Connection Requests_ ignores the packet silently, and the single exception is the
-cookie, which is 44 bytes against 724 and is the price of address validation
+cookie, which is 44 bytes against 716 and is the price of address validation
 having to start somewhere. Today the widest margins are a
-724-byte request answered by a 56-byte challenge or a 44-byte cookie. At those
+716-byte request answered by a 56-byte challenge or a 44-byte cookie. At those
 ratios the challenge is not usefully a reflection primitive: an attacker
-spoofing a victim's address to place 56 bytes there spends 724 to do it and is
+spoofing a victim's address to place 56 bytes there spends 716 to do it and is
 strictly worse off than sending the 676 at the victim directly. The cost of a
 spoofed request is CPU, which the cookie exchange addresses, rather than
 reflected bytes.
@@ -1637,7 +1663,7 @@ beneath it carries the security guarantees.
 8. The sequence number is a fixed 4 bytes on the wire with the 64-bit value
    reconstructed, instead of a variable 1 to 8 bytes packed against the type
    byte. The type byte carries only the type.
-9. The encrypted challenge token is replaced by a 24-byte MAC cookie: no
+9. The encrypted challenge token is replaced by a MAC cookie: no
    challenge key, no challenge sequence counter, no challenge nonce space, and
    the challenge falls from 366 bytes to 56 and the response, which now carries
     no data at all, to 24.
@@ -1662,6 +1688,6 @@ beneath it carries the security guarantees.
 14. A server accepts a connection request at either advertised address;
     boundary address normalization is normative.
 
-Everything else — the two-RTT handshake shape, per-packet AEAD and its
+Everything else — the handshake shape, per-packet AEAD and its
 associated data construction, replay protection, the client state machine, the
 server slot model, the strict connection-request rules — is netcode 1.02.
