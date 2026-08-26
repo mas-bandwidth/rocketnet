@@ -81,53 +81,24 @@ lifetime out of the game entirely, for ~85 MB/s of copying at target load.
 
 ## Known issues, ranked
 
-**FIXED 2026-08-13** — a remote overflow in `rocketnet_server_socket_process_direct_packet`:
-it bounded on `ROCKETNET_XDP_RECV_QUEUE_SIZE` (16384) while writing into arrays
-sized `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS` (16000). 384 entries past the
-end of all three arrays, and since `packet_data` is the last member of the
-heap-allocated socket, the tail wrote attacker-timed pointers past the
-allocation for the caller to dereference. The guard now uses the constant that
-sizes the arrays. **The lesson generalises: a bound and the buffer it protects
-must not be two facts that happen to agree.**
-
 Still open, highest first:
 
 1. **`magic` is all zeros at every call site**, so chonkle is unkeyed: the
    filter proves a packet has rocketnet's *shape*, not that it came from someone
-   holding a key. This is the one inherited bug still live. (The other, the
-   `data[0] == 0` passthrough, was fixed 2026-08-13.)
+   holding a key.
 
-   Correction to an earlier note here, which said the kernel-side filter was
-   commented out: **it is live in this repo's XDP program.** It is commented
-   out in space game's vendored copy, where the AF_XDP program is not running
-   at all — that project is in development, not production, and cut the XDP
-   path down. Worth knowing before anyone "re-enables" something that is
+   Note the kernel-side filter **is live in this repo's XDP program.** It is
+   commented out in space game's vendored copy, where the AF_XDP program is not
+   running at all — that project is in development, not production, and cut the
+   XDP path down. Worth knowing before anyone "re-enables" something that is
    already on.
 2. **Startup side effects, output and exit status discarded**: several `popen`
-   calls, and library init disables SMT machine-wide. (The wildcard delete as
-   root was fixed 2026-08-13 — it now builds in a private `mkdtemp` directory.)
+   calls, and library init disables SMT machine-wide.
 
-Fixed since this list was written:
-
-- **The packet filter's type-0 bypass** (2026-08-13). `data[0] == 0` returned
-  true before any length or chonkle check, so one zero byte skipped the whole
-  filter. Type 0 is `ROCKETNET_PACKET_CLIENT_BACKEND_INIT_REQUEST`, not a
-  passthrough. Fixed in both the basic and the disabled advanced filter, with a
-  regression test that fails without the fix.
-- **The root wildcard delete** (2026-08-13). `rm -f *.c` and friends ran as root
-  in the inherited CWD; server_xdp now builds in a private `mkdtemp` directory
-  addressed by path.
-- **Uninitialized umem addresses in the fill ring** (2026-08-14). `frame[]` was
-  filled only up to the point the staging buffer filled, but the release and
-  the refill both covered every peeked descriptor — so stack garbage reached
-  the kernel as umem addresses. Now a `num_consumed` count drives release,
-  refill and the pending-return spill, and unconsumed descriptors stay in the
-  ring for the next peek, which is the correct AF_XDP behaviour for a consumer
-  that cannot keep up. **Needs a run on Linux: this file is `#if ROCKETNET_XDP` and
-  does not compile on macOS.**
-- **The SDK version fields** (2026-08-13). Three sites assigned
-  `sdk_version_major` three times instead of major/minor/patch, on a struct
-  that is not zeroed, so minor and patch shipped uninitialized stack.
+3. **The umem fill-ring refill path is unverified on Linux**: the
+   `num_consumed` accounting that drives release, refill and the
+   pending-return spill has never been run for real, because the file is
+   `#if ROCKETNET_XDP` and does not compile on macOS.
 
 Refuted on inspection, recorded so nobody re-hunts them:
 
