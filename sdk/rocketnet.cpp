@@ -235,6 +235,8 @@ void * rocketnet_malloc( void * context, size_t bytes )
 void rocketnet_free( void * context, void * p )
 {
     rocketnet_assert( rocketnet_free_function );
+    if ( !p )
+        return;
     return rocketnet_free_function( context, p );
 }
 

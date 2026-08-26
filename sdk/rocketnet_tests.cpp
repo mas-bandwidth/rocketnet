@@ -25,6 +25,8 @@
 #include "rocketnet_token_tables.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_replay.h"
+#include "rocketnet_client_slots.h"
 
 #include <sodium.h>
 
@@ -2425,6 +2427,129 @@ void rocketnet_test_request_path_config_branches()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_replay_protection()
+{
+    struct rocketnet_replay_protection_t replay;
+    memset( &replay, 0, sizeof(replay) );
+
+    // a fresh window has received nothing
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 1 ) );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 1000 ) );
+
+    // each sequence is accepted exactly once
+    rocketnet_replay_advance( &replay, 1 );
+    rocketnet_check( rocketnet_replay_already_received( &replay, 1 ) );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 2 ) );
+
+    // out of order within the window is fine, and each still only once
+    rocketnet_replay_advance( &replay, 5 );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 3 ) );
+    rocketnet_replay_advance( &replay, 3 );
+    rocketnet_check( rocketnet_replay_already_received( &replay, 3 ) );
+    rocketnet_check( rocketnet_replay_already_received( &replay, 5 ) );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 2 ) );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 4 ) );
+
+    // a partial skip clears exactly the entries it jumps past
+    rocketnet_replay_advance( &replay, 10 );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 6 ) );
+    rocketnet_check( !rocketnet_replay_already_received( &replay, 9 ) );
+    rocketnet_check( rocketnet_replay_already_received( &replay, 10 ) );
+
+    // below the window is refused as too old -- indistinguishable from
+    // received, and refused either way
+    struct rocketnet_replay_protection_t high;
+    memset( &high, 0, sizeof(high) );
+    rocketnet_replay_advance( &high, 300 );
+    rocketnet_check( rocketnet_replay_already_received( &high, 44 ) );      // 300 - 256
+    rocketnet_check( !rocketnet_replay_already_received( &high, 45 ) );
+
+    // a far-ahead advance clears the whole window: a sequence one full lap
+    // later shares a ring bit with an old one and must not inherit it
+    struct rocketnet_replay_protection_t lap;
+    memset( &lap, 0, sizeof(lap) );
+    rocketnet_replay_advance( &lap, 1 );
+    rocketnet_replay_advance( &lap, 257 );                                  // same ring bit as 1
+    rocketnet_check( rocketnet_replay_already_received( &lap, 257 ) );
+    rocketnet_check( rocketnet_replay_already_received( &lap, 1 ) );        // too old now, refused
+    rocketnet_check( !rocketnet_replay_already_received( &lap, 2 ) );       // 2 > 257-256, cleared, not received
+
+    // the standard's phase separation: two independent windows never
+    // interact -- handshake and session replay state are separate structs
+    struct rocketnet_replay_protection_t a, b;
+    memset( &a, 0, sizeof(a) );
+    memset( &b, 0, sizeof(b) );
+    rocketnet_replay_advance( &a, 7 );
+    rocketnet_check( !rocketnet_replay_already_received( &b, 7 ) );
+}
+
+void rocketnet_test_client_slots()
+{
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
+    rocketnet_check( slots );
+    rocketnet_check( rocketnet_client_slots_max_clients( slots ) == 4 );
+    rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 0 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 4 );
+    rocketnet_check( rocketnet_client_slots_find( slots, 0x1111 ) == -1 );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xCD, sizeof(user_data) );
+
+    // the lowest free slot is assigned, unconfirmed, with identity copied in
+    int a = rocketnet_client_slots_assign( slots, 0x1111, 7, user_data );
+    rocketnet_check( a == 0 );
+    rocketnet_check( rocketnet_client_slots_find( slots, 0x1111 ) == 0 );
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 0 ) == 0x1111 );
+    rocketnet_check( rocketnet_client_slots_mapping_index( slots, 0 ) == 7 );
+    rocketnet_check( !rocketnet_client_slots_confirmed( slots, 0 ) );
+    rocketnet_check( memcmp( rocketnet_client_slots_user_data( slots, 0 ), user_data, ROCKETNET_USER_DATA_BYTES ) == 0 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 3 );
+
+    // confirmation is one way, per slot
+    rocketnet_client_slots_confirm( slots, 0 );
+    rocketnet_check( rocketnet_client_slots_confirmed( slots, 0 ) );
+
+    int b = rocketnet_client_slots_assign( slots, 0x2222, 8, user_data );
+    int c = rocketnet_client_slots_assign( slots, 0x3333, 9, user_data );
+    rocketnet_check( b == 1 && c == 2 );
+
+    // release frees the slot, clears identity, and the lowest-free rule
+    // reuses it next
+    rocketnet_client_slots_release( slots, 1 );
+    rocketnet_check( rocketnet_client_slots_find( slots, 0x2222 ) == -1 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
+    int d = rocketnet_client_slots_assign( slots, 0x4444, 10, user_data );
+    rocketnet_check( d == 1 );
+    rocketnet_check( !rocketnet_client_slots_confirmed( slots, 1 ) );
+
+    // full refuses
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x5555, 11, user_data ) == 3 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x6666, 12, user_data ) == -1 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
+
+    rocketnet_client_slots_destroy( slots );
+
+    // the chained map holds up at scale: every id findable, then every id
+    // gone after release, across enough ids to force chain collisions
+    slots = rocketnet_client_slots_create( NULL, 64 );
+    rocketnet_check( slots );
+    for ( int i = 0; i < 64; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( slots, 0xABCD0000ULL + (uint64_t) i, i, user_data ) == i );
+    for ( int i = 0; i < 64; i++ )
+        rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == i );
+    for ( int i = 0; i < 64; i += 2 )
+        rocketnet_client_slots_release( slots, i );
+    for ( int i = 0; i < 64; i++ )
+    {
+        if ( i % 2 == 0 )
+            rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == -1 );
+        else
+            rocketnet_check( rocketnet_client_slots_find( slots, 0xABCD0000ULL + (uint64_t) i ) == i );
+    }
+    rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 32 );
+    rocketnet_client_slots_destroy( slots );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -3074,6 +3199,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );
         RUN_TEST( test_request_path_config_branches );
+        RUN_TEST( test_replay_protection );
+        RUN_TEST( test_client_slots );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );

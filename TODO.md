@@ -85,6 +85,11 @@ land. The milestone view is issue #28; this file is the live ordering.
   expired; the duplicate cookie validator deleted — one implementation,
   tested where it runs; three silent returns now count INTERNAL_ERROR so
   received == sum of outcomes holds everywhere.
+- Replay protection and client slots: replay check separate from advance so
+  only opened packets mark the window, ring-lap inheritance proven
+  impossible, below-window refused as too old; slots as parallel arrays
+  with a constant-time client-id map, lowest-free assignment, lifecycle
+  logs, identity zeroed on release; rocketnet_free NULL-safe centrally.
 
 ## TODO
 

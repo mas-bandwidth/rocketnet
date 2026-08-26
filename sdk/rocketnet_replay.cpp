@@ -1,0 +1,72 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#include "rocketnet_replay.h"
+#include "rocketnet.h"
+
+#define ROCKETNET_REPLAY_WINDOW_BITS 256
+
+static int rocketnet_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
+}
+
+static void rocketnet_replay_set_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    replay->window[bit / 64] |= 1ULL << ( bit % 64 );
+}
+
+static void rocketnet_replay_clear_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    replay->window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
+}
+
+int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    rocketnet_assert( replay );
+    rocketnet_assert( sequence != 0 );
+
+    if ( sequence > replay->highest_opened )
+        return 0;
+
+    if ( replay->highest_opened >= ROCKETNET_REPLAY_WINDOW_BITS &&
+         sequence <= replay->highest_opened - ROCKETNET_REPLAY_WINDOW_BITS )
+        return 1;
+
+    return rocketnet_replay_bit( replay, sequence );
+}
+
+void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    rocketnet_assert( replay );
+    rocketnet_assert( sequence != 0 );
+    rocketnet_assert( !rocketnet_replay_already_received( replay, sequence ) );
+
+    if ( sequence > replay->highest_opened )
+    {
+        // clear every entry the advance skips past, so a sequence far ahead
+        // does not inherit bits from the previous lap of the ring
+
+        uint64_t skipped = sequence - replay->highest_opened;
+        if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
+        {
+            replay->window[0] = 0;
+            replay->window[1] = 0;
+            replay->window[2] = 0;
+            replay->window[3] = 0;
+        }
+        else
+        {
+            for ( uint64_t s = replay->highest_opened + 1; s < sequence; s++ )
+                rocketnet_replay_clear_bit( replay, s );
+        }
+        replay->highest_opened = sequence;
+    }
+
+    rocketnet_replay_set_bit( replay, sequence );
+}
