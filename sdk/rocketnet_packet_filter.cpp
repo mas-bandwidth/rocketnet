@@ -144,37 +144,3 @@ void rocketnet_address_data( const rocketnet_address_t * address, uint8_t * addr
     address_data[3] = address->data.ipv4[3];
 }
 
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-
-bool rocketnet_advanced_packet_filter( const uint8_t * data, const uint8_t * magic, const uint8_t * from_address, const uint8_t * to_address, uint16_t packet_length )
-{
-    // Same bypass, same removal as rocketnet_basic_packet_filter -- see the note
-    // there. This one is behind ROCKETNET_ADVANCED_PACKET_FILTER and off today,
-    // which is exactly why it had to be fixed in the same change: leaving it
-    // armed means the hole silently returns the day someone sets rocketnet.h's
-    // ROCKETNET_ADVANCED_PACKET_FILTER to 1.
-    //
-    // It also lacked the `packet_length == 0` guard its basic counterpart had,
-    // so data[0] was read before any length was established. Ordering the
-    // length check first fixes both problems at once.
-
-    if ( packet_length < 18 )
-        return false;
-    
-    uint8_t a[2];
-    uint8_t b[15];
-
-    rocketnet_generate_pittle( a, from_address, to_address, packet_length );
-
-    rocketnet_generate_chonkle( b, magic, from_address, to_address, packet_length );
-
-    if ( memcmp( a, data + 1, 2 ) != 0 )
-        return false;
-
-    if ( memcmp( b, data + 3, 15 ) != 0 )
-        return false;
-
-    return true;
-}
-
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER

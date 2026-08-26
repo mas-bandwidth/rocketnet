@@ -20,7 +20,6 @@
 #define ROCKETNET_XDP 1
 #endif // #ifdef __linux__
 
-#define ROCKETNET_ADVANCED_PACKET_FILTER                               0
 
 #if !defined( ROCKETNET_DEVELOPMENT )
 #define ROCKETNET_DEVELOPMENT 0

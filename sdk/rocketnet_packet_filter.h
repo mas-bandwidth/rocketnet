@@ -19,10 +19,5 @@ bool rocketnet_basic_packet_filter( const uint8_t * data, uint16_t packet_length
 
 void rocketnet_address_data( const rocketnet_address_t * address, uint8_t * address_data );
 
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-
-bool rocketnet_advanced_packet_filter( const uint8_t * data, const uint8_t * magic, const uint8_t * from_address, const uint8_t * to_address, uint16_t packet_length );
-
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
 
 #endif // #ifndef ROCKETNET_PACKET_FILTER_H

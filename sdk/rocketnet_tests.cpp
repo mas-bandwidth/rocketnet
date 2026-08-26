@@ -637,9 +637,6 @@ void rocketnet_test_packet_filter()
 
         rocketnet_check( rocketnet_basic_packet_filter( output, packet_length ) );
 
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-        rocketnet_check( rocketnet_advanced_packet_filter( output, magic, from_address, to_address, packet_length ) );
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
     }
 }
 
@@ -709,38 +706,6 @@ void rocketnet_test_basic_packet_filter()
     }
     rocketnet_check( pass == 0 );
 }
-
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-
-void rocketnet_test_advanced_packet_filter()
-{
-    uint8_t output[256];
-    memset( output, 0, sizeof(output) );
-    uint64_t pass = 0;
-    uint64_t iterations = 100;
-    srand( 100 );
-    for ( int i = 0; i < int(iterations); ++i )
-    {
-        uint8_t magic[8];
-        uint8_t from_address[4];
-        uint8_t to_address[4];
-        rocketnet_crypto_random_bytes( magic, 8 );
-        rocketnet_crypto_random_bytes( from_address, 4 );
-        rocketnet_crypto_random_bytes( to_address, 4 );
-        int packet_length = 18 + ( i % ( sizeof(output) - 18 ) );
-        for ( int j = 0; j < int(sizeof(output)); ++j )
-        {
-            output[j] = uint8_t( rand() % 256 );
-        }
-        if ( rocketnet_advanced_packet_filter( output, magic, from_address, to_address, packet_length ) )
-        {
-            pass++;
-        }
-    }
-    rocketnet_check( pass == 0 );
-}
-
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
 
 void rocketnet_test_address_data_ipv4()
 {
@@ -1047,9 +1012,6 @@ void rocketnet_run_tests()
         RUN_TEST( test_packet_filter );
         RUN_TEST( test_basic_packet_filter );
         RUN_TEST( test_packet_filter_no_type_zero_bypass );
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-        RUN_TEST( test_advanced_packet_filter );
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
         RUN_TEST( test_address_data_ipv4 );
         RUN_TEST( test_anonymize_address_ipv4 );
 #if ROCKETNET_PLATFORM_HAS_IPV6
