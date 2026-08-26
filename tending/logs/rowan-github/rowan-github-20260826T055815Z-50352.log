@@ -1,0 +1,2 @@
+2026-08-26T05:58:15Z info  log: /Users/glenn/rowan-working/rocketnet/tending/logs/rowan-github/rowan-github-20260826T055815Z-50352.log
+2026-08-26T05:58:15Z info  argv: run list --repo mas-bandwidth/rocketnet --limit 3 --json status,conclusion,headBranch,displayTitle

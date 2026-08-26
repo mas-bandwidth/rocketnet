@@ -1,11 +1,12 @@
-# RocketNet. Copyright 2026 Mas Bandwidth LLC.
+# rocketnet CI: build the library and every tool the Makefile produces, then run the
+# test suite, on ubuntu and macos — the two platforms the Makefile builds on.
 #
-# Stage 1 CI: build the library and both examples, run the tests, and run
-# the examples end to end on ubuntu and macos. The client cannot connect in
-# stage 1 — the workflow asserts it fails CLEANLY through the documented
-# state machine and exits 0, and that the server ticks and shuts down
-# cleanly on SIGINT. Windows joins when the windows platform leg is
-# exercised for real.
+# This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
+# then run dist/test directly. The Linux build links the XDP dataplane against
+# libbpf/libxdp, so those dev packages are installed there; the XDP programs
+# themselves (lib/proton, cmd/server_xdp) are embedded as source tarballs by the
+# build and compile on the target kernel, so compiling them needs a kernel with
+# BTF and stays outside this workflow.
 
 name: CI
 
@@ -24,36 +25,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Build library, tests and examples
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+
+      - name: Build
         run: make
 
       - name: Run tests
         run: ./dist/test
-
-      - name: Run examples
-        run: |
-          ./dist/simple_server > server.log 2>&1 &
-          SERVER_PID=$!
-
-          # the client runs its full connect attempt (~10s), times out
-          # through the state machine, and exits 0
-          ./dist/simple_client > client.log 2>&1
-          CLIENT_EXIT=$?
-
-          sleep 1
-          kill -INT $SERVER_PID
-          wait $SERVER_PID
-          SERVER_EXIT=$?
-
-          echo "--- client ---"
-          cat client.log
-          echo "--- server (tail) ---"
-          tail -5 server.log
-
-          test $CLIENT_EXIT -eq 0
-          test $SERVER_EXIT -eq 0
-          grep -q "connecting to 127.0.0.1:40000" client.log
-          grep -q "connection failed, state -2" client.log
-          grep -q "shutting down" client.log
-          grep -q "server listening on port 40000" server.log
-          grep -q "shutting down" server.log

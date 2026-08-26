@@ -1,0 +1,1613 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.  
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#include "rocketnet.h"
+
+#if ROCKETNET_XDP
+
+#include "rocketnet_server_socket.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_platform.h"
+#include "rocketnet_packet_filter.h"
+#include "rocketnet_hash.h"
+
+#include <ifaddrs.h>
+#include <bpf/bpf.h>
+#include <bpf/libbpf.h>
+#include <xdp/xsk.h>
+#include <xdp/libxdp.h>
+#include <sys/resource.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+#include <net/if.h>
+#include <linux/if_link.h>
+#include <linux/if_ether.h>
+#include <linux/if_xdp.h>
+#include <sys/eventfd.h>
+#include <errno.h>
+#include <poll.h>
+#include <unistd.h>   // mkdtemp (POSIX declares it in stdlib.h; unistd.h is the portable belt-and-braces)
+
+#include "rocketnet_server_xdp.h"
+
+#include <memory.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <atomic>
+
+struct alignas(64) rocketnet_server_socket_send_packet_info_t
+{
+    rocketnet_address_t to;
+    uint8_t packet_type;
+    size_t packet_bytes;
+};
+
+struct rocketnet_server_socket_send_buffer_t
+{
+    uint8_t padding_0[4096];
+
+    std::atomic<int> num_packets;
+
+    uint8_t padding_1[4096];
+
+    int packet_start_index;
+
+    uint8_t padding_2[4096];
+
+    rocketnet_server_socket_send_packet_info_t packet_info[ROCKETNET_XDP_SEND_QUEUE_SIZE];
+
+    uint8_t padding_3[4096];
+
+    uint8_t packet_data[ROCKETNET_XDP_SEND_QUEUE_SIZE][ROCKETNET_XDP_FRAME_SIZE];
+
+    uint8_t padding_4[4096];
+};
+
+struct rocketnet_server_socket_receive_buffer_t
+{
+    uint8_t padding_0[4096];
+
+    std::atomic<bool> ready;
+
+    uint8_t padding_1[4096];
+
+    uint32_t num_packets;
+    uint8_t eth[ROCKETNET_XDP_RECV_QUEUE_SIZE][ETH_ALEN];
+    rocketnet_address_t from[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+    size_t packet_bytes[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+    uint8_t packet_data[ROCKETNET_XDP_RECV_QUEUE_SIZE][ROCKETNET_XDP_FRAME_SIZE];
+
+    uint8_t padding_2[4096];
+};
+
+struct rocketnet_server_xdp_socket_t
+{
+    uint8_t padding_0[4096];
+
+    int queue;
+    int num_os_cpus;
+    int num_queues;
+
+    uint8_t padding_1[4096];
+
+    void * buffer;
+    struct xsk_umem * umem;
+    struct xsk_ring_cons receive_queue;
+    struct xsk_ring_prod send_queue;
+    struct xsk_ring_cons complete_queue;
+    struct xsk_ring_prod fill_queue;
+    struct xsk_socket * xsk;
+
+    uint8_t padding_2[4096];
+
+    std::atomic<bool> quit;
+
+    uint8_t padding_4[4096];
+
+    uint64_t receive_counter;
+
+    uint8_t padding_5[4096];
+
+    uint64_t send_counter;
+
+    uint8_t padding_6[4096];
+
+    rocketnet_platform_thread_t * xdp_thread;
+
+    rocketnet_platform_mutex_t send_mutex;
+    rocketnet_platform_mutex_t receive_mutex;
+
+    int num_free_receive_frames;
+    uint64_t receive_frames[ROCKETNET_XDP_NUM_FRAMES/2];
+
+    int num_free_send_frames;
+    uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES/2];
+    int send_flow_index;
+
+    uint8_t server_ethernet_address[ETH_ALEN];
+    uint8_t gateway_ethernet_address[ETH_ALEN];
+    uint32_t server_address_big_endian;
+    uint16_t server_port_big_endian;
+
+    struct rocketnet_server_socket_receive_buffer_t receive_buffer[ROCKETNET_XDP_NUM_BUFFERS];
+
+    struct rocketnet_server_socket_send_buffer_t send_buffer[ROCKETNET_XDP_NUM_BUFFERS];
+
+    uint8_t padding_7[4096];
+};
+
+struct rocketnet_server_socket_t
+{
+    void * context;
+    int state;
+    rocketnet_address_t public_address;
+    uint64_t server_id;
+    uint64_t match_id;
+
+    uint8_t server_ethernet_address[ETH_ALEN];
+    uint8_t gateway_ethernet_address[ETH_ALEN];
+
+    uint32_t server_address_big_endian;
+    uint16_t server_port_big_endian;
+
+    int interface_index;
+    struct xdp_program * program;
+    bool attached_native;
+    bool attached_skb;
+    int config_map_fd;
+    int state_map_fd;
+    int socket_map_fd;
+
+    std::atomic<uint64_t> packet_id;
+
+    int num_queues;
+    rocketnet_server_xdp_socket_t * socket;
+
+    rocketnet_server_socket_process_packets_t process_packets;
+};
+
+void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
+
+static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address ) 
+{
+    char path[256];
+    snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
+    FILE * file = fopen(path, "r");
+    if ( !file )
+    {
+        return false;
+    }
+
+    // xx.xx.xx.xx.xx.xx
+
+    char mac_address_string[18];
+
+    if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
+    {
+        fclose( file );
+        return false;
+    }
+
+    mac_address_string[2] = 0;
+    mac_address_string[5] = 0;
+    mac_address_string[8] = 0;
+    mac_address_string[11] = 0;
+    mac_address_string[14] = 0;
+    mac_address_string[17] = 0;
+
+    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
+    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
+    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
+    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
+    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
+    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
+
+    fclose( file );
+
+    return true;
+}
+
+static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_address )
+{
+    memset( mac_address, 0, 6 );
+
+    char mac_address_string[18];
+    memset( mac_address_string, 0, sizeof(mac_address_string) );
+
+    const char * gateway_ethernet_address_env = getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
+    if ( gateway_ethernet_address_env )
+    {
+        // let the user force the gateway ethernet address to use (useful for testing)
+
+        strncpy( mac_address_string, gateway_ethernet_address_env, 17 );
+        mac_address_string[17] = 0;
+    }
+    else
+    {
+        // first find the gateway IP address for the network interface via netstat
+
+        const char * gateway_ip_string = NULL;
+
+        FILE * file = popen( "netstat -rn", "r" );
+        char netstat_buffer[1024];
+        while ( fgets( netstat_buffer, sizeof(netstat_buffer), file ) != NULL )
+        {
+            if ( strlen( netstat_buffer ) > 0 && strstr( netstat_buffer, "UG" ) && strstr( netstat_buffer, interface_name ) )
+            {
+                char * token = strtok( netstat_buffer, " " );
+                if ( token )
+                {
+                    token = strtok( NULL, " " );
+                    if ( token )
+                    {
+                        gateway_ip_string = token;
+                        break;
+                    }
+                }
+            }
+        }
+        pclose( file );
+
+        if ( !gateway_ip_string )
+        {
+            return false;
+        }
+
+        // parse the address and make sure it's a valid ipv4
+
+        rocketnet_address_t address;
+        if ( !rocketnet_address_parse( &address, gateway_ip_string ) || address.type != ROCKETNET_ADDRESS_IPV4 )
+        {
+            return false;
+        }
+
+        // now find the ethernet address corresponding to the gateway IP address and interface name
+
+        bool found_mac_address = false;
+
+        file = popen( "ip neigh show", "r" );
+        char ip_buffer[1024];
+        while ( fgets( ip_buffer, sizeof(ip_buffer), file ) != NULL )
+        {
+            if ( strlen( ip_buffer ) > 0 && strstr( ip_buffer, gateway_ip_string ) && strstr( ip_buffer, interface_name ) )
+            {
+                char * p = strstr( ip_buffer, " lladdr " );
+                if ( p )
+                {
+                    p += 8;
+                    found_mac_address = true;
+                    strncpy( mac_address_string, p, 17 );
+                    mac_address_string[17] = 0;
+                    break;
+                }
+            }
+        }
+        pclose( file );
+
+        if ( !found_mac_address )
+        {
+            return false;
+        }
+    }
+
+    mac_address_string[2] = 0;
+    mac_address_string[5] = 0;
+    mac_address_string[8] = 0;
+    mac_address_string[11] = 0;
+    mac_address_string[14] = 0;
+    mac_address_string[17] = 0;
+
+    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
+    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
+    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
+    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
+    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
+    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
+
+    return true;
+}
+
+#define INVALID_FRAME UINT64_MAX
+
+static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
+{
+    uint64_t frame = INVALID_FRAME;
+    if ( socket->num_free_send_frames > 0 )
+    {
+        socket->num_free_send_frames--;
+        frame = socket->send_frames[socket->num_free_send_frames];
+        socket->send_frames[socket->num_free_send_frames] = INVALID_FRAME;
+    }
+    return frame;
+}
+
+static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
+{
+    rocketnet_assert( socket->num_free_send_frames < ROCKETNET_XDP_NUM_FRAMES );
+    socket->send_frames[socket->num_free_send_frames] = frame;
+    socket->num_free_send_frames++;
+}
+
+static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
+{
+    uint64_t frame = INVALID_FRAME;
+    if ( socket->num_free_receive_frames > 0 )
+    {
+        socket->num_free_receive_frames--;
+        frame = socket->receive_frames[socket->num_free_receive_frames];
+        socket->receive_frames[socket->num_free_receive_frames] = INVALID_FRAME;
+    }
+    return frame;
+}
+
+static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
+{
+    rocketnet_assert( socket->num_free_receive_frames < ROCKETNET_XDP_NUM_FRAMES );
+    socket->receive_frames[socket->num_free_receive_frames] = frame;
+    socket->num_free_receive_frames++;
+}
+
+void xdp_thread_function( void * data );
+
+// Removes the private build directory created by mkdtemp. The path is always
+// one this process made, never a glob and never the caller's CWD, so an
+// unguarded rm -rf on it is safe in a way the code this replaced was not.
+// Still refuses anything that does not look like our own mkdtemp template --
+// an rm -rf built by snprintf deserves one cheap assertion in front of it.
+static void rocketnet_server_socket_remove_workdir( const char * workdir )
+{
+    if ( workdir == NULL || strncmp( workdir, "/var/tmp/rocketnet_xdp_", 23 ) != 0 )
+    {
+        rocketnet_error( "refusing to remove unexpected work directory" );
+        return;
+    }
+
+    char command[1024];
+    snprintf( command, sizeof(command), "rm -rf %s", workdir );
+    FILE * file = popen( command, "r" );
+    if ( file )
+    {
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+}
+
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, int num_queues, int num_os_cpus )
+{
+    rocketnet_assert( num_queues >= 1 );
+    rocketnet_assert( public_address_string );
+    
+    const char * num_queues_env = getenv( "ROCKETNET_SERVER_NUM_QUEUES" );
+    if ( num_queues_env )
+    {
+        num_queues = atoi( num_queues_env );
+    }
+
+    const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    if ( public_address_env )
+    {
+        public_address_string = public_address_env;
+    }
+
+    rocketnet_info( "server public address is %s", public_address_string );
+
+    rocketnet_address_t public_address;
+    if ( !rocketnet_address_parse( &public_address, public_address_string ) )
+    {
+        rocketnet_error( "server could not parse public address" );
+        return NULL;
+    }
+
+    if ( public_address.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_error( "we only support ipv4 servers at the moment" );
+        return NULL;
+    }
+
+    rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t*) rocketnet_malloc( context, sizeof(rocketnet_server_socket_t) );
+    if ( !server_socket )
+        return NULL;
+
+    memset( server_socket, 0, sizeof( rocketnet_server_socket_t) );
+    
+    server_socket->context = context;
+
+    // AF_XDP can only run as root
+
+    if ( geteuid() != 0 ) 
+    {
+        rocketnet_error( "server must run as root" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    // find the network interface that matches the public address
+
+    uint32_t public_address_ipv4 = rocketnet_address_ipv4( &public_address );
+
+    char interface_name[1024];
+    memset( interface_name, 0, sizeof(interface_name) );
+    {
+        bool found = false;
+
+        struct ifaddrs * addrs;
+        if ( getifaddrs( &addrs ) != 0 )
+        {
+            rocketnet_error( "server getifaddrs failed" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        for ( struct ifaddrs * iap = addrs; iap != NULL; iap = iap->ifa_next ) 
+        {
+            if ( iap->ifa_addr && ( iap->ifa_flags & IFF_UP ) && iap->ifa_addr->sa_family == AF_INET )
+            {
+                struct sockaddr_in * sa = (struct sockaddr_in*) iap->ifa_addr;
+                if ( sa->sin_addr.s_addr == public_address_ipv4 )
+                {
+                    strncpy( interface_name, iap->ifa_name, sizeof(interface_name) );
+                    rocketnet_info( "server found network interface: %s", interface_name );
+                    server_socket->interface_index = if_nametoindex( iap->ifa_name );
+                    if ( !server_socket->interface_index ) 
+                    {
+                        rocketnet_error( "server if_nametoindex failed" );
+                        rocketnet_server_socket_destroy( server_socket );
+                        return NULL;
+                    }
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        freeifaddrs( addrs );
+
+        if ( !found )
+        {
+            rocketnet_error( "server could not find any network interface matching public address" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+    }
+
+    rocketnet_info( "server network interface is %s", interface_name );
+
+    // make sure no xdp programs are loaded on the NIC
+    {
+        char command[2048];
+        snprintf( command, sizeof(command), "xdp-loader unload -a %s", interface_name );
+        FILE * file = popen( command, "r" );
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+
+    // disable hyperthreading
+    {
+        char command[2048];
+        snprintf( command, sizeof(command), "echo off > /sys/devices/system/cpu/smt/control" );
+        FILE * file = popen( command, "r" );
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+
+    // setup for busy polling
+    {
+        char command[4096];
+        snprintf( command, sizeof(command), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs && echo 200000 > /sys/class/net/%s/gro_flush_timeout", interface_name, interface_name );
+        FILE * file = popen( command, "r" );
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+
+    // force the NIC to use the number of NIC queues we want
+    {
+        rocketnet_info( "initializing %d queues", num_queues );
+
+        server_socket->num_queues = num_queues;
+
+        char command[2048];
+        snprintf( command, sizeof(command), "ethtool -L %s combined %d", interface_name, num_queues );
+        FILE * file = popen( command, "r" );
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+
+    // todo: we should set num queues on the sister NIC port as well (0/1)
+
+    // look up the ethernet address of the network interface
+
+    if ( !get_interface_mac_address( interface_name, server_socket->server_ethernet_address ) )
+    {
+        rocketnet_error( "server could not get mac address of network interface" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    rocketnet_info( "server ethernet address is %02x.%02x.%02x.%02x.%02x.%02x", 
+        server_socket->server_ethernet_address[0], 
+        server_socket->server_ethernet_address[1], 
+        server_socket->server_ethernet_address[2], 
+        server_socket->server_ethernet_address[3], 
+        server_socket->server_ethernet_address[4], 
+        server_socket->server_ethernet_address[5] 
+    );
+
+    // look up the gateway ethernet address for the network interface
+
+    if ( !get_gateway_mac_address( interface_name, server_socket->gateway_ethernet_address ) )
+    {
+        rocketnet_error( "server could not get gateway mac address" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    rocketnet_info( "gateway ethernet address is %02x.%02x.%02x.%02x.%02x.%02x", 
+        server_socket->gateway_ethernet_address[0], 
+        server_socket->gateway_ethernet_address[1], 
+        server_socket->gateway_ethernet_address[2], 
+        server_socket->gateway_ethernet_address[3], 
+        server_socket->gateway_ethernet_address[4], 
+        server_socket->gateway_ethernet_address[5] 
+    );
+
+    // delete all bpf maps we use so stale data doesn't stick around
+    {
+        {
+            const char * command = "rm -f /sys/fs/bpf/server_xdp_config_map";
+            FILE * file = popen( command, "r" );
+            char buffer[1024];
+            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+            pclose( file );
+        }
+
+        {
+            const char * command = "rm -f /sys/fs/bpf/server_xdp_state_map";
+            FILE * file = popen( command, "r" );
+            char buffer[1024];
+            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+            pclose( file );
+        }
+
+        {
+            const char * command = "rm -f /sys/fs/bpf/server_xdp_socket_map";
+            FILE * file = popen( command, "r" );
+            char buffer[1024];
+            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+            pclose( file );
+        }
+    }
+
+    // Build the server_xdp program in a PRIVATE directory.
+    //
+    // This used to run, via popen and as root:
+    //
+    //     rm -f Makefile && rm -f *.c && rm -f *.h && rm -f *.o
+    //
+    // in whatever directory the process happened to inherit -- there is no
+    // chdir anywhere in this library, so the glob expanded wherever the
+    // server was started from. Launch it from a source tree and it deletes
+    // the source tree; run two servers in one directory and they race over
+    // server_xdp.o. The sanctioned launcher happens to cd into dist/ first,
+    // which is why this has not bitten yet, but nothing enforces that and the
+    // rm lives in the library, not the launcher.
+    //
+    // mkdtemp gives a fresh 0700 directory per process. Nothing needs
+    // pre-clearing (it starts empty), the race disappears, and cleanup is
+    // rm -rf on a path this process created rather than a glob over files it
+    // did not put there.
+
+    char workdir[] = "/var/tmp/rocketnet_xdp_XXXXXX";
+    if ( mkdtemp( workdir ) == NULL )
+    {
+        rocketnet_error( "could not create a temporary directory to build server_xdp" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    // write out source tar.gz for server_xdp program
+    {
+        char tarball[1024];
+        snprintf( tarball, sizeof(tarball), "%s/server_xdp_source.tar.gz", workdir );
+
+        FILE * file = fopen( tarball, "wb" );
+        if ( !file )
+        {
+            rocketnet_error( "could not open %s for writing", tarball );
+            rocketnet_server_socket_remove_workdir( workdir );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        fwrite( rocketnet_server_xdp_tar_gz, sizeof(rocketnet_server_xdp_tar_gz), 1, file );
+
+        fclose( file );
+    }
+
+    // unzip source and build server_xdp.o, entirely inside the private directory
+    {
+        char command[2048];
+        snprintf( command, sizeof(command),
+                  "cd %s && tar -zxf server_xdp_source.tar.gz && make server_xdp.o", workdir );
+        FILE * file = popen( command, "r" );
+        char buffer[1024];
+        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+        pclose( file );
+    }
+
+    // load the client_backend_xdp program and attach it to the network interface
+
+    rocketnet_info( "loading server_xdp..." );
+
+    {
+        char object[1024];
+        snprintf( object, sizeof(object), "%s/server_xdp.o", workdir );
+        server_socket->program = xdp_program__open_file( object, "server_xdp", NULL );
+    }
+
+    // Clean up after ourselves. This happens AFTER the load, unlike the old
+    // sequence -- the old cleanup could run first only because it left
+    // server_xdp.o behind in the shared directory for the loader to find.
+    // Unlinking a file libxdp still holds open is fine on Linux.
+    rocketnet_server_socket_remove_workdir( workdir );
+
+    if ( libxdp_get_error( server_socket->program ) )
+    {
+        rocketnet_error( "could not load server_xdp program" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    rocketnet_info( "server_xdp loaded successfully." );
+
+    rocketnet_info( "attaching server_xdp to network interface %s", interface_name );
+
+    int ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
+    if ( ret == 0 )
+    {
+        server_socket->attached_native = true;
+    } 
+    else
+    {
+        rocketnet_info( "falling back to skb mode..." );
+        ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
+        if ( ret == 0 )
+        {
+            server_socket->attached_skb = true;
+        }
+        else
+        {
+            rocketnet_error( "failed to attach server_xdp program to interface %s", interface_name );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+    }
+
+    // allow unlimited locking of memory, so all memory needed for packet buffers can be locked
+
+    struct rlimit rlim = { RLIM_INFINITY, RLIM_INFINITY };
+
+    if ( setrlimit( RLIMIT_MEMLOCK, &rlim ) ) 
+    {
+        rocketnet_error( "server could not setrlimit" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    // get file descriptors for maps so we can communicate with the server_xdp program running in kernel space
+
+    server_socket->config_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_config_map" );
+    if ( server_socket->config_map_fd <= 0 )
+    {
+        rocketnet_error( "server could not get config map: %s", strerror(errno) );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    server_socket->state_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_state_map" );
+    if ( server_socket->state_map_fd <= 0 )
+    {
+        rocketnet_error( "server could not get state map: %s", strerror(errno) );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    server_socket->socket_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_socket_map" );
+    if ( server_socket->socket_map_fd <= 0 )
+    {
+        rocketnet_error( "server could not get socket map: %s", strerror(errno) );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    // save the server public address and port in network order (big endian)
+
+    server_socket->server_address_big_endian = public_address_ipv4;
+    server_socket->server_port_big_endian = rocketnet_platform_htons( public_address.port );
+
+    // initialize server xdp sockets (one socket per-NIC queue)
+
+    server_socket->socket = (rocketnet_server_xdp_socket_t*) rocketnet_malloc( server_socket->context, num_queues * sizeof(rocketnet_server_xdp_socket_t) );
+    if ( server_socket->socket == NULL )
+    {
+        rocketnet_error( "server could not allocate sockets" );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    for ( int queue = 0; queue < num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+        socket->queue = queue;
+        socket->num_queues = num_queues;
+        socket->num_os_cpus = num_os_cpus;
+
+        // allocate umem
+
+        const int buffer_size = ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+
+        if ( posix_memalign( &socket->buffer, getpagesize(), buffer_size ) ) 
+        {
+            rocketnet_error( "server could allocate buffer" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, NULL );
+        if ( result ) 
+        {
+            rocketnet_error( "server could not create umem" );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        // create xdp socket
+
+        struct xsk_socket_config xsk_config;
+
+        memset( &xsk_config, 0, sizeof(xsk_config) );
+
+        xsk_config.rx_size = ROCKETNET_XDP_RECV_QUEUE_SIZE;
+        xsk_config.tx_size = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+        xsk_config.xdp_flags = XDP_ZEROCOPY;     
+        xsk_config.bind_flags = XDP_USE_NEED_WAKEUP;
+        xsk_config.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
+
+        result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
+        if ( result )
+        {
+            rocketnet_error( "server could not create xsk socket for queue %d", queue );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        // configure the xdp socket to receive packets from the xdp program
+
+        __u32 key = queue;
+        __u32 value = xsk_socket__fd( socket->xsk );
+
+        if ( bpf_map_update_elem( server_socket->socket_map_fd, &key, &value, BPF_ANY ) < 0 ) 
+        {
+            rocketnet_error( "server failed to add xdp socket for queue %d to map", queue );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        // copy across data needed by the socket to send packets
+
+        memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
+        memcpy( socket->gateway_ethernet_address, server_socket->gateway_ethernet_address, ETH_ALEN );
+        socket->server_address_big_endian = server_socket->server_address_big_endian;
+        socket->server_port_big_endian = server_socket->server_port_big_endian;
+
+        // initialize send frame allocator
+
+        rocketnet_assert( ROCKETNET_XDP_SEND_QUEUE_SIZE <= ROCKETNET_XDP_NUM_FRAMES / 4 );
+        rocketnet_assert( ROCKETNET_XDP_RECV_QUEUE_SIZE <= ROCKETNET_XDP_NUM_FRAMES / 4 );
+
+        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
+        {
+            socket->send_frames[j] = j * ROCKETNET_XDP_FRAME_SIZE;
+        }
+
+        socket->num_free_send_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
+
+        // make sure we start off with the correct send buffer index
+
+        socket->send_flow_index = ( socket->send_counter + 1 ) % ROCKETNET_XDP_NUM_BUFFERS;
+
+        // initialize receive frame allocator
+
+        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
+        {
+            socket->receive_frames[j] = ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE;
+        }
+
+        socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
+
+        // populate fill ring for packets to be received in
+        {
+            rocketnet_assert( ROCKETNET_XDP_FILL_QUEUE_SIZE <= ROCKETNET_XDP_RECV_QUEUE_SIZE );
+
+            uint32_t index;
+            int result = xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE, &index );
+            if ( result != ROCKETNET_XDP_FILL_QUEUE_SIZE )
+            {
+                rocketnet_error( "server failed to populate fill queue: %d", result );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+
+            uint64_t frames[ROCKETNET_XDP_FILL_QUEUE_SIZE];
+            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
+            {
+                frames[i] = alloc_receive_frame( socket );
+                if ( frames[i] == INVALID_FRAME )
+                {
+                    rocketnet_error( "server could not allocate receive frame for fill queue" );
+                    rocketnet_server_socket_destroy( server_socket );
+                    return NULL;
+                }
+            }
+
+            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
+            {
+                uint64_t * frame = (uint64_t*) xsk_ring_prod__fill_addr( &socket->fill_queue, index + i );
+                rocketnet_assert( frame );
+                *frame = frames[i];
+            }
+
+            xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE );
+        }
+
+        // create send mutex
+
+        if ( !rocketnet_platform_mutex_create( &socket->send_mutex ) )
+        {
+            rocketnet_error( "failed to create send mutex for queue %d", queue );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        // create receive mutex
+
+        if ( !rocketnet_platform_mutex_create( &socket->receive_mutex ) )
+        {
+            rocketnet_error( "failed to create receive mutex for queue %d", queue );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        // start xdp thread
+
+        rocketnet_info( "starting xdp thread for socket queue %d", socket->queue );
+
+        socket->xdp_thread = rocketnet_platform_thread_create( NULL, xdp_thread_function, socket );
+        if ( !socket->xdp_thread )
+        {
+            rocketnet_error( "server could not create xdp thread %d", queue );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+    }
+
+    // the server has started successfully
+
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "server started on %s [xdp]", rocketnet_address_to_string( &public_address, address_string ) );
+
+    server_socket->public_address = public_address;
+    server_socket->state = ROCKETNET_SERVER_SOCKET_RUNNING;
+    server_socket->server_id = rocketnet_hash_string( public_address_string );
+    server_socket->match_id = rocketnet_random_uint64();
+
+    rocketnet_info( "server id is %016" PRIx64, server_socket->server_id );
+    rocketnet_info( "match id is %016" PRIx64, server_socket->match_id );
+
+    return server_socket;
+}
+
+void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPED );        // IMPORTANT: Please stop the server and wait until state is ROCKETNET_SERVER_STOPPED before destroying it
+
+    if ( server_socket->program != NULL )
+    {
+        if ( server_socket->attached_native )
+        {
+            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
+        }
+        if ( server_socket->attached_skb )
+        {
+            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
+        }
+        xdp_program__close( server_socket->program );
+    }
+
+    for ( int i = 0; i < server_socket->num_queues; i++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[i];
+
+        // stop xdp thread
+
+        if ( socket->xdp_thread )
+        {
+            socket->quit = true;
+            rocketnet_platform_thread_join( socket->xdp_thread );
+            rocketnet_platform_thread_destroy( socket->xdp_thread );
+        }
+
+        // destroy mutexes
+
+        rocketnet_platform_mutex_destroy( &socket->send_mutex );
+        rocketnet_platform_mutex_destroy( &socket->receive_mutex );
+
+        // destroy xdp socket
+
+        if ( socket->xsk )
+        {
+            xsk_socket__delete( socket->xsk );
+        }
+
+        if ( socket->umem )
+        {
+            xsk_umem__delete( socket->umem );
+        }
+
+        free( socket->buffer );
+    }
+
+    rocketnet_free( server_socket->context, server_socket->socket );
+
+    rocketnet_clear_and_free( server_socket->context, server_socket, sizeof(rocketnet_server_socket_t) );
+}
+
+void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    if ( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPING )
+    {
+        server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPED;
+    }
+}
+
+void rocketnet_server_socket_stop( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPING;
+}
+
+int rocketnet_server_socket_state( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->state;
+}
+
+uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->server_id;
+}
+
+static uint16_t ipv4_checksum( const void * data, size_t header_length )
+{
+    unsigned long sum = 0;
+    const uint16_t * p = (const uint16_t*) data;
+    while ( header_length > 1 )
+    {
+        sum += *p++;
+        if ( sum & 0x80000000 )
+        {
+            sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+        }
+        header_length -= 2;
+    }
+    while ( sum >> 16 )
+    {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    return ~sum;
+}
+
+int generate_packet_header( void * data, uint8_t * server_ethernet_address, uint8_t * gateway_ethernet_address, uint32_t server_address_big_endian, uint32_t client_address_big_endian, uint16_t server_port_big_endian, uint16_t client_port_big_endian, int payload_bytes )
+{
+    struct ethhdr * eth = (ethhdr*) data;
+    struct iphdr  * ip  = (iphdr*) ( (uint8_t*)data + sizeof( struct ethhdr ) );
+    struct udphdr * udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
+
+    // generate ethernet header
+
+    memcpy( eth->h_source, server_ethernet_address, ETH_ALEN );
+    memcpy( eth->h_dest, gateway_ethernet_address, ETH_ALEN );
+    eth->h_proto = __constant_htons( ETH_P_IP );
+
+    // generate ip header
+
+    ip->ihl      = 5;
+    ip->version  = 4;
+    ip->tos      = 0x0;
+    ip->tot_len  = __constant_htons( sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes );
+    ip->id       = 0;
+    ip->frag_off = __constant_htons( 0x4000 );
+    ip->ttl      = 64;
+    ip->protocol = IPPROTO_UDP;
+    ip->check    = 0; // IMPORTANT: Must clear for checksum calculation (!!!)
+    ip->saddr    = server_address_big_endian;
+    ip->daddr    = client_address_big_endian;
+
+    // calculate ip checksum
+
+    ip->check    = ipv4_checksum( ip, sizeof( struct iphdr ) );
+
+    // generate udp header
+
+    udp->source  = server_port_big_endian;
+    udp->dest    = client_port_big_endian;
+    udp->len     = __constant_htons( sizeof(struct udphdr) + payload_bytes );
+    udp->check   = 0;
+
+    return sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes; 
+}
+
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, uint8_t packet_type )
+{
+    rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index];
+
+    int packet_index = send_buffer->num_packets.fetch_add(1);
+
+    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+    {
+        rocketnet_warn( "sent too many packets!" );
+        return NULL;
+    }
+
+    uint8_t * packet_data = send_buffer->packet_data[packet_index];
+
+    packet_data += ROCKETNET_HEADER_BYTES;
+
+    send_buffer->packet_info[packet_index].to = *to;
+    send_buffer->packet_info[packet_index].packet_type = packet_type;
+    send_buffer->packet_info[packet_index].packet_bytes = 0;
+
+    return packet_data;
+}
+
+uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( to );
+    rocketnet_assert( packet_id );
+
+    *packet_id = server_socket->packet_id.fetch_add(1);
+
+    const int queue = *packet_id % server_socket->num_queues;
+
+    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, ROCKETNET_PACKET_DIRECT );
+}
+
+void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( packet_bytes >= 0 );
+    rocketnet_assert( packet_bytes <= ROCKETNET_MTU );
+
+    const int queue = packet_id % server_socket->num_queues;
+
+    rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index];
+
+    size_t offset = ( packet_data - send_buffer->packet_data[0] );
+
+    const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
+
+    rocketnet_assert( packet_index >= 0 );  
+    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );  
+
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_bytes > 0 );
+    rocketnet_assert( packet_bytes <= ROCKETNET_MTU );
+
+    send_buffer->packet_info[packet_index].packet_bytes = packet_bytes + ROCKETNET_HEADER_BYTES;
+
+    // write the packet header
+
+    packet_data -= ROCKETNET_HEADER_BYTES;
+
+    packet_data[0] = send_buffer->packet_info[packet_index].packet_type;
+
+    uint8_t to_address_data[32];
+    rocketnet_address_data( &send_buffer->packet_info[packet_index].to, to_address_data );
+
+    uint8_t from_address_data[32];
+    rocketnet_address_data( &server_socket->public_address, from_address_data );
+
+    uint8_t * a = packet_data + 1;
+    uint8_t * b = packet_data + 3;
+
+    uint8_t magic[8];
+    memset( magic, 0, sizeof(magic) );
+
+    rocketnet_generate_pittle( a, from_address_data, to_address_data, packet_bytes );
+    rocketnet_generate_chonkle( b, magic, from_address_data, to_address_data, packet_bytes );
+}
+
+void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
+{
+    rocketnet_assert( server_socket );
+
+    const int queue = packet_id % server_socket->num_queues;
+
+    rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index];
+
+    long offset = ( packet_data - send_buffer->packet_data[0] );
+
+    rocketnet_assert( offset >= 0 );
+    rocketnet_assert( offset < ROCKETNET_XDP_FRAME_SIZE * ROCKETNET_XDP_SEND_QUEUE_SIZE );
+
+    const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
+
+    rocketnet_assert( packet_index >= 0 );  
+    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );  
+
+    send_buffer->packet_info[packet_index].packet_bytes = 0;
+}
+
+void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket )
+{
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+        rocketnet_platform_mutex_acquire( &socket->send_mutex );
+        {
+            socket->send_counter++;
+        }
+        rocketnet_platform_mutex_release( &socket->send_mutex );
+
+        socket->send_flow_index = ( socket->send_counter + 1 ) % ROCKETNET_XDP_NUM_BUFFERS;
+        const int on_index = socket->send_counter % ROCKETNET_XDP_NUM_BUFFERS;
+        for ( int i = 0; i < ROCKETNET_XDP_NUM_BUFFERS; i++ )
+        {
+            if ( i != on_index )
+            {
+                socket->send_buffer[i].num_packets = 0;
+                socket->send_buffer[i].packet_start_index = 0;
+            }
+        }
+    }
+}
+
+void rocketnet_server_socket_process_packet_internal( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
+{
+    const uint8_t packet_type = packet_data[0];
+
+    // ...
+
+    (void) packet_type;
+}
+
+void rocketnet_server_socket_process_direct_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
+{   
+    if ( packet_bytes < ROCKETNET_HEADER_BYTES )
+        return;
+
+    // Bound by the ARRAY, not by the queue depth. These are different numbers:
+    // ROCKETNET_XDP_RECV_QUEUE_SIZE is 4096*4 = 16384 (how deep one queue's staging
+    // buffer is), while process_packets.from/packet_bytes/packet_data are sized
+    // ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT *
+    // ROCKETNET_MAX_CLIENTS = 16 * 1000 = 16000. Guarding on the larger one let 384
+    // entries write past the end of all three arrays — and since packet_data is
+    // the last member of rocketnet_server_socket_t, the tail of that overrun put
+    // attacker-timed POINTERS past the allocation, which the caller then
+    // dereferences. num_packets accumulates across every queue and both
+    // off-buffers before it is reset in receive_packets, so one flooded queue
+    // reaches it. The portable path was always bounded correctly.
+    if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+        return;
+
+    const int index = server_socket->process_packets.num_packets++;
+
+    packet_data += ROCKETNET_HEADER_BYTES;
+    packet_bytes -= ROCKETNET_HEADER_BYTES;
+
+    rocketnet_assert( packet_bytes >= 0 );
+
+    server_socket->process_packets.from[index] = *from;
+    server_socket->process_packets.packet_data[index] = packet_data;
+    server_socket->process_packets.packet_bytes[index] = packet_bytes;
+}
+
+static void pin_thread_to_cpu( int cpu ) 
+{
+    int num_cpus = sysconf( _SC_NPROCESSORS_ONLN );
+    rocketnet_assert( cpu >= 0 );
+    rocketnet_assert( cpu < num_cpus );
+
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    CPU_SET( cpu, &cpuset );
+
+    pthread_t current_thread = pthread_self();    
+
+    pthread_setaffinity_np( current_thread, sizeof(cpu_set_t), &cpuset );
+}
+
+struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return &server_socket->process_packets;
+}
+
+int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->num_queues;
+}
+
+void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    server_socket->process_packets.num_packets = 0;
+
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+
+        rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+        {
+            socket->receive_counter++;
+        }
+        rocketnet_platform_mutex_release( &socket->receive_mutex );
+
+        const int on_buffer = ( socket->receive_counter ) % ROCKETNET_XDP_NUM_BUFFERS;
+
+        for ( int j = 0; j < ROCKETNET_XDP_NUM_BUFFERS; j++ )
+        {
+            if ( j == on_buffer )
+                continue;
+
+            rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[j];
+
+            for ( int i = 0; i < receive_buffer->num_packets; i++ )
+            {
+                uint8_t * eth = receive_buffer->eth[i];
+                rocketnet_address_t from = receive_buffer->from[i];
+                uint8_t * packet_data = receive_buffer->packet_data[i];
+                const int packet_bytes = receive_buffer->packet_bytes[i];
+
+                rocketnet_assert( packet_bytes >= 18 );
+
+                const uint8_t packet_type = packet_data[0];
+
+                if ( packet_type == ROCKETNET_PACKET_DIRECT )
+                { 
+                    rocketnet_server_socket_process_direct_packet( server_socket, eth, &from, packet_data, packet_bytes );
+                }
+                else
+                {
+                    rocketnet_server_socket_process_packet_internal( server_socket, eth, &from, packet_data, packet_bytes );
+                }
+            }
+
+            receive_buffer->num_packets = 0;
+        }
+    }        
+}
+
+void xdp_thread_function( void * data )
+{
+    rocketnet_server_xdp_socket_t * socket = (rocketnet_server_xdp_socket_t*) data;
+
+    rocketnet_assert( socket );
+
+    pin_thread_to_cpu( socket->num_os_cpus + socket->queue );
+
+    struct sched_param param;
+    param.sched_priority = sched_get_priority_min( SCHED_RR );
+    pthread_setschedparam( pthread_self(), SCHED_RR, &param );
+
+    rocketnet_info( "pinning xdp thread %d to CPU %d", socket->queue, socket->num_os_cpus + socket->queue );
+
+    struct pollfd fds[1];
+    fds[0].fd = xsk_socket__fd( socket->xsk );
+    fds[0].events = POLLIN;
+
+    int num_batch_packets = 0;
+    int batch_frames[ROCKETNET_XDP_SEND_BATCH_SIZE];
+    int batch_packet_bytes[ROCKETNET_XDP_SEND_BATCH_SIZE];
+
+    int num_pending_return = 0;
+    uint64_t pending_return[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+    while ( !socket->quit )
+    {
+        // busy poll the driver
+
+        poll( fds, 1, 0 );
+
+        // return pending frames to the fill queue
+
+        if ( num_pending_return > 0 )
+        {
+            uint32_t fill_index;
+            int num_reserved = xsk_ring_prod__reserve( &socket->fill_queue, num_pending_return, &fill_index );
+            for ( int i = 0; i < num_reserved; i++ )
+            {
+                *xsk_ring_prod__fill_addr( &socket->fill_queue, fill_index + i ) = pending_return[i];
+            }
+
+            xsk_ring_prod__submit( &socket->fill_queue, num_reserved );
+
+            if ( num_reserved != num_pending_return )
+            {
+                int num_extra = num_pending_return - num_reserved;
+
+                rocketnet_assert( num_extra > 0 );
+
+                for ( int i = 0; i < num_extra; i++ )
+                {
+                    pending_return[i] = pending_return[num_reserved+i];
+                }
+            }
+            else
+            {
+                num_pending_return = 0;
+            }
+        }
+
+        // see if there are any packets to receive
+
+        uint32_t receive_index;
+        
+        uint32_t num_packets = xsk_ring_cons__peek( &socket->receive_queue, ROCKETNET_XDP_RECV_QUEUE_SIZE, &receive_index );
+
+        if ( num_packets > 0 )
+        {
+            rocketnet_platform_mutex_acquire( &socket->receive_mutex );
+
+            const int on_index = socket->receive_counter % ROCKETNET_XDP_NUM_BUFFERS;
+
+            rocketnet_server_socket_receive_buffer_t * __restrict__ receive_buffer = &socket->receive_buffer[on_index];
+
+            // receive packets
+
+            // How many descriptors this pass actually took. The loop below can
+            // stop early when the staging buffer fills, and everything after
+            // this point -- the release, the refill, the pending-return spill --
+            // must cover exactly that many, not the number peeked. Releasing
+            // more would hand the kernel uninitialized stack as umem addresses:
+            // rejected (leaking the frame forever) or in range and aliasing a
+            // LIVE frame, which is the packet corruption the shouty comment at
+            // rocketnet_constants.h:22 warns about.
+            //
+            // Descriptors left unconsumed stay in the ring and come back on the
+            // next peek, which is the correct AF_XDP behaviour when a consumer
+            // cannot keep up.
+            uint32_t num_consumed = 0;
+
+            uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+            for ( uint32_t i = 0; i < num_packets; i++ ) 
+            {
+                if ( receive_buffer->num_packets >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
+                    break;
+
+                const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
+
+                frame[num_consumed] = desc->addr;
+                num_consumed++;
+
+                uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
+
+                const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
+
+                const int packet_bytes = desc->len;
+
+                if ( packet_bytes >= header_bytes + ROCKETNET_HEADER_BYTES )
+                {
+                    const int index = receive_buffer->num_packets;
+
+                    struct ethhdr * __restrict__ eth = (ethhdr*) packet_data;
+                    struct iphdr  * __restrict__ ip  = (iphdr*) ( (uint8_t*)packet_data + sizeof( struct ethhdr ) );
+                    struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
+
+                    uint8_t * __restrict__ payload_data = packet_data + header_bytes;
+
+                    const int payload_bytes = packet_bytes - header_bytes;
+
+                    rocketnet_address_load_ipv4( &receive_buffer->from[index], (uint32_t) ip->saddr, udp->source );
+
+                    memcpy( receive_buffer->eth[index], eth->h_source, ETH_ALEN );
+
+                    memcpy( receive_buffer->packet_data[index], payload_data, payload_bytes );
+
+                    receive_buffer->packet_bytes[index] = payload_bytes;
+
+                    receive_buffer->num_packets++;
+                }
+            }
+
+            rocketnet_platform_mutex_release( &socket->receive_mutex );
+
+            xsk_ring_cons__release( &socket->receive_queue, num_consumed );
+
+            // return processed packets to fill queue
+
+            uint32_t fill_index;
+            
+            int num_reserved = xsk_ring_prod__reserve( &socket->fill_queue, num_consumed, &fill_index );
+
+            if ( num_reserved > 0 )
+            {
+                for ( int i = 0; i < num_reserved; i++ )
+                {
+                    *xsk_ring_prod__fill_addr( &socket->fill_queue, fill_index + i ) = frame[i];
+                }
+
+                xsk_ring_prod__submit( &socket->fill_queue, num_reserved );
+            }
+
+            // append frames we couldn't return to the pending return array
+
+            if ( num_reserved != (int) num_consumed )
+            {
+                rocketnet_assert( (int) num_consumed >= num_reserved );
+                const int num_extra = (int) num_consumed - num_reserved;
+                for ( int i = 0; i < num_extra; i++ )
+                {
+                    pending_return[num_pending_return++] = frame[num_reserved+i];
+                }
+            }
+        }
+
+        // mark any completed send packet frames as free to be reused
+
+        uint32_t complete_index;
+
+        unsigned int num_completed = xsk_ring_cons__peek( &socket->complete_queue, XSK_RING_CONS__DEFAULT_NUM_DESCS, &complete_index );
+
+        if ( num_completed > 0 )
+        {
+            for ( int i = 0; i < num_completed; i++ )
+            {
+                uint64_t frame = *xsk_ring_cons__comp_addr( &socket->complete_queue, complete_index + i );
+                free_send_frame( socket, frame );
+            }
+
+            xsk_ring_cons__release( &socket->complete_queue, num_completed );
+        }
+
+        // if we don't already have a batch of packets to send, get one
+
+        if ( num_batch_packets == 0 )
+        {
+            rocketnet_platform_mutex_acquire( &socket->send_mutex );
+
+            const int on_index = socket->send_counter % ROCKETNET_XDP_NUM_BUFFERS;
+
+            rocketnet_server_socket_send_buffer_t * __restrict__ send_buffer = &socket->send_buffer[on_index];        
+
+            // IMPORTANT: clamp num packets because it's an atomic increment across multiple threads so it can go over max if unlucky
+
+            int num_packets = send_buffer->num_packets;
+
+            if ( num_packets > ROCKETNET_XDP_SEND_QUEUE_SIZE )
+            {
+                num_packets = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+            }
+
+            rocketnet_assert( num_packets >= 0 );
+            rocketnet_assert( num_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );
+
+            // grab a batch of non-zero byte packets from the send buffer
+
+            const int start_index = send_buffer->packet_start_index;
+
+            rocketnet_assert( start_index >= 0 );
+            rocketnet_assert( start_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );
+
+            for ( int i = start_index; i < num_packets; i++ )
+            {
+                if ( num_batch_packets >= ROCKETNET_XDP_SEND_BATCH_SIZE )
+                    break;
+
+                if ( send_buffer->packet_info[i].packet_bytes > 0 )
+                {
+                    int frame = alloc_send_frame( socket );
+
+                    rocketnet_assert( frame != INVALID_FRAME );
+                    if ( frame == INVALID_FRAME )
+                    {
+                        rocketnet_error( "out of frames" );
+                        exit( 1 );
+                    }
+
+                    uint8_t * packet_data = (uint8_t*)socket->buffer + frame;
+
+                    const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
+
+                    memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i], payload_bytes );
+
+                    uint32_t to_address_big_endian = rocketnet_address_ipv4( &send_buffer->packet_info[i].to );
+                    uint16_t to_port_big_endian = rocketnet_platform_htons( send_buffer->packet_info[i].to.port );
+
+                    batch_frames[num_batch_packets] = frame;
+                    batch_packet_bytes[num_batch_packets] = generate_packet_header( packet_data, socket->server_ethernet_address, socket->gateway_ethernet_address, socket->server_address_big_endian, to_address_big_endian, socket->server_port_big_endian, to_port_big_endian, payload_bytes );
+                    num_batch_packets++;
+                }
+
+                send_buffer->packet_start_index++;
+            }
+
+            rocketnet_platform_mutex_release( &socket->send_mutex );
+        }
+
+        // actually send the packets
+
+        if ( num_batch_packets > 0 )
+        {
+            // reserve entries in the send queue
+
+            uint32_t send_queue_index;
+            int send_packets = xsk_ring_prod__reserve( &socket->send_queue, num_batch_packets, &send_queue_index );
+
+            if ( send_packets > 0 && send_packets != num_batch_packets )
+            {
+                rocketnet_error( "need more complicated logic for send batch packets" );
+                exit( 1 );
+            }
+
+            if ( send_packets > 0 )
+            {
+                // setup descriptors for packets in batch to be sent
+
+                for ( int i = 0; i < send_packets; i++ )
+                {
+                    struct xdp_desc * __restrict__ desc = xsk_ring_prod__tx_desc( &socket->send_queue, send_queue_index + i );
+                    desc->addr = batch_frames[i];
+                    desc->len = batch_packet_bytes[i];
+                }
+
+                // submit send queue to driver
+
+                xsk_ring_prod__submit( &socket->send_queue, send_packets );
+
+                // batch has been sent
+
+                num_batch_packets = 0;
+            }
+        }
+
+        if ( xsk_ring_prod__needs_wakeup( &socket->send_queue ) )
+        {
+            sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+        }
+
+        // IMPORTANT: Sleep so the driver gets all the time it wants. Otherwise, it can hitch us
+
+        rocketnet_platform_sleep( 0.0 );
+    }
+}
+
+#else // #if ROCKETNET_XDP
+
+int rocketnet_server_socket_linux_cpp_dummy = 0;
+
+#endif // #if ROCKETNET_XDP
