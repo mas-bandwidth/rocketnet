@@ -7,6 +7,7 @@
 #include "rocketnet.h"
 
 #include "rocketnet_platform.h"
+#include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
@@ -78,6 +79,52 @@ void rocketnet_test_endian()
     rocketnet_check( bytes[0] == 0x11 );
 
 #endif // #if ROCKETNET_LITTLE_ENDIAN
+}
+
+void rocketnet_test_read_write()
+{
+    // round trip every width through one buffer, pointers advancing
+    uint8_t buffer[64];
+    uint8_t * w = buffer;
+    rocketnet_write_uint8( &w, 0xA5 );
+    rocketnet_write_uint16( &w, 0xBEEF );
+    rocketnet_write_uint32( &w, 0x12345678 );
+    rocketnet_write_uint64( &w, 0x1122334455667788ULL );
+    const uint8_t some_bytes[5] = { 1, 2, 3, 4, 5 };
+    rocketnet_write_bytes( &w, some_bytes, 5 );
+    rocketnet_write_zero_bytes( &w, 3 );
+    rocketnet_check( w - buffer == 1 + 2 + 4 + 8 + 5 + 3 );
+
+    const uint8_t * r = buffer;
+    rocketnet_check( rocketnet_read_uint8( &r ) == 0xA5 );
+    rocketnet_check( rocketnet_read_uint16( &r ) == 0xBEEF );
+    rocketnet_check( rocketnet_read_uint32( &r ) == 0x12345678 );
+    rocketnet_check( rocketnet_read_uint64( &r ) == 0x1122334455667788ULL );
+    uint8_t bytes_out[5];
+    rocketnet_read_bytes( &r, bytes_out, 5 );
+    rocketnet_check( memcmp( bytes_out, some_bytes, 5 ) == 0 );
+    for ( int i = 0; i < 3; i++ )
+        rocketnet_check( rocketnet_read_uint8( &r ) == 0 );
+    rocketnet_check( r - buffer == w - buffer );
+
+    // exact bytes on the wire, anchored to STANDARD.md Appendix A: the
+    // associated data vectors begin with the version then the protocol id,
+    // little-endian. these must match the published hex exactly.
+    uint8_t ad[12];
+    uint8_t * a = ad;
+    rocketnet_write_uint32( &a, 0x4E7C1A93 );
+    rocketnet_write_uint64( &a, 0x1122334455667788ULL );
+    const uint8_t expected_ad[12] = { 0x93, 0x1a, 0x7c, 0x4e,
+                                      0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
+    rocketnet_check( memcmp( ad, expected_ad, 12 ) == 0 );
+
+    // the byte construction is by shift and mask, so the same bytes come out
+    // whatever the host endianness. sanity that a uint16 port writes as the
+    // standard's little-endian: 56789 = 0xddd5 -> d5 dd.
+    uint8_t port_bytes[2];
+    uint8_t * pp = port_bytes;
+    rocketnet_write_uint16( &pp, 56789 );
+    rocketnet_check( port_bytes[0] == 0xd5 && port_bytes[1] == 0xdd );
 }
 
 void rocketnet_test_base64()
@@ -999,6 +1046,7 @@ void rocketnet_run_tests()
     {
         RUN_TEST( test_time );
         RUN_TEST( test_endian );
+        RUN_TEST( test_read_write );
         RUN_TEST( test_base64 );
         RUN_TEST( test_hash );
         RUN_TEST( test_copy_string );
