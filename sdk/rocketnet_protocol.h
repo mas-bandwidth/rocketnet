@@ -189,18 +189,4 @@ int rocketnet_generate_cookie_mac( uint8_t * mac,
                                    uint64_t cookie_expire_timestamp,
                                    const uint8_t * cookie_key );
 
-// Validates the 24-byte return cookie field from a connection request --
-// expire timestamp then mac -- against the request's source address and salt.
-// Accepts under the current key or, when provided, the previous key, so a key
-// rotation does not fail connections in flight. The comparison is constant
-// time. Returns 1 to proceed past the cookie gate, 0 to answer with a fresh
-// cookie packet.
-
-int rocketnet_validate_cookie( const struct rocketnet_address_t * address,
-                               const uint8_t * connection_salt,
-                               const uint8_t * cookie_field,
-                               uint64_t current_timestamp,
-                               const uint8_t * cookie_key,
-                               const uint8_t * previous_cookie_key );
-
 #endif // #ifndef ROCKETNET_PROTOCOL_H

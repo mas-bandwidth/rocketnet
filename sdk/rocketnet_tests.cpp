@@ -1247,7 +1247,8 @@ void rocketnet_test_cookie()
 {
     // the vector: client source 198.51.100.7:56789, the vector salt and
     // cookie key, expire = create + 3. the input encoding and the mac must
-    // both reproduce Appendix A exactly.
+    // both reproduce Appendix A exactly. validation itself lives in the
+    // request ladder -- one implementation of the rule, tested where it runs.
     struct rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
 
@@ -1260,59 +1261,23 @@ void rocketnet_test_cookie()
     rocketnet_check( rocketnet_generate_cookie_mac( mac, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
     rocketnet_check( memcmp( mac, rocketnet_test_cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
 
-    // a valid, unexpired cookie field passes the gate
-    uint8_t cookie_field[ROCKETNET_COOKIE_FIELD_BYTES];
-    uint8_t * p = cookie_field;
-    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 3 );
-    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
-    rocketnet_check( rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: the ordinary first request -- an all-zero field -- is refused
-    uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, zero_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: expired at exactly its timestamp, and after it
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key, NULL ) );
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS + 100, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: a different source address or port is refused -- the cookie
-    // proves receipt at one address, not a bearer right
+    // the mac is a function of every input: address, port, salt, expire, key
+    uint8_t other_mac[ROCKETNET_COOKIE_MAC_BYTES];
     struct rocketnet_address_t other_address;
     rocketnet_check( rocketnet_address_parse( &other_address, "198.51.100.8:56789" ) );
-    rocketnet_check( !rocketnet_validate_cookie( &other_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+    rocketnet_check( rocketnet_generate_cookie_mac( other_mac, &other_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( other_mac, mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
     rocketnet_check( rocketnet_address_parse( &other_address, "198.51.100.7:56790" ) );
-    rocketnet_check( !rocketnet_validate_cookie( &other_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: a different salt is refused -- an injected cookie cannot be
-    // made usable for another attempt
+    rocketnet_check( rocketnet_generate_cookie_mac( other_mac, &other_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( other_mac, mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
     const uint8_t other_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, other_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: a tampered expire is refused -- it is inside the mac, so a
-    // client cannot extend its own cookie
-    uint8_t extended_field[ROCKETNET_COOKIE_FIELD_BYTES];
-    p = extended_field;
-    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 1000 );
-    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, extended_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-
-    // NEGATIVE: a flipped mac byte is refused
-    cookie_field[8] ^= 1;
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
-    cookie_field[8] ^= 1;
-
-    // rotation: a cookie under the previous key is accepted for one period,
-    // refused once that key is gone, and two wrong keys refuse
-    uint8_t new_key[ROCKETNET_COOKIE_KEY_BYTES];
-    memset( new_key, 0x77, sizeof(new_key) );
-    rocketnet_check( rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, rocketnet_test_cookie_key ) );
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, NULL ) );
-    uint8_t another_key[ROCKETNET_COOKIE_KEY_BYTES];
-    memset( another_key, 0x88, sizeof(another_key) );
-    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, another_key ) );
+    rocketnet_check( rocketnet_generate_cookie_mac( other_mac, &client_address, other_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( other_mac, mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
+    rocketnet_check( rocketnet_generate_cookie_mac( other_mac, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 4, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( other_mac, mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
 
     // an ipv6 source encodes at the ipv6 length with family 2, group bytes
-    // little-endian, and round trips through generate and validate
+    // little-endian
     struct rocketnet_address_t ipv6_address;
     rocketnet_check( rocketnet_address_parse( &ipv6_address, "[2001:db8::7]:56789" ) );
     input_bytes = rocketnet_write_cookie_mac_input( input, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3 );
@@ -1320,10 +1285,6 @@ void rocketnet_test_cookie()
     rocketnet_check( input[0] == 2 );
     rocketnet_check( input[1] == 0x01 && input[2] == 0x20 );   // group 2001 little-endian
     rocketnet_check( rocketnet_generate_cookie_mac( mac, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
-    p = cookie_field;
-    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 3 );
-    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
-    rocketnet_check( rocketnet_validate_cookie( &ipv6_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
 }
 
 void rocketnet_test_connection_keys()
@@ -1748,6 +1709,13 @@ static void rocketnet_test_pass_cookie_gate( struct rocketnet_test_server_t * te
     memcpy( request + ROCKETNET_PREFILTER_BYTES, response + 12, ROCKETNET_COOKIE_FIELD_BYTES );
 }
 
+
+static int rocketnet_test_slot_view_no_free_slots( void * context )
+{
+    (void) context;
+    return 0;
+}
+
 void rocketnet_test_request_path_happy()
 {
     struct rocketnet_test_server_t test;
@@ -1963,13 +1931,30 @@ void rocketnet_test_request_path_cookie_gate()
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY );
 
-    // an expired cookie gets a fresh one
-    p = request + ROCKETNET_PREFILTER_BYTES;
-    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS );             // <= now
+    // a genuinely expired cookie -- valid mac, past expiry -- gets a fresh
+    // one, and counts as expired. only real clients with stale cookies land
+    // here: the mac is checked first, so a forgery cannot hide under it.
+    {
+        uint64_t stale_expire = ROCKETNET_TEST_CREATE_TS;               // <= now
+        uint8_t stale_mac[ROCKETNET_COOKIE_MAC_BYTES];
+        rocketnet_check( rocketnet_generate_cookie_mac( stale_mac, &test.client_address, request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, stale_expire, rocketnet_test_cookie_key ) );
+        p = request + ROCKETNET_PREFILTER_BYTES;
+        rocketnet_write_uint64( &p, stale_expire );
+        rocketnet_write_bytes( &p, stale_mac, ROCKETNET_COOKIE_MAC_BYTES );
+    }
     before = test.counters;
     result = rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes );
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED );
+
+    // and the forgery carrying a past expiry counts as a forgery
+    memset( request + ROCKETNET_PREFILTER_BYTES, 0xAB, ROCKETNET_COOKIE_FIELD_BYTES );
+    p = request + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS );             // <= now, forged mac
+    before = test.counters;
+    result = rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY );
 
     // the cookie the server hands out is bound to the source address: the
     // same cookie presented from another address fails the mac
@@ -2099,8 +2084,7 @@ void rocketnet_test_request_path_slots_and_denial()
     // a slot view with nothing free: the ladder runs all the way to the
     // denied, sealed under keys derived for this attempt, openable by the
     // client from the wire bytes alone
-    struct zero_slots_t { static int none( void * ) { return 0; } };
-    test.server.slots.num_free_slots = []( void * ) -> int { return 0; };
+    test.server.slots.num_free_slots = rocketnet_test_slot_view_no_free_slots;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
@@ -2167,6 +2151,276 @@ void rocketnet_test_request_path_slots_and_denial()
             expected++;
         rocketnet_check( test.counters.values[i] == expected );
     }
+
+    rocketnet_test_server_teardown( &test );
+}
+
+static int rocketnet_test_slot_view_connected( void * context, const struct rocketnet_address_t * address )
+{
+    (void) context; (void) address;
+    return 1;
+}
+
+static int rocketnet_test_slot_view_id_connected( void * context, uint64_t client_id )
+{
+    (void) context; (void) client_id;
+    return 1;
+}
+
+void rocketnet_test_request_path_ordering()
+{
+    // multi-fault packets: the suite's single-fault tests pin WHICH check
+    // refuses; these pin THAT the checks run in the standard's order, which
+    // is the security argument itself. each packet fails two rungs and the
+    // earlier one must win with the later one's counter untouched.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    struct rocketnet_counters_t before;
+    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    int signature_offset = signed_offset + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
+
+    // no cookie AND a broken signature: the cookie gate wins, and no
+    // asymmetric work runs -- SIGNATURE_DID_NOT_VERIFY must not move. this
+    // is the ordering the whole ladder exists for.
+    rocketnet_test_build_request( request, 0x0A0A, rocketnet_test_salt );
+    request[signature_offset] ^= 1;
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE );
+
+    // a bad version AND no cookie: the version check wins and NOTHING is
+    // emitted -- a garbage packet carrying the title tag must never turn the
+    // server into a cookie reflector
+    rocketnet_test_build_request( request, 0x0B0B, rocketnet_test_salt );
+    request[signed_offset + ROCKETNET_SIGNED_OFFSET_VERSION] ^= 1;
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
+
+    // the already-connected rung, hooked for the first time: one lookup, no
+    // crypto, nothing emitted, and it beats everything below it
+    test.server.slots.address_connected = rocketnet_test_slot_view_connected;
+    rocketnet_test_build_request( request, 0x0C0C, rocketnet_test_salt );
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED );
+    test.server.slots.address_connected = NULL;
+
+    // the client-id rung, hooked: reached only after the seal opens
+    rocketnet_test_build_request( request, 0x0D0D, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+    test.server.slots.client_id_connected = rocketnet_test_slot_view_id_connected;
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED );
+    test.server.slots.client_id_connected = NULL;
+
+    // the resend rung fires for a garbage body from a mapped address --
+    // pinning its position above the version check: a mapping is answered
+    // with its stored challenge no matter what the bytes claim
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    uint8_t garbage[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    memset( garbage, 0xEE, sizeof(garbage) );
+    uint8_t resent[ROCKETNET_RECEIVE_CEILING];
+    int resent_bytes = 0;
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, garbage, sizeof(garbage), resent, &resent_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( resent_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    rocketnet_check( memcmp( resent, response, (size_t) resent_bytes ) == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_request_path_uncovered_rungs()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    struct rocketnet_counters_t before;
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+
+    // SEALED_MISMATCH: a validly signed token whose sealed protocol id
+    // disagrees -- only the consistency check refuses it
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID ^ 1;
+        uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+        rocketnet_write_connect_token_private( &private_fields, private_block );
+        rocketnet_check( crypto_box_seal( signed_fields.sealed_private_block, private_block, sizeof(private_block), signed_fields.server_public_key ) == 0 );
+        uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+        rocketnet_write_signed_connect_data( &signed_fields, signed_buffer );
+        uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+        rocketnet_check( crypto_sign_detached( signature, NULL, signed_buffer, sizeof(signed_buffer), rocketnet_test_backend_secret_key ) == 0 );
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, signed_buffer, signature );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        before = test.counters;
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH );
+    }
+
+    // COULD_NOT_OPEN_SEALED_BLOCK: signed data names this server's key but
+    // the block is sealed to another
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        uint8_t other_pk[32], other_sk[32];
+        crypto_box_keypair( other_pk, other_sk );
+        uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+        rocketnet_write_connect_token_private( &private_fields, private_block );
+        rocketnet_check( crypto_box_seal( signed_fields.sealed_private_block, private_block, sizeof(private_block), other_pk ) == 0 );
+        uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+        rocketnet_write_signed_connect_data( &signed_fields, signed_buffer );
+        uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+        rocketnet_check( crypto_sign_detached( signature, NULL, signed_buffer, sizeof(signed_buffer), rocketnet_test_backend_secret_key ) == 0 );
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, signed_buffer, signature );
+        uint8_t salt[8];
+        memcpy( salt, rocketnet_test_salt, 8 );
+        salt[7] ^= 1;
+        memcpy( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, salt, 8 );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        before = test.counters;
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK );
+    }
+
+    // TOKEN_ALREADY_CONNECTED: seeded by hand until the response path lands
+    // the real insert -- a token in the admitted set is refused
+    {
+        rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.7:56789" ) );
+        rocketnet_test_build_request( request, 0x0E0E, rocketnet_test_salt );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_connect_token_identifier( identifier, request + signed_offset );
+        rocketnet_check( rocketnet_admitted_token_set_add( test.server.admitted_token_set, identifier, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS ) );
+        before = test.counters;
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED );
+    }
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_request_path_config_branches()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+
+    // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
+    // but THIS server's ipv6 is accepted -- either advertised address, not
+    // only the first
+    rocketnet_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[2001:db8::1]:40000" ) );
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6;
+        const uint8_t other_server[6] = { 198, 51, 100, 1, 0x40, 0x9c };
+        memcpy( signed_fields.ipv4_address, other_server, 6 );
+        uint8_t * q = signed_fields.ipv6_address;
+        const uint16_t groups[8] = { 0x2001, 0x0db8, 0, 0, 0, 0, 0, 1 };
+        for ( int i = 0; i < 8; i++ )
+            rocketnet_write_uint16( &q, groups[i] );
+        rocketnet_write_uint16( &q, 40000 );
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    }
+
+    // the timeout clamp: a huge timeout lands in the mapping clamped
+    test.server.max_timeout_seconds = 30;
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.60:56789" ) );
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.timeout_seconds = 9999;
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        rocketnet_check( index != -1 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == 30 );
+    }
+
+    // a negative timeout is accepted when explicitly configured, refused
+    // otherwise (the refusal is already tested); and the accept carries the
+    // negative value through so timeouts are disabled downstream
+    test.server.allow_negative_timeout = 1;
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.61:56789" ) );
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.timeout_seconds = -1;
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
+        rocketnet_test_pass_cookie_gate( &test, request );
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        rocketnet_check( index != -1 );
+        rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == -1 );
+    }
+
+    // the previous cookie key: a cookie minted under the old key is accepted
+    // for one rotation period after the key changes
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.62:56789" ) );
+    rocketnet_test_build_request( request, 0x0F0F, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+    memcpy( test.server.previous_cookie_key, test.server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    memset( test.server.cookie_key, 0x77, ROCKETNET_COOKIE_KEY_BYTES );
+    test.server.has_previous_cookie_key = 1;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    // nonce freshness across mapping lifetimes: the same request after the
+    // first mapping dies yields a different nonce and different bytes --
+    // no key or nonce ever recurs
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.63:56789" ) );
+    rocketnet_test_build_request( request, 0x1F1F, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    uint8_t first_challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
+    memcpy( first_challenge, response, sizeof(first_challenge) );
+    {
+        int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        rocketnet_check( index != -1 );
+        rocketnet_encryption_map_remove( test.server.encryption_map, index );
+    }
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( memcmp( response + 8, first_challenge + 8, ROCKETNET_SESSION_NONCE_BYTES ) != 0 );
+    rocketnet_check( memcmp( response, first_challenge, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) != 0 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -2817,6 +3071,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_request_path_crypto_refusals );
         RUN_TEST( test_request_path_state_refusals );
         RUN_TEST( test_request_path_slots_and_denial );
+        RUN_TEST( test_request_path_ordering );
+        RUN_TEST( test_request_path_uncovered_rungs );
+        RUN_TEST( test_request_path_config_branches );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );

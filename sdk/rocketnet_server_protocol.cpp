@@ -116,7 +116,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT]++;
             return ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE;
         }
     }
@@ -137,7 +137,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         if ( rocketnet_read_uint32( &p ) != ROCKETNET_VERSION )
         {
             rocketnet_debug( "server ignored connection request. wrong version" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
@@ -147,7 +147,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         if ( rocketnet_read_uint64( &p ) != server->protocol_id )
         {
             rocketnet_debug( "server ignored connection request. wrong protocol id" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
@@ -159,7 +159,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         if ( token_expire_timestamp <= current_timestamp )
         {
             rocketnet_debug( "server ignored connection request. connect token expired" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
@@ -171,7 +171,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         if ( timeout_seconds == 0 || ( timeout_seconds < 0 && !server->allow_negative_timeout ) )
         {
             rocketnet_debug( "server ignored connection request. invalid timeout" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
         if ( timeout_seconds > 0 && server->max_timeout_seconds > 0 && timeout_seconds > server->max_timeout_seconds )
@@ -207,7 +207,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         if ( !advertised )
         {
             rocketnet_debug( "server ignored connection request. token names no address this server is advertised at" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
@@ -230,36 +230,45 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         uint64_t cookie_expire = rocketnet_read_uint64( &p );
         const uint8_t * cookie_mac = p;
 
-        static const uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
-        if ( memcmp( return_cookie, zero_field, ROCKETNET_COOKIE_FIELD_BYTES ) == 0 )
-        {
-            rocketnet_debug( "server sent connection cookie. request carried no cookie" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE]++;
-        }
-        else if ( cookie_expire <= current_timestamp )
-        {
-            rocketnet_debug( "server sent connection cookie. cookie expired" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
-        }
-        else
+        // in the spec's order: zero field, then the mac, then expiry -- so
+        // COOKIE_EXPIRED only ever counts genuine clients with stale
+        // cookies, and a forgery never hides under it
+
+        int mac_matches = 0;
         {
             uint8_t expected_mac[ROCKETNET_COOKIE_MAC_BYTES];
             if ( rocketnet_generate_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->cookie_key ) &&
                  sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
             {
-                cookie_ok = 1;
+                mac_matches = 1;
             }
             else if ( server->has_previous_cookie_key &&
                       rocketnet_generate_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->previous_cookie_key ) &&
                       sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
             {
-                cookie_ok = 1;
+                mac_matches = 1;
             }
-            else
-            {
-                rocketnet_debug( "server sent connection cookie. cookie did not verify" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
-            }
+        }
+
+        static const uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
+        if ( memcmp( return_cookie, zero_field, ROCKETNET_COOKIE_FIELD_BYTES ) == 0 )
+        {
+            rocketnet_debug( "server sent connection cookie. request carried no cookie" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE]++;
+        }
+        else if ( !mac_matches )
+        {
+            rocketnet_debug( "server sent connection cookie. cookie did not verify" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
+        }
+        else if ( cookie_expire <= current_timestamp )
+        {
+            rocketnet_debug( "server sent connection cookie. cookie expired" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
+        }
+        else
+        {
+            cookie_ok = 1;
         }
 
         if ( !cookie_ok )
@@ -267,7 +276,12 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
             uint64_t fresh_expire = current_timestamp + (uint64_t) server->cookie_lifetime_seconds;
             uint8_t fresh_mac[ROCKETNET_COOKIE_MAC_BYTES];
             if ( !rocketnet_generate_cookie_mac( fresh_mac, from, connection_salt, fresh_expire, server->cookie_key ) )
+            {
+                rocketnet_assert( 0 );      // the source address was parsed; a bad family is a caller bug
+                rocketnet_debug( "server ignored connection request. internal error" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
             rocketnet_write_connection_cookie_packet( response_packet, server->title_tag, connection_salt, fresh_expire, fresh_mac );
             *response_bytes = ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
             return ROCKETNET_SERVER_PROCESS_SEND_COOKIE;
@@ -334,7 +348,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     int * response_bytes )
 {
     uint64_t * counters = server->counters->values;
-    (void) signed_connect_data;
 
     if ( !rocketnet_connect_token_private_consistent( private_data, signed_connect_data ) )
     {
@@ -383,7 +396,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         {
             sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
             rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
 
@@ -401,10 +414,15 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                               keys.handshake_server_to_client );
             sodium_memzero( &keys, sizeof(keys) );
             if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
+            {
+                rocketnet_assert( 0 );      // fixed arguments; a wrong size is a bug, not a condition
+                rocketnet_debug( "server ignored connection request. internal error" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
             *response_bytes = denied_bytes;
             rocketnet_debug( "server denied connection request. no client slots available" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
         }
 
@@ -413,7 +431,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         {
             sodium_memzero( &keys, sizeof(keys) );
             rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
@@ -423,6 +441,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         memcpy( mapping->connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
         memcpy( mapping->session_nonce, session_nonce, ROCKETNET_SESSION_NONCE_BYTES );
         memcpy( mapping->server_ephemeral_public_key, server_ephemeral_public_key, ROCKETNET_KEY_BYTES );
+        memcpy( mapping->client_ephemeral_public_key, client_ephemeral_public_key, ROCKETNET_KEY_BYTES );
         mapping->client_id = private_data->client_id;
         memcpy( mapping->user_data, private_data->user_data, ROCKETNET_USER_DATA_BYTES );
         memcpy( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
@@ -445,7 +464,10 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                              mapping->keys.handshake_server_to_client );
         if ( challenge_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
         {
+            rocketnet_assert( 0 );          // fixed arguments; a wrong size is a bug, not a condition
             rocketnet_encryption_map_remove( server->encryption_map, index );
+            rocketnet_debug( "server ignored connection request. internal error" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
         mapping->send_sequence_handshake++;

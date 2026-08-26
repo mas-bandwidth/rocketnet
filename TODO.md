@@ -73,6 +73,18 @@ land. The milestone view is issue #28; this file is the live ordering.
   cross-address replay refused after one hash. Negative control run: broke
   the expire check, suite went red, restored. Spec's ladder gained the
   zero-timeout bullet and the counter table matched to implementation order.
+  COLD READER round (probed the built library): confirmed the order exactly
+  the spec's and the security properties hold; found the derive buffer
+  leaving the shared secret on the stack (scrubbed) and the mapping
+  discarding the client ephemeral the type-3 AD needs — a spec omission the
+  code inherited; mapping now retains it, spec bullet and rationale fixed.
+  Its probes folded as tests: multi-fault ordering, both slot hooks, sealed
+  mismatch, seal-open failure, ipv6 advertised, clamp, negative timeout,
+  previous cookie key, garbage-body resend, nonce freshness. Cookie gate
+  reordered to spec (zero, mac, expiry) so forgeries never hide under
+  expired; the duplicate cookie validator deleted — one implementation,
+  tested where it runs; three silent returns now count INTERNAL_ERROR so
+  received == sum of outcomes holds everywhere.
 
 ## TODO
 

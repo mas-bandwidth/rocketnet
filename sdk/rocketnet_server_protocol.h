@@ -70,9 +70,10 @@ struct rocketnet_server_protocol_t
 // Processes one connection request packet, full wire bytes including the
 // prefilter header, from this source address. current_timestamp is unix
 // seconds for token and cookie checks; current_time is the server clock for
-// deadlines. On SEND_*, the response packet is in response_packet with its
-// length in response_bytes; on IGNORED nothing is sent, ever. The exact
-// reason is counted, always, along with the arrival.
+// deadlines. On SEND_*, the response packet is in response_packet -- sized at
+// least ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES (64), the largest response
+// -- with its length in response_bytes; on IGNORED nothing is sent, ever.
+// The exact reason is counted, always, along with the arrival.
 
 int rocketnet_server_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,

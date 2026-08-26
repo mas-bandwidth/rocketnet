@@ -20,6 +20,7 @@ static void rocketnet_derive_key( uint8_t * out,
     memcpy( buffer, input, (size_t) input_bytes );
     memcpy( buffer + input_bytes, context, 8 );
     crypto_generichash( out, 32, buffer, (size_t) ( input_bytes + 8 ), token_key, 32 );
+    sodium_memzero( buffer, sizeof(buffer) );
 }
 
 void rocketnet_derive_handshake_keys( struct rocketnet_connection_keys_t * keys,

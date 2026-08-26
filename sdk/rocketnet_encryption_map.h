@@ -39,6 +39,7 @@ struct rocketnet_encryption_mapping_t
     uint8_t connection_salt[ROCKETNET_CONNECTION_SALT_BYTES];
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
+    uint8_t client_ephemeral_public_key[ROCKETNET_KEY_BYTES];   // public; needed to build the type 3 AD
     uint8_t challenge_packet[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
     uint64_t client_id;
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
