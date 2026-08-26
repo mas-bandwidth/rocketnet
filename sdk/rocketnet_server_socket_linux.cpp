@@ -360,7 +360,7 @@ void xdp_thread_function( void * data );
 // an rm -rf built by snprintf deserves one cheap assertion in front of it.
 static void rocketnet_server_socket_remove_workdir( const char * workdir )
 {
-    if ( workdir == NULL || strncmp( workdir, "/var/tmp/rocketnet_xdp_", 18 ) != 0 )
+    if ( workdir == NULL || strncmp( workdir, "/var/tmp/rocketnet_xdp_", 23 ) != 0 )
     {
         rocketnet_error( "refusing to remove unexpected work directory" );
         return;
