@@ -4,6 +4,15 @@ The hard set, locked with Glenn 2026-08-26. The first customer is Dean Hall
 (RocketWerkz); "Dean" below is him. Everything here is a requirement, not a
 preference.
 
+RocketNet is a merger of flow's good transport bits and zero copy API with a
+netcode-like connection protocol and security — connect tokens and all
+crypto, which must not exclude player hosted servers. Think of it as pulling
+the 1000 player transport goodness out of the space game and giving it to
+Dean as a commercial product, meeting Dean's stated needs in the immediate
+term — and once done, re-integrating it back into the space game as its
+foundation. It serves both the needs of the space game and the needs of Dean
+Hall. Two-for-one.
+
 * Replacement for RakNet that isn't IO bound. On Linux this means AF_XDP plus
   non-root alternatives; on Windows completion ports plus whatever else gets
   past IO bounds; on mac the equivalent, to be surveyed.
@@ -11,7 +20,9 @@ preference.
 * The zero copy machinery from flow for sending and receiving packets
   quickly.
 
-* A C# interface, via a simple C API on top of the C++ library underneath.
+* A C# interface, via a simple C API on top of the library underneath. The
+  library stays the loose C-like C++ we do — no rewrite in C; the nice C API
+  rides on top for Dean to call from C#.
 
 * Everything is byte buffers, no structure. To Dean these are "packets" he
   can send. RocketNet does not own serialization.
@@ -34,6 +45,18 @@ preference.
   between the backend and the servers.
 
 * Crypto is hydrogen, not sodium, if possible.
+
+* Scale: 1000 players or above on a single server.
+
+* Network identity is not tied to an IPv4/IPv6 address struct. An endpoint
+  is a string with some maximum size, so transports are free to name
+  whatever they route by — this way new and interesting transports can be
+  created. The data passed in to the client on connect is a string that may
+  not conform to an IP address — more like a base64 token or something. TBD.
+
+* Excluded: the greater network next 2.0 visions — relay networks, network
+  acceleration, DDoS protection. Dean doesn't want them. If we ever want
+  them later, they are brought in as a new transport.
 
 ## The shape this adds up to
 

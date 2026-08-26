@@ -8,10 +8,13 @@ else. It carries the flow codebase forward under a new name, narrowed to one
 thing: a packet-level transport worthy of a 1000 player game.
 
 Right now it is direct mode only: a client connects to a server address and
-exchanges raw packets. The next construction is the security foundation — a
-netcode-style two-RTT handshake, per-session keys, and sealed packets — tracked
-in issue #6. The C API, packet disciplines, and the node architecture beyond
-that are recorded in issue #2.
+exchanges raw packets. The requirements are locked in
+[REQUIREMENTS.md](REQUIREMENTS.md): first the minimal secure connect —
+netcode-style connect tokens on public key crypto, with no secret shared
+between the backend and the servers, so player hosted servers are never
+excluded — then platform transports behind an easy-to-extend seam, then
+reliability, flows and broadcast on top. Security construction is tracked in
+issue #6, transports in issue #2.
 
 ## Building
 

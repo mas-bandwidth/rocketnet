@@ -77,14 +77,10 @@ bool rocketnet_basic_packet_filter( const uint8_t * data, uint16_t packet_length
     // data[1..17] unconditionally, so any early return placed above this is a
     // read past the end of a short packet.
     //
-    // There was a `data[0] == 0 -> return true` passthrough here, inherited
-    // from network next. rocketnet has no passthrough packet type; 0 is
-    // ROCKETNET_PACKET_CLIENT_BACKEND_INIT_REQUEST, so that line handed every
-    // attacker a filter bypass by setting one byte to zero -- a 1-byte
-    // datagram skipped the length check and all sixteen pittle/chonkle checks.
-    // Legitimate type 0 packets are sent through
-    // rocketnet_client_socket_send_packet_internal, which writes a real pittle and
-    // chonkle header, so they pass on their merits and need no exemption.
+    // There is deliberately no passthrough packet type. Every packet,
+    // ROCKETNET_PACKET_DIRECT (0) included, must carry a real pittle and
+    // chonkle header and passes on its merits; an exemption keyed on the
+    // type byte would hand every attacker a one-byte filter bypass.
 
     if ( packet_length < 18 )
         return false;

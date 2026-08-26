@@ -643,16 +643,14 @@ void rocketnet_test_packet_filter()
     }
 }
 
-// The type-0 bypass regression. rocketnet_basic_packet_filter used to open with
-// `if ( data[0] == 0 ) return true;` -- an inherited "passthrough packet type"
-// that rocketnet does not have, and which aliased
-// ROCKETNET_PACKET_CLIENT_BACKEND_INIT_REQUEST. One zero byte skipped the 18-byte
-// minimum and all sixteen pittle/chonkle checks.
+// The filter must grant no exemption keyed on the type byte: a zero first
+// byte never excuses a packet from the 18-byte minimum or the pittle and
+// chonkle checks, and a real ROCKETNET_PACKET_DIRECT (0) packet with a valid
+// header must still pass on its merits.
 //
-// rocketnet_test_basic_packet_filter above should have caught this and did not: it
-// fuzzes from a fixed srand(100), and that seed happens never to produce a
-// zero first byte on a packet long enough to matter. This test does not
-// depend on luck.
+// rocketnet_test_basic_packet_filter above cannot cover this: it fuzzes from a
+// fixed srand(100), and that seed happens never to produce a zero first byte
+// on a packet long enough to matter. This test does not depend on luck.
 void rocketnet_test_packet_filter_no_type_zero_bypass()
 {
     // the minimal attack: a single zero byte
@@ -672,10 +670,9 @@ void rocketnet_test_packet_filter_no_type_zero_bypass()
     // nor a long one that carries no valid header
     rocketnet_check( !rocketnet_basic_packet_filter( zeroes, sizeof(zeroes) ) );
 
-    // and the converse: a REAL type 0 packet -- an init request carries type 0
-    // in data[0] -- still passes on its merits, because the send path writes a
-    // real pittle and chonkle header. Removing the bypass must not have cost
-    // us the legitimate case.
+    // and the converse: a real direct packet -- ROCKETNET_PACKET_DIRECT is
+    // type 0 -- with a valid pittle and chonkle header still passes on its
+    // merits.
     uint8_t output[256];
     memset( output, 0, sizeof(output) );
     uint8_t magic[8];
@@ -686,7 +683,7 @@ void rocketnet_test_packet_filter_no_type_zero_bypass()
     memset( to_address, 0, sizeof(to_address) );
 
     const int packet_length = 64;
-    output[0] = 0; // ROCKETNET_PACKET_CLIENT_BACKEND_INIT_REQUEST
+    output[0] = 0; // ROCKETNET_PACKET_DIRECT
     rocketnet_generate_pittle( output + 1, from_address, to_address, packet_length );
     rocketnet_generate_chonkle( output + 3, magic, from_address, to_address, packet_length );
     rocketnet_check( rocketnet_basic_packet_filter( output, packet_length ) );

@@ -18,10 +18,10 @@ int main()
     rocketnet_base64_encode_data( keypair.pk, hydro_sign_PUBLICKEYBYTES, public_key_string, sizeof(public_key_string) );
     rocketnet_base64_encode_data( keypair.sk, hydro_sign_SECRETKEYBYTES, private_key_string, sizeof(private_key_string) );
 
-    printf( "\nbuyer public key base64 = %s\n\n", public_key_string );
-    printf( "buyer private key base64 = %s\n\n", private_key_string );
+    printf( "\nbackend public key base64 = %s\n\n", public_key_string );
+    printf( "backend private key base64 = %s\n\n", private_key_string );
 
-    printf( "const uint8_t buyer_public_key[] = { " );
+    printf( "const uint8_t backend_public_key[] = { " );
     for ( int i = 0; i < (int) hydro_sign_PUBLICKEYBYTES; i++ )
     {
         printf( "0x%02x", keypair.pk[i] );
@@ -35,7 +35,7 @@ int main()
         }
     }
 
-    printf( "const uint8_t buyer_private_key[] = { " );
+    printf( "const uint8_t backend_private_key[] = { " );
     for ( int i = 0; i < (int) hydro_sign_SECRETKEYBYTES; i++ )
     {
         printf( "0x%02x", keypair.sk[i] );
