@@ -2,7 +2,7 @@
 # test suite, on ubuntu and macos — the two platforms the Makefile builds on.
 #
 # This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
-# then run dist/test directly. The Linux build links the XDP dataplane against
+# then run bin/test directly. The Linux build links the XDP dataplane against
 # libbpf/libxdp, so those dev packages are installed there; the XDP program
 # itself (server_xdp) is embedded as a source tarball by the build and compiles
 # on the target kernel, so compiling it needs a kernel with BTF and stays
@@ -35,4 +35,4 @@ jobs:
         run: make
 
       - name: Run tests
-        run: ./dist/test
+        run: ./bin/test

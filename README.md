@@ -18,8 +18,8 @@ issue #6, transports in issue #2.
 
 ## Building
 
-See [BUILDING.md](BUILDING.md). Binaries land in `dist/`; run the test suite
-with `./dist/test`.
+See [BUILDING.md](BUILDING.md). Binaries land in `bin/`; run the test suite
+with `./bin/test`.
 
 ## Documentation
 
