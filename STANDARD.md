@@ -32,7 +32,9 @@ Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 * Sealed boxes (`crypto_box_seal`, X25519) — delivering the session keys to the
   server confidentially through the untrusted client.
 * BLAKE2b key derivation (`crypto_kdf`) — per-connection keys.
-* BLAKE2b keyed hashing (`crypto_generichash`) — the address challenge cookie.
+* BLAKE2b keyed hashing (`crypto_generichash`) — the address challenge cookie,
+  and session key derivation.
+* X25519 (`crypto_scalarmult`) — the ephemeral exchange giving forward secrecy.
 * ChaCha20-Poly1305 IETF AEAD (`crypto_aead_chacha20poly1305_ietf`) — every
   sealed packet.
 
@@ -497,8 +499,36 @@ id and the following 8-byte contexts:
 
     handshake client to server = kdf( token c2s key, salt, "RKTNHNDC" )
     handshake server to client = kdf( token s2c key, salt, "RKTNHNDS" )
-    session   client to server = kdf( token c2s key, salt, "RKTNSESC" )
-    session   server to client = kdf( token s2c key, salt, "RKTNSESS" )
+
+The **session** keys additionally mix in an ephemeral key exchange, so that
+recovering the token keys later does not recover the traffic. Each side
+generates an X25519 keypair for the attempt: the client sends its public half in
+the connection request, and the server sends its public half inside the sealed
+connection challenge. Both compute the shared secret with `crypto_scalarmult`
+and derive:
+
+    shared = crypto_scalarmult( own ephemeral secret, peer ephemeral public )
+
+    session client to server = crypto_generichash(
+                                   32 bytes,
+                                   shared ‖ salt ‖ "RKTNSESC",
+                                   key = token c2s key )
+
+    session server to client = crypto_generichash(
+                                   32 bytes,
+                                   shared ‖ salt ‖ "RKTNSESS",
+                                   key = token s2c key )
+
+The raw shared secret is never used as a key; it is hashed, which is what
+libsodium's own documentation requires of a scalar multiplication result. Keying
+the hash with the token key means a session key needs **both** the ephemeral
+secret and the token key, so neither an attacker who recovers the token later
+nor one who somehow obtains an ephemeral secret alone learns the traffic.
+
+**`crypto_scalarmult` returns an error for a small-order peer public key, and an
+implementation MUST check it and abandon the handshake on failure.** Ignoring
+that return is a classic way to end up agreeing on an all-zero shared secret
+with an attacker who chose the point.
 
 **The context distinguishes the direction as well as the phase**, so the two
 directions are separated by the derivation itself and not only by the backend
@@ -514,7 +544,20 @@ _Connection challenge_, _connection response_ and _connection denied_ packets
 are sealed with the handshake keys. _Connection keep-alive_, _connection
 payload_ and _connection disconnect_ packets are sealed with the session keys.
 
-This is four BLAKE2b invocations per connection and it deletes a great deal:
+**The whole cost is in the handshake: 64 bytes across two packets and two
+scalar multiplications per side, once per connection. Not one byte and not one
+operation is added to any game packet.** That is the condition this was built
+to satisfy: forward secrecy is worth having only if the packets carrying the
+game do not pay for it.
+
+A server MAY reuse one ephemeral keypair across a short rotation window rather
+than generating one per connection, which makes the cost per connection
+negligible at the price of coarser granularity — every session opened in that
+window shares the protection of one ephemeral secret. A server SHOULD generate
+per connection when it can afford to.
+
+This is a handful of BLAKE2b invocations and two scalar multiplications per
+connection, and it deletes a great deal:
 
 * **The restart hazard is gone.** netcode devotes a section to a client
   presenting an unexpired token to a restarted server and repeating nonces under
@@ -600,10 +643,17 @@ The connection request (0) is not sealed. After the prefilter header:
 
     [return cookie] (24 bytes)          // zero if the client holds none
     [connection salt] (8 bytes)         // client-generated, this attempt
+    [client ephemeral public key] (32 bytes)
     [signed connect data] (576 bytes)   // from the token, verbatim
     [signature] (64 bytes)              // from the token, verbatim
 
-A fixed 672 bytes after the prefilter header, 676 bytes on the wire.
+A fixed 704 bytes after the prefilter header, 708 bytes on the wire.
+
+The connection salt and the client ephemeral public key sit outside the
+signature, because the backend fixed the signed data when it issued the token
+and the client chooses these per attempt. Tampering with either makes the two
+sides derive different keys and the handshake fails; nothing is exposed and
+nothing is accepted.
 
 The **return cookie** field is all zero on a client's first request. It is
 filled in only if the server has answered with a _connection cookie packet_,
@@ -650,6 +700,7 @@ _connection denied_: no data.
 _connection challenge_:
 
     [cookie] (24 bytes)
+    [server ephemeral public key] (32 bytes)
 
 _connection response_:
 
@@ -733,7 +784,7 @@ In this exact order:
 * If the opened data size does not match the expected size for the type, ignore
   the packet:
   * 0 bytes — _connection denied_
-  * 24 bytes — _connection challenge_
+  * 56 bytes — _connection challenge_
   * 24 bytes — _connection response_
   * 8 bytes — _connection keep-alive_
   * [1,1208] bytes — _connection payload_
@@ -860,9 +911,50 @@ support high slot counts; the reference target is 1000.
 
 ### Processing Connection Requests
 
-netcode's strict rules hold: clients must have a valid connect token; respond
-only when necessary; ignore malformed requests as cheaply as possible; every
-response smaller than the request, so there is nothing to amplify.
+**The governing intent, which every rule in this section serves: a client
+without a valid connect token must be trivially rejectable.** That is what the
+connect token is for beyond authorization — it is the protection against being
+flooded off the internet. A server should be able to throw away traffic from
+anyone who has not been sent by the matchmaker at a cost so small that an
+attacker gains nothing by sending it, and the moment rejection stops being
+trivial the token has stopped doing half its job.
+
+netcode's strict rules follow from that intent and hold here: clients must have
+a valid connect token; respond only when necessary; ignore malformed requests as
+cheaply as possible; every response smaller than the request, so there is
+nothing to amplify.
+
+**Public key cryptography puts that intent under real pressure, which is why the
+cookie exists.** Verifying a signature is not trivial, and an attacker who can
+make a server verify one has made rejection expensive by definition. The cookie
+restores the property: a request without one is refused after a single keyed
+hash, and only an address that has proved it can receive gets any asymmetric
+work spent on it. Read the ordering below as the implementation of the intent
+above, not as a list of checks that happen to be in an order.
+
+**The two properties, and why they need four layers here where netcode needed
+fewer.** What a server must have is a bar that is hard to get over — you cannot
+connect unless the matchmaker sent you — and no way to occupy a slot with a
+zombie client that is not really there. netcode obtained both from one symmetric
+check: the shared key made the bar real *and* made enforcing it cost about a
+microsecond, so cheap rejection and a high bar were the same operation. Removing
+the shared secret separates them, and they have to be rebuilt as a ladder, each
+rung rejecting what it can at its own cost so the expensive rung is reached only
+by traffic that has already cleared the cheap ones:
+
+| Layer | Rejects | Cost | Bar |
+|---|---|---|---|
+| Prefilter | traffic that is not this title's | a 3-byte compare | none — unkeyed |
+| Cookie | a source address that cannot receive | one keyed hash | must hold the address |
+| Signature | anyone the matchmaker did not send | one Ed25519 verify | must hold a real token |
+| Challenge | a client that never answers | already paid | must complete a round trip |
+
+The bar is the signature and it is as hard as it has ever been — an attacker
+needs a token the backend actually issued, which means authenticating with the
+backend. The zombie is stopped by the challenge, exactly as in netcode: no slot
+is allocated until the client has answered from the address it claimed. What the
+cookie adds is not a new bar but a cheap gate in front of the expensive one, so
+that the cost of *enforcing* the bar cannot itself be turned into the attack.
 
 Under public key crypto the ordering matters far more than it did in netcode. A
 connection request costs a signature verification and a seal-open — on the order
@@ -908,7 +1000,7 @@ amplification is not a threat.
 
 In this exact order, on a _connection request packet_:
 
-* If the packet, less the prefilter header, is not 672 bytes, ignore it.
+* If the packet, less the prefilter header, is not 704 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
 * **If the server is at or above its connection-request rate threshold:**
@@ -1047,14 +1139,24 @@ one way this design fails quietly: anyone can seal a block to a server's public
 key. An implementation that treats a successful open as authenticity lets any
 party mint tokens for that server. Verify, then open.
 
-**Sealing gives the recipient no forward secrecy.** An attacker who records
-connection requests and later obtains a server's X25519 secret key can open every
-recorded sealed block and decrypt every past session that server ran. netcode
-has the same retroactive exposure, fleet-wide rather than per-server, so this is
-strictly better — but "leaks only its own sessions" includes recorded past ones.
-Ephemeral key exchange was considered and declined: for game session content —
-positions, inputs, chat — the value of retroactive decryption does not justify
-the added handshake complexity.
+**Session traffic has forward secrecy; the handshake does not, and that is the
+right split.** Recovering a token, a server's X25519 secret, or even the
+backend's signing key at some later date does not decrypt recorded game traffic,
+because the session keys also require an ephemeral secret that existed only for
+the duration of the connection and was never transmitted. What such a compromise
+still yields is the handshake packets — a cookie and a client index — which
+carry nothing worth recovering.
+
+*This closes an exposure that is wider than it first appears, and wider than an
+earlier draft of this document admitted.* The token keys are generated by the
+backend and travel in the clear inside the connect token, so before this change
+the readers of a session's traffic included: the backend, permanently and for
+every server it ever issued for, including player-hosted ones it does not
+control; anyone who obtained a server's X25519 secret at any later date; and
+anyone who found a connect token in a proxy cache, a log or a crash dump. That
+is a stronger trust anchor than a certificate authority, which can impersonate
+but cannot decrypt. It now costs 64 bytes across two handshake packets, two
+scalar multiplications per side, and **nothing at all per game packet**.
 
 **Connection-request replay is a denial of service against one client, not an
 authentication break.** An on-path observer can capture a connection request and
