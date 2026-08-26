@@ -24,6 +24,29 @@ Hall. Two-for-one.
   library stays the loose C-like C++ we do — no rewrite in C; the nice C API
   rides on top for Dean to call from C#.
 
+  The C API is for C to call: an `extern "C"` interface with real,
+  non-mangled symbols, consumable from many languages without C++ nonsense.
+  No C++ types cross that surface. C# is the first consumer, not the only
+  one it is shaped for.
+
+* Development works out of the box, with no backend, no configuration and no
+  copying keys between machines. Run the server, point the client at its
+  address, connected. This is achieved with published test keys — both the
+  backend signing keypair and the server key exchange keypair are fixed values
+  printed in the standard and embedded in the library, used by default, so the
+  developer configures nothing and the default path is the working path. The
+  security comes from the keys being public rather than from a flag being off:
+  a deployment that ships with them has an authorization system anyone can
+  forge, which fails loudly, where a mode flag that disables checks fails
+  silently. Nothing else is relaxed; the development path runs the same
+  handshake, sealing and replay protection that ships.
+
+* Example backend code, in Go and C#, for creating connect tokens. That is
+  the backend integration story: a customer runs their own backend, and
+  minting a token is the only thing it has to do for us. Go needs no
+  dependency for the signing half — Ed25519 is in its standard library — and
+  sealed boxes are in `nacl/box`.
+
 * Everything is byte buffers, no structure. To Dean these are "packets" he
   can send. RocketNet does not own serialization.
 
@@ -43,6 +66,16 @@ Hall. Two-for-one.
 * Connection is netcode style: connect with connect tokens — but the tokens
   must not exclude player hosted servers by requiring a secret shared
   between the backend and the servers.
+
+* No security property weaker than netcode 1.02. That is the absolute
+  minimum baseline, and a change that buys something new at the cost of an
+  existing guarantee is a defect.
+
+* The connect token fits in a single 1500 MTU packet. Because of that it
+  names one server, at up to two addresses — an IPv4 one and an IPv6 one,
+  each optional. netcode's list of up to 32 candidate servers per token was
+  a mistake (Glenn's own, named as such); failover is a fresh token from the
+  backend, which has better information than any stale candidate list.
 
 * Crypto is sodium, ruled 2026-08-26 after the hydrogen evaluation: gutted
   to what the protocol needs, vendored as the two-file flatten netcode and
