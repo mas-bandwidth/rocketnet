@@ -63,13 +63,31 @@ land. The milestone view is issue #28; this file is the live ordering.
   material, proven byte by byte. Sweep enforces the two deadlines with their
   counters: handshake deadline never refreshed, idle refreshed by traffic,
   established ignores the handshake deadline.
+- Server request path: the full ladder as flat early-return functions (the
+  post-open half its own function, the scrub in one place, zero gotos), a
+  debug log at every counter site, the slot view as hooks. Tests: the happy
+  path completes the client's whole side from wire bytes alone and matches
+  the mapping's keys; byte-identical resend; every refusal asserts its exact
+  reason + arrival with all other counters untouched; the no-slots denied
+  opens client-side; mapping-table-full counts reason + rollup; a
+  cross-address replay refused after one hash. Negative control run: broke
+  the expire check, suite went red, restored. Spec's ladder gained the
+  zero-timeout bullet and the counter table matched to implementation order.
+  COLD READER round (probed the built library): confirmed the order exactly
+  the spec's and the security properties hold; found the derive buffer
+  leaving the shared secret on the stack (scrubbed) and the mapping
+  discarding the client ephemeral the type-3 AD needs — a spec omission the
+  code inherited; mapping now retains it, spec bullet and rationale fixed.
+  Its probes folded as tests: multi-fault ordering, both slot hooks, sealed
+  mismatch, seal-open failure, ipv6 advertised, clamp, negative timeout,
+  previous cookie key, garbage-body resend, nonce freshness. Cookie gate
+  reordered to spec (zero, mac, expiry) so forgeries never hide under
+  expired; the duplicate cookie validator deleted — one implementation,
+  tested where it runs; three silent returns now count INTERNAL_ERROR so
+  received == sum of outcomes holds everywhere.
 
 ## TODO
 
-- Server request path: the ordered list check by check over the encryption
-  mapping, used-token history, admitted-token set; one negative test per
-  check asserting its reason counter AND the arrival counter; the stored
-  challenge resend; the handshake deadline and idle deadline, separately.
 - Challenge and response, client state machine: monotonic climb 1-4, per-type
   client processing, temporaries committed only on successful open, every
   packet loss walked.

@@ -981,9 +981,11 @@ constructed by both ends and never travels on the wire.
 
 **The client's ephemeral public key is in the associated data of the connection
 challenge and the connection response**, types 2 and 3 only. It is omitted from
-the connection denied packet, type 1, because a denied must be constructible
-from mapping state alone and the mapping does not retain the client ephemeral
-after key derivation, and from the session types 4, 5 and 6 —
+the connection denied packet, type 1, because its authenticity rests on the
+handshake key, which the ephemeral exchange does not feed — binding the
+ephemeral into its associated data would add nothing, where types 2 and 3
+bind it because they are the packets that carry out the exchange — and from
+the session types 4, 5 and 6 —
 so it costs nothing on any game packet. It is there because the client ephemeral
 travels in the clear, outside the signature, and without this binding an on-path
 attacker who alters it in flight achieves something worse than a dropped packet:
@@ -1611,6 +1613,10 @@ In this exact order, on a _connection request packet_:
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
+* If the timeout seconds field is zero, ignore it; if it is negative and the
+  server is not explicitly configured to accept negative timeouts, ignore it.
+  A positive value above the server's configured maximum is clamped, not
+  refused.
 * If the address flags have bits 2-7 set, or name no family, ignore it.
 * If neither flagged address in the signed data is one this server is advertised
   at, ignore it. Either advertised address is accepted, not only the first.
@@ -1687,8 +1693,10 @@ In this exact order, on a _connection request packet_:
 
 * Add an encryption mapping for the source address and port, holding the four
   derived keys, the connection salt, the session nonce, the server ephemeral
-  public key, the client id, the user data, and the sending sequence and replay
-  state for both key phases. It is bound by **two independent deadlines**,
+  public key, the client ephemeral public key — public material, retained
+  because the server needs it to construct the associated data when opening
+  the connection response — the client id, the user data, and the sending
+  sequence and replay state for both key phases. It is bound by **two independent deadlines**,
   described below. If it cannot be added, ignore the packet.
 * Build a _connection challenge packet_ carrying the server's ephemeral public
   key and the session nonce, send it, and store it in the mapping, so that a
@@ -1984,6 +1992,7 @@ order:
 | `..._WRONG_VERSION` | version mismatch |
 | `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
 | `..._TOKEN_EXPIRED` | expire timestamp has passed |
+| `..._TIMEOUT_INVALID` | timeout seconds zero, or negative and not accepted |
 | `..._BAD_ADDRESS_FLAGS` | reserved bits set, or no family named |
 | `..._ADDRESS_NOT_ADVERTISED` | names no address this server answers at |
 | `..._WRONG_SERVER_KEY` | server public key is not one held |

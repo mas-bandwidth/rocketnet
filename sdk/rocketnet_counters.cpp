@@ -39,6 +39,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT:                           return "MAPPING_IDLE_TIMEOUT";
         case ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED:             return "MAPPING_HANDSHAKE_DEADLINE_EXPIRED";
         case ROCKETNET_COUNTER_MAPPING_TABLE_FULL:                             return "MAPPING_TABLE_FULL";
+        case ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR:              return "CONNECTION_REQUEST_INTERNAL_ERROR";
         default:
             rocketnet_assert( 0 );
             return "???";

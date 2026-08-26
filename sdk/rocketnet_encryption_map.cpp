@@ -206,6 +206,7 @@ void rocketnet_encryption_map_sweep( struct rocketnet_encryption_map_t * map,
         {
             if ( current_time >= mapping->handshake_deadline )
             {
+                rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
                 rocketnet_encryption_map_remove( map, i );
                 counters->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
             }
@@ -214,6 +215,7 @@ void rocketnet_encryption_map_sweep( struct rocketnet_encryption_map_t * map,
 
         if ( mapping->timeout_seconds > 0 && current_time >= mapping->last_receive_time + mapping->timeout_seconds )
         {
+            rocketnet_debug( "server removed encryption mapping. idle timeout" );
             rocketnet_encryption_map_remove( map, i );
             counters->values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
         }
