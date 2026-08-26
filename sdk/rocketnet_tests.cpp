@@ -23,6 +23,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_token_tables.h"
+#include "rocketnet_encryption_map.h"
 
 #include <sodium.h>
 
@@ -1519,6 +1520,121 @@ void rocketnet_test_admitted_token_set()
     rocketnet_admitted_token_set_destroy( set );
 }
 
+void rocketnet_test_encryption_map()
+{
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    rocketnet_check( map );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 0 );
+
+    struct rocketnet_address_t address_a, address_b, address_c;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.1:30001" ) );      // same ip, other port
+    rocketnet_check( rocketnet_address_parse( &address_c, "[2001:db8::7]:30000" ) );
+
+    // absent, then found once added; address and port together are identity
+    rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == -1 );
+    int index_a = rocketnet_encryption_map_add( map, &address_a, 100.0 );
+    rocketnet_check( index_a != -1 );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == index_a );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address_b ) == -1 );
+
+    // a fresh mapping: sequences start at one, no slot, not established
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, index_a );
+    rocketnet_check( mapping->send_sequence_handshake == 1 );
+    rocketnet_check( mapping->send_sequence_session == 1 );
+    rocketnet_check( mapping->client_index == -1 );
+    rocketnet_check( !mapping->established );
+    rocketnet_check( mapping->handshake_deadline == 100.0 );
+
+    // both families coexist
+    int index_b = rocketnet_encryption_map_add( map, &address_b, 100.0 );
+    int index_c = rocketnet_encryption_map_add( map, &address_c, 100.0 );
+    rocketnet_check( index_b != -1 && index_c != -1 );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address_c ) == index_c );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 3 );
+
+    // full refuses: mappings are never evicted
+    struct rocketnet_address_t address_d, address_e;
+    rocketnet_check( rocketnet_address_parse( &address_d, "10.0.0.4:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_e, "10.0.0.5:30000" ) );
+    rocketnet_check( rocketnet_encryption_map_add( map, &address_d, 100.0 ) != -1 );
+    rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) == -1 );
+
+    // remove zeroes the key material and frees the slot for reuse
+    memset( &mapping->keys, 0xAB, sizeof(mapping->keys) );
+    rocketnet_encryption_map_remove( map, index_a );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address_a ) == -1 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 3 );
+    const uint8_t * raw = (const uint8_t*) mapping;
+    for ( int i = 0; i < (int) sizeof(struct rocketnet_encryption_mapping_t); i++ )
+        rocketnet_check( raw[i] == 0 );
+    rocketnet_check( rocketnet_encryption_map_add( map, &address_e, 100.0 ) != -1 );
+
+    rocketnet_encryption_map_destroy( map );
+}
+
+void rocketnet_test_encryption_map_deadlines()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 8 );
+    rocketnet_check( map );
+
+    struct rocketnet_address_t stalled_address, connecting_address, established_address, idle_address;
+    rocketnet_check( rocketnet_address_parse( &stalled_address, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &connecting_address, "10.0.0.2:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &established_address, "10.0.0.3:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &idle_address, "10.0.0.4:30000" ) );
+
+    // a stalled handshake dies at its deadline no matter what; a connecting
+    // one inside its deadline survives
+    int stalled = rocketnet_encryption_map_add( map, &stalled_address, 105.0 );
+    int connecting = rocketnet_encryption_map_add( map, &connecting_address, 120.0 );
+
+    // an established mapping ignores the handshake deadline entirely and is
+    // governed by its idle timeout alone
+    int established = rocketnet_encryption_map_add( map, &established_address, 105.0 );
+    struct rocketnet_encryption_mapping_t * established_mapping = rocketnet_encryption_map_entry( map, established );
+    established_mapping->established = 1;
+    established_mapping->timeout_seconds = 10;
+    established_mapping->last_receive_time = 109.0;
+
+    int idle = rocketnet_encryption_map_add( map, &idle_address, 105.0 );
+    struct rocketnet_encryption_mapping_t * idle_mapping = rocketnet_encryption_map_entry( map, idle );
+    idle_mapping->established = 1;
+    idle_mapping->timeout_seconds = 10;
+    idle_mapping->last_receive_time = 90.0;
+
+    (void) stalled;
+    (void) connecting;
+
+    rocketnet_encryption_map_sweep( map, 110.0, &counters );
+
+    rocketnet_check( rocketnet_encryption_map_find( map, &stalled_address ) == -1 );        // deadline passed
+    rocketnet_check( rocketnet_encryption_map_find( map, &connecting_address ) != -1 );     // inside deadline
+    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) != -1 );    // established: deadline ignored
+    rocketnet_check( rocketnet_encryption_map_find( map, &idle_address ) == -1 );           // idle past timeout
+
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
+
+    // traffic refreshes the idle deadline and the connection lives on
+    established_mapping = rocketnet_encryption_map_entry( map, rocketnet_encryption_map_find( map, &established_address ) );
+    established_mapping->last_receive_time = 118.0;
+    rocketnet_encryption_map_sweep( map, 125.0, &counters );
+    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) != -1 );
+    rocketnet_encryption_map_sweep( map, 130.0, &counters );
+    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) == -1 );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 2 );
+
+    // the connecting mapping eventually dies at its own deadline: connect or
+    // be discarded, and no amount of nothing extends it
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 2 );
+
+    rocketnet_encryption_map_destroy( map );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -2157,6 +2273,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_counters );
         RUN_TEST( test_used_token_history );
         RUN_TEST( test_admitted_token_set );
+        RUN_TEST( test_encryption_map );
+        RUN_TEST( test_encryption_map_deadlines );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );

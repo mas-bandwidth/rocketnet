@@ -163,6 +163,17 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
 
 struct rocketnet_address_t;
 
+// the canonical address byte encoding: family byte, address bytes as the
+// token encodes them, port little-endian. 7 bytes IPv4, 19 IPv6. used by the
+// cookie mac input and by address hashing.
+
+#define ROCKETNET_ADDRESS_BYTES_IPV4    7
+#define ROCKETNET_ADDRESS_BYTES_IPV6    19
+
+// returns the length written, or 0 for an address that is not IPv4 or IPv6
+
+int rocketnet_write_address_bytes( uint8_t * output, const struct rocketnet_address_t * address );
+
 // returns the input length written, or 0 for an address that is not IPv4 or IPv6
 
 int rocketnet_write_cookie_mac_input( uint8_t * input,

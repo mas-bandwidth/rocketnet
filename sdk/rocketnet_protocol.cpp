@@ -267,16 +267,12 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
     return best;
 }
 
-int rocketnet_write_cookie_mac_input( uint8_t * input,
-                                      const struct rocketnet_address_t * address,
-                                      const uint8_t * connection_salt,
-                                      uint64_t cookie_expire_timestamp )
+int rocketnet_write_address_bytes( uint8_t * output, const struct rocketnet_address_t * address )
 {
-    rocketnet_assert( input );
+    rocketnet_assert( output );
     rocketnet_assert( address );
-    rocketnet_assert( connection_salt );
 
-    uint8_t * p = input;
+    uint8_t * p = output;
 
     if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
@@ -295,6 +291,23 @@ int rocketnet_write_cookie_mac_input( uint8_t * input,
     }
 
     rocketnet_write_uint16( &p, address->port );
+
+    return (int) ( p - output );
+}
+
+int rocketnet_write_cookie_mac_input( uint8_t * input,
+                                      const struct rocketnet_address_t * address,
+                                      const uint8_t * connection_salt,
+                                      uint64_t cookie_expire_timestamp )
+{
+    rocketnet_assert( input );
+    rocketnet_assert( connection_salt );
+
+    int address_bytes = rocketnet_write_address_bytes( input, address );
+    if ( address_bytes == 0 )
+        return 0;
+
+    uint8_t * p = input + address_bytes;
     rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     rocketnet_write_uint64( &p, cookie_expire_timestamp );
 
