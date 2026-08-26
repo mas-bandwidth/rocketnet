@@ -44,7 +44,15 @@ Hall. Two-for-one.
   must not exclude player hosted servers by requiring a secret shared
   between the backend and the servers.
 
-* Crypto is hydrogen, not sodium, if possible.
+* Crypto is sodium, ruled 2026-08-26 after the hydrogen evaluation: gutted
+  to what the protocol needs, vendored as the two-file flatten netcode and
+  yojimbo already carry, extended with Ed25519 signatures and sealed boxes
+  for the public key token design. Hydrogen was feasible and loses on crypto
+  pedigree, backend interop, per-packet overhead (36 vs 16 bytes), and the
+  missing associated data parameter. XDP crypto stays a nice to have,
+  reachable later via a proton style kernel module for either library.
+  Interim, so construction moves quickly: brew libsodium as is on the dev
+  box; the gutted two-file vendor lands later, before anything ships.
 
 * Scale: 1000 players or above on a single server.
 
@@ -67,9 +75,8 @@ reliable-ordered packets and most recent packets are added on top.
 ## Order of operations
 
 1. The minimal secure connect: netcode-style connect tokens on public key
-   crypto, exchanging signed and encrypted packets with hydrogen. First we
-   work out whether hydrogen is possible for this at all — we don't know
-   yet.
+   crypto, exchanging signed and encrypted packets. Crypto per the sodium
+   ruling above.
 
 2. A few different platform transports, implemented to learn what the shape
    is. Make it easy to add new transports.
