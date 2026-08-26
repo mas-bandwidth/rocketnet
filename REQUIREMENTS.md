@@ -67,6 +67,15 @@ Hall. Two-for-one.
   upgrade in 2026 — netcode ended up being patched to support this;
   RocketNet does not repeat that.
 
+* Multiple servers per physical box is common and supported. A server is
+  addressed by address and port; nothing in the library may assume it owns
+  the machine. Transports declare their sharing model: socket transports
+  run many servers per box, one port each. AF_XDP is a single server per
+  box design — that is a property of that transport, the end. A customer
+  who wants that changed is asking for paid customization work. (Dean is
+  being advised onto GameLift, which has no XDP, so the many-per-box case
+  there rides the socket transports anyway.)
+
 * Excluded: the greater network next 2.0 visions — relay networks, network
   acceleration, DDoS protection. Dean doesn't want them. If we ever want
   them later, they are brought in as a new transport.
