@@ -99,8 +99,6 @@ func main() {
 		keygen()
 	} else if command == "proton" {
 		proton()
-	} else if command == "client-backend" {
-		client_backend()
 	} else {
 		fmt.Printf("\nunknown command\n\n")
 	}
@@ -108,14 +106,6 @@ func main() {
 
 func help() {
 	fmt.Printf("\nsyntax:\n\n    run <action> [args]\n\n")
-}
-
-func client_backend() {
-	if runtime.GOOS == "linux" {
-		bash("cd dist && sudo -E CLIENT_BACKEND_PUBLIC_ADDRESS=45.250.253.243:40000 CLIENT_BACKEND_PRIVATE_KEY=otPzITpGBQbhk0F4u19zjobra/ez4F5YGDekxQI+HFw= ./client_backend")
-	} else {
-		bash("cd dist && CLIENT_BACKEND_PUBLIC_ADDRESS=45.250.253.243:40000 CLIENT_BACKEND_PRIVATE_KEY=otPzITpGBQbhk0F4u19zjobra/ez4F5YGDekxQI+HFw= ./client_backend")
-	}
 }
 
 func client() {

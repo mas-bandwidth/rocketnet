@@ -10,14 +10,11 @@
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
-#include "rocketnet_header.h"
 #include "rocketnet_packet_filter.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
 #include "rocketnet_value_tracker.h"
-#include "rocketnet_connect_token.h"
-#include "rocketnet_client_backend_token.h"
 #include "rocketnet_hydrogen.h"
 
 #include <math.h>
@@ -1025,67 +1022,6 @@ static void context_check_free( void * context, void * p )
     rocketnet_default_free_function( context, p );;
 }
 
-void rocketnet_test_connect_token()
-{
-    hydro_sign_keypair keypair;
-    hydro_sign_keygen( &keypair );
-
-    rocketnet_connect_token_t input_token;
-    memset( &input_token, 0, sizeof(input_token) );
-    input_token.expire_timestamp = rocketnet_random_uint64();
-    input_token.buyer_id = rocketnet_random_uint64();
-    input_token.server_id = rocketnet_random_uint64();
-    input_token.rocketnet_id = rocketnet_random_uint64();
-    input_token.user_hash = rocketnet_random_uint64();
-    input_token.client_public_address = rocketnet_random_uint32();
-    for ( int i = 0; i < ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS; i++ )
-    {
-        input_token.backend_addresses[i] = rocketnet_random_uint32();
-        input_token.backend_ports[i] = (uint16_t) rocketnet_random_uint32();
-    }        
-    input_token.pings_per_second = 10;
-    input_token.max_connect_seconds = 30;
-    input_token.backend_token_refresh_seconds = 30;
-
-    char connect_token_string[ROCKETNET_MAX_CONNECT_TOKEN_BYTES];
-    memset( connect_token_string, 0, sizeof(connect_token_string) );
-    {
-        rocketnet_check( rocketnet_write_connect_token( &input_token, connect_token_string, keypair.sk ) );
-    }
-
-    rocketnet_connect_token_t output_token;
-    rocketnet_check( rocketnet_read_connect_token( &output_token, connect_token_string, keypair.pk ) );
-
-    rocketnet_check( memcmp( &input_token, &output_token, sizeof(rocketnet_connect_token_t) - sizeof(input_token.signature) ) == 0 );
-}
-
-void rocketnet_test_client_backend_token()
-{
-    uint8_t key[hydro_secretbox_KEYBYTES];
-    hydro_secretbox_keygen( key );
-
-    uint8_t buffer[1024];
-
-    rocketnet_client_backend_token_t input_token;
-    memset( &input_token, 0, sizeof(input_token) );
-    input_token.expire_timestamp = rocketnet_random_uint64();
-    input_token.buyer_id = rocketnet_random_uint64();
-    input_token.server_id = rocketnet_random_uint64();
-    input_token.rocketnet_id = rocketnet_random_uint64();
-    input_token.user_hash = rocketnet_random_uint64();
-    input_token.client_address = rocketnet_random_uint32();
-    input_token.client_port = rocketnet_random_uint16();
-
-    rocketnet_check( rocketnet_write_client_backend_token( &input_token, buffer, key ) == sizeof(rocketnet_client_backend_token_t) );
-
-    rocketnet_client_backend_token_t output_token;
-    memset( &output_token, 0, sizeof(output_token) );
-
-    rocketnet_check( rocketnet_read_client_backend_token( &output_token, buffer, sizeof(rocketnet_client_backend_token_t), key ) );
-
-    rocketnet_check( memcmp( &input_token, &output_token, sizeof(rocketnet_client_backend_token_t) ) == 0 );
-}
-
 #define RUN_TEST( test_function )                                           \
     do                                                                      \
     {                                                                       \
@@ -1126,7 +1062,5 @@ void rocketnet_run_tests()
         RUN_TEST( test_packet_loss_tracker );
         RUN_TEST( test_out_of_order_tracker );
         RUN_TEST( test_jitter_tracker );
-        RUN_TEST( test_connect_token );
-        RUN_TEST( test_client_backend_token );
     }
 }
