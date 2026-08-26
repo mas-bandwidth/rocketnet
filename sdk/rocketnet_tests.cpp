@@ -19,6 +19,7 @@
 #include "rocketnet_hydrogen.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_protocol.h"
 
 #include <sodium.h>
 
@@ -978,6 +979,56 @@ void rocketnet_test_connect_token_refusals()
     rocketnet_check( memcmp( id_before, id_after, 16 ) != 0 );
 }
 
+void rocketnet_test_prefilter()
+{
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+
+    // the embedded test title tag is the published one from the standard
+    rocketnet_check( memcmp( tag, rocketnet_test_title_tag, ROCKETNET_TITLE_TAG_BYTES ) == 0 );
+
+    // writing the header produces exactly the assembled vectors' first bytes:
+    // a request begins 00 b7 59 01, a challenge begins 02 b7 59 01
+    uint8_t header[ROCKETNET_PREFILTER_BYTES];
+    uint8_t * p = header;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, tag );
+    rocketnet_check( p - header == ROCKETNET_PREFILTER_BYTES );
+    rocketnet_check( memcmp( header, rocketnet_test_assembled_request, ROCKETNET_PREFILTER_BYTES ) == 0 );
+
+    p = header;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag );
+    rocketnet_check( memcmp( header, rocketnet_test_assembled_challenge, ROCKETNET_PREFILTER_BYTES ) == 0 );
+
+    // the structural check accepts a well formed header and returns the type
+    uint8_t packet[64] = { 0 };
+    p = packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // the type byte carries the type and nothing else: any value comes back,
+    // including reserved ones -- refusing those is a later reading order step
+    packet[0] = 200;
+    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == 200 );
+    packet[0] = ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET;
+
+    // NEGATIVE: shorter than the header is refused, at every length
+    for ( int bytes = 0; bytes < ROCKETNET_PREFILTER_BYTES; bytes++ )
+        rocketnet_check( rocketnet_prefilter_check( packet, bytes, tag ) == -1 );
+
+    // NEGATIVE: larger than the receive ceiling is refused; the ceiling
+    // itself is accepted
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, tag ) == -1 );
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // NEGATIVE: a wrong tag byte, any of the three, is refused
+    for ( int i = 0; i < ROCKETNET_TITLE_TAG_BYTES; i++ )
+    {
+        packet[1+i] ^= 1;
+        rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
+        packet[1+i] ^= 1;
+    }
+    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -1605,6 +1656,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_connect_token_frozen );
         RUN_TEST( test_connect_token_mint );
         RUN_TEST( test_connect_token_refusals );
+        RUN_TEST( test_prefilter );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
