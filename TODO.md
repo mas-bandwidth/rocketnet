@@ -56,6 +56,13 @@ land. The milestone view is issue #28; this file is the live ordering.
   restructured, not patched. History: bind-to-first-address, oldest-first
   eviction, expiry-as-absence, the flush shape demonstrated. Admitted set:
   never evicts unexpired, fails closed, idempotent add, expiry reclaim.
+- Encryption map: the mapping aspect in the same array shape — hot address
+  array walked by find under a per-run SipHash of the canonical address
+  bytes (extracted from the cookie encoder for both users), cold mapping
+  payload by the same index. Never evicts; full refuses. Remove zeroes key
+  material, proven byte by byte. Sweep enforces the two deadlines with their
+  counters: handshake deadline never refreshed, idle refreshed by traffic,
+  established ignores the handshake deadline.
 
 ## TODO
 
