@@ -21,6 +21,8 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_keys.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_token_tables.h"
 
 #include <sodium.h>
 
@@ -1376,6 +1378,147 @@ void rocketnet_test_connection_keys()
                                                         rocketnet_test_client_eph_public, rocketnet_test_server_eph_public ) );
 }
 
+void rocketnet_test_counters()
+{
+    // every counter has a name, values zero-initialize, and increments hold
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        rocketnet_check( rocketnet_counter_name( i ) != NULL );
+        rocketnet_check( strcmp( rocketnet_counter_name( i ), "???" ) != 0 );
+        rocketnet_check( counters.values[i] == 0 );
+    }
+    counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED]++;
+    counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED]++;
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == 2 );
+    rocketnet_check( strcmp( rocketnet_counter_name( ROCKETNET_COUNTER_MAPPING_CREATED ), "MAPPING_CREATED" ) == 0 );
+}
+
+static void rocketnet_test_token_id( uint8_t * identifier, int seed )
+{
+    memset( identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+    identifier[0] = (uint8_t) ( seed & 0xFF );
+    identifier[1] = (uint8_t) ( ( seed >> 8 ) & 0xFF );
+    identifier[15] = 0x5A;
+}
+
+void rocketnet_test_used_token_history()
+{
+    const uint64_t now = 1000;
+    const uint64_t expire = now + 300;
+
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 8 );
+    rocketnet_check( history );
+
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id, 1 );
+
+    // unseen passes from anywhere; once recorded, bound to the first address
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_a, now ) );
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_b, now ) );
+    rocketnet_used_token_history_record( history, id, &address_a, expire, now );
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_a, now ) );
+    rocketnet_check( !rocketnet_used_token_history_check( history, id, &address_b, now ) );
+
+    // the same port on a different address, and the same address on a
+    // different port, are different identities
+    struct rocketnet_address_t address_a_other_port;
+    rocketnet_check( rocketnet_address_parse( &address_a_other_port, "10.0.0.1:30001" ) );
+    rocketnet_check( !rocketnet_used_token_history_check( history, id, &address_a_other_port, now ) );
+
+    // recording again from the same address is harmless
+    rocketnet_used_token_history_record( history, id, &address_a, expire, now );
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_a, now ) );
+    rocketnet_check( !rocketnet_used_token_history_check( history, id, &address_b, now ) );
+
+    // entries expire with their tokens: past expiry the binding is gone,
+    // which protects nothing the token expire check does not already refuse
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_b, expire + 1 ) );
+
+    // oldest-first eviction at capacity: fill the table, add one more, and
+    // the oldest binding is flushed -- the documented attack shape the
+    // standard sizes capacity against
+    for ( int i = 2; i <= 9; i++ )
+    {
+        uint8_t fill_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( fill_id, i );
+        rocketnet_used_token_history_record( history, fill_id, &address_a, expire, now );
+    }
+    uint8_t last_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( last_id, 10 );
+    rocketnet_used_token_history_record( history, last_id, &address_a, expire, now );
+
+    // records ran 1 through 10 against capacity 8, so exact oldest-first
+    // evicted ids 1 and 2; ids 3 through 10 stay bound
+    rocketnet_check( rocketnet_used_token_history_check( history, id, &address_b, now ) );          // id 1 evicted
+    uint8_t id_2[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id_2, 2 );
+    rocketnet_check( rocketnet_used_token_history_check( history, id_2, &address_b, now ) );        // id 2 evicted
+    rocketnet_check( !rocketnet_used_token_history_check( history, last_id, &address_b, now ) );    // id 10 bound
+    for ( int i = 3; i <= 9; i++ )
+    {
+        uint8_t bound_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( bound_id, i );
+        rocketnet_check( !rocketnet_used_token_history_check( history, bound_id, &address_b, now ) );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+void rocketnet_test_admitted_token_set()
+{
+    const uint64_t now = 1000;
+    const uint64_t expire = now + 300;
+
+    struct rocketnet_admitted_token_set_t * set = rocketnet_admitted_token_set_create( NULL, 4 );
+    rocketnet_check( set );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id, 100 );
+
+    // a token admits one connection: absent, then present once added
+    rocketnet_check( !rocketnet_admitted_token_set_contains( set, id, now ) );
+    rocketnet_check( rocketnet_admitted_token_set_add( set, id, expire, now ) );
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, id, now ) );
+
+    // adding the same token again is idempotent
+    rocketnet_check( rocketnet_admitted_token_set_add( set, id, expire, now ) );
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, id, now ) );
+
+    // fill to capacity with unexpired entries, then one more MUST refuse:
+    // unexpired entries are never evicted, and the server fails closed
+    for ( int i = 101; i <= 103; i++ )
+    {
+        uint8_t fill_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( fill_id, i );
+        rocketnet_check( rocketnet_admitted_token_set_add( set, fill_id, expire, now ) );
+    }
+    uint8_t overflow_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( overflow_id, 104 );
+    rocketnet_check( !rocketnet_admitted_token_set_add( set, overflow_id, expire, now ) );
+
+    // every original entry survived the refused add
+    for ( int i = 100; i <= 103; i++ )
+    {
+        uint8_t check_id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        rocketnet_test_token_id( check_id, i );
+        rocketnet_check( rocketnet_admitted_token_set_contains( set, check_id, now ) );
+    }
+
+    // past expiry the entries are gone -- their tokens cannot pass the expire
+    // check anyway -- and the slots reclaim
+    rocketnet_check( !rocketnet_admitted_token_set_contains( set, id, expire + 1 ) );
+    rocketnet_check( rocketnet_admitted_token_set_add( set, overflow_id, expire + 300, expire + 1 ) );
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, overflow_id, expire + 1 ) );
+
+    rocketnet_admitted_token_set_destroy( set );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -2011,6 +2154,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_sequence_reconstruction );
         RUN_TEST( test_cookie );
         RUN_TEST( test_connection_keys );
+        RUN_TEST( test_counters );
+        RUN_TEST( test_used_token_history );
+        RUN_TEST( test_admitted_token_set );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );

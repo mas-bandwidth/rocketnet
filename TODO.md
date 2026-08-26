@@ -44,13 +44,21 @@ land. The milestone view is issue #28; this file is the live ordering.
   the vector keys from their own halves and agree; handshake-only derivation
   for the pre-ephemeral client; small-order refusal fatal to the whole
   derivation; secrets zeroed before return.
+- Counters framework: the request-path and mapping-lifecycle names, every
+  one named, indices the implementation's contract, monotonic. Landed just
+  ahead of the ladder that increments them.
+- Token tables: used-token history and admitted-token set as one
+  data-oriented structure — parallel fixed arrays, hot identifiers split
+  from cold fields, chained buckets under a per-run SipHash key, free list,
+  unlink/relink so every entry is findable from its own bucket. First
+  open-addressing attempt broke exactly there (evicted-in-place entries
+  landed off their own probe chain, caught red by the tests) and was
+  restructured, not patched. History: bind-to-first-address, oldest-first
+  eviction, expiry-as-absence, the flush shape demonstrated. Admitted set:
+  never evicts unexpired, fails closed, idempotent add, expiry reclaim.
 
 ## TODO
 
-- Counters framework: lands HERE, with its first real users — one counter per
-  distinct rejection reason, arrival counted separately, monotonic, never
-  reset; check_counter/check_no_counter test helpers. (Deliberately not
-  earlier: a counter with no code path is a dead counter.)
 - Server request path: the ordered list check by check over the encryption
   mapping, used-token history, admitted-token set; one negative test per
   check asserting its reason counter AND the arrival counter; the stored
