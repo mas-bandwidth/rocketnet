@@ -164,6 +164,34 @@ RocketNet is dual stack from day one, not as a later addition:
   address is where a mapped-versus-native mismatch detonates, and the boundary
   rule is what prevents it.
 
+### The client address is the connection identity
+
+**RocketNet assumes a client keeps the same IP address and port for the whole
+duration of its connection to a server.** This is stated rather than left
+implicit, because it is the assumption everything else rests on: a server keys
+its encryption mapping, its client slot, its replay state and its cookie check
+on the client's source address and port. A packet arriving from a different
+address is a packet from a different client.
+
+The consequence, plainly: **if a client's address or port changes mid-session,
+the connection is lost.** NAT rebinding, a carrier-grade NAT reassigning a port,
+and a mobile handover between networks all end the session; the client sees a
+timeout and must obtain a fresh connect token and connect again. netcode makes
+the identical assumption, so this is not a regression — but a game whose players
+are largely on mobile networks should know it is choosing this behaviour.
+
+QUIC removes this assumption with connection IDs: an identifier carried in the
+packet, independent of the address, so a connection survives a path change. That
+is the right design for a general-purpose internet transport and it is a real
+capability RocketNet does not have. It is not free — it requires an identifier in
+every packet, a path validation exchange to prevent an attacker redirecting a
+session to a victim's address, and a linkability decision about whether that
+identifier lets an observer follow a client across networks. For a game session
+on a fixed connection, reconnecting on the rare path change is a smaller cost
+than carrying that machinery on every packet. **This is a deliberate scope
+choice, not an oversight, and it is the natural thing to revisit if RocketNet
+ever targets mobile clients seriously.**
+
 Higher-level transports may name endpoints by an opaque string rather than an IP
 address (per REQUIREMENTS.md). How a non-IP transport encodes its endpoint in a
 connect token is that transport's business; the address encoding below is the
