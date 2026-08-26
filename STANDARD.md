@@ -1122,25 +1122,83 @@ logic rather than one per transport.
 
 ## Client State Machine
 
-States, transitions, timeouts, retry rates and error states are netcode 1.02's:
+Transitions, timeouts and retry rates are netcode 1.02's. The states are
+netcode's with one addition, because this protocol has one more exchange than
+netcode did:
 
-* _connect token expired_ (-6)
-* _invalid connect token_ (-5)
-* _connection timed out_ (-4)
-* _connection response timed out_ (-3)
-* _connection request timed out_ (-2)
+* _connect token expired_ (-7)
+* _invalid connect token_ (-6)
+* _connection timed out_ (-5)
+* _connection response timed out_ (-4)
+* _connection request timed out_ (-3)
+* _cookie request timed out_ (-2)
 * _connection denied_ (-1)
 * _disconnected_ (0)
-* _sending connection request_ (1)
-* _sending connection response_ (2)
-* _connected_ (3)
+* _requesting cookie_ (1)
+* _sending connection request_ (2)
+* _sending connection response_ (3)
+* _connected_ (4)
+
+**The state MUST be readable from outside at any time**, and it is the primary
+means of diagnosing a connection that is not progressing. A state machine whose
+current position cannot be observed can only be debugged by inference, and the
+failure it is worst at explaining is the one that matters most here: a client
+that never connects and never says why.
+
+*Why the cookie phase gets a state of its own.* netcode's client sent a request
+and waited for a challenge, so one sending state covered the whole pre-challenge
+period. Here the client sends a request with an empty cookie field and waits for
+a cookie, then sends a request carrying that cookie and waits for a challenge.
+Those are two different waits with two different failure meanings, and collapsing
+them would make the protocol's two most common deployment faults
+indistinguishable: _cookie request timed out_ means nothing was ever heard from
+the server — wrong address, wrong port, wrong title tag, server down, a firewall
+— while _connection request timed out_ means the server answered, issued a
+cookie, and then silently refused the token, which points at the signature, the
+sealed block, the advertised address or the protocol id. Both surface as a client
+that will not connect; only the state separates them.
+
+Both states send a _connection request packet_. The state names the phase, not
+the packet.
+
+**The numbering carries an invariant: a waiting state N times out to state
+-(N+1).** _requesting cookie_ (1) → -2, _sending connection request_ (2) → -3,
+_sending connection response_ (3) → -4, _connected_ (4) → -5. Only _connection
+denied_ (-1), which is told to the client rather than inferred from silence, and
+the two token defects the client detects before sending anything, fall outside
+it. An implementation SHOULD assert the pairing, so that a state added later
+cannot silently ship without its timeout.
+
+*This renumbers netcode's values.* An integrator porting from netcode must not
+assume the constants match; the names are stable, the numbers are this
+protocol's.
+
+**The ordering is load-bearing, not cosmetic.** The handshake is exactly the
+range `state > disconnected && state < connected`, so any rule that applies
+"while connecting" is one range check that stays correct as states are added
+between. netcode relies on this and so does the rule below.
+
+**A total connect deadline bounds the client, as the handshake deadline bounds
+the server.** Per-state timeouts alone are not enough on either side: a client
+that keeps making just enough progress could walk between states indefinitely,
+and per-state timers would never fire. So while the client is in the handshake
+range it MUST abandon the attempt once the token's lifetime — `expire - create`,
+measured from the start of the attempt — has elapsed, transitioning to _connect
+token expired_ (-7). The deadline is measured as a duration from the attempt's
+start rather than against the absolute expire timestamp, so that a client whose
+clock disagrees with the backend's still gives up after the intended interval.
+The check stops at _connected_: an established connection is governed by its
+idle timeout, not by the token that admitted it.
+
+This mirrors netcode, which applies the same bound over the same state range.
 
 Before its first request the client verifies the token: the address flags name
 at least one family with bits 2-7 zero, and the create timestamp is not later
 than the expire timestamp; otherwise _invalid connect token_. The client selects
 the address whose family it can reach, preferring IPv6 when both are present and
 both are reachable, and uses that address for the whole attempt. If no listed
-family is reachable it transitions to _connection request timed out_.
+family is reachable it transitions to _cookie request timed out_ — the failure
+belongs to the first exchange, which is the one it could not begin.
 
 The client generates its connection salt once per connection attempt, before the
 first request, and reuses it for every retransmission of that attempt. **The
@@ -1148,10 +1206,11 @@ client's packet sequence number MUST NOT be reset within an attempt.** A new
 attempt means a new salt, hence new keys, so restarting the sequence at zero is
 correct there and only there.
 
-All other client behavior — send rates, storing and echoing the cookie,
-transition to _connected_ on the first keep-alive, keep-alive generation, timeout
-handling, redundant disconnect packets — is netcode 1.02, reading "sealed" for
-"encrypted".
+All other client behavior — send rates, transition to _connected_ on the first
+keep-alive, keep-alive generation, timeout handling, redundant disconnect
+packets — is netcode 1.02, reading "sealed" for "encrypted". Storing and echoing
+the cookie has no netcode equivalent and is specified in _Connection cookie
+packet_ above.
 
 ## Server-Side Connection Process
 
@@ -1338,12 +1397,86 @@ In this exact order, on a _connection request packet_:
 * Add an encryption mapping for the source address and port, holding the four
   derived keys, the connection salt, the session nonce, the server ephemeral
   public key, the challenge packet as sent, the client id, the user data, and
-  the sending sequence and replay state for both key phases. It
-  expires after _timeout_ seconds without traffic, or if the connection is not
-  established within _timeout_ seconds. If it cannot be added, ignore the packet.
+  the sending sequence and replay state for both key phases. It is bound by
+  **two independent deadlines**, described below. If it cannot be added, ignore
+  the packet.
 * Respond with a _connection challenge packet_ carrying the server's ephemeral
   public key, and store that packet in the mapping so a retransmission can be
   answered with a byte-identical copy.
+
+**Half-open state, and the two deadlines that bound it.** A handshake that is
+started and never finished is the classic way to attack a connection protocol,
+and there are two separate things to get right: what a stalled handshake can
+occupy, and how long it can occupy it.
+
+*What it can occupy is an encryption mapping, never a client slot.* Slots are
+assigned only in step 3, after the client has answered a challenge sent to the
+address it claimed, so no amount of stalling before that point consumes live
+server capacity. This separation is netcode's and it is the structural defence;
+everything below is about duration.
+
+*How long it can occupy it is bounded twice, and the second bound is the one
+that matters.*
+
+* An **idle deadline**, refreshed by traffic, which reclaims a mapping whose
+  peer has gone silent.
+* A **handshake deadline**, fixed when the mapping is created and **never
+  refreshed**, by which the connection must be established or the mapping is
+  destroyed.
+
+The idle deadline alone would be a hole. A mapping exists from the end of step 2,
+and a client may legitimately retransmit its request — so a peer that retransmits
+just often enough to touch the mapping resets the idle timer forever and stays
+half-open for as long as it cares to, at the cost of one small packet per
+interval. The handshake deadline is what makes that pointless: it does not move,
+whatever the peer sends. Connect within it or be discarded.
+
+**The handshake deadline MUST NOT be the token's `timeout seconds`.** That field
+is the *connected* idle timeout — how long an established player may go quiet
+before being dropped — and it is sized for gameplay, in tens of seconds. A
+legitimate client completes steps 2 and 3 in one round trip; a few seconds
+covers that with room for several retransmissions. Reusing the gameplay timeout
+here would hand an attacker a ten- to sixty-fold multiplier on the duration of
+every mapping they hold, bought with nothing. The handshake deadline is a
+server-side configuration value, in seconds, and it is not carried in the token,
+because it protects the server and nothing the client presents should set it.
+
+**It has a sensible default and it is tunable per game.** The default SHOULD be
+five seconds: a client retransmitting at netcode's rate gets tens of attempts
+inside it, which covers ordinary loss and a poor round trip with room to spare,
+while cutting an attacker's hold time to a fraction of a gameplay timeout. But
+five seconds is a judgement about a population of players, not a property of the
+protocol, and the population differs per game — a title with satellite or
+cellular players wants more, a LAN or console title under attack wants less. So
+the value is exposed as configuration, with the default chosen to be safe for a
+game that never touches it. The same applies to the idle deadline and to the
+client's total connect deadline: each has a default that works unattended, and
+each can be tuned by a deployment that knows its players better than this
+document does.
+
+*This is a deliberate improvement on netcode 1.02, which has both deadlines but
+gives them the same value:* it sets the mapping's absolute expiry to
+`server->time + timeout_seconds` on creation and clears it on establishment. The
+structure is right and is inherited; only the shared value is not.
+
+**On establishment the handshake deadline is discharged**, and the mapping is
+governed by the idle deadline alone — as in netcode, which clears the absolute
+expiry at the moment the client is connected.
+
+**Size the mapping table far above the slot count.** Mappings are small and
+short-lived where slots are large and long-lived, so there is no reason to ration
+them; a generous table decouples pressure on the handshake from capacity for live
+players, and makes filling it a much more expensive thing to attempt. An
+implementation MUST document the ratio it chose.
+
+*What remains, and whose problem it is.* A peer holding a real token can complete
+the whole handshake, take a slot, and then send nothing but keep-alives forever.
+That is not a protocol defect: it is a connected client that the backend admitted
+and that is behaving legally, and this layer cannot tell it from a player sitting
+in a menu. The bound on it is the backend's issuance policy, and the decision to
+drop it belongs to the game, which knows what a player ought to be doing. This
+layer's obligation is to make it *visible* — see the counters below — not to
+police it.
 
 **The used-token history** is a fixed-size structure. An implementation MUST
 document its capacity and eviction policy, and SHOULD size it to at least eight
@@ -1378,6 +1511,143 @@ only data already verified.
 Client slots, the client index, the confirmed flag, keep-alive prefixing until
 confirmation, payload delivery both ways, redundant disconnect packets, and slot
 reset on timeout or disconnect are all netcode 1.02.
+
+## Observability
+
+A protocol this layered fails in ways that are invisible from outside. A client
+that will not connect looks identical whether the title tag was wrong, the cookie
+never arrived, the signature failed, or every slot was full — and at scale, logs
+are the wrong instrument for telling them apart, because the volume that makes a
+problem visible is the same volume that makes logs unreadable.
+
+Three instruments are required, and they sit at three different timescales:
+
+| Instrument | Timescale | Answers |
+|---|---|---|
+| **Counters** | cumulative, whole run | how often does this happen |
+| **Connection state** | instantaneous | where is this connection now, and what stopped it |
+| **Statistics** | sampled per frame | what is the trend |
+
+Connection state is specified in _Client State Machine_. This section covers the
+other two.
+
+### Counters
+
+**An implementation MUST maintain one counter per distinct reason a packet is
+rejected**, not one per category. `wrong size`, `token expired` and
+`signature did not verify` are three counters and never one
+`connection_request_errors`. The granularity is the entire value: a single
+error counter tells you something is wrong, which you already knew, while a
+counter per reason tells you which check refused and therefore where to look.
+
+Counters follow these rules:
+
+* **One flat namespace**, `ROCKETNET_COUNTER_<SUBJECT>_<OUTCOME>`. No hierarchy,
+  no tags, no labels.
+* **The outcome vocabulary is small, closed, and reused across every subject**:
+  `RECEIVED`, `WRONG_SIZE`, `WRONG_VERSION`, `WRONG_PROTOCOL_ID`, `EXPIRED`,
+  `DID_NOT_VERIFY`, `DID_NOT_OPEN`, `ALREADY_RECEIVED`, `ALREADY_CONNECTED`,
+  `NO_MAPPING`, `NO_SLOTS`, `ACCEPTED`. Reuse is what keeps a hundred counters
+  memorable, and lets a reader predict a name instead of grepping for it.
+* **Reasons are cross-producted with packet type**, not shared. A replayed
+  payload and a replayed keep-alive are separate counters even though the reason
+  word is the same.
+* **Arrival is counted separately from outcome.** Each packet type has a
+  `RECEIVED` counter incremented once on entry, and then exactly one outcome
+  counter. This makes `RECEIVED == Σ outcomes` an invariant that can be checked
+  by eye and asserted in tests, and it is how you tell "the check rejected it"
+  from "it never reached the check".
+* **Names state the observed condition**, never a severity and never a metric
+  type.
+* **Counters are monotonic and MUST NOT be reset.** Rates are derived by
+  differencing snapshots. A counter that resets cannot support the assertion
+  that something never happened, which is the most valuable assertion of the set.
+* **Storage is per-execution-context**, summed only at readout — per-CPU in a
+  kernel dataplane, per-thread in userspace — so the hot path never touches a
+  shared cache line.
+* **Every counter site SHOULD also log**, with the log compiled out in
+  production and the counter never compiled out. The log explains one incident;
+  the counter reveals the pattern.
+* **Indices, where counters are exposed as a fixed-width array, are a wire
+  contract.** They are never renumbered, new counters take unused slots, and an
+  implementation MUST reject a report whose width it does not recognize.
+  Duplicate indices MUST be checked mechanically: two counters sharing a slot
+  sum into one number, and a rare rejection sharing a slot with a routine
+  success is simply erased.
+
+**The connection request path is the one that matters most**, because it is the
+attack surface and because it has the most ways to fail. Every step of the
+ordered list in _Processing Connection Requests_ gets its own counter, in that
+order:
+
+| Counter | Fires when |
+|---|---|
+| `CONNECTION_REQUEST_RECEIVED` | a request reaches the handler |
+| `..._WRONG_SIZE` | not 704 bytes after the prefilter header |
+| `..._ALREADY_CONNECTED` | source address already holds a slot |
+| `..._WRONG_VERSION` | version mismatch |
+| `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
+| `..._TOKEN_EXPIRED` | expire timestamp has passed |
+| `..._BAD_ADDRESS_FLAGS` | reserved bits set, or no family named |
+| `..._ADDRESS_NOT_ADVERTISED` | names no address this server answers at |
+| `..._WRONG_SERVER_KEY` | server public key is not one held |
+| `..._NO_COOKIE` | cookie field zero — the ordinary first request |
+| `..._COOKIE_DID_NOT_VERIFY` | cookie MAC mismatch |
+| `..._COOKIE_EXPIRED` | cookie past its expiry |
+| `..._TOKEN_ALREADY_USED` | token identifier bound to another address |
+| `..._SIGNATURE_DID_NOT_VERIFY` | Ed25519 verification failed |
+| `..._COULD_NOT_OPEN_SEALED_BLOCK` | seal open failed |
+| `..._SEALED_MISMATCH` | inner protocol id or expire disagrees with signed |
+| `..._CLIENT_ID_ALREADY_CONNECTED` | that client id already holds a slot |
+| `..._TOKEN_ALREADY_CONNECTED` | token already admitted a connection this run |
+| `..._SMALL_ORDER_KEY` | `crypto_scalarmult` refused the peer key |
+| `..._NO_SLOTS` | slot table full; a denied packet was sent |
+| `..._COULD_NOT_ADD_MAPPING` | mapping table full |
+| `..._SENT_CHALLENGE` | success — mapping created, challenge sent |
+
+The three cookie counters are not failures in the ordinary sense: every
+legitimate connection increments `NO_COOKIE` exactly once, and their sum is the
+number of cookie packets sent. Their separation is diagnostic —
+`COOKIE_DID_NOT_VERIFY` climbing means injected cookies, a rotated key, or a bug,
+and it means something entirely different from `NO_COOKIE` climbing.
+
+The same treatment applies to connection responses and to each sealed packet
+type, and to the lifecycle events that no packet triggers:
+
+* `MAPPING_CREATED`, `MAPPING_IDLE_TIMEOUT`, `MAPPING_TABLE_FULL`
+* **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED`** — a handshake started and never
+  finished
+* `CLIENT_CONNECTED`, `CLIENT_DISCONNECTED`, `CLIENT_TIMED_OUT`
+* `INTEGRITY_LIMIT_REACHED`
+
+**`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled
+handshake described above**, and it is the counter to watch. A deployment under
+that attack shows a large and climbing count here with no matching growth in
+`CLIENT_CONNECTED` — peers starting handshakes and walking away — and there is no
+other signal that says so. In ordinary operation it is near zero, which is what
+makes a rise legible.
+
+### Statistics
+
+An implementation SHOULD expose a flat structure of per-frame quantities, read
+by the application each update: round trip time, jitter, packet loss each way,
+packets sent and received, packets lost, packets out of order, and bandwidth up
+and down. These are for graphing, and they are what lets an integrator see what
+the library is doing rather than infer it.
+
+The structure is plain data — scalars only, no pointers, no nesting, no
+allocation, returned by const pointer — so it costs nothing to read every frame
+and crosses the C API without marshalling.
+
+### Why this is in a protocol standard
+
+Counters and states look like implementation detail, and the naming of them
+partly is. They are here because two implementations that reject the same packet
+for the same reason should say so in the same words: a deployment running a
+third-party server should be diagnosable with the knowledge that this document
+gives, and a bug report that says `COOKIE_DID_NOT_VERIFY is climbing` should mean
+the same thing to everyone reading it. An implementation MAY add counters; it
+MUST NOT merge two of the reasons listed here into one.
 
 ## Development without a backend
 
@@ -1725,6 +1995,77 @@ source address. Whether a receiver checks it in userspace, in a kernel program,
 or not at all is a quality-of-implementation choice, since the sealed layer
 beneath it carries the security guarantees.
 
+### Demonstrating conformance
+
+The ordered check lists in this document are a test plan, and the counters of the
+_Observability_ section are what make it executable. Each numbered step is one
+negative test: construct a packet that fails exactly that check, and assert that
+exactly that counter fired.
+
+* **A negative test MUST assert two counters, not one**: the reason counter, and
+  the packet type's `RECEIVED` counter. The reason alone is not enough — a test
+  that asserts only "rejected" still passes when the packet never reached the
+  check at all, which is how negative tests silently rot into testing nothing.
+  Asserting arrival rules out the whole upstream path having eaten the input.
+* **A positive test asserts the success counter and independently observes the
+  result** — the packet on the wire, the state transition, the slot assigned.
+  The counter says why; the observation says whether.
+* **The strongest tests pair a must-fire with a must-not-fire.** Asserting that a
+  rejection counter rose *and* that the corresponding success counter stayed at
+  exactly zero is a far stronger claim than watching a socket and seeing nothing
+  arrive, which only proves that one listener missed it in one window. It is
+  available only because counters never reset.
+* **A drop is unobservable by construction.** Without counters every rejection
+  test collapses into the same assertion — "nothing came back" — which cannot
+  distinguish twenty different reasons, several of which are bugs.
+
+**A reason counter with no test naming it is an untested branch.** The counter
+list and the test list should be the same list, and diffing them is a coverage
+check that costs nothing and does not depend on a coverage tool understanding the
+kernel dataplane.
+
+**Every rule in this document that exists because of a specific failure needs a
+test that reproduces that failure.** Much of what is written here is of the form
+"do X, because otherwise Y" — the response carries required padding or a
+connected client becomes a reflector; the session nonce is chosen at mapping
+creation or a replayed cookie makes a key recur; the handshake deadline never
+refreshes or a peer stays half-open forever. Each of those `Y`s is a situation
+that is hard to stumble into and easy to reintroduce, and the prose explaining it
+protects nothing once the code is being changed for some other reason.
+
+**The failure mode this guards against is repairing one defect and breaking
+something essential in the process**, and it is not a careless-programmer
+problem — it is what happens to someone concentrating hard on a different part of
+the protocol. These rules interact: a change to how mappings are replaced touches
+key derivation, a change to a packet's size touches the amplification invariant,
+a change to when a nonce is chosen touches replay. The person making the second
+change is being careful about the second thing. Only a test is careful about the
+first.
+
+This is true for one author working alone across months, and more so for a team,
+where the person making the second change may never have read the reasoning
+behind the first and has no way to know it is there. Prose in a standard is
+available to whoever goes looking; a failing test arrives uninvited, which is the
+only delivery that works.
+
+Reproducing these paths is laborious — they are, by construction, the states a
+correct implementation never enters — and it is the work that makes the
+difference between a protocol that is specified and one that stays correct.
+
+The counter and the test do different halves of this: the counter proves the
+intended branch was reached, and the test keeps it reachable and correct
+thereafter.
+
+**Known-answer test vectors are REQUIRED for interoperability.** A conforming
+implementation publishes, and checks itself against, fixed vectors covering: a
+connect token built from a fixed backend keypair and server keypair, the four
+derived per-connection keys, one sealed packet of each type with its exact
+associated data bytes, and one cookie MAC. Self-consistency proves an
+implementation agrees with itself; only vectors prove two implementations agree
+with each other. The failure this prevents is the expensive one — two correct
+readings of an ambiguous sentence, and a handshake that silently never
+completes.
+
 ## Deviations from netcode 1.02, in one place
 
 **Trust model**
@@ -1777,6 +2118,24 @@ beneath it carries the security guarantees.
 14. A server accepts a connection request at either advertised address;
     boundary address normalization is normative.
 
+**Timeouts and state**
+
+15. The client state machine gains _requesting cookie_, because this protocol
+    has one more exchange than netcode did, and all state values are renumbered
+    as a result. The waiting state N times out to -(N+1).
+
+16. The handshake deadline is a server-side configuration value, separate from
+    the token's `timeout seconds`. netcode has the same two deadlines on an
+    encryption mapping — an idle timer and an absolute expiry set at creation —
+    but gives them one value, so half-open state lives as long as a connected
+    player may idle. The structure is inherited; the shared value is not.
+
+**Observability**
+
+17. Counters, connection state and per-frame statistics are specified rather
+    than left to implementations, with one counter required per distinct
+    rejection reason. netcode leaves diagnosis to log lines.
+
 Everything else — the handshake shape, per-packet AEAD and its
-associated data construction, replay protection, the client state machine, the
+associated data construction, replay protection, the client state model, the
 server slot model, the strict connection-request rules — is netcode 1.02.
