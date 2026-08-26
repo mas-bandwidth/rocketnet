@@ -421,7 +421,7 @@ signed by the backend. The request carries this buffer and its signature
 verbatim, so the server verifies with no shared secret and no other state:
 
     signed connect data (576 bytes):
-        [version info] (14 bytes)       // "ROCKETNET 1.0" ASCII, null terminated
+        [version] (uint32)              // 0x4E7C1A93 for RocketNet 1.0
         [protocol id] (uint64)          // unique to this title
         [create timestamp] (uint64)     // unix time the token was created
         [expire timestamp] (uint64)     // unix time the token expires
@@ -448,7 +448,15 @@ to. It lets a server hold more than one keypair and rotate without rejecting
 every in-flight token, and it lets a server reject a token meant for a different
 key with a 32-byte compare instead of a failed seal-open.
 
-The buffer is 576 bytes and uses 531, leaving 45 free **deliberately**. The
+**The version is an opaque 32-bit constant, not a readable string.** It has to
+be on the wire in the clear, because the connection request carries the signed
+data a server verifies before it trusts anything. A protocol banner in ASCII
+would be a universal signature for every RocketNet deployment in existence,
+readable by anyone scanning traffic, which would undo in the connect path what
+the per-title prefilter tag is for. A future version takes an unrelated
+constant rather than an increment.
+
+The buffer is 576 bytes and uses 521, leaving 55 free **deliberately**. The
 signed length is part of the signed message, so growing this buffer later is a
 hard wire break; the slack is there so a future field does not force one.
 
@@ -663,7 +671,7 @@ using the following associated data — netcode's construction, with the
 connection salt added so the derived keys are bound to the exchange that chose
 them:
 
-    [version info] (14 bytes)           // "ROCKETNET 1.0" ASCII, null terminated
+    [version] (uint32)                  // 0x4E7C1A93 for RocketNet 1.0
     [protocol id] (uint64)
     [packet type] (uint8)               // binds the type; altering it fails the tag
     [connection salt] (8 bytes)
@@ -909,8 +917,7 @@ In this exact order, on a _connection request packet_:
   constant time. If the field is zero, the MAC does not match, or the cookie has
   expired, respond with a _connection cookie packet_ and stop. One keyed hash,
   no asymmetric work.
-* If the version info is not "ROCKETNET 1.0" — all 14 bytes, including the
-  terminating null — ignore it.
+* If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
 * If the address flags have bits 2-7 set, or name no family, ignore it.
@@ -1178,22 +1185,25 @@ beneath it carries the security guarantees.
 9. The encrypted challenge token is replaced by a 24-byte MAC cookie: no
    challenge key, no challenge sequence counter, no challenge nonce space, and
    the challenge and response packets fall from 366 bytes to 48.
-10. One packet-size budget of 1232 bytes from the IPv6 minimum MTU; payload
+10. The version is an opaque 32-bit constant rather than netcode's 14-byte
+    ASCII string, which travels in the clear on every connection request and
+    would be a universal signature for the protocol.
+11. One packet-size budget of 1232 bytes from the IPv6 minimum MTU; payload
     packets carry 1 to 1208 bytes; the token is a fixed 768 bytes, one MTU by
     design.
 
 **Keys and nonces**
 
-11. Per-connection keys are derived from the token keys and a client-chosen
+12. Per-connection keys are derived from the token keys and a client-chosen
     salt, with separate handshake and session contexts. This deletes netcode's
     server-restart section and both of its optional mitigations, deletes the
     2^63 global sequence convention, and removes the reconnect nonce reuse
     netcode does not document.
-12. The connection salt is included in the per-packet associated data.
+13. The connection salt is included in the per-packet associated data.
 
 **Dual stack**
 
-13. A server accepts a connection request at either advertised address;
+14. A server accepts a connection request at either advertised address;
     boundary address normalization is normative.
 
 Everything else — the two-RTT handshake shape, per-packet AEAD and its
