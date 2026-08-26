@@ -28,11 +28,12 @@ land. The milestone view is issue #28; this file is the live ordering.
   consistency, token identifier. The frozen token verifies, opens and
   recovers every published field; refusals proven per check including the
   anonymous-box hazard and a hostile-backend inner mismatch.
+- Prefilter header: rocketnet_protocol.{h,cpp} started; write and structural
+  check as flat early-return guards, locked to the assembled vectors' first
+  bytes; every refusal proven at every length and tag byte.
 
 ## TODO
 
-- Prefilter header: test title tag b7 59 01, write and structural check, pure
-  functions tested to death.
 - Packet layouts: write/read every type, exact sizes from the table,
   assembled wire vectors matched byte for byte, malformed rejection.
 - Sealing: per-type seal/open with sequence-derived nonce and the 21/53-byte
