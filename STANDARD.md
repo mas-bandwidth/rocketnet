@@ -484,10 +484,20 @@ attempt and sends it in the clear in the connection request. Both sides then
 derive four keys with `crypto_kdf_derive_from_key`, using the salt as the subkey
 id and the following 8-byte contexts:
 
-    handshake client to server = kdf( token c2s key, salt, "RKTNHAND" )
-    handshake server to client = kdf( token s2c key, salt, "RKTNHAND" )
-    session   client to server = kdf( token c2s key, salt, "RKTNSESS" )
+    handshake client to server = kdf( token c2s key, salt, "RKTNHNDC" )
+    handshake server to client = kdf( token s2c key, salt, "RKTNHNDS" )
+    session   client to server = kdf( token c2s key, salt, "RKTNSESC" )
     session   server to client = kdf( token s2c key, salt, "RKTNSESS" )
+
+**The context distinguishes the direction as well as the phase**, so the two
+directions are separated by the derivation itself and not only by the backend
+having generated two different token keys. If a backend ever set the two token
+keys equal, identical contexts would produce identical derived keys in both
+directions, and an attacker spoofing the server's address could reflect a
+client's own packet back at it and have it authenticate: same associated data,
+same nonce, and replay windows are per direction so a fresh sequence passes. A
+protocol should not depend on a backend's key-generation hygiene for a property
+it can make structural at no cost.
 
 _Connection challenge_, _connection response_ and _connection denied_ packets
 are sealed with the handshake keys. _Connection keep-alive_, _connection
@@ -563,6 +573,7 @@ RocketNet has the following packets:
 * _connection keep-alive packet_ (4)
 * _connection payload packet_ (5)
 * _connection disconnect packet_ (6)
+* _connection cookie packet_ (7)
 
 Every packet begins with the 4-byte prefilter header, whose first byte is the
 packet type. The type byte carries the type and nothing else.
@@ -571,11 +582,39 @@ packet type. The type byte carries the type and nothing else.
 
 The connection request (0) is not sealed. After the prefilter header:
 
+    [return cookie] (24 bytes)          // zero if the client holds none
     [connection salt] (8 bytes)         // client-generated, this attempt
     [signed connect data] (576 bytes)   // from the token, verbatim
     [signature] (64 bytes)              // from the token, verbatim
 
-A fixed 648 bytes after the prefilter header, 652 bytes on the wire.
+A fixed 672 bytes after the prefilter header, 676 bytes on the wire.
+
+The **return cookie** field is all zero on a client's first request. It is
+filled in only if the server has answered with a _connection cookie packet_,
+which it does when it is under enough load to require address validation before
+spending asymmetric work. See _Processing Connection Requests_.
+
+### Connection cookie packet
+
+The connection cookie (7) is **not sealed**, because the server sends it before
+doing any work that would give it a key:
+
+    [cookie expire timestamp] (uint64)
+    [cookie mac] (16 bytes)
+
+24 bytes after the prefilter header, 28 on the wire — far smaller than the
+676-byte request that provoked it.
+
+    cookie mac = crypto_generichash( 16 bytes,
+                                     client address ‖ connection salt ‖ expire,
+                                     server cookie key )
+
+A client that receives one stores the 24 bytes and puts them in the return
+cookie field of every subsequent request in this attempt. A client that receives
+another replaces what it holds. The packet is unauthenticated, so an off-path
+attacker can inject one; the effect is that the client sends a request the server
+answers with a fresh cookie, which is no worse than dropping the client's
+packets, and the attempt is bounded by the ordinary connection timeout.
 
 The server verifies the signature over the signed connect data against the
 backend public key, with no shared secret and no other state. Authenticity is
@@ -638,10 +677,15 @@ In this exact order:
   _Processing Connection Requests_ and stop.** Everything below applies to
   sealed packets only.
 
-* If the type byte is greater than 6, ignore the packet.
+* If the type byte is greater than 7, ignore the packet. Types 8 through 255
+  are reserved and MUST be ignored by a conforming receiver.
 
-* The server ignores _connection challenge_ packets. The client ignores
-  _connection request_ and _connection response_ packets.
+* The server ignores _connection challenge_ and _connection cookie_ packets. The
+  client ignores _connection request_ and _connection response_ packets.
+
+* **If the type byte is 7 this is a connection cookie: the client stores its 24
+  bytes for use in subsequent requests of this attempt, and stops.** It is not
+  sealed, so nothing below applies to it.
 
 * If the packet is smaller than 4 + 4 + 16 bytes, it cannot hold a sequence and
   a tag; ignore it.
@@ -692,12 +736,73 @@ size; within the window accept a sequence only once; on a successful open mark
 it received and advance the most recent. Applied to _connection keep-alive_,
 _connection payload_ and _connection disconnect_ on both ends.
 
+### The AEAD integrity limit
+
+**A server and a client MUST each count the sealed packets that fail to open on
+a connection, across all of that connection's keys, and MUST disconnect it on
+reaching 2^36 failures.** ChaCha20-Poly1305's integrity limit is 2^36 invalid
+packets; both QUIC and DTLS 1.3 make counting them mandatory and name the same
+number, because a datagram protocol silently discards what it cannot
+authenticate and therefore grants an attacker unlimited forgery attempts where a
+stream protocol would have torn down the connection on the first one.
+
+RocketNet's response is simply to disconnect. It has no key update to fall back
+on and does not need one: the limit is far enough away that reaching it is an
+attack rather than an accident, and a connection under 2^36 forgery attempts has
+nothing worth preserving. Both reference protocols permit closing as the
+response.
+
+*This is not only theoretical bookkeeping.* At the minimum sealed packet size,
+2^36 attempts is a few terabytes, which is under an hour at 10 Gbps against one
+connection — and this standard explicitly contemplates sessions running for
+hours. In practice a server would exhaust its CPU on the AEAD opens long before
+the counter filled, so this is a backstop rather than the thing that saves it;
+the RFCs require it regardless, and it is four lines.
+
+### Replay window sizing
+
 A replay buffer of 256 entries per client is a floor, not a recommendation.
 RocketNet does not assume a low packet rate: a game sending fragmented state at
 tens of thousands of packets per second per direction needs a buffer sized to at
 least one second of its maximum per-client receive rate, and an implementation
 serving such a title MUST size it accordingly. An undersized buffer discards
-legitimate reordered packets; it never accepts a replay.
+legitimate packets; it never accepts a replay, so the failure is lost traffic
+rather than lost security.
+
+*One second is far more than reordering needs — real reordering is milliseconds.
+The number is sized for recovering from a loss burst, where a gap in the window
+must still be fillable when the retransmissions arrive, and for the case where a
+receiver falls behind and catches up. Over-sizing costs only memory, which is
+the cheap side of this trade.*
+
+### Client lookup must not be a linear scan
+
+Not a wire requirement, but security-relevant enough to state: **a server MUST
+NOT locate a client by scanning its clients, and MUST NOT use an unkeyed hash of
+the client address to locate one.**
+
+netcode scans linearly on every received packet. At the scale this protocol
+targets that is quadratic in disguise: a thousand clients each sending at a high
+rate means a thousand comparisons per packet, times the aggregate packet rate,
+which becomes whole cores spent comparing addresses.
+
+The obvious repair is a hash table keyed on the client address, and the obvious
+objection is that an attacker who can choose addresses can choose collisions and
+restore the linear behavior deliberately. Both halves of the answer matter:
+
+* **Key the hash with a per-run secret.** `crypto_shorthash` in libsodium is
+  SipHash-2-4, which exists precisely to make hash-table flooding impossible,
+  and is what several language runtimes adopted after that attack class was
+  demonstrated. With a random key generated at server start, an attacker cannot
+  predict which bucket an address lands in, so cannot construct a collision set.
+* **Insertion is already authorized.** An entry appears only for an address that
+  has answered a cookie and presented a backend-signed token, so an attacker
+  cannot populate the table at will even if the hash were predictable. This is
+  the stronger of the two protections, and it is a property of the handshake
+  rather than of the data structure.
+
+Together these put worst-case lookup back at expected constant time without
+trusting the address distribution.
 
 ## Client State Machine
 
@@ -752,11 +857,50 @@ and it comes **before** the crypto: otherwise an attacker who captures a single
 valid connection request can replay it at line rate and burn a full verify on
 every copy.
 
+**Address validation before asymmetric work, when it matters.** A server keeps a
+running measure of the rate of connection requests it is receiving. Below its
+configured threshold it processes requests as listed below and never sends a
+cookie packet; the common case is unchanged and costs no extra round trip. At or
+above the threshold, the server MUST require a valid return cookie before
+performing the signature verification, and answers a request without one by
+sending a _connection cookie packet_ and stopping.
+
+*Why this is required rather than advised, and why the earlier mitigations were
+not enough.* Every check that precedes the signature verify reads a field the
+attacker either controls or can copy from the client binary: the size, the
+version, the protocol id, the expire timestamp it writes itself, the address
+flags, the advertised address, the server public key, and a used-token
+identifier that is a hash of its own bytes and therefore unique every time. The
+already-connected check passes trivially, because a spoofed source is never
+connected. So a request built from public constants and random padding forces a
+full Ed25519 verification, from a spoofed address, with no captured packet and
+no on-path position. At roughly a hundred microseconds each that is about ten
+thousand per second per core, or **tens of megabits per second of attack traffic
+to saturate a core** — where netcode's symmetric open needed gigabits. The
+prefilter cannot help: it is unkeyed and its code ships in every client. Rate
+limiting cannot help: the source address is spoofable, which this standard
+already says. The used-token history cannot help: it bounds replays of captured
+tokens, not fabrications. **The cookie is the only one of these that changes the
+attacker's cost**, and it changes it completely — to obtain a cookie you must
+receive at the address you claim, so the flood must come from addresses you
+really hold, where per-source rate limiting finally bites. This is the SYN
+cookie pattern, and it is what DTLS 1.3 and QUIC both do: cheap keyed symmetric
+work first, expensive asymmetric work only for an address that has answered.
+Making it load-triggered rather than always-on follows DTLS 1.3, which performs
+the cookie exchange by default but permits a deployment to skip it where
+amplification is not a threat.
+
 In this exact order, on a _connection request packet_:
 
-* If the packet, less the prefilter header, is not 648 bytes, ignore it.
+* If the packet, less the prefilter header, is not 672 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
+* **If the server is at or above its connection-request rate threshold:**
+  recompute the cookie MAC from this packet's source address, its connection
+  salt, and the expire timestamp in its return cookie field, and compare in
+  constant time. If the field is zero, the MAC does not match, or the cookie has
+  expired, respond with a _connection cookie packet_ and stop. One keyed hash,
+  no asymmetric work.
 * If the version info is not "ROCKETNET 1.0" — all 14 bytes, including the
   terminating null — ignore it.
 * If the protocol id does not match the server's, ignore it.
@@ -791,10 +935,28 @@ In this exact order, on a _connection request packet_:
 * If no slots are available, respond with a _connection denied packet_.
 * Derive the four per-connection keys from the token keys and the connection
   salt.
-* Add an encryption mapping for the source address and port, holding the derived
-  keys, the client id and the user data. It expires after _timeout_ seconds
-  without traffic, or if the connection is not established within _timeout_
-  seconds. If it cannot be added, ignore the packet.
+* **If an encryption mapping already exists for this source address and port,
+  and its connection salt equals the request's salt, the server MUST NOT create
+  a new one.** It reuses the existing mapping unchanged — its keys, its sequence
+  numbers and its replay state — and answers with a fresh challenge sealed under
+  that mapping's keys. If the salt differs, the request belongs to a new attempt
+  with different derived keys, and the server replaces the mapping.
+
+  *This rule is load-bearing and its absence is a nonce reuse, so it is stated
+  as a requirement rather than left to an implementer. A client retransmits
+  connection requests at about 10Hz and reuses one salt for the whole attempt,
+  so an ordinary lost challenge brings a second identical request. Creating a
+  second mapping for it would restart the sending sequence at zero under keys
+  that did not change, and the two challenge packets differ in their cookie
+  expire timestamp — two different plaintexts under one key at one nonce. No
+  attacker is needed to reach it; an on-path attacker who drops challenges can
+  farm the pairs. netcode was accidentally immune here because its server
+  sequence was global and monotonic, which is what the 2^63 convention bought;
+  removing that convention removed the accident with it.*
+* Otherwise add an encryption mapping for the source address and port, holding
+  the derived keys, the connection salt, the client id and the user data. It
+  expires after _timeout_ seconds without traffic, or if the connection is not
+  established within _timeout_ seconds. If it cannot be added, ignore the packet.
 * Respond with a _connection challenge packet_ carrying a freshly computed
   cookie.
 
