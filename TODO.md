@@ -63,13 +63,19 @@ land. The milestone view is issue #28; this file is the live ordering.
   material, proven byte by byte. Sweep enforces the two deadlines with their
   counters: handshake deadline never refreshed, idle refreshed by traffic,
   established ignores the handshake deadline.
+- Server request path: the full ladder as flat early-return functions (the
+  post-open half its own function, the scrub in one place, zero gotos), a
+  debug log at every counter site, the slot view as hooks. Tests: the happy
+  path completes the client's whole side from wire bytes alone and matches
+  the mapping's keys; byte-identical resend; every refusal asserts its exact
+  reason + arrival with all other counters untouched; the no-slots denied
+  opens client-side; mapping-table-full counts reason + rollup; a
+  cross-address replay refused after one hash. Negative control run: broke
+  the expire check, suite went red, restored. Spec's ladder gained the
+  zero-timeout bullet and the counter table matched to implementation order.
 
 ## TODO
 
-- Server request path: the ordered list check by check over the encryption
-  mapping, used-token history, admitted-token set; one negative test per
-  check asserting its reason counter AND the arrival counter; the stored
-  challenge resend; the handshake deadline and idle deadline, separately.
 - Challenge and response, client state machine: monotonic climb 1-4, per-type
   client processing, temporaries committed only on successful open, every
   packet loss walked.
