@@ -62,6 +62,11 @@ Hall. Two-for-one.
   created. The data passed in to the client on connect is a string that may
   not conform to an IP address — more like a base64 token or something. TBD.
 
+* IPv6, designed in properly from day one: a server listens on both IPv4
+  and IPv6 addresses, and clients connect over either family. A reasonable
+  upgrade in 2026 — netcode ended up being patched to support this;
+  RocketNet does not repeat that.
+
 * Excluded: the greater network next 2.0 visions — relay networks, network
   acceleration, DDoS protection. Dean doesn't want them. If we ever want
   them later, they are brought in as a new transport.
