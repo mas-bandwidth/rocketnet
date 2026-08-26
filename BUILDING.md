@@ -1,29 +1,35 @@
-# Building RocketNet
+# Building rocketnet
 
-RocketNet builds on Linux and macOS with CMake, driven by the Makefile:
+rocketnet builds on Linux and macOS with CMake, driven by the Makefile:
 
     make
 
-The library, tests and examples land in `dist/`. Run the test suite with:
+Binaries and libraries land in `dist/`. Run the test suite with:
 
-    make test
+    ./dist/test
 
-Windows joins when the Windows platform leg is exercised for real.
+On Linux the build links the XDP dataplane, so it needs the dev packages CI installs:
 
-## Floating point: RocketNet builds with -ffp-contract=off
+    sudo apt install cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+
+The embedded XDP programs (`lib/proton`, `cmd/server_xdp`) are packed as source tarballs by
+the build and compile later on the target kernel, which needs BTF; they are not compiled by
+`make` here.
+
+## Floating point: rocketnet builds with -ffp-contract=off
 
 Estate policy for mas-bandwidth network libraries: builds are strict about floating point
 contraction. This build sets the right flag on every target, so nothing is required of you to
-build RocketNet itself:
+build rocketnet itself:
 
   - GCC/Clang: `-ffp-contract=off`. Not merely the absence of `-ffast-math` — GCC's default
     is `-ffp-contract=fast`, which contracts across statement boundaries, and clang's default
     `=on` still fuses within a single expression.
   - MSVC: `/fp:precise`.
 
-RocketNet's floats are connection config and stats, so no flag is required of consumers for
-correct wire bytes today. The strict build is the family floor: contraction is
+rocketnet's float wire encoding is a bit copy (no arithmetic), so no flag is required of consumers
+for correct wire bytes today. The strict build is the family floor: contraction is
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
-compile RocketNet's sources into your own build rather than linking the library, carry the
-same flag.
+compile rocketnet's sources into your own build rather than linking the library, carry the same
+flag.

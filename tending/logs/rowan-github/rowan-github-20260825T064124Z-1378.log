@@ -1,0 +1,3 @@
+2026-08-25T06:41:24Z info  log: /Users/glenn/rowan-working/rocketnet/tending/logs/rowan-github/rowan-github-20260825T064124Z-1378.log
+2026-08-25T06:41:24Z info  argv: pr merge 1 --squash --delete-branch
+2026-08-25T06:41:34Z info  rowan-github: gh pr merge 1 --squash --delete-branch -> exit 0

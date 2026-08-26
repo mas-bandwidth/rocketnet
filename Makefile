@@ -3,10 +3,6 @@
 build: build/Makefile
 	cd build && make -j --no-print-directory
 
-.PHONY: test
-test: build
-	./dist/test
-
 .PHONY: clean
 clean: build/Makefile
 	cd build && make clean --no-print-directory
