@@ -1238,6 +1238,89 @@ void rocketnet_test_sequence_reconstruction()
     rocketnet_check( rocketnet_reconstruct_sequence( 0, 0x17FFFFFFFULL ) == 0x200000000ULL );
 }
 
+void rocketnet_test_cookie()
+{
+    // the vector: client source 198.51.100.7:56789, the vector salt and
+    // cookie key, expire = create + 3. the input encoding and the mac must
+    // both reproduce Appendix A exactly.
+    struct rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
+    uint8_t input[ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES];
+    int input_bytes = rocketnet_write_cookie_mac_input( input, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3 );
+    rocketnet_check( input_bytes == ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES );
+    rocketnet_check( memcmp( input, rocketnet_test_cookie_mac_input, ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES ) == 0 );
+
+    uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES];
+    rocketnet_check( rocketnet_generate_cookie_mac( mac, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( mac, rocketnet_test_cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
+
+    // a valid, unexpired cookie field passes the gate
+    uint8_t cookie_field[ROCKETNET_COOKIE_FIELD_BYTES];
+    uint8_t * p = cookie_field;
+    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 3 );
+    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
+    rocketnet_check( rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: the ordinary first request -- an all-zero field -- is refused
+    uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, zero_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: expired at exactly its timestamp, and after it
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key, NULL ) );
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS + 100, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: a different source address or port is refused -- the cookie
+    // proves receipt at one address, not a bearer right
+    struct rocketnet_address_t other_address;
+    rocketnet_check( rocketnet_address_parse( &other_address, "198.51.100.8:56789" ) );
+    rocketnet_check( !rocketnet_validate_cookie( &other_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+    rocketnet_check( rocketnet_address_parse( &other_address, "198.51.100.7:56790" ) );
+    rocketnet_check( !rocketnet_validate_cookie( &other_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: a different salt is refused -- an injected cookie cannot be
+    // made usable for another attempt
+    const uint8_t other_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, other_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: a tampered expire is refused -- it is inside the mac, so a
+    // client cannot extend its own cookie
+    uint8_t extended_field[ROCKETNET_COOKIE_FIELD_BYTES];
+    p = extended_field;
+    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 1000 );
+    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, extended_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+
+    // NEGATIVE: a flipped mac byte is refused
+    cookie_field[8] ^= 1;
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+    cookie_field[8] ^= 1;
+
+    // rotation: a cookie under the previous key is accepted for one period,
+    // refused once that key is gone, and two wrong keys refuse
+    uint8_t new_key[ROCKETNET_COOKIE_KEY_BYTES];
+    memset( new_key, 0x77, sizeof(new_key) );
+    rocketnet_check( rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, rocketnet_test_cookie_key ) );
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, NULL ) );
+    uint8_t another_key[ROCKETNET_COOKIE_KEY_BYTES];
+    memset( another_key, 0x88, sizeof(another_key) );
+    rocketnet_check( !rocketnet_validate_cookie( &client_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, new_key, another_key ) );
+
+    // an ipv6 source encodes at the ipv6 length with family 2, group bytes
+    // little-endian, and round trips through generate and validate
+    struct rocketnet_address_t ipv6_address;
+    rocketnet_check( rocketnet_address_parse( &ipv6_address, "[2001:db8::7]:56789" ) );
+    input_bytes = rocketnet_write_cookie_mac_input( input, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3 );
+    rocketnet_check( input_bytes == ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES );
+    rocketnet_check( input[0] == 2 );
+    rocketnet_check( input[1] == 0x01 && input[2] == 0x20 );   // group 2001 little-endian
+    rocketnet_check( rocketnet_generate_cookie_mac( mac, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    p = cookie_field;
+    rocketnet_write_uint64( &p, ROCKETNET_TEST_CREATE_TS + 3 );
+    rocketnet_write_bytes( &p, mac, ROCKETNET_COOKIE_MAC_BYTES );
+    rocketnet_check( rocketnet_validate_cookie( &ipv6_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -1871,6 +1954,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_sealed_packet_refusals );
         RUN_TEST( test_unsealed_packets );
         RUN_TEST( test_sequence_reconstruction );
+        RUN_TEST( test_cookie );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
