@@ -622,6 +622,15 @@ slot. It is a cookie, not an encrypted token.
                                                     ‖ cookie expire,
                                      server cookie key )
 
+**The cookie MAC MUST be a keyed construction, and the key MUST be passed as the
+key.** `crypto_generichash` with the cookie key in its key parameter is BLAKE2b's
+keyed mode, which is safe. What must never be substituted is a bare hash of the
+key followed by the message under a Merkle-Damgård function — `SHA256(key ‖
+message)` and its relatives are extendable without the key, which is the whole
+reason HMAC exists. This is written down because the substitution is the natural
+one for someone later reaching for a familiar hash, and it would reintroduce a
+weakness this protocol does not currently have.
+
 The connection salt is in the input so a cookie belongs to one connection
 attempt rather than being a bearer token for an address and client id over its
 whole lifetime. It costs nothing and it narrows what a captured cookie is worth.
