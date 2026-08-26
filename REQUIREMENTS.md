@@ -29,6 +29,17 @@ Hall. Two-for-one.
   No C++ types cross that surface. C# is the first consumer, not the only
   one it is shaped for.
 
+* Development works out of the box, with no backend, no configuration and no
+  copying keys between machines. Run the server, point the client at its
+  address, connected. This is achieved with published test keys — both the
+  backend signing keypair and the server key exchange keypair are fixed values
+  printed in the standard — so the default path is the working path. The
+  security comes from the keys being public rather than from a flag being off:
+  a deployment that ships with them has an authorization system anyone can
+  forge, which fails loudly, where a mode flag that disables checks fails
+  silently. Nothing else is relaxed; the development path runs the same
+  handshake, sealing and replay protection that ships.
+
 * Example backend code, in Go and C#, for creating connect tokens. That is
   the backend integration story: a customer runs their own backend, and
   minting a token is the only thing it has to do for us. Go needs no

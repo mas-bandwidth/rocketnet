@@ -547,19 +547,31 @@ terminating null.
 
     handshake client to server = crypto_generichash(
                                      32 bytes,
-                                     salt ‖ server nonce ‖ "RKTNHNDC",
+                                     salt ‖ session nonce ‖ "RKTNHNDC",
                                      key = token c2s key )
 
     handshake server to client = crypto_generichash(
                                      32 bytes,
-                                     salt ‖ server nonce ‖ "RKTNHNDS",
+                                     salt ‖ session nonce ‖ "RKTNHNDS",
                                      key = token s2c key )
 
-**Both sides contribute, and that is what makes a repeated key impossible.** The
-client's salt is chosen per attempt; the server's nonce is chosen per cookie and
-never repeats within a run. A key therefore cannot recur unless the server
-reissues a nonce, which it must not, and no sequence reset can produce a repeated
-(key, nonce) pair however the mapping's lifecycle behaves.
+**Both sides contribute, and the server's contribution is chosen at the moment
+the mapping is created.** The client's salt is chosen per attempt; the server's
+**session nonce** is a fresh random 64-bit value generated when it creates the
+encryption mapping, and sent in the clear in the challenge so the client can
+derive with it.
+
+*Choosing it at mapping-creation time rather than earlier is what makes the
+guarantee hold, and an earlier draft got this wrong in a way worth recording.*
+That draft had the server issue its nonce with the cookie. But a cookie is
+replayable for its lifetime, so an attacker could present one nonce, cause the
+mapping to be replaced by presenting a second, then replay the first — producing
+a second mapping with the same derived keys and the sending sequence reset to
+zero, which is a repeated (key, nonce) pair. The same reasoning applied across a
+restart. Binding the nonce to the creation of the mapping removes the whole
+class: a mapping is created once, gets one nonce, and a nonce a server has used
+is never reachable again, so no lifecycle path — replacement, eviction, expiry,
+rebuild, restart — can recreate a key whose sequence has been reset.
 
 *An earlier draft derived these from the salt alone, and it was wrong in a way
 worth recording, because the mistake is natural. With only the client
@@ -587,14 +599,14 @@ and derive:
                                    32 bytes,
                                    shared ‖ client ephemeral public
                                           ‖ server ephemeral public
-                                          ‖ salt ‖ server nonce ‖ "RKTNSESC",
+                                          ‖ salt ‖ session nonce ‖ "RKTNSESC",
                                    key = token c2s key )
 
     session server to client = crypto_generichash(
                                    32 bytes,
                                    shared ‖ client ephemeral public
                                           ‖ server ephemeral public
-                                          ‖ salt ‖ server nonce ‖ "RKTNSESS",
+                                          ‖ salt ‖ session nonce ‖ "RKTNSESS",
                                    key = token s2c key )
 
 Both ephemeral public keys are in the hash, not only the shared secret they
@@ -750,13 +762,13 @@ packet type. The type byte carries the type and nothing else.
 
 The connection request (0) is not sealed. After the prefilter header:
 
-    [return cookie] (32 bytes)          // zero if the client holds none
+    [return cookie] (24 bytes)          // expire and MAC; zero if none held
     [connection salt] (8 bytes)         // client-generated, this attempt
     [client ephemeral public key] (32 bytes)
     [signed connect data] (576 bytes)   // from the token, verbatim
     [signature] (64 bytes)              // from the token, verbatim
 
-A fixed 712 bytes after the prefilter header, 716 bytes on the wire.
+A fixed 704 bytes after the prefilter header, 708 bytes on the wire.
 
 The connection salt and the client ephemeral public key sit outside the
 signature, because the backend fixed the signed data when it issued the token
@@ -775,33 +787,23 @@ The connection cookie (7) is **not sealed**, because the server sends it before
 doing any work that would give it a key, and before allocating any state at all:
 
     [connection salt] (8 bytes)         // echoed from the request, in the clear
-    [server nonce] (8 bytes)            // never repeats within a server run
     [cookie expire timestamp] (uint64)
     [cookie mac] (16 bytes)
 
-40 bytes after the prefilter header, 44 on the wire — far smaller than the
+32 bytes after the prefilter header, 36 on the wire — far smaller than the
 716-byte request that provoked it.
 
     cookie mac = crypto_generichash( 16 bytes,
-                                     client address ‖ connection salt
-                                          ‖ server nonce ‖ expire,
+                                     client address ‖ connection salt ‖ expire,
                                      server cookie key )
 
-The **server nonce** is the server's contribution to key derivation, and it is
-the reason this packet exists in the key schedule rather than only in address
-validation. **A server MUST NOT issue the same nonce twice, and the requirement spans
-restarts rather than runs.** A random 64-bit value satisfies this and is the
-recommended implementation. A counter does **not**, unless it is seeded from
-persistent state or from randomness at start: a counter beginning at zero on
-every start reissues the same nonces after a restart, and a client replaying an
-unexpired token would then meet identical handshake keys with the sending
-sequence beginning again at zero — which is netcode's restart hazard, reached by
-the very mechanism introduced to remove it. Its purpose is
-explained under _Per-connection keys_.
+The cookie proves only that the client can receive at the address it claimed.
+It carries no key material and no key-schedule input; see _Per-connection keys_
+for where the server makes its contribution.
 
-A client that receives one stores its last 32 bytes — the server nonce, the
-expire timestamp and the MAC, but not the echoed salt, which the request already
-carries in its own field — and puts them in the return cookie field of every subsequent request in this attempt.
+A client that receives one stores its last 24 bytes — the expire timestamp and
+the MAC, but not the echoed salt, which the request already carries in its own
+field — and puts them in the return cookie field of every subsequent request in this attempt.
 
 **A cookie packet does not provoke a reply.** A client that receives one stores
 it and includes it in its next *scheduled* request; it MUST NOT send a request
@@ -840,6 +842,19 @@ _connection denied_: no data.
 _connection challenge_:
 
     [server ephemeral public key] (32 bytes)
+
+The challenge is preceded, in the clear and outside the sealed data, by the
+**session nonce** the server chose for this mapping:
+
+    [prefilter header] (4 bytes)
+    [sequence number] (4 bytes)
+    [session nonce] (8 bytes)           // in the clear; the key-schedule input
+    [sealed data] (48 bytes)            // 32 + 16
+
+64 bytes on the wire. It is in the clear because the client needs it to derive
+the key that opens the sealed part, and it needs no confidentiality: altering it
+in flight makes the client derive a different key, the open fails, and the
+handshake stops. Nothing is exposed and nothing is accepted.
 
 _connection response_:
 
@@ -1251,7 +1266,7 @@ amplification is not a threat.
 
 In this exact order, on a _connection request packet_:
 
-* If the packet, less the prefilter header, is not 712 bytes, ignore it.
+* If the packet, less the prefilter header, is not 704 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
 * If the version is not 0x4E7C1A93, ignore it.
@@ -1263,7 +1278,7 @@ In this exact order, on a _connection request packet_:
 * If the server public key in the signed data is not one this server holds,
   ignore it.
 * **Recompute the cookie MAC** from this packet's source address, its connection
-  salt, and the server nonce and expire timestamp in its return cookie field, and
+  salt, and the expire timestamp in its return cookie field, and
   compare in constant time. If the field is zero, the MAC does not match, or the
   cookie has expired, respond with a _connection cookie packet_ and stop. One
   keyed hash, no asymmetric work, and no state allocated.
@@ -1300,6 +1315,9 @@ In this exact order, on a _connection request packet_:
 * Record the token identifier with this source address and port in the used-token
   history.
 
+* **Generate a fresh random 64-bit session nonce for this mapping.** It is
+  never reused, and because it is chosen here rather than at cookie time, no
+  replayed cookie can cause a key to recur.
 * **Compute `shared = crypto_scalarmult( server ephemeral secret, client
   ephemeral public )`. If it returns non-zero, ignore the packet.** libsodium
   returns an error for a small-order peer key, and this check must happen here —
@@ -1307,7 +1325,8 @@ In this exact order, on a _connection request packet_:
   obtains a mapping. This is the third asymmetric operation on this path and it
   is deliberately after both the cookie and the signature verification.
 * Derive the four per-connection keys: the two handshake keys from the token
-  keys, the salt and the server nonce; the two session keys from those plus the
+  keys, the salt and the session nonce just generated; the two session keys from
+  those plus the
   shared secret and both ephemeral public keys.
 * **Erase the shared secret**, and the server's ephemeral secret if it is not
   being reused across a rotation window, as soon as the four keys exist.
@@ -1317,7 +1336,7 @@ In this exact order, on a _connection request packet_:
   packet is sealed, and before this point no keys exist to seal it with.*
 
 * Add an encryption mapping for the source address and port, holding the four
-  derived keys, the connection salt, the server nonce, the server ephemeral
+  derived keys, the connection salt, the session nonce, the server ephemeral
   public key, the challenge packet as sent, the client id, the user data, and
   the sending sequence and replay state for both key phases. It
   expires after _timeout_ seconds without traffic, or if the connection is not
@@ -1359,6 +1378,67 @@ only data already verified.
 Client slots, the client index, the confirmed flag, keep-alive prefixing until
 confirmation, payload delivery both ways, redundant disconnect packets, and slot
 reset on timeout or disconnect are all netcode 1.02.
+
+## Development without a backend
+
+A developer's first use of this protocol is a server on a box with a public
+address and a client pointed at it. **That must work with no backend, no
+configuration and no copying of keys between machines**, because every hoop
+between downloading the library and seeing a connection is paid by every
+customer, forever, and first impressions of a transport are formed in the first
+ten minutes.
+
+Two things stand in the way of the obvious flow, and both are key distribution.
+A token must be signed by a backend the server trusts, and it must be sealed to
+the server's own public key — so a naive development story is "run a keygen,
+copy the backend public key to the server, copy the server public key to
+whatever mints your token, then start both." That is four steps and two file
+copies before a single packet moves.
+
+**Both keys are therefore published in this standard as fixed test values:** a
+test backend Ed25519 keypair, including its secret half, and a test server
+X25519 keypair, including its secret half. Their values are given in the
+reference implementation and are identical for everyone.
+
+That reduces development to what it should be:
+
+    ./server                       # uses the test server keypair
+    ./client 203.0.113.10:40000    # mints its own token, sealed to it
+
+The client mints a token locally with the published backend secret key, naming
+the address it was given, and seals it to the published server key. No backend
+runs, nothing is generated, nothing is copied.
+
+**The safety property is that the keys are public, not that a flag is off**, and
+that distinction is the whole design. A mode flag that disables checks behaves
+identically in development and in production, so nothing fails when it ships by
+accident — the bug is discovered by an attacker. Published keys fail in exactly
+the right direction: a deployment that leaves them enabled has an authorization
+system every one of its players can forge, which is not a subtle condition, and
+any adversarial look finds it immediately. There is no state in which the test
+keys are quietly load-bearing.
+
+The rules that keep it that way:
+
+* A server MUST NOT accept the test backend key unless explicitly configured to,
+  MUST NOT have that configuration as its default, and SHOULD warn on every
+  start where it is enabled.
+* A server MUST NOT use the test server keypair unless explicitly configured to,
+  under the same conditions.
+* An implementation SHOULD refuse both in a build configured for release, and
+  SHOULD make that refusal impossible to override with configuration alone.
+
+**Nothing else is relaxed, and that is the point.** The handshake, the cookie
+exchange, the address validation, the sealing, the key derivation, the replay
+protection and the erasure requirements all run exactly as specified. A
+development server is a real server that trusts a public signing key, so the
+code path exercised on a laptop is the code path that ships. This document asks
+transports elsewhere not to have defences that only run under attack; the same
+principle applies to itself.
+
+*Compare netcode's negative `timeout seconds`, which disables timeouts entirely
+and is marked "dev only" by a comment. A value that turns a protection off is
+exactly the shape this section avoids.*
 
 ## Security baseline: never weaker than netcode 1.02
 
