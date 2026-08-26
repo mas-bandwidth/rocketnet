@@ -40,6 +40,10 @@ land. The milestone view is issue #28; this file is the live ordering.
   expired, from another address or port, for another salt, extended, or
   tampered; rotation accepts the previous key for one period; ipv6 encoding
   proven little-endian.
+- Per-connection keys: rocketnet_keys as its own aspect; both sides derive
+  the vector keys from their own halves and agree; handshake-only derivation
+  for the pre-ephemeral client; small-order refusal fatal to the whole
+  derivation; secrets zeroed before return.
 
 ## TODO
 

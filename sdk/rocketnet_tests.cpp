@@ -20,6 +20,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
+#include "rocketnet_keys.h"
 
 #include <sodium.h>
 
@@ -1321,6 +1322,60 @@ void rocketnet_test_cookie()
     rocketnet_check( rocketnet_validate_cookie( &ipv6_address, rocketnet_test_salt, cookie_field, ROCKETNET_TEST_CREATE_TS, rocketnet_test_cookie_key, NULL ) );
 }
 
+void rocketnet_test_connection_keys()
+{
+    // both sides derive, from their own halves, exactly the four keys the
+    // vectors publish -- and they agree with each other
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_check( rocketnet_derive_connection_keys( &client_keys,
+                                                       rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                                       rocketnet_test_salt, rocketnet_test_session_nonce,
+                                                       rocketnet_test_client_eph_secret, rocketnet_test_server_eph_public,
+                                                       rocketnet_test_client_eph_public, rocketnet_test_server_eph_public ) );
+
+    struct rocketnet_connection_keys_t server_keys;
+    rocketnet_check( rocketnet_derive_connection_keys( &server_keys,
+                                                       rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                                       rocketnet_test_salt, rocketnet_test_session_nonce,
+                                                       rocketnet_test_server_eph_secret, rocketnet_test_client_eph_public,
+                                                       rocketnet_test_client_eph_public, rocketnet_test_server_eph_public ) );
+
+    rocketnet_check( memcmp( client_keys.handshake_client_to_server, rocketnet_test_handshake_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( client_keys.handshake_server_to_client, rocketnet_test_handshake_s2c_key, 32 ) == 0 );
+    rocketnet_check( memcmp( client_keys.session_client_to_server, rocketnet_test_session_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( client_keys.session_server_to_client, rocketnet_test_session_s2c_key, 32 ) == 0 );
+    rocketnet_check( memcmp( &client_keys, &server_keys, sizeof(client_keys) ) == 0 );
+
+    // the handshake-only derivation matches the full one, so a client can
+    // open a challenge before any ephemeral work
+    struct rocketnet_connection_keys_t handshake_only;
+    memset( &handshake_only, 0, sizeof(handshake_only) );
+    rocketnet_derive_handshake_keys( &handshake_only,
+                                     rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                     rocketnet_test_salt, rocketnet_test_session_nonce );
+    rocketnet_check( memcmp( handshake_only.handshake_client_to_server, rocketnet_test_handshake_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( handshake_only.handshake_server_to_client, rocketnet_test_handshake_s2c_key, 32 ) == 0 );
+
+    // a different salt or nonce changes every derived key: keys are per
+    // connection by construction
+    struct rocketnet_connection_keys_t other;
+    const uint8_t other_salt[8] = { 9, 9, 9, 9, 9, 9, 9, 9 };
+    rocketnet_derive_handshake_keys( &other, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key, other_salt, rocketnet_test_session_nonce );
+    rocketnet_check( memcmp( other.handshake_client_to_server, rocketnet_test_handshake_c2s_key, 32 ) != 0 );
+    rocketnet_check( memcmp( other.handshake_server_to_client, rocketnet_test_handshake_s2c_key, 32 ) != 0 );
+    const uint8_t other_nonce[8] = { 8, 8, 8, 8, 8, 8, 8, 8 };
+    rocketnet_derive_handshake_keys( &other, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key, rocketnet_test_salt, other_nonce );
+    rocketnet_check( memcmp( other.handshake_client_to_server, rocketnet_test_handshake_c2s_key, 32 ) != 0 );
+
+    // NEGATIVE: a small-order peer ephemeral refuses the whole derivation
+    const uint8_t zero_point[32] = { 0 };
+    rocketnet_check( !rocketnet_derive_connection_keys( &other,
+                                                        rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                                        rocketnet_test_salt, rocketnet_test_session_nonce,
+                                                        rocketnet_test_client_eph_secret, zero_point,
+                                                        rocketnet_test_client_eph_public, rocketnet_test_server_eph_public ) );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -1955,6 +2010,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_unsealed_packets );
         RUN_TEST( test_sequence_reconstruction );
         RUN_TEST( test_cookie );
+        RUN_TEST( test_connection_keys );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
