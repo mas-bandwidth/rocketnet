@@ -152,4 +152,44 @@ void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
 
 uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened );
 
+// The cookie: address validation before any asymmetric work. The MAC is a
+// 16-byte keyed generichash over the exact input encoding from the standard:
+// family byte, the address bytes as the token encodes them, the port
+// little-endian, then the connection salt and the cookie expire timestamp.
+
+#define ROCKETNET_COOKIE_KEY_BYTES              32
+#define ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES   23
+#define ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES   35
+
+struct rocketnet_address_t;
+
+// returns the input length written, or 0 for an address that is not IPv4 or IPv6
+
+int rocketnet_write_cookie_mac_input( uint8_t * input,
+                                      const struct rocketnet_address_t * address,
+                                      const uint8_t * connection_salt,
+                                      uint64_t cookie_expire_timestamp );
+
+// returns 1 and writes the 16-byte mac, or 0 for a bad address family
+
+int rocketnet_generate_cookie_mac( uint8_t * mac,
+                                   const struct rocketnet_address_t * address,
+                                   const uint8_t * connection_salt,
+                                   uint64_t cookie_expire_timestamp,
+                                   const uint8_t * cookie_key );
+
+// Validates the 24-byte return cookie field from a connection request --
+// expire timestamp then mac -- against the request's source address and salt.
+// Accepts under the current key or, when provided, the previous key, so a key
+// rotation does not fail connections in flight. The comparison is constant
+// time. Returns 1 to proceed past the cookie gate, 0 to answer with a fresh
+// cookie packet.
+
+int rocketnet_validate_cookie( const struct rocketnet_address_t * address,
+                               const uint8_t * connection_salt,
+                               const uint8_t * cookie_field,
+                               uint64_t current_timestamp,
+                               const uint8_t * cookie_key,
+                               const uint8_t * previous_cookie_key );
+
 #endif // #ifndef ROCKETNET_PROTOCOL_H

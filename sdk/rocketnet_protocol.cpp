@@ -7,6 +7,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet.h"
+#include "rocketnet_address.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -264,4 +265,97 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
     }
 
     return best;
+}
+
+int rocketnet_write_cookie_mac_input( uint8_t * input,
+                                      const struct rocketnet_address_t * address,
+                                      const uint8_t * connection_salt,
+                                      uint64_t cookie_expire_timestamp )
+{
+    rocketnet_assert( input );
+    rocketnet_assert( address );
+    rocketnet_assert( connection_salt );
+
+    uint8_t * p = input;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_write_uint8( &p, 1 );
+        rocketnet_write_bytes( &p, address->data.ipv4, 4 );
+    }
+    else if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        rocketnet_write_uint8( &p, 2 );
+        for ( int i = 0; i < 8; i++ )
+            rocketnet_write_uint16( &p, address->data.ipv6[i] );
+    }
+    else
+    {
+        return 0;
+    }
+
+    rocketnet_write_uint16( &p, address->port );
+    rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );
+    rocketnet_write_uint64( &p, cookie_expire_timestamp );
+
+    return (int) ( p - input );
+}
+
+int rocketnet_generate_cookie_mac( uint8_t * mac,
+                                   const struct rocketnet_address_t * address,
+                                   const uint8_t * connection_salt,
+                                   uint64_t cookie_expire_timestamp,
+                                   const uint8_t * cookie_key )
+{
+    rocketnet_assert( mac );
+    rocketnet_assert( cookie_key );
+
+    uint8_t input[ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES];
+    int input_bytes = rocketnet_write_cookie_mac_input( input, address, connection_salt, cookie_expire_timestamp );
+    if ( input_bytes == 0 )
+        return 0;
+
+    crypto_generichash( mac, ROCKETNET_COOKIE_MAC_BYTES, input, (size_t) input_bytes, cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+
+    return 1;
+}
+
+static int rocketnet_cookie_mac_matches( const struct rocketnet_address_t * address,
+                                         const uint8_t * connection_salt,
+                                         uint64_t cookie_expire_timestamp,
+                                         const uint8_t * cookie_mac,
+                                         const uint8_t * cookie_key )
+{
+    uint8_t expected_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    if ( !rocketnet_generate_cookie_mac( expected_mac, address, connection_salt, cookie_expire_timestamp, cookie_key ) )
+        return 0;
+    return sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0;
+}
+
+int rocketnet_validate_cookie( const struct rocketnet_address_t * address,
+                               const uint8_t * connection_salt,
+                               const uint8_t * cookie_field,
+                               uint64_t current_timestamp,
+                               const uint8_t * cookie_key,
+                               const uint8_t * previous_cookie_key )
+{
+    rocketnet_assert( address );
+    rocketnet_assert( connection_salt );
+    rocketnet_assert( cookie_field );
+    rocketnet_assert( cookie_key );
+
+    const uint8_t * p = cookie_field;
+    uint64_t cookie_expire_timestamp = rocketnet_read_uint64( &p );
+    const uint8_t * cookie_mac = p;
+
+    if ( cookie_expire_timestamp <= current_timestamp )
+        return 0;
+
+    if ( rocketnet_cookie_mac_matches( address, connection_salt, cookie_expire_timestamp, cookie_mac, cookie_key ) )
+        return 1;
+
+    if ( previous_cookie_key && rocketnet_cookie_mac_matches( address, connection_salt, cookie_expire_timestamp, cookie_mac, previous_cookie_key ) )
+        return 1;
+
+    return 0;
 }

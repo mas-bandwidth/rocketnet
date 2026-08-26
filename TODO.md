@@ -35,11 +35,14 @@ land. The milestone view is issue #28; this file is the live ordering.
   and sequence reconstruction with the tie rule; every per-type vector and
   both assembled vectors matched byte for byte; refusals per input including
   zero sequence, type-swap via AD, and truncation at every cut.
+- Cookie: the exact input encoding and mac locked to Appendix A; validate as
+  an early-return gate with constant-time compare; refused when zero,
+  expired, from another address or port, for another salt, extended, or
+  tampered; rotation accepts the previous key for one period; ipv6 encoding
+  proven little-endian.
 
 ## TODO
 
-- Cookie: MAC with the exact 7/19-byte address input, generate/validate,
-  expiry, rotation overlap, Appendix A vector match.
 - Counters framework: lands HERE, with its first real users — one counter per
   distinct rejection reason, arrival counted separately, monotonic, never
   reset; check_counter/check_no_counter test helpers. (Deliberately not
