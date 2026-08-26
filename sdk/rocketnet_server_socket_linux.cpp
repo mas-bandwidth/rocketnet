@@ -643,7 +643,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         pclose( file );
     }
 
-    // load the client_backend_xdp program and attach it to the network interface
+    // load the server_xdp program and attach it to the network interface
 
     rocketnet_info( "loading server_xdp..." );
 

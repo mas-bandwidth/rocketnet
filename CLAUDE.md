@@ -33,8 +33,7 @@ XDP or portable. Any third implementation drops into that same seam.
 
 **Owns:** socket lifecycle and tuning, threads/time, `rocketnet_address_t`, the
 18-byte `{type, pittle, chonkle}` prefix, packet buffering and batching, the
-whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives,
-two token formats.
+whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives.
 
 **Leaves to the caller:** serialization and bit packing (absolutely — this is
 the design), reliability, acks, sequencing, fragmentation, payload encryption,
@@ -42,19 +41,20 @@ handshake, keepalives, DNS, and on the direct path all connection semantics.
 `rocketnet_server_socket_t` has no client table; `ROCKETNET_MAX_CLIENTS` is only an
 array-sizing constant.
 
-## Current state: direct path only, deliberately
+## Current state: direct mode only, by ruling
 
-`direct = true` is the live path today, and that is a staging decision, not an
-oversight — the full connected path across relays and multipath comes back in
-time. So the `#if 0` regions (`rocketnet_header.h` entirely, the connect-token path
-in `rocketnet_client_socket_create`, the empty `process_packet_internal` stubs) are
-scaffolding for work that is planned, and should not be read as dead code to
-delete.
+Direct mode is the library: a client connects to a server address and
+exchanges raw packets. The network next era machinery — client_backend, both
+token formats, the multi-backend init race — was excised on Glenn's 2026-08-26
+ruling (issue #6); flow's repo preserves all of it. The whitelist control
+plane and node architecture that eventually replace it are recorded on issue
+#2 and are not present in this codebase yet.
 
-Practical consequence while that holds: a direct client is `CONNECTED` at
-create time before a byte moves, and the server has no notion of a client at
-all — the game does its own connect tokens, challenge tokens, encryption
-manager and message sender/receiver on top.
+Practical consequence today: a direct client is `CONNECTED` at create time
+before a byte moves, and the server has no notion of a client at all. That is
+the security hole issue #6 exists to fix: a netcode-style two-RTT handshake,
+per-session keys, sealed packets, and a server-side client table are the next
+construction.
 
 ## The scaling story, in one paragraph
 

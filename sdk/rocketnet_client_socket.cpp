@@ -1,5 +1,5 @@
 /*
-    RocketNet. Copyright 2026 Más Bandwidth LLC.  
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 */
 
@@ -7,26 +7,12 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_packet_filter.h"
-#include "rocketnet_connect_token.h"
-#include "rocketnet_client_backend_token.h"
 #include "rocketnet_packets.h"
-#include "rocketnet_platform.h"
 
 #include <memory.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <atomic>
-
-struct rocketnet_client_socket_backend_init_data_t
-{
-    double rocketnet_update_time;
-    uint64_t request_id;
-    uint64_t ping_sequence;
-    uint64_t pong_sequence;
-    bool initialized;
-    int num_pongs_received;
-    rocketnet_client_backend_token_t backend_token;
-};
 
 struct rocketnet_client_socket_receive_buffer_t
 {
@@ -54,21 +40,7 @@ struct rocketnet_client_socket_t
 
     uint16_t bound_port;
 
-    bool direct;
-    rocketnet_address_t direct_address;
-
-    double init_start_time;
-    rocketnet_connect_token_t connect_token;
-    rocketnet_client_socket_backend_init_data_t backend_init_data[ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS];
-
-    double last_refresh_backend_token_time;
-    double last_request_backend_token_refresh_time;
-    uint64_t refresh_backend_token_request_id;
-
-    rocketnet_address_t client_backend_address;
-    rocketnet_client_backend_token_t backend_token;
-    uint64_t rocketnet_id;
-    uint64_t server_id;
+    rocketnet_address_t server_address;
 
     rocketnet_platform_socket_t * socket;
 
@@ -81,11 +53,6 @@ struct rocketnet_client_socket_t
     rocketnet_client_socket_received_packets_t received_packets;
     rocketnet_client_socket_receive_buffer_t receive_buffer[2];
 };
-
-void rocketnet_client_socket_init_timed_out( rocketnet_client_socket_t * client_socket )
-{
-    rocketnet_warn( "client init timed out" );
-}
 
 void rocketnet_client_socket_connection_timed_out( rocketnet_client_socket_t * client_socket )
 {
@@ -114,52 +81,15 @@ rocketnet_client_socket_t * rocketnet_client_socket_create( void * context, cons
         connect_address_string = connect_address_env;
     }
 
-    rocketnet_connect_token_t connect_token;
-    memset( &connect_token, 0, sizeof(connect_token) );
-
-    bool direct = false;
-    rocketnet_address_t direct_address;
-    if ( rocketnet_address_parse( &direct_address, connect_address_string ) )
+    rocketnet_address_t server_address;
+    if ( !rocketnet_address_parse( &server_address, connect_address_string ) )
     {
-        direct = true;
-        char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-        rocketnet_info( "client direct connection to %s", rocketnet_address_to_string( &direct_address, string_buffer ) );
+        rocketnet_error( "client could not parse connect address" );
+        return NULL;
     }
-    else
-    {
-        // todo: put the public key in in the client config or stash it in the connect token as base64?
-#if 0
 
-        rocketnet_info( "secure connection via connect token" );
-
-        if ( !rocketnet_read_connect_token( &connect_token, connect_token_string, buyer_public_key ) )
-        {
-            rocketnet_error( "connect token is invalid" );
-            return NULL;
-        }
-
-        int num_backends_found = 0;
-        for ( int i = 0; i < ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS; i++ )
-        {
-            if ( connect_token.backend_addresses[i] != 0 )
-            {
-                num_backends_found++;
-            }
-        }
-
-        if ( num_backends_found == 0 )
-        {
-            rocketnet_error( "no backends found in connect token" );
-            return NULL;
-        }
-
-        if ( connect_token.pings_per_second == 0 )
-        {
-            rocketnet_error( "pings per-second is zero in connect token" );
-            return NULL;
-        }
-#endif // #if 0
-    }
+    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &server_address, string_buffer ) );
 
     rocketnet_client_socket_t * client_socket = (rocketnet_client_socket_t*) rocketnet_malloc( context, sizeof(rocketnet_client_socket_t) );
     if ( !client_socket )
@@ -169,7 +99,7 @@ rocketnet_client_socket_t * rocketnet_client_socket_create( void * context, cons
     }
 
     memset( (char*) client_socket, 0, sizeof(rocketnet_client_socket_t) );
-    
+
     const uint64_t current_time = rocketnet_platform_time();
 
     client_socket->context = context;
@@ -210,22 +140,10 @@ rocketnet_client_socket_t * rocketnet_client_socket_create( void * context, cons
 
     client_socket->bound_port = bind_address.port;
 
-    if ( direct )
-    {
-        client_socket->direct = true;
-        client_socket->direct_address = direct_address;
-        client_socket->state = ROCKETNET_CLIENT_SOCKET_CONNECTED;
-        client_socket->last_packet_receive_time = current_time;
-        rocketnet_client_socket_connected( client_socket );
-    }
-    else
-    {
-        client_socket->connect_token = connect_token;
-        client_socket->state = ROCKETNET_CLIENT_SOCKET_INITIALIZING;
-        client_socket->init_start_time = current_time;
-        client_socket->last_refresh_backend_token_time = current_time;
-        client_socket->refresh_backend_token_request_id = rocketnet_random_uint64();
-    }
+    client_socket->server_address = server_address;
+    client_socket->state = ROCKETNET_CLIENT_SOCKET_CONNECTED;
+    client_socket->last_packet_receive_time = current_time;
+    rocketnet_client_socket_connected( client_socket );
 
     if ( !rocketnet_platform_mutex_create( &client_socket->mutex ) )
     {
@@ -275,7 +193,6 @@ void rocketnet_client_socket_send_packet_internal( rocketnet_client_socket_t * c
     rocketnet_address_t from_address;
     memset( &from_address, 0, sizeof(from_address) );
     from_address.type = ROCKETNET_ADDRESS_IPV4;
-    memcpy( from_address.data.ipv4, (uint8_t*) &client_socket->connect_token.client_public_address, 4 );
 
     uint8_t from_address_data[32];
     rocketnet_address_data( &from_address, from_address_data );
@@ -292,108 +209,15 @@ void rocketnet_client_socket_send_packet_internal( rocketnet_client_socket_t * c
     rocketnet_platform_socket_send_packet( client_socket->socket, to_address, packet_data, packet_bytes );
 }
 
-void rocketnet_client_socket_update_direct( rocketnet_client_socket_t * client_socket )
-{
-    if ( !client_socket->direct )
-        return;
-
-    if ( client_socket->state != ROCKETNET_CLIENT_SOCKET_INITIALIZING )
-        return;
-}
-
 void rocketnet_client_socket_update_timeout( rocketnet_client_socket_t * client_socket )
 {
-    if ( client_socket->direct )
-    {
-        if ( client_socket->last_packet_receive_time + ROCKETNET_DIRECT_TIMEOUT < rocketnet_platform_time() )
-        {
-            client_socket->state = ROCKETNET_CLIENT_SOCKET_CONNECTION_TIMED_OUT;
-            rocketnet_client_socket_connection_timed_out( client_socket );
-            return;
-        }
-    }
-    else
-    {
-        // todo: accelerated timeout
-    }
-}
-
-void rocketnet_client_socket_update_initialize( rocketnet_client_socket_t * client_socket )
-{
-    /*
-        Our strategy is to ping n client backends and accept the first backend that we init with and receive n pongs from
-        This biases us towards selecting the client backend with the lowest latency lowest packet loss for the client
-    */
-
-    if ( client_socket->direct )
+    if ( client_socket->state != ROCKETNET_CLIENT_SOCKET_CONNECTED )
         return;
 
-    if ( client_socket->state != ROCKETNET_CLIENT_SOCKET_INITIALIZING )
-        return;
-
-    double current_time = rocketnet_platform_time();
-
-    if ( client_socket->init_start_time + client_socket->connect_token.max_connect_seconds < current_time )
+    if ( client_socket->last_packet_receive_time + ROCKETNET_DIRECT_TIMEOUT < rocketnet_platform_time() )
     {
-        client_socket->state = ROCKETNET_CLIENT_SOCKET_INIT_TIMED_OUT;
-        rocketnet_client_socket_init_timed_out( client_socket );
-        return;
-    }
-
-    rocketnet_address_t from;
-    rocketnet_address_load_ipv4( &from, client_socket->connect_token.client_public_address, 0 );
-
-    for ( int i = 0; i < ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS; i++ )
-    {
-        if ( client_socket->connect_token.backend_addresses[i] == 0 )
-        {
-            continue;
-        }
-
-        if ( client_socket->backend_init_data[i].rocketnet_update_time == 0.0 )
-        {
-            client_socket->backend_init_data[i].rocketnet_update_time = current_time + rocketnet_random_float() * ( 1.0 / client_socket->connect_token.pings_per_second );
-            client_socket->backend_init_data[i].request_id = rocketnet_random_uint64();
-            continue;
-        }
-
-        if ( client_socket->backend_init_data[i].rocketnet_update_time > current_time )
-        {
-            continue;
-        }
-        
-        client_socket->backend_init_data[i].rocketnet_update_time += ( 1.0 / client_socket->connect_token.pings_per_second );            
-
-        rocketnet_address_t to;
-        rocketnet_address_load_ipv4( &to, client_socket->connect_token.backend_addresses[i], client_socket->connect_token.backend_ports[i] );
-
-        if ( !client_socket->backend_init_data[i].initialized )
-        {
-            rocketnet_client_backend_init_request_packet_t packet;
-            packet.type = ROCKETNET_PACKET_CLIENT_BACKEND_INIT_REQUEST;
-            packet.sdk_version_major = ROCKETNET_VERSION_MAJOR_INT;
-            packet.sdk_version_minor = ROCKETNET_VERSION_MINOR_INT;
-            packet.sdk_version_patch = ROCKETNET_VERSION_PATCH_INT;
-            packet.connect_token = client_socket->connect_token;
-            packet.request_id = client_socket->backend_init_data[i].request_id;
-            rocketnet_endian_fix( &packet );
-            rocketnet_client_socket_send_packet_internal( client_socket, &to, (uint8_t*) &packet, sizeof(rocketnet_client_backend_init_request_packet_t) );
-        }
-        else
-        {
-            rocketnet_info( "sent ping packet to client backend %d", i );
-
-            rocketnet_client_backend_ping_packet_t packet;
-            packet.type = ROCKETNET_PACKET_CLIENT_BACKEND_PING; 
-            packet.sdk_version_major = ROCKETNET_VERSION_MAJOR_INT;
-            packet.sdk_version_minor = ROCKETNET_VERSION_MINOR_INT;
-            packet.sdk_version_patch = ROCKETNET_VERSION_PATCH_INT;
-            packet.request_id = client_socket->backend_init_data[i].request_id;
-            packet.ping_sequence = client_socket->backend_init_data[i].ping_sequence++;
-            packet.backend_token = client_socket->backend_init_data[i].backend_token;
-            rocketnet_endian_fix( &packet );
-            rocketnet_client_socket_send_packet_internal( client_socket, &to, (uint8_t*) &packet, sizeof(rocketnet_client_backend_ping_packet_t) );
-        }
+        client_socket->state = ROCKETNET_CLIENT_SOCKET_CONNECTION_TIMED_OUT;
+        rocketnet_client_socket_connection_timed_out( client_socket );
     }
 }
 
@@ -425,142 +249,22 @@ void rocketnet_client_socket_process_packet( rocketnet_client_socket_t * client_
 
     const uint8_t packet_type = packet_data[0];
 
-    if ( client_socket->state == ROCKETNET_CLIENT_SOCKET_CONNECTED )
+    if ( client_socket->state != ROCKETNET_CLIENT_SOCKET_CONNECTED )
+        return;
+
+    if ( packet_type == ROCKETNET_PACKET_DIRECT && rocketnet_address_equal( from, &client_socket->server_address ) && packet_bytes > ROCKETNET_HEADER_BYTES )
     {
-        // common case: client is connected
+        client_socket->last_packet_receive_time = rocketnet_platform_time();
 
-        if ( packet_type == ROCKETNET_PACKET_DIRECT && rocketnet_address_equal( from, &client_socket->direct_address ) && packet_bytes > ROCKETNET_HEADER_BYTES )
+        const int index = client_socket->received_packets.num_packets;
+
+        if ( index < ROCKETNET_NUM_CLIENT_PACKETS )
         {
-            client_socket->last_packet_receive_time = rocketnet_platform_time();
-
-            const int index = client_socket->received_packets.num_packets;
-
-            if ( index < ROCKETNET_NUM_CLIENT_PACKETS )
-            {
-                client_socket->received_packets.packet_data[index] = packet_data + ROCKETNET_HEADER_BYTES;
-                client_socket->received_packets.packet_bytes[index] = packet_bytes - ROCKETNET_HEADER_BYTES;
-                client_socket->received_packets.num_packets++;
-            }
-        }
-        // todo: address check on selected client backend address?
-        else if ( packet_type == ROCKETNET_PACKET_CLIENT_BACKEND_REFRESH_TOKEN_RESPONSE && packet_bytes == sizeof(rocketnet_client_backend_refresh_token_response_packet_t) )
-        {
-            const rocketnet_client_backend_refresh_token_response_packet_t * packet = (const rocketnet_client_backend_refresh_token_response_packet_t*) packet_data;
-
-            if ( packet->request_id != client_socket->refresh_backend_token_request_id )
-                return;
-
-            rocketnet_info( "client refreshed backend token" );
-
-            client_socket->backend_token = packet->backend_token;
-            client_socket->last_refresh_backend_token_time = rocketnet_platform_time();
-            client_socket->refresh_backend_token_request_id = rocketnet_random_uint64();
+            client_socket->received_packets.packet_data[index] = packet_data + ROCKETNET_HEADER_BYTES;
+            client_socket->received_packets.packet_bytes[index] = packet_bytes - ROCKETNET_HEADER_BYTES;
+            client_socket->received_packets.num_packets++;
         }
     }
-    else if ( client_socket->state == ROCKETNET_CLIENT_SOCKET_INITIALIZING && !client_socket->direct )
-    {
-        // client is initializing with client backend
-
-        const uint32_t from_ipv4 = rocketnet_address_ipv4( from );
-        const uint16_t from_port = rocketnet_platform_htons( from->port );
-
-        if ( packet_type == ROCKETNET_PACKET_CLIENT_BACKEND_INIT_RESPONSE && packet_bytes == sizeof(rocketnet_client_backend_init_response_packet_t) )
-        {
-            rocketnet_client_backend_init_response_packet_t * packet = (rocketnet_client_backend_init_response_packet_t*) packet_data;
-
-            rocketnet_endian_fix( packet );
-
-            for ( int i = 0; i < ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS; i++ )
-            {
-                if ( client_socket->connect_token.backend_addresses[i] != from_ipv4 || client_socket->connect_token.backend_ports[i] != from_port )
-                    continue;
-
-                if ( client_socket->backend_init_data[i].initialized )
-                    break;
-
-                if ( client_socket->backend_init_data[i].request_id != packet->request_id )
-                    break;
-
-                client_socket->backend_init_data[i].initialized = true;
-                client_socket->backend_init_data[i].rocketnet_update_time = rocketnet_platform_time();
-                client_socket->backend_init_data[i].backend_token = packet->backend_token;
-
-                rocketnet_info( "initialized with client backend %d", i );
-
-                break;
-            }
-        }
-        else if ( packet_type == ROCKETNET_PACKET_CLIENT_BACKEND_PONG && packet_bytes == sizeof(rocketnet_client_backend_pong_packet_t) )
-        {
-            rocketnet_client_backend_pong_packet_t * packet = (rocketnet_client_backend_pong_packet_t*) packet_data;
-
-            rocketnet_endian_fix( packet );
-
-            for ( int i = 0; i < ROCKETNET_MAX_CONNECT_TOKEN_BACKENDS; i++ )
-            {
-                if ( client_socket->connect_token.backend_addresses[i] != from_ipv4 || client_socket->connect_token.backend_ports[i] != from_port )
-                    continue;
-
-                if ( !client_socket->backend_init_data[i].initialized )
-                    break;
-
-                if ( client_socket->backend_init_data[i].request_id != packet->request_id )
-                    break;
-
-                if ( packet->ping_sequence < client_socket->backend_init_data[i].pong_sequence )
-                    break;
-
-                rocketnet_info( "received pong from client backend %d", i );
-
-                client_socket->backend_init_data[i].pong_sequence = packet->ping_sequence + 1;
-                client_socket->backend_init_data[i].num_pongs_received++;
-
-                if ( client_socket->backend_init_data[i].num_pongs_received++ > client_socket->connect_token.pongs_before_select )
-                {
-                    // todo: we're not really connected at this point, we should transition to pinging nodes here
-
-                    client_socket->state = ROCKETNET_CLIENT_SOCKET_CONNECTED;
-                    client_socket->client_backend_address = *from;
-                    client_socket->backend_token = client_socket->backend_init_data[i].backend_token;
-
-                    rocketnet_info( "selected client backend %d", i );
-                }
-
-                break;
-            }
-        }
-    }
-}
-
-void rocketnet_client_socket_update_refresh_backend_token( rocketnet_client_socket_t * client_socket )
-{
-    if ( client_socket->direct )
-        return;
-
-    if ( client_socket->state <= ROCKETNET_CLIENT_SOCKET_INITIALIZING )
-        return;
-
-    const uint64_t current_time = rocketnet_platform_time();
-
-    if ( client_socket->last_refresh_backend_token_time + client_socket->connect_token.backend_token_refresh_seconds > current_time )
-        return;
-
-    if ( client_socket->last_request_backend_token_refresh_time + 1.0 > current_time )
-        return;
-
-    rocketnet_info( "request refresh backend token" );
-
-    rocketnet_client_backend_refresh_token_request_packet_t packet;
-    packet.type = ROCKETNET_PACKET_CLIENT_BACKEND_REFRESH_TOKEN_REQUEST;
-    packet.sdk_version_major = ROCKETNET_VERSION_MAJOR_INT;
-    packet.sdk_version_minor = ROCKETNET_VERSION_MINOR_INT;
-    packet.sdk_version_patch = ROCKETNET_VERSION_PATCH_INT;
-    packet.request_id = client_socket->refresh_backend_token_request_id;
-    packet.backend_token = client_socket->backend_token;
-    rocketnet_endian_fix( &packet );
-    rocketnet_client_socket_send_packet_internal( client_socket, &client_socket->client_backend_address, (uint8_t*) &packet, sizeof(rocketnet_client_backend_refresh_token_request_packet_t) );
-
-    client_socket->last_request_backend_token_refresh_time = current_time;
 }
 
 void rocketnet_client_socket_update_swap_receive_buffers( rocketnet_client_socket_t * client_socket )
@@ -606,12 +310,6 @@ void rocketnet_client_socket_update( rocketnet_client_socket_t * client_socket )
 
     rocketnet_client_socket_update_process_packets( client_socket );
 
-    rocketnet_client_socket_update_direct( client_socket );
-
-    rocketnet_client_socket_update_initialize( client_socket );
-
-    rocketnet_client_socket_update_refresh_backend_token( client_socket );
-
     rocketnet_client_socket_update_timeout( client_socket );
 }
 
@@ -625,21 +323,14 @@ void rocketnet_client_socket_send_packet( rocketnet_client_socket_t * client_soc
     if ( client_socket->state != ROCKETNET_CLIENT_SOCKET_CONNECTED )
         return;
 
-    if ( client_socket->direct )
-    {
-        uint8_t direct_packet_data[ROCKETNET_MAX_PACKET_BYTES];
-        direct_packet_data[0] = ROCKETNET_PACKET_DIRECT;
-        memcpy( direct_packet_data + ROCKETNET_HEADER_BYTES, packet_data, packet_bytes );
-        rocketnet_client_socket_send_packet_internal( client_socket, &client_socket->direct_address, direct_packet_data, ROCKETNET_HEADER_BYTES + packet_bytes );
-    }
-    else
-    {
-        // client to server packet
-    }
+    uint8_t direct_packet_data[ROCKETNET_MAX_PACKET_BYTES];
+    direct_packet_data[0] = ROCKETNET_PACKET_DIRECT;
+    memcpy( direct_packet_data + ROCKETNET_HEADER_BYTES, packet_data, packet_bytes );
+    rocketnet_client_socket_send_packet_internal( client_socket, &client_socket->server_address, direct_packet_data, ROCKETNET_HEADER_BYTES + packet_bytes );
 }
 
 int rocketnet_client_socket_receive_packet( rocketnet_client_socket_t * client_socket, uint8_t * packet_data )
-{   
+{
     rocketnet_assert( client_socket );
     rocketnet_assert( packet_data );
 
@@ -666,11 +357,6 @@ void rocketnet_client_socket_disconnect( rocketnet_client_socket_t * client_sock
 {
     rocketnet_assert( client_socket );
 
-    if ( !client_socket->direct )
-    {
-        // todo: accelerated disconnect. this is a state machine and we stay in this state until we receive ack from the nodes that we have closed the sessions.
-    }
-
     client_socket->state = ROCKETNET_CLIENT_SOCKET_DISCONNECTED;
 
     rocketnet_client_socket_disconnected( client_socket );
@@ -682,31 +368,11 @@ int rocketnet_client_socket_state( rocketnet_client_socket_t * client_socket )
     return client_socket->state;
 }
 
-uint64_t rocketnet_client_socket_flow_id( rocketnet_client_socket_t * client_socket )
-{
-    rocketnet_assert( client_socket );
-    return client_socket->rocketnet_id;
-}
-
-uint64_t rocketnet_client_socket_server_id( rocketnet_client_socket_t * client_socket )
-{
-    rocketnet_assert( client_socket );
-    return client_socket->server_id;
-}
-
 void rocketnet_client_socket_receive_packets( rocketnet_client_socket_t * client_socket )
 {
     rocketnet_assert( client_socket );
 
-    double start = rocketnet_platform_time();
     rocketnet_platform_mutex_acquire( &client_socket->mutex );
-    double finish = rocketnet_platform_time();
-
-    double dt = finish - start;
-    if ( dt > 0.1 )
-    {
-        printf( "mutex hitch %f seconds\n", dt );
-    }
 
     const int off_index = client_socket->receive_buffer_index ? 0 : 1;
 
@@ -752,6 +418,6 @@ static void rocketnet_client_socket_thread_function( void * data )
     {
         rocketnet_client_socket_receive_packets( client_socket );
 
-        rocketnet_platform_sleep( 0.001 );       // IMPORTANT: ~1ms resolution for pings
+        rocketnet_platform_sleep( 0.001 );
     }
 }

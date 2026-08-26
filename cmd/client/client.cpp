@@ -5,19 +5,11 @@
 
 #include "rocketnet.h"
 #include "rocketnet_client_socket.h"
-#include "rocketnet_base64.h"
-#include "rocketnet_connect_token.h"
-#include "rocketnet_hydrogen.h"
 #include "rocketnet_platform.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-
-#define CLIENT_DIRECT 1
-
-const uint8_t buyer_public_key[] = { 0x9d, 0x59, 0x40, 0xa4, 0xe2, 0x4a, 0xa3, 0x0a, 0xf2, 0x30, 0xb6, 0x1b, 0x49, 0x7d, 0x60, 0xe8, 0x6d, 0xf9, 0x03, 0x28, 0x5c, 0x96, 0x83, 0x06, 0x89, 0xf5, 0xdd, 0x62, 0x8a, 0x25, 0x95, 0x16 };
-
-const uint8_t buyer_private_key[] = { 0x7b, 0xd7, 0x97, 0x88, 0xcb, 0x67, 0x03, 0xac, 0xdc, 0x75, 0x6d, 0x7a, 0xcc, 0x03, 0x88, 0x67, 0xd4, 0xc6, 0xe8, 0xb5, 0x99, 0x42, 0x77, 0xd9, 0x68, 0xb3, 0xf6, 0xbd, 0xa5, 0xd3, 0x55, 0xfa, 0x9d, 0x59, 0x40, 0xa4, 0xe2, 0x4a, 0xa3, 0x0a, 0xf2, 0x30, 0xb6, 0x1b, 0x49, 0x7d, 0x60, 0xe8, 0x6d, 0xf9, 0x03, 0x28, 0x5c, 0x96, 0x83, 0x06, 0x89, 0xf5, 0xdd, 0x62, 0x8a, 0x25, 0x95, 0x16 };
 
 static volatile int quit;
 
@@ -58,41 +50,11 @@ int main()
         return 1;        
     }
 
-#if CLIENT_DIRECT
-
     const char * connect = "69.67.149.151:40000";       // space1
 
     // const char * connect = "64.34.88.117:40000";        // space2
 
     // const char * connect = "127.0.0.1:40000";
-
-#else // #if CLIENT_DIRECT
-
-    char connect[ROCKETNET_MAX_CONNECT_TOKEN_BYTES];
-    memset( connect, 0, sizeof(connect) );
-    {
-        rocketnet_connect_token_t token;
-        memset( &token, 0, sizeof(token) );
-        token.expire_timestamp = rocketnet_random_uint64();
-        token.buyer_id = 0x12345678;
-        token.server_id = rocketnet_random_uint64();
-        token.rocketnet_id = rocketnet_random_uint64();
-        token.user_hash = rocketnet_random_uint64();
-        token.client_public_address = 0xa89d4f2d;               // 45.79.157.168  (home ip address)
-        token.backend_addresses[0] = 0xf3fdfa2d;                // 45.250.253.243 (latitude.newyork)
-        token.backend_ports[0] = rocketnet_platform_htons( 40000 );
-        token.pings_per_second = 10;
-        token.pongs_before_select = 10;
-        token.max_connect_seconds = 30;
-        token.backend_token_refresh_seconds = 30;
-        if ( !rocketnet_write_connect_token( &token, connect, buyer_private_key ) )
-        {
-            rocketnet_error( "failed to write connect token" );
-            return 1;        
-        }
-    }
-
-#endif // #if CLIENT_DIRECT
 
     rocketnet_client_socket_t * client_socket = rocketnet_client_socket_create( NULL, connect );
     if ( !client_socket )
