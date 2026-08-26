@@ -32,7 +32,7 @@ Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 * Sealed boxes (`crypto_box_seal`, X25519) — delivering the session keys to the
   server confidentially through the untrusted client.
 * BLAKE2b key derivation (`crypto_kdf`) — per-connection keys.
-* BLAKE2b keyed hashing (`crypto_generichash`) — the address challenge cookie,
+* BLAKE2b keyed hashing (`crypto_generichash`) — the address validation cookie,
   and session key derivation.
 * X25519 (`crypto_scalarmult`) — the ephemeral exchange giving forward secrecy.
 * ChaCha20-Poly1305 IETF AEAD (`crypto_aead_chacha20poly1305_ietf`) — every
@@ -661,72 +661,48 @@ Tampering with the salt in flight makes the two sides derive different keys and
 the handshake fails. That requires an on-path attacker, who can drop the packets
 instead; no key is exposed and nothing is accepted.
 
-## The address challenge
+## The two-step handshake, and why it is two steps and not three
 
-The challenge stops a client with a spoofed source address from occupying a
-slot. It is a cookie, not an encrypted token.
+The address is proved once, by the cookie exchange, and never again.
 
-    [cookie expire timestamp] (uint64)
-    [cookie mac] (16 bytes)
+1. **Request, cookie.** The client sends a connection request with an empty
+   return cookie. The server performs only fixed-offset comparisons, answers
+   with a _connection cookie packet_, and allocates nothing. A source that
+   cannot receive at the address it claimed gets no further, for the cost of one
+   keyed hash.
+2. **Request with cookie, challenge.** The client repeats the request carrying
+   the cookie. The server validates it, verifies the signature, opens the sealed
+   block, derives the keys, creates the mapping, and answers with a _connection
+   challenge_ carrying its ephemeral public key, sealed under the handshake key.
+3. **Response, keep-alive.** The client opens the challenge, derives the session
+   keys, and answers with an empty sealed _connection response_. The server
+   assigns a slot and sends the first keep-alive.
 
-    cookie mac = crypto_generichash( 16 bytes,
-                                     client address ‖ client id ‖ connection salt
-                                                    ‖ cookie expire,
-                                     server cookie key )
+*The third exchange carries no cookie, and that is a deliberate subtraction.*
+netcode's challenge token existed to prove the client could receive at its
+address while keeping the server stateless until it did — the token carried the
+client id and user data so the server needed to remember nothing. Neither
+purpose survives here. The address was already proved in step 1, so proving it
+again is redundant; and by step 3 the server holds a mapping for that address,
+so it is not stateless and has nowhere it needs the client to carry its state
+for it. What remains for the response to prove is possession of the handshake
+key, and an empty sealed packet proves exactly that: a party who captured the
+request bytes but cannot open the challenge cannot produce one.
 
-**There are two distinct cookies and they are not interchangeable.** The
-*address-validation cookie* (domain byte `0x01`) is issued by the cookie packet
-before any token processing, and cannot include the client id because the sealed
-block has not been opened yet. The *challenge cookie* (domain byte `0x02`) is
-issued with the challenge, after the client id is known, and binds it. They share
-one server cookie key, so each MAC input begins with its domain byte to keep the
-two constructions separate; without it they are two different messages under one
-key with no separation, and an implementation that unified them would silently
-change which value the response path verifies.
+That is why the response carries no data at all, and why there is only one
+cookie construction in this protocol rather than two.
 
-**The client address MUST be encoded in the MAC input in a fixed-width form** —
-one byte of address family, sixteen bytes of address, two bytes of port, with
-unused address bytes zero — so that no two distinct addresses can produce the
-same input bytes. A variable-length encoding here would reintroduce exactly the
-ambiguity the fixed token layout exists to remove.
-
-**Both cookie MACs MUST be keyed constructions, and the key MUST be passed as the
-key.** `crypto_generichash` with the cookie key in its key parameter is BLAKE2b's
-keyed mode, which is safe. What must never be substituted is a bare hash of the
-key followed by the message under a Merkle-Damgård function — `SHA256(key ‖
-message)` and its relatives are extendable without the key, which is the whole
-reason HMAC exists. This is written down because the substitution is the natural
-one for someone later reaching for a familiar hash, and it would reintroduce a
-weakness this protocol does not currently have.
-
-The connection salt is in the input so a cookie belongs to one connection
-attempt rather than being a bearer token for an address and client id over its
-whole lifetime. It costs nothing and it narrows what a captured cookie is worth.
-
-24 bytes on the wire. The server sends it in the _connection challenge_ packet;
-the client echoes it unchanged in the _connection response_; the server
-recomputes it from the source address of the response and compares in constant
-time. A client that cannot receive at the address it claimed never sees the
-cookie and can never produce it.
-
-The client address in the MAC input is the full address and port, normalized as
-_Addresses and dual stack_ requires.
-
-*This replaces netcode's encrypted challenge token, and the simplification is
-the point.* netcode's version is a 300-byte structure with its own encryption
-key, its own sequence counter, its own nonce discipline, and a 316-byte wire
-form appearing in two packet types. All of that existed to let the server stay
-stateless until the address was proven — but the server already allocates an
-encryption mapping for the address when it accepts the connection request, so it
-already has somewhere to keep the client id and user data. The cookie proves
-exactly the same property in 24 bytes, deletes a key, a sequence counter and a
-nonce space, and shrinks the challenge to 80 bytes and the response to 48
-— which also improves the amplification ratio.
+**Step 3 is still necessary, and it is worth saying what it stops.** Without it
+a server would assign a slot at the end of step 2, and an on-path attacker who
+spoofs a victim's address could replay the victim's captured request, take the
+victim's slot, and leave the victim refused as already connected. Because the
+challenge goes to the address, not to the attacker, only the real client can
+answer it.
 
 The cookie key is generated at server start and rotated periodically; a
 deployment SHOULD accept cookies under the previous key for one rotation period
 so a rotation does not fail connections in flight. Cookie lifetime SHOULD be
-short — a few seconds is ample, since the client echoes it immediately.
+short — a few seconds is ample, since the client returns it immediately.
 
 ## Packets
 
@@ -781,7 +757,7 @@ doing any work that would give it a key, and before allocating any state at all:
 716-byte request that provoked it.
 
     cookie mac = crypto_generichash( 16 bytes,
-                                     0x01 ‖ client address ‖ connection salt
+                                     client address ‖ connection salt
                                           ‖ server nonce ‖ expire,
                                      server cookie key )
 
@@ -822,12 +798,9 @@ _connection denied_: no data.
 
 _connection challenge_:
 
-    [cookie] (24 bytes)
     [server ephemeral public key] (32 bytes)
 
-_connection response_:
-
-    [cookie] (24 bytes)
+_connection response_: no data.
 
 _connection keep-alive_:
 
@@ -921,8 +894,8 @@ In this exact order:
 * If the opened data size does not match the expected size for the type, ignore
   the packet:
   * 0 bytes — _connection denied_
-  * 56 bytes — _connection challenge_
-  * 24 bytes — _connection response_
+  * 32 bytes — _connection challenge_
+  * 0 bytes — _connection response_
   * 8 bytes — _connection keep-alive_
   * [1,1208] bytes — _connection payload_
   * 0 bytes — _connection disconnect_
@@ -1330,9 +1303,9 @@ only data already verified.
 
 ### Processing Connection Response Packets
 
-* Recompute the cookie from the response's source address, the client id in the
-  encryption mapping, and the cookie expire timestamp in the packet; if it does
-  not match in constant time, or the cookie has expired, ignore the packet.
+* The packet opened under this mapping's handshake key, which is all the
+  response has to prove: the address was validated in step 1 and the token was
+  verified in step 2.
 * If a client from the source address and port is already connected, ignore it.
 * If a client with that client id is already connected, ignore it.
 * If no slots are available, respond with a _connection denied packet_.
@@ -1417,9 +1390,9 @@ in effect, quieter than the alternative.
 **No response may be larger than the packet that provoked it.** This is a
 normative invariant of the protocol, not inherited advice, and every packet type
 must be checked against it as the protocol grows. Today the widest margins are a
-724-byte request answered by an 80-byte challenge or a 44-byte cookie. At those
+724-byte request answered by a 56-byte challenge or a 44-byte cookie. At those
 ratios the challenge is not usefully a reflection primitive: an attacker
-spoofing a victim's address to place 80 bytes there spends 724 to do it and is
+spoofing a victim's address to place 56 bytes there spends 724 to do it and is
 strictly worse off than sending the 676 at the victim directly. The cost of a
 spoofed request is CPU, which the cookie exchange addresses, rather than
 reflected bytes.
@@ -1626,7 +1599,8 @@ beneath it carries the security guarantees.
    byte. The type byte carries only the type.
 9. The encrypted challenge token is replaced by a 24-byte MAC cookie: no
    challenge key, no challenge sequence counter, no challenge nonce space, and
-   the challenge falls from 366 bytes to 80 and the response to 48.
+   the challenge falls from 366 bytes to 56 and the response, which now carries
+    no data at all, to 24.
 10. The version is an opaque 32-bit constant rather than netcode's 14-byte
     ASCII string, which travels in the clear on every connection request and
     would be a universal signature for the protocol.
