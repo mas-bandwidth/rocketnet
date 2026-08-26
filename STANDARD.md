@@ -206,6 +206,17 @@ lesson of the design this one descends from:
 Every one of those disappears if the tag is a constant, and nothing is lost,
 because of the property below.
 
+**RocketNet also does not assume that the address a client uses to reach the
+backend is the address it uses to reach the server.** Steam Datagram Relay takes
+that assumption as a baseline, and it is usually true — but not always: some
+carrier-grade NAT deployments egress from an address pool, so a client's TCP and
+UDP flows can leave on different public addresses, and a dual-stack client may
+reach an HTTPS backend over IPv6 while reaching a game server over IPv4. Network
+Next did not assume it either; it had the server observe the client's address and
+tell it, which is robust but creates the bootstrap dependency noted above.
+Depending on no address at all is the only one of the three approaches that needs
+neither the assumption nor the round trip.
+
 **The filter cannot resist a targeted attacker, and is not asked to.** Nothing
 in it is secret: an attacker who observes one packet learns the tag and can
 reproduce it forever. That is equally true of a derived, per-packet structural
@@ -240,11 +251,24 @@ A receiver drops any packet smaller than the minimum for its type, larger than
 There is no keyed or stateful filter. Network Next distributed a rotating
 "magic" value to servers from a backend; a player-hosted server has no backend
 feeding it per-packet secrets, so the concept is absent by design rather than
-deferred. **The upgrade path for a deployment that needs to resist a targeted
-flood is a whitelist in the kernel** — an XDP map of currently authorized source
-addresses, maintained by the server as connections are established. That is
-stateful, is outside this standard, and is the only thing that actually helps;
-no unkeyed header can substitute for it.
+deferred.
+
+**The upgrade path for a deployment that needs to resist a targeted flood is a
+whitelist in the kernel** — an XDP map of currently authorized source addresses.
+That is stateful, is outside this standard, and is the only thing that actually
+helps; no unkeyed header can substitute for it.
+
+*Where such a whitelist gets its addresses is the design decision that matters,
+and this protocol makes the better answer available.* Steam Datagram Relay
+populates its relay whitelist with the client address the backend observed
+during the backend conversation — which inherits the same-address assumption
+above, and fails wherever that assumption does. A RocketNet server does not need
+to guess: the two-RTT handshake ends with the server holding the client's actual
+UDP source address, **proven** by the cookie round trip rather than assumed. A
+whitelist populated after the handshake, from verified addresses, is correct
+under CGNAT address pools and dual-stack mismatch alike. Populating one from a
+backend-supplied address would import a defect this design does not otherwise
+have.
 
 ## Packet sizes
 
