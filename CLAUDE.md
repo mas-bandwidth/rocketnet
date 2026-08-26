@@ -17,6 +17,15 @@ trade, so bit-packing moved *above* rocketnet (the space game fills buffers with
 schema compiler) and rocketnet ships bytes. There is not one bit-packing routine on
 the send or receive path.
 
+The same line holds inside the connection layer, ruled 2026-08-26: **protocol
+packets are byte aligned and written that way** — plain little-endian
+read/write helpers against the standard's packed layouts, no serialize, no
+schema. The wire format has no sub-byte fields, so a bitpacker buys nothing;
+the security core carries minimum dependencies; and the assembled wire vectors
+in the standard diff against the implementation with a straight memcmp.
+serialize and schema remain available above the line, in payloads, where they
+already earn their keep.
+
 ## The layering
 
     rocketnet_hydrogen        vendored libhydrogen (~24% of the source)
