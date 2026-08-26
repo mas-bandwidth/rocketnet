@@ -44,6 +44,16 @@ Hall. Two-for-one.
   must not exclude player hosted servers by requiring a secret shared
   between the backend and the servers.
 
+* No security property weaker than netcode 1.02. That is the absolute
+  minimum baseline, and a change that buys something new at the cost of an
+  existing guarantee is a defect.
+
+* The connect token fits in a single 1500 MTU packet. Because of that it
+  names one server, at up to two addresses — an IPv4 one and an IPv6 one,
+  each optional. netcode's list of up to 32 candidate servers per token was
+  a mistake (Glenn's own, named as such); failover is a fresh token from the
+  backend, which has better information than any stale candidate list.
+
 * Crypto is sodium, ruled 2026-08-26 after the hydrogen evaluation: gutted
   to what the protocol needs, vendored as the two-file flatten netcode and
   yojimbo already carry, extended with Ed25519 signatures and sealed boxes
