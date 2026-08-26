@@ -116,6 +116,67 @@ Refuted on inspection, recorded so nobody re-hunts them:
    port literal is pre-swapped but named as host order, so it is correct by
    accident and will silently blackhole the day someone "updates" it.
 
+## Verification ladder
+
+Correct, then fast, then durable. Three instruments, three disjoint defect
+classes — none substitutes for another, and the library has not shipped until
+all three pass:
+
+1. **Unit and functional tests** prove correctness. Every layer exhaustively,
+   simplest to most complex; negative tests assert the specific reason counter
+   AND the packet type's arrival counter, so "rejected" always means "rejected
+   here"; known-answer vectors (STANDARD.md Appendix A) prove interop.
+2. **Load profiling** proves performance, and without it the library does not
+   work — performance is the spec ("fastest correct", 1000+ players, not IO
+   bound). Real shape: ~1000 real connections at game-like rates and sizes
+   with connect/disconnect churn, not ten connections at line rate. Baselines
+   (packets/sec/core, p99 processing time) are recorded and diffed per change
+   like tests: a perf regression goes red, it does not drift. This is the
+   instrument that sees what tests cannot: false sharing, lock convoy,
+   allocation storms, syscall costs. Truth lives on Linux on real hardware;
+   the mac is the edit loop.
+3. **Soak at load** proves durability — hours to days, and it is what finds
+   the difficult problems, because duration converts probability into
+   certainty: leaks, table exhaustion under churn, timer and key-rotation
+   edges, and the one-in-a-billion interleavings that become routine at
+   billions of events per hour. The harness asserts counters *while running* —
+   must-stay-zero counters stay zero, received == sum of outcomes per type —
+   so "fast" can never be achieved by silently dropping, and a days-long run
+   stays diagnosable with no logs.
+
+This requires a **synthetic traffic generator as part of step 1's
+deliverable**, not later tooling: a swarm client built on the real library
+(real handshakes, real crypto, churn schedules, a percentage abandoning
+mid-handshake so the half-open reclaim soaks under pressure), plus a garbage
+generator so the reject paths soak too — a polite-traffic-only soak is half a
+soak. The swarm is the library exercising itself and lives with the tests in
+C++; the orchestration around it — spin-up, counter collection, baseline
+diffing — is tooling and therefore Go.
+
+Two cadences: a short smoke load per change; the long soak scheduled on a
+Linux box.
+
+**The discipline behind all three: ALWAYS BE LOADED, and no rare codepaths.**
+The space game server does the work of 1000 players all the time — snapshot
+deltas, packet construction, everything — even with one client connected, so
+the cost profile is flat, the 999th client cannot surprise, and any
+scale-dependent bug is hit trivially by booting the server and connecting one
+real client. For this library the same discipline lands two ways. Where
+load-independent cost is cheap (fixed tables, full-table sweeps), prefer
+constant shape over clever load-proportional work. Everywhere else, the rule
+is: **if a codepath is rare, make it not rare — something always gone through,
+even if redundant.** Instances already in the design: the cookie exchange is
+always-on for every connection, so the under-attack path is the normal path;
+dev runs the full ship handshake under published test keys, so the laptop path
+is the production path; every disconnect sends the full redundant burst.
+Standing consequences: cookie key rotation runs always at its 60 s period so
+the previous-key acceptance window is exercised every minute of every session;
+and the soak runs long enough that a connection crosses 2^32 packets, so
+sequence reconstruction's wrap region is routine rather than theoretical. What
+cannot be made non-rare by design (real wire I/O, per-packet crypto at scale)
+is made non-rare by posture: the swarm supplies load in every dev loop, so the
+library is never observed unloaded.
+
 ## Planned: a non-root server implementation
 
 For hosts where XDP is not available — AWS GameLift and similar, no

@@ -1258,6 +1258,18 @@ _Timing_.
 * _sending connection response_ (3)
 * _connected_ (4)
 
+**The machine steps forward or fails; it never moves sideways.** A client
+climbs the positive states monotonically — 1, 2, 3, 4 — entering each exactly
+once per attempt, and every connection goes through every step, so there is no
+shortcut, no state reachable by two routes, and no rarely-taken path. On any
+failure it does not detour into recovery: it fails to a terminal state, and
+recovery is a fresh attempt from the start with a fresh salt — which means the
+recovery path *is* the ordinary connect path, the one that runs every time.
+This is deliberate case reduction: one route to success and one kind of
+failure handling is less to implement, less to secure, and less to test than
+in-flight repair could ever be, and it is why the invariants below can exist
+at all.
+
 **The state MUST be readable from outside at any time**, and it is the primary
 means of diagnosing a connection that is not progressing. A state machine whose
 current position cannot be observed can only be debugged by inference, and the
@@ -1381,11 +1393,12 @@ client past _sending connection request_ no longer sends requests.
 * Derive the two session keys. Commit all four keys and the session nonce.
 * **Erase the client ephemeral secret and the shared secret.** From this moment
   the client holds only the four derived keys, exactly as the server does.
-* Transition to _sending connection response_ and send the connection response
-  at the send rate. The response MAY additionally be sent immediately on this
-  transition: the challenge that triggered it is authenticated, so this is not
-  a reflection lever, and it saves most of a send interval of latency. The
-  cookie transition has no such allowance because the cookie is unsealed.
+* Transition to _sending connection response_. The response goes out at the
+  send rate, like everything else. **Nothing in this protocol is ever sent
+  because a packet arrived**; there is one sending rule — the scheduled rate —
+  and no immediate-send case for any transition. The rule costs at most one
+  send interval of connect latency and buys a single sending behavior to
+  implement, secure and test, with no per-transition amplification argument.
 
 ### Processing a connection denied packet
 
