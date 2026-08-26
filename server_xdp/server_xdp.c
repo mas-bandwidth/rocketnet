@@ -35,11 +35,6 @@ struct server_xdp_config
     __u32 public_address;                                               // big endian
 };
 
-struct server_xdp_state
-{
-    __u64 current_timestamp;
-};
-
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define ROCKETNET_LITTLE_ENDIAN 1
 #elif defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -60,16 +55,6 @@ struct server_xdp_state
 #define bpf_htons(x)        (x)
 #endif // #if ROCKETNET_LITTLE_ENDIAN
 
-#pragma pack(push,1)
-
-// ---------------------------------------------------------------------------------------------------------------------
-
-// todo: packets
-
-// ---------------------------------------------------------------------------------------------------------------------
-
-#pragma pack(pop)
-
 struct {
     __uint( type, BPF_MAP_TYPE_ARRAY );
     __type( key, __u32 );
@@ -77,14 +62,6 @@ struct {
     __uint( max_entries, 1 );
     __uint( pinning, LIBBPF_PIN_BY_NAME );
 } server_xdp_config_map SEC(".maps");
-
-struct {
-    __uint( type, BPF_MAP_TYPE_ARRAY );
-    __type( key, __u32 );
-    __type( value, struct server_xdp_state );
-    __uint( max_entries, 1 );
-    __uint( pinning, LIBBPF_PIN_BY_NAME );
-} server_xdp_state_map SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_XSKMAP);
@@ -102,204 +79,6 @@ struct {
 #define debug_printf(...) do { } while (0)
 #endif // #if DEBUG
 
-static void reflect_packet( void * data, int payload_bytes, __u8 * magic )
-{
-    struct ethhdr * eth = data;
-    struct iphdr  * ip  = data + sizeof( struct ethhdr );
-    struct udphdr * udp = (void*) ip + sizeof( struct iphdr );
-
-    __u16 a = udp->source;
-    udp->source = udp->dest;
-    udp->dest = a;
-    udp->check = 0;
-    udp->len = bpf_htons( sizeof(struct udphdr) + payload_bytes );
-
-    __u32 b = ip->saddr;
-    ip->saddr = ip->daddr;
-    ip->daddr = b;
-    ip->tot_len = bpf_htons( sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes );
-    ip->check = 0;
-
-    char c[ETH_ALEN];
-    memcpy( c, eth->h_source, ETH_ALEN );
-    memcpy( eth->h_source, eth->h_dest, ETH_ALEN );
-    memcpy( eth->h_dest, c, ETH_ALEN );
-
-    __u16 * p = (__u16*) ip;
-    __u32 checksum = p[0];
-    checksum += p[1];
-    checksum += p[2];
-    checksum += p[3];
-    checksum += p[4];
-    checksum += p[5];
-    checksum += p[6];
-    checksum += p[7];
-    checksum += p[8];
-    checksum += p[9];
-    checksum = ~ ( ( checksum & 0xFFFF ) + ( checksum >> 16 ) );
-    ip->check = checksum;
-
-    __u8 * packet_data = (void*) udp + sizeof( struct udphdr );
-
-    __u32 from = ip->saddr;
-    __u32 to   = ip->daddr;
-
-    unsigned short sum = 0;
-
-    sum += ( from >> 24 );
-    sum += ( from >> 16 ) & 0xFF;
-    sum += ( from >> 8  ) & 0xFF;
-    sum += ( from       ) & 0xFF;
-
-    sum += ( to >> 24 );
-    sum += ( to >> 16 ) & 0xFF;
-    sum += ( to >> 8  ) & 0xFF;
-    sum += ( to       ) & 0xFF;
-
-    sum += ( payload_bytes >> 8 );
-    sum += ( payload_bytes      ) & 0xFF;
-
-    char * sum_data = (char*) &sum;
-
-    __u8 sum_0 = ( sum      ) & 0xFF;
-    __u8 sum_1 = ( sum >> 8 );
-
-    __u8 pittle[2];
-    pittle[0] = 1 | ( sum_0 ^ sum_1 ^ 193 );
-    pittle[1] = 1 | ( ( 255 - pittle[0] ) ^ 113 );
-
-    packet_data[1] = pittle[0];
-    packet_data[2] = pittle[1];
-
-    __u64 hash = 0xCBF29CE484222325;
-
-    hash ^= magic[0];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[1];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[2];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[3];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[4];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[5];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[6];
-    hash *= 0x00000100000001B3;
-
-    hash ^= magic[7];
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( from       ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( from >> 8  ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( from >> 16 ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( from >> 24 );
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( to       ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( to >> 8  ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( to >> 16 ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( to >> 24 );
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( payload_bytes      ) & 0xFF;
-    hash *= 0x00000100000001B3;
-
-    hash ^= ( payload_bytes >> 8 );
-    hash *= 0x00000100000001B3;
-
-    __u8 hash_0 = ( hash       ) & 0xFF;
-    __u8 hash_1 = ( hash >> 8  ) & 0xFF;
-    __u8 hash_2 = ( hash >> 16 ) & 0xFF;
-    __u8 hash_3 = ( hash >> 24 ) & 0xFF;
-    __u8 hash_4 = ( hash >> 32 ) & 0xFF;
-    __u8 hash_5 = ( hash >> 40 ) & 0xFF;
-    __u8 hash_6 = ( hash >> 48 ) & 0xFF;
-    __u8 hash_7 = ( hash >> 56 );
-
-    __u8 chonkle[15];
-
-    chonkle[0] = ( ( hash_6 & 0xC0 ) >> 6 ) + 42;
-    chonkle[1] = ( hash_3 & 0x1F ) + 200;
-    chonkle[2] = ( ( hash_2 & 0xFC ) >> 2 ) + 5;
-    chonkle[3] = hash_0;
-    chonkle[4] = ( hash_2 & 0x03 ) + 78;
-    chonkle[5] = ( hash_4 & 0x7F ) + 96;
-    chonkle[6] = ( ( hash_1 & 0xFC ) >> 2 ) + 100;
-    if ( ( hash_7 & 1 ) == 0 ) 
-    {
-        chonkle[7] = 79;
-    } 
-    else 
-    {
-        chonkle[7] = 7;
-    }
-    if ( ( hash_4 & 0x80 ) == 0 )
-    {
-        chonkle[8] = 37;
-    } 
-    else 
-    {
-        chonkle[8] = 83;
-    }
-    chonkle[9] = ( hash_5 & 0x07 ) + 124;
-    chonkle[10] = ( ( hash_1 & 0xE0 ) >> 5 ) + 175;
-    chonkle[11] = ( hash_6 & 0x3F ) + 33;
-    __u8 value = ( hash_1 & 0x03 );
-    if ( value == 0 )
-    {
-        chonkle[12] = 97;
-    } 
-    else if ( value == 1 )
-    {
-        chonkle[12] = 5;
-    } 
-    else if ( value == 2 )
-    {
-        chonkle[12] = 43;
-    } 
-    else 
-    {
-        chonkle[12] = 13;
-    }
-    chonkle[13] = ( ( hash_5 & 0xF8 ) >> 3 ) + 210;
-    chonkle[14] = ( ( hash_7 & 0xFE ) >> 1 ) + 17;
-
-    packet_data[3]  = chonkle[0];
-    packet_data[4]  = chonkle[1];
-    packet_data[5]  = chonkle[2];
-    packet_data[6]  = chonkle[3];
-    packet_data[7]  = chonkle[4];
-    packet_data[8]  = chonkle[5];
-    packet_data[9]  = chonkle[6];
-    packet_data[10] = chonkle[7];
-    packet_data[11] = chonkle[8];
-    packet_data[12] = chonkle[9];
-    packet_data[13] = chonkle[10];
-    packet_data[14] = chonkle[11];
-    packet_data[15] = chonkle[12];
-    packet_data[16] = chonkle[13];
-    packet_data[17] = chonkle[14];
-}
 
 SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx ) 
 { 
@@ -407,8 +186,6 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
                         sum += ( packet_bytes >> 8 );
                         sum += ( packet_bytes      ) & 0xFF;
-
-                        char * sum_data = (char*) &sum;
 
                         __u8 sum_0 = ( sum      ) & 0xFF;
                         __u8 sum_1 = ( sum >> 8 );

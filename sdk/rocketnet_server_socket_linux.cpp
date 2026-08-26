@@ -159,7 +159,6 @@ struct rocketnet_server_socket_t
     bool attached_native;
     bool attached_skb;
     int config_map_fd;
-    int state_map_fd;
     int socket_map_fd;
 
     std::atomic<uint64_t> packet_id;
@@ -570,14 +569,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         }
 
         {
-            const char * command = "rm -f /sys/fs/bpf/server_xdp_state_map";
-            FILE * file = popen( command, "r" );
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
-        }
-
-        {
             const char * command = "rm -f /sys/fs/bpf/server_xdp_socket_map";
             FILE * file = popen( command, "r" );
             char buffer[1024];
@@ -708,14 +699,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( server_socket->config_map_fd <= 0 )
     {
         rocketnet_error( "server could not get config map: %s", strerror(errno) );
-        rocketnet_server_socket_destroy( server_socket );
-        return NULL;
-    }
-
-    server_socket->state_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_state_map" );
-    if ( server_socket->state_map_fd <= 0 )
-    {
-        rocketnet_error( "server could not get state map: %s", strerror(errno) );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
