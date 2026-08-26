@@ -51,6 +51,15 @@ file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
 find_package(Threads REQUIRED)
+
+# libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
+# package (brew on mac, libsodium-dev on linux) so construction moves quickly;
+# the gutted two-file vendor replaces this before anything ships.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED libsodium)
+target_include_directories(rocketnet PUBLIC ${SODIUM_INCLUDE_DIRS})
+target_link_directories(rocketnet PUBLIC ${SODIUM_LIBRARY_DIRS})
+target_link_libraries(rocketnet ${SODIUM_LIBRARIES})
 if (APPLE)
     target_link_libraries(rocketnet Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
 else()

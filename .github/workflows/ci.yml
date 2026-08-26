@@ -29,7 +29,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
       - name: Build
         run: make

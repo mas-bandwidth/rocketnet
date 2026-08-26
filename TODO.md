@@ -13,21 +13,19 @@ land. The milestone view is issue #28; this file is the live ordering.
 - Read/write helpers: pointer-advancing, shift-and-mask little-endian,
   endian independent by construction; tested including exact Appendix A byte
   patterns.
+- Sodium in the build: pkg-config on both platforms, CI deps for both legs.
+- Crypto expectations: every primitive pinned against real libsodium — sizes,
+  sign/verify with refusals, sealed box with the anonymous-box hazard, AEAD
+  with AD/nonce/truncation negatives, generichash outlen binding, small-order
+  scalarmult refusal, and the four KDF outputs + cookie MAC + all six sealed
+  packet vectors reproducing Appendix A byte for byte.
+- Test vector data: checked-in arrays generated from the vectors harness
+  (a generator parsing bug produced truncated key arrays; caught by the first
+  real crypto call, regenerated at full length — never transcribe by hand,
+  and never trust a generator without a consumer).
 
 ## TODO
 
-- Sodium in the build: link libsodium (brew on mac, libsodium-dev on linux),
-  CI deps for both legs. No hydrogen removal yet; it leaves when the sodium
-  construction fully replaces it.
-- Crypto expectations: pin every primitive the standard uses against real
-  libsodium. Sizes vs headers; sign/verify round trip + refusals; sealed box
-  round trip + wrong-keypair refusal + the anonymous-box hazard; AEAD round
-  trip + AD/nonce/truncation negative controls; generichash keyed and
-  unkeyed, 16-byte output is not a truncation of 32; scalarmult small-order
-  rejection; the four KDF outputs reproducing Appendix A exactly.
-- Test vector data: the Appendix A fixed inputs and frozen outputs as checked
-  in arrays (generated once from the vectors harness, never transcribed by
-  hand).
 - Connect token: private block, signed data, token write/read at the exact
   offsets; mint for tests and the dev path; server-side verify-then-open with
   the inner consistency checks; token identifier (unkeyed generichash, 16).

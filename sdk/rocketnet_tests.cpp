@@ -17,6 +17,9 @@
 #include "rocketnet_jitter_tracker.h"
 #include "rocketnet_value_tracker.h"
 #include "rocketnet_hydrogen.h"
+#include "rocketnet_test_vectors.h"
+
+#include <sodium.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -436,6 +439,309 @@ void rocketnet_test_random_float()
         float value = rocketnet_random_float();
         rocketnet_check( value >= 0.0f );
         rocketnet_check( value <= 1.0f );
+    }
+}
+
+// Crypto expectations: call every libsodium primitive the standard uses and
+// pin its behavior, before any protocol code exists to depend on it. The
+// vector data mirrors STANDARD.md Appendix A byte for byte.
+
+static void rocketnet_test_sodium_ready()
+{
+    rocketnet_check( sodium_init() >= 0 );
+}
+
+void rocketnet_test_crypto_sizes()
+{
+    rocketnet_test_sodium_ready();
+    rocketnet_check( crypto_sign_BYTES == 64 );
+    rocketnet_check( crypto_sign_PUBLICKEYBYTES == 32 );
+    rocketnet_check( crypto_sign_SECRETKEYBYTES == 64 );
+    rocketnet_check( crypto_box_PUBLICKEYBYTES == 32 );
+    rocketnet_check( crypto_box_SECRETKEYBYTES == 32 );
+    rocketnet_check( crypto_box_SEALBYTES == 48 );
+    rocketnet_check( crypto_generichash_KEYBYTES == 32 );
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_KEYBYTES == 32 );
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_NPUBBYTES == 12 );
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_ABYTES == 16 );
+    rocketnet_check( crypto_scalarmult_BYTES == 32 );
+    rocketnet_check( crypto_scalarmult_SCALARBYTES == 32 );
+}
+
+void rocketnet_test_crypto_test_keys()
+{
+    rocketnet_test_sodium_ready();
+
+    // the published test keypairs are self-consistent: the Ed25519 secret key
+    // embeds its public half, and the X25519 publics derive from the secrets
+    rocketnet_check( memcmp( rocketnet_test_backend_secret_key + 32, rocketnet_test_backend_public_key, 32 ) == 0 );
+
+    uint8_t derived_public[32];
+    crypto_scalarmult_base( derived_public, rocketnet_test_server_secret_key );
+    rocketnet_check( memcmp( derived_public, rocketnet_test_server_public_key, 32 ) == 0 );
+
+    crypto_scalarmult_base( derived_public, rocketnet_test_client_eph_secret );
+    rocketnet_check( memcmp( derived_public, rocketnet_test_client_eph_public, 32 ) == 0 );
+
+    crypto_scalarmult_base( derived_public, rocketnet_test_server_eph_secret );
+    rocketnet_check( memcmp( derived_public, rocketnet_test_server_eph_public, 32 ) == 0 );
+}
+
+void rocketnet_test_crypto_sign()
+{
+    rocketnet_test_sodium_ready();
+
+    uint8_t message[576];
+    for ( int i = 0; i < (int) sizeof(message); i++ )
+        message[i] = (uint8_t) i;
+
+    uint8_t signature[64];
+    rocketnet_check( crypto_sign_detached( signature, NULL, message, sizeof(message), rocketnet_test_backend_secret_key ) == 0 );
+    rocketnet_check( crypto_sign_verify_detached( signature, message, sizeof(message), rocketnet_test_backend_public_key ) == 0 );
+
+    // NEGATIVE: one flipped bit anywhere in the message fails verification
+    message[100] ^= 1;
+    rocketnet_check( crypto_sign_verify_detached( signature, message, sizeof(message), rocketnet_test_backend_public_key ) != 0 );
+    message[100] ^= 1;
+
+    // NEGATIVE: one flipped bit in the signature fails verification
+    signature[10] ^= 1;
+    rocketnet_check( crypto_sign_verify_detached( signature, message, sizeof(message), rocketnet_test_backend_public_key ) != 0 );
+    signature[10] ^= 1;
+
+    // NEGATIVE: a signature from a different key fails against the backend key
+    uint8_t other_pk[32], other_sk[64];
+    crypto_sign_keypair( other_pk, other_sk );
+    uint8_t other_signature[64];
+    crypto_sign_detached( other_signature, NULL, message, sizeof(message), other_sk );
+    rocketnet_check( crypto_sign_verify_detached( other_signature, message, sizeof(message), rocketnet_test_backend_public_key ) != 0 );
+}
+
+void rocketnet_test_crypto_sealed_box()
+{
+    rocketnet_test_sodium_ready();
+
+    uint8_t plaintext[384];
+    for ( int i = 0; i < (int) sizeof(plaintext); i++ )
+        plaintext[i] = (uint8_t) ( i * 7 );
+
+    uint8_t sealed[384 + 48];
+    rocketnet_check( crypto_box_seal( sealed, plaintext, sizeof(plaintext), rocketnet_test_server_public_key ) == 0 );
+
+    uint8_t opened[384];
+    rocketnet_check( crypto_box_seal_open( opened, sealed, sizeof(sealed), rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) == 0 );
+    rocketnet_check( memcmp( opened, plaintext, sizeof(plaintext) ) == 0 );
+
+    // NEGATIVE: a different keypair cannot open it
+    uint8_t other_pk[32], other_sk[32];
+    crypto_box_keypair( other_pk, other_sk );
+    rocketnet_check( crypto_box_seal_open( opened, sealed, sizeof(sealed), other_pk, other_sk ) != 0 );
+
+    // NEGATIVE: a flipped byte fails the open
+    sealed[100] ^= 1;
+    rocketnet_check( crypto_box_seal_open( opened, sealed, sizeof(sealed), rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) != 0 );
+    sealed[100] ^= 1;
+
+    // THE HAZARD THE STANDARD WARNS ABOUT: a sealed box is anonymous. anyone
+    // can seal to the server's public key and the open succeeds. authenticity
+    // of a connect token is the backend signature, never a successful open.
+    uint8_t attacker_plaintext[384];
+    memset( attacker_plaintext, 0xAA, sizeof(attacker_plaintext) );
+    uint8_t attacker_sealed[384 + 48];
+    crypto_box_seal( attacker_sealed, attacker_plaintext, sizeof(attacker_plaintext), rocketnet_test_server_public_key );
+    rocketnet_check( crypto_box_seal_open( opened, attacker_sealed, sizeof(attacker_sealed), rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) == 0 );
+}
+
+void rocketnet_test_crypto_aead()
+{
+    rocketnet_test_sodium_ready();
+
+    const uint8_t key[32] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32 };
+    uint8_t ad[21];
+    for ( int i = 0; i < (int) sizeof(ad); i++ )
+        ad[i] = (uint8_t) ( 0x40 + i );
+
+    // the nonce is 4 zero bytes then the 64-bit sequence little-endian
+    uint8_t nonce[12];
+    memset( nonce, 0, 4 );
+    uint8_t * n = nonce + 4;
+    rocketnet_write_uint64( &n, 1000 );
+
+    uint8_t plaintext[100];
+    for ( int i = 0; i < (int) sizeof(plaintext); i++ )
+        plaintext[i] = (uint8_t) i;
+
+    uint8_t sealed[100 + 16];
+    unsigned long long sealed_length = 0;
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_encrypt( sealed, &sealed_length, plaintext, sizeof(plaintext), ad, sizeof(ad), NULL, nonce, key ) == 0 );
+    rocketnet_check( sealed_length == sizeof(plaintext) + 16 );
+
+    uint8_t opened[100];
+    unsigned long long opened_length = 0;
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_length, NULL, sealed, sealed_length, ad, sizeof(ad), nonce, key ) == 0 );
+    rocketnet_check( opened_length == sizeof(plaintext) );
+    rocketnet_check( memcmp( opened, plaintext, sizeof(plaintext) ) == 0 );
+
+    // NEGATIVE: altering the associated data fails the tag
+    ad[12] ^= 1;
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_length, NULL, sealed, sealed_length, ad, sizeof(ad), nonce, key ) != 0 );
+    ad[12] ^= 1;
+
+    // NEGATIVE: altering the nonce (the sequence) fails the tag
+    nonce[4] ^= 1;
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_length, NULL, sealed, sealed_length, ad, sizeof(ad), nonce, key ) != 0 );
+    nonce[4] ^= 1;
+
+    // NEGATIVE: truncation fails the tag
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_length, NULL, sealed, sealed_length - 1, ad, sizeof(ad), nonce, key ) != 0 );
+
+    // NEGATIVE: a flipped ciphertext byte fails the tag
+    sealed[50] ^= 1;
+    rocketnet_check( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_length, NULL, sealed, sealed_length, ad, sizeof(ad), nonce, key ) != 0 );
+    sealed[50] ^= 1;
+}
+
+void rocketnet_test_crypto_generichash()
+{
+    rocketnet_test_sodium_ready();
+
+    const uint8_t input[64] = { 0 };
+
+    // BLAKE2b binds its output length into the hash: a 16-byte invocation is
+    // NOT a truncation of the 32-byte one. the standard's token identifier
+    // depends on implementations getting this right.
+    uint8_t hash16[16];
+    uint8_t hash32[32];
+    rocketnet_check( crypto_generichash( hash16, 16, input, sizeof(input), NULL, 0 ) == 0 );
+    rocketnet_check( crypto_generichash( hash32, 32, input, sizeof(input), NULL, 0 ) == 0 );
+    rocketnet_check( memcmp( hash16, hash32, 16 ) != 0 );
+
+    // keyed and unkeyed differ over the same input
+    const uint8_t key[32] = { 9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9 };
+    uint8_t keyed[32];
+    rocketnet_check( crypto_generichash( keyed, 32, input, sizeof(input), key, 32 ) == 0 );
+    rocketnet_check( memcmp( keyed, hash32, 32 ) != 0 );
+
+    // deterministic: same inputs, same output
+    uint8_t again[32];
+    rocketnet_check( crypto_generichash( again, 32, input, sizeof(input), key, 32 ) == 0 );
+    rocketnet_check( memcmp( again, keyed, 32 ) == 0 );
+}
+
+void rocketnet_test_crypto_scalarmult()
+{
+    rocketnet_test_sodium_ready();
+
+    // the shared secret agrees from both sides and matches the vector
+    uint8_t shared_from_client[32];
+    uint8_t shared_from_server[32];
+    rocketnet_check( crypto_scalarmult( shared_from_client, rocketnet_test_client_eph_secret, rocketnet_test_server_eph_public ) == 0 );
+    rocketnet_check( crypto_scalarmult( shared_from_server, rocketnet_test_server_eph_secret, rocketnet_test_client_eph_public ) == 0 );
+    rocketnet_check( memcmp( shared_from_client, shared_from_server, 32 ) == 0 );
+    rocketnet_check( memcmp( shared_from_client, rocketnet_test_shared_secret, 32 ) == 0 );
+
+    // NEGATIVE: a small-order peer public key is refused. ignoring this
+    // return is how implementations end up agreeing on an all-zero secret
+    // with an attacker who chose the point. the standard makes checking it
+    // a MUST on both sides.
+    uint8_t shared[32];
+    const uint8_t zero_point[32] = { 0 };
+    rocketnet_check( crypto_scalarmult( shared, rocketnet_test_client_eph_secret, zero_point ) != 0 );
+
+    const uint8_t small_order_point[32] = {
+        0xe0, 0xeb, 0x7a, 0x7c, 0x3b, 0x41, 0xb8, 0xae, 0x16, 0x56, 0xe3, 0xfa, 0xf1, 0x9f, 0xc4, 0x6a,
+        0xda, 0x09, 0x8d, 0xeb, 0x9c, 0x32, 0xb1, 0xfd, 0x86, 0x62, 0x05, 0x16, 0x5f, 0x49, 0xb8, 0x00 };
+    rocketnet_check( crypto_scalarmult( shared, rocketnet_test_client_eph_secret, small_order_point ) != 0 );
+}
+
+void rocketnet_test_crypto_key_derivation()
+{
+    rocketnet_test_sodium_ready();
+
+    // reproduce the four per-connection keys exactly as Appendix A publishes
+    // them, from the standard's formulas and the fixed inputs. this pins both
+    // the primitive and this implementation's reading of the formulas.
+
+    // handshake keys: generichash(32, salt || session nonce || context, key = token key)
+    uint8_t input[8 + 8 + 8];
+    memcpy( input, rocketnet_test_salt, 8 );
+    memcpy( input + 8, rocketnet_test_session_nonce, 8 );
+
+    uint8_t handshake_c2s[32];
+    memcpy( input + 16, "RKTNHNDC", 8 );
+    rocketnet_check( crypto_generichash( handshake_c2s, 32, input, sizeof(input), rocketnet_test_token_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( handshake_c2s, rocketnet_test_handshake_c2s_key, 32 ) == 0 );
+
+    uint8_t handshake_s2c[32];
+    memcpy( input + 16, "RKTNHNDS", 8 );
+    rocketnet_check( crypto_generichash( handshake_s2c, 32, input, sizeof(input), rocketnet_test_token_s2c_key, 32 ) == 0 );
+    rocketnet_check( memcmp( handshake_s2c, rocketnet_test_handshake_s2c_key, 32 ) == 0 );
+
+    // session keys: generichash(32, shared || client eph pk || server eph pk ||
+    // salt || session nonce || context, key = token key)
+    uint8_t session_input[32 + 32 + 32 + 8 + 8 + 8];
+    memcpy( session_input, rocketnet_test_shared_secret, 32 );
+    memcpy( session_input + 32, rocketnet_test_client_eph_public, 32 );
+    memcpy( session_input + 64, rocketnet_test_server_eph_public, 32 );
+    memcpy( session_input + 96, rocketnet_test_salt, 8 );
+    memcpy( session_input + 104, rocketnet_test_session_nonce, 8 );
+
+    uint8_t session_c2s[32];
+    memcpy( session_input + 112, "RKTNSESC", 8 );
+    rocketnet_check( crypto_generichash( session_c2s, 32, session_input, sizeof(session_input), rocketnet_test_token_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( session_c2s, rocketnet_test_session_c2s_key, 32 ) == 0 );
+
+    uint8_t session_s2c[32];
+    memcpy( session_input + 112, "RKTNSESS", 8 );
+    rocketnet_check( crypto_generichash( session_s2c, 32, session_input, sizeof(session_input), rocketnet_test_token_s2c_key, 32 ) == 0 );
+    rocketnet_check( memcmp( session_s2c, rocketnet_test_session_s2c_key, 32 ) == 0 );
+
+    // the cookie mac is the same primitive at 16 bytes, keyed with the cookie
+    // key, over the exact published input encoding
+    uint8_t cookie_mac[16];
+    rocketnet_check( crypto_generichash( cookie_mac, 16, rocketnet_test_cookie_mac_input, sizeof(rocketnet_test_cookie_mac_input), rocketnet_test_cookie_key, 32 ) == 0 );
+    rocketnet_check( memcmp( cookie_mac, rocketnet_test_cookie_mac, 16 ) == 0 );
+
+    // and the six per-type sealed packet vectors reproduce exactly: right key,
+    // right sequence-derived nonce, right associated data, right bytes out
+    struct
+    {
+        const uint8_t * key;
+        uint64_t sequence;
+        const uint8_t * ad;
+        int ad_bytes;
+        const uint8_t * plaintext;
+        int plaintext_bytes;
+        const uint8_t * expected;
+        int expected_bytes;
+    } vectors[6];
+
+    const uint8_t response_plaintext[24] = { 0 };
+    uint8_t keepalive_plaintext[8];
+    uint8_t * ka = keepalive_plaintext;
+    rocketnet_write_uint32( &ka, 3 );
+    rocketnet_write_uint32( &ka, 1000 );
+    const uint8_t payload_plaintext[5] = { 0x68, 0x65, 0x6c, 0x6c, 0x6f };
+
+    vectors[0] = { rocketnet_test_handshake_s2c_key, 1, rocketnet_test_challenge_ad, 53, rocketnet_test_server_eph_public, 32, rocketnet_test_challenge_sealed, 48 };
+    vectors[1] = { rocketnet_test_handshake_s2c_key, 2, rocketnet_test_denied_ad, 21, NULL, 0, rocketnet_test_denied_sealed, 16 };
+    vectors[2] = { rocketnet_test_handshake_c2s_key, 1, rocketnet_test_response_ad, 53, response_plaintext, 24, rocketnet_test_response_sealed, 40 };
+    vectors[3] = { rocketnet_test_session_s2c_key, 1, rocketnet_test_keepalive_ad, 21, keepalive_plaintext, 8, rocketnet_test_keepalive_sealed, 24 };
+    vectors[4] = { rocketnet_test_session_c2s_key, 3, rocketnet_test_payload_ad, 21, payload_plaintext, 5, rocketnet_test_payload_sealed, 21 };
+    vectors[5] = { rocketnet_test_session_c2s_key, 4, rocketnet_test_disconnect_ad, 21, NULL, 0, rocketnet_test_disconnect_sealed, 16 };
+
+    for ( int i = 0; i < 6; i++ )
+    {
+        uint8_t nonce[12];
+        memset( nonce, 0, 4 );
+        uint8_t * n = nonce + 4;
+        rocketnet_write_uint64( &n, vectors[i].sequence );
+
+        uint8_t sealed[64];
+        unsigned long long sealed_length = 0;
+        rocketnet_check( crypto_aead_chacha20poly1305_ietf_encrypt( sealed, &sealed_length, vectors[i].plaintext, vectors[i].plaintext_bytes, vectors[i].ad, vectors[i].ad_bytes, NULL, nonce, vectors[i].key ) == 0 );
+        rocketnet_check( (int) sealed_length == vectors[i].expected_bytes );
+        rocketnet_check( memcmp( sealed, vectors[i].expected, sealed_length ) == 0 );
     }
 }
 
@@ -1053,6 +1359,14 @@ void rocketnet_run_tests()
         RUN_TEST( test_address );
         RUN_TEST( test_random_bytes );
         RUN_TEST( test_random_float );
+        RUN_TEST( test_crypto_sizes );
+        RUN_TEST( test_crypto_test_keys );
+        RUN_TEST( test_crypto_sign );
+        RUN_TEST( test_crypto_sealed_box );
+        RUN_TEST( test_crypto_aead );
+        RUN_TEST( test_crypto_generichash );
+        RUN_TEST( test_crypto_scalarmult );
+        RUN_TEST( test_crypto_key_derivation );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
