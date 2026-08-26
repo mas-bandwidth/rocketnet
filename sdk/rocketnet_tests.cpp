@@ -18,6 +18,7 @@
 #include "rocketnet_value_tracker.h"
 #include "rocketnet_hydrogen.h"
 #include "rocketnet_test_vectors.h"
+#include "rocketnet_connect_token.h"
 
 #include <sodium.h>
 
@@ -745,6 +746,238 @@ void rocketnet_test_crypto_key_derivation()
     }
 }
 
+static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
+                                               struct rocketnet_connect_token_private_t * private_fields )
+{
+    memset( signed_fields, 0, sizeof(*signed_fields) );
+    signed_fields->version = ROCKETNET_VERSION;
+    signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    signed_fields->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    signed_fields->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
+    memcpy( signed_fields->ipv4_address, server_address, 6 );
+    memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
+
+    memset( private_fields, 0, sizeof(*private_fields) );
+    private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    memcpy( private_fields->client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields->server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+}
+
+void rocketnet_test_connect_token_private()
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t input;
+    rocketnet_test_fill_vector_fields( &signed_fields, &input );
+
+    uint8_t buffer[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    rocketnet_write_connect_token_private( &input, buffer );
+
+    // exact offsets: client id at 0, protocol id at 8, expire at 16, keys at
+    // 24 and 56, user data at 88, zero padding from 344
+    const uint8_t * p = buffer;
+    rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_CLIENT_ID );
+    rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_PROTOCOL_ID );
+    rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_EXPIRE_TS );
+    rocketnet_check( memcmp( buffer + 24, rocketnet_test_token_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( buffer + 56, rocketnet_test_token_s2c_key, 32 ) == 0 );
+    for ( int i = 344; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
+        rocketnet_check( buffer[i] == 0 );
+
+    struct rocketnet_connect_token_private_t output;
+    rocketnet_read_connect_token_private( &output, buffer );
+    rocketnet_check( output.client_id == input.client_id );
+    rocketnet_check( output.protocol_id == input.protocol_id );
+    rocketnet_check( output.expire_timestamp == input.expire_timestamp );
+    rocketnet_check( memcmp( output.client_to_server_key, input.client_to_server_key, 32 ) == 0 );
+    rocketnet_check( memcmp( output.server_to_client_key, input.server_to_client_key, 32 ) == 0 );
+    rocketnet_check( memcmp( output.user_data, input.user_data, ROCKETNET_USER_DATA_BYTES ) == 0 );
+}
+
+void rocketnet_test_signed_connect_data()
+{
+    struct rocketnet_signed_connect_data_t input;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &input, &private_fields );
+
+    uint8_t buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    rocketnet_write_signed_connect_data( &input, buffer );
+
+    // the frozen token's first 89 bytes are exactly these fields at these
+    // offsets: everything before the sealed block must match byte for byte
+    rocketnet_check( memcmp( buffer, rocketnet_test_frozen_token, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
+
+    // and the padding after the used 521 bytes is zero
+    for ( int i = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+        rocketnet_check( buffer[i] == 0 );
+
+    struct rocketnet_signed_connect_data_t output;
+    rocketnet_read_signed_connect_data( &output, buffer );
+    rocketnet_check( output.version == input.version );
+    rocketnet_check( output.protocol_id == input.protocol_id );
+    rocketnet_check( output.create_timestamp == input.create_timestamp );
+    rocketnet_check( output.expire_timestamp == input.expire_timestamp );
+    rocketnet_check( output.timeout_seconds == input.timeout_seconds );
+    rocketnet_check( output.address_flags == input.address_flags );
+    rocketnet_check( memcmp( output.ipv4_address, input.ipv4_address, 6 ) == 0 );
+    rocketnet_check( memcmp( output.ipv6_address, input.ipv6_address, 18 ) == 0 );
+    rocketnet_check( memcmp( output.server_public_key, input.server_public_key, 32 ) == 0 );
+}
+
+void rocketnet_test_connect_token_frozen()
+{
+    // the frozen token from Appendix A is the interop oracle: a conforming
+    // server-side implementation verifies it, opens it, and recovers exactly
+    // the published fields
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, rocketnet_test_frozen_token );
+
+    rocketnet_check( rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) );
+
+    struct rocketnet_connect_token_private_t opened;
+    rocketnet_check( rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+
+    rocketnet_check( opened.client_id == ROCKETNET_TEST_CLIENT_ID );
+    rocketnet_check( opened.protocol_id == ROCKETNET_TEST_PROTOCOL_ID );
+    rocketnet_check( opened.expire_timestamp == ROCKETNET_TEST_EXPIRE_TS );
+    rocketnet_check( memcmp( opened.client_to_server_key, rocketnet_test_token_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( opened.server_to_client_key, rocketnet_test_token_s2c_key, 32 ) == 0 );
+    for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
+        rocketnet_check( opened.user_data[i] == 0 );
+
+    rocketnet_check( rocketnet_connect_token_private_consistent( &opened, token.signed_connect_data ) );
+
+    // the clear token keys ride at 640 and 672, and the tail pad is zero
+    rocketnet_check( memcmp( token.client_to_server_key, rocketnet_test_token_c2s_key, 32 ) == 0 );
+    rocketnet_check( memcmp( token.server_to_client_key, rocketnet_test_token_s2c_key, 32 ) == 0 );
+    for ( int i = 704; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+        rocketnet_check( rocketnet_test_frozen_token[i] == 0 );
+
+    // the token identifier is content determined and matches the vector
+    uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_connect_token_identifier( identifier, token.signed_connect_data );
+    rocketnet_check( memcmp( identifier, rocketnet_test_token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 );
+}
+
+void rocketnet_test_connect_token_mint()
+{
+    // a freshly minted token round trips: our own signature verifies, our own
+    // seal opens, and the fields survive
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    rocketnet_check( rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) );
+
+    struct rocketnet_connect_token_private_t opened;
+    rocketnet_check( rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+    rocketnet_check( opened.client_id == private_fields.client_id );
+    rocketnet_check( rocketnet_connect_token_private_consistent( &opened, token.signed_connect_data ) );
+
+    // two mints of the same fields differ (seal randomness), so their token
+    // identifiers differ: identifiers are per token, not per fields
+    uint8_t token_data_2[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data_2 ) );
+    uint8_t id_1[16], id_2[16];
+    rocketnet_connect_token_identifier( id_1, token_data );
+    rocketnet_connect_token_identifier( id_2, token_data_2 );
+    rocketnet_check( memcmp( id_1, id_2, 16 ) != 0 );
+}
+
+void rocketnet_test_connect_token_refusals()
+{
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, rocketnet_test_frozen_token );
+
+    // NEGATIVE: any flipped byte in the signed data fails verification
+    const int tamper_offsets[] = { 0, 4, 20, 32, 57, 89, 520 };
+    for ( int i = 0; i < (int) ( sizeof(tamper_offsets) / sizeof(tamper_offsets[0]) ); i++ )
+    {
+        token.signed_connect_data[tamper_offsets[i]] ^= 1;
+        rocketnet_check( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) );
+        token.signed_connect_data[tamper_offsets[i]] ^= 1;
+    }
+
+    // NEGATIVE: a flipped signature byte fails verification
+    token.signature[0] ^= 1;
+    rocketnet_check( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) );
+    token.signature[0] ^= 1;
+
+    // NEGATIVE: a different backend key refuses the real token
+    uint8_t other_pk[32], other_sk[64];
+    crypto_sign_keypair( other_pk, other_sk );
+    rocketnet_check( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, other_pk ) );
+
+    // NEGATIVE: a different server keypair cannot open the sealed block
+    uint8_t other_box_pk[32], other_box_sk[32];
+    crypto_box_keypair( other_box_pk, other_box_sk );
+    struct rocketnet_connect_token_private_t opened;
+    rocketnet_check( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, other_box_pk, other_box_sk ) );
+
+    // NEGATIVE: a tampered sealed block does not open
+    token.signed_connect_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + 100] ^= 1;
+    rocketnet_check( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+    token.signed_connect_data[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + 100] ^= 1;
+
+    // THE CENTRAL HAZARD: an attacker's sealed block opens fine at the
+    // server, because sealed boxes are anonymous. only the signature refuses
+    // it. compose an attacker token from the public constants and prove the
+    // refusal happens exactly there.
+    struct rocketnet_signed_connect_data_t attacker_signed;
+    struct rocketnet_connect_token_private_t attacker_private;
+    rocketnet_test_fill_vector_fields( &attacker_signed, &attacker_private );
+    attacker_private.client_id = 0xEE11EE11EE11EE11ULL;
+
+    uint8_t attacker_pk[32], attacker_sk[64];
+    crypto_sign_keypair( attacker_pk, attacker_sk );
+    uint8_t attacker_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &attacker_signed, &attacker_private, attacker_sk, attacker_token ) );
+
+    struct rocketnet_connect_token_t parsed;
+    rocketnet_read_connect_token( &parsed, attacker_token );
+    rocketnet_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+    rocketnet_check( !rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
+
+    // NEGATIVE: inner consistency refuses a private block whose protocol id
+    // disagrees with the signed one, even under a valid signature and seal.
+    // compose it from the layout pieces, exactly as a hostile backend could.
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
+
+    uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    rocketnet_write_connect_token_private( &private_fields, private_block );
+    rocketnet_check( crypto_box_seal( signed_fields.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, rocketnet_test_server_public_key ) == 0 );
+
+    uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    rocketnet_write_signed_connect_data( &signed_fields, signed_buffer );
+    uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+    rocketnet_check( crypto_sign_detached( signature, NULL, signed_buffer, sizeof(signed_buffer), rocketnet_test_backend_secret_key ) == 0 );
+
+    rocketnet_check( rocketnet_verify_signed_connect_data( signed_buffer, signature, rocketnet_test_backend_public_key ) );
+    rocketnet_check( rocketnet_open_connect_token_private( &opened, signed_buffer, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
+    rocketnet_check( !rocketnet_connect_token_private_consistent( &opened, signed_buffer ) );
+
+    // the token identifier changes when any signed byte changes
+    uint8_t id_before[16], id_after[16];
+    rocketnet_connect_token_identifier( id_before, signed_buffer );
+    signed_buffer[300] ^= 1;
+    rocketnet_connect_token_identifier( id_after, signed_buffer );
+    rocketnet_check( memcmp( id_before, id_after, 16 ) != 0 );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -1367,6 +1600,11 @@ void rocketnet_run_tests()
         RUN_TEST( test_crypto_generichash );
         RUN_TEST( test_crypto_scalarmult );
         RUN_TEST( test_crypto_key_derivation );
+        RUN_TEST( test_connect_token_private );
+        RUN_TEST( test_signed_connect_data );
+        RUN_TEST( test_connect_token_frozen );
+        RUN_TEST( test_connect_token_mint );
+        RUN_TEST( test_connect_token_refusals );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
