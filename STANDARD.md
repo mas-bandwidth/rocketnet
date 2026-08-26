@@ -655,15 +655,15 @@ and the client chooses these per attempt. Tampering with either makes the two
 sides derive different keys and the handshake fails; nothing is exposed and
 nothing is accepted.
 
-The **return cookie** field is all zero on a client's first request. It is
-filled in only if the server has answered with a _connection cookie packet_,
-which it does when it is under enough load to require address validation before
-spending asymmetric work. See _Processing Connection Requests_.
+The **return cookie** field is all zero on a client's first request, which the
+server always answers with a _connection cookie packet_. The client fills the
+field in with those bytes and sends the request again. See _Processing
+Connection Requests_.
 
 ### Connection cookie packet
 
 The connection cookie (7) is **not sealed**, because the server sends it before
-doing any work that would give it a key:
+doing any work that would give it a key, and before allocating any state at all:
 
     [cookie expire timestamp] (uint64)
     [cookie mac] (16 bytes)
@@ -965,13 +965,30 @@ and it comes **before** the crypto: otherwise an attacker who captures a single
 valid connection request can replay it at line rate and burn a full verify on
 every copy.
 
-**Address validation before asymmetric work, when it matters.** A server keeps a
-running measure of the rate of connection requests it is receiving. Below its
-configured threshold it processes requests as listed below and never sends a
-cookie packet; the common case is unchanged and costs no extra round trip. At or
-above the threshold, the server MUST require a valid return cookie before
-performing the signature verification, and answers a request without one by
-sending a _connection cookie packet_ and stopping.
+**Address validation always comes before asymmetric work.** A server MUST
+require a valid return cookie before performing the signature verification, and
+answers a request without one by sending a _connection cookie packet_ and
+stopping. There is no threshold and no mode: the cookie exchange happens on
+every connection.
+
+*An earlier draft made this load-triggered, to avoid spending a round trip on
+players when no attack was happening. That is the wrong trade for two reasons.
+
+**A round trip is cheap here because of what this protocol is for.** RocketNet
+carries long-lived connections — a session lasts minutes, and a connect is
+already expected to take on the order of a second. It is not a request-response
+protocol where a client connects, asks one question and leaves, and where a
+handshake round trip would be a meaningful fraction of the total work. Against a
+session measured in minutes, an extra exchange at the start is invisible, and
+resilience bought with it is bought cheaply. A protocol whose connections were
+short and numerous would have to weigh this differently.
+
+The second reason is that a defence which engages only above a threshold is a
+code path that never executes in normal operation or in testing, which means it
+is most likely to be discovered broken on the day it is first needed. A threshold
+also has to be tuned, and creates a seam an attacker can sit just underneath.
+Always-on deletes the rate measurement, the threshold, the seam, and the
+untested branch.*
 
 *Why this is required rather than advised, and why the earlier mitigations were
 not enough.* Every check that precedes the signature verify reads a field the
@@ -1003,12 +1020,11 @@ In this exact order, on a _connection request packet_:
 * If the packet, less the prefilter header, is not 704 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
-* **If the server is at or above its connection-request rate threshold:**
-  recompute the cookie MAC from this packet's source address, its connection
+* **Recompute the cookie MAC** from this packet's source address, its connection
   salt, and the expire timestamp in its return cookie field, and compare in
   constant time. If the field is zero, the MAC does not match, or the cookie has
   expired, respond with a _connection cookie packet_ and stop. One keyed hash,
-  no asymmetric work.
+  no asymmetric work, and no state allocated.
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
@@ -1179,6 +1195,26 @@ spoofing a victim's address to place 48 bytes there spends 676 to do it and is
 strictly worse off than sending the 676 at the victim directly. The cost of a
 spoofed request is CPU, which the cookie exchange addresses, rather than
 reflected bytes.
+
+**Client proof-of-work was considered and declined.** Requiring a client to
+solve a puzzle before connecting, with difficulty scaled up under attack, is a
+recurring proposal and it is the wrong tool here. The cost falls about equally
+on an attacker and on a legitimate client, but the attacker commands a botnet's
+aggregate compute and is indifferent to latency, while the player is on a
+laptop, a console or a phone on battery and is watching a loading screen — so
+the tax is regressive against exactly the clients least able to pay it. It also
+misses every threat that matters: it removes not one byte of a volumetric flood,
+the cookie already defeats a spoofed one more cheaply, and an attacker with real
+addresses needs real connect tokens to get past the bar at all.
+
+That last point is the decisive one. **An attacker holding valid tokens is a
+problem for the backend, not for this layer.** The backend knows who requested
+them and can limit issuance per account; a server sees only an address. A puzzle
+here would duplicate, worse, a control that belongs upstream where identity is
+known. Note also that TLS, DTLS and QUIC all considered client puzzles and none
+adopted one. Proof-of-work would only be worth its cost in a design with no
+address validation at all, where it substitutes for proving the client is really
+there — and this protocol has the cookie for that.
 
 **The backend is the real admission control.** A server allocates an encryption
 mapping only for a request carrying a valid backend signature, so the number of
