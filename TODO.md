@@ -31,14 +31,13 @@ land. The milestone view is issue #28; this file is the live ordering.
 - Prefilter header: rocketnet_protocol.{h,cpp} started; write and structural
   check as flat early-return guards, locked to the assembled vectors' first
   bytes; every refusal proven at every length and tag byte.
+- Packets: the AD builder, sealed write/open, request and cookie writers,
+  and sequence reconstruction with the tie rule; every per-type vector and
+  both assembled vectors matched byte for byte; refusals per input including
+  zero sequence, type-swap via AD, and truncation at every cut.
 
 ## TODO
 
-- Packet layouts: write/read every type, exact sizes from the table,
-  assembled wire vectors matched byte for byte, malformed rejection.
-- Sealing: per-type seal/open with sequence-derived nonce and the 21/53-byte
-  AD; per-type vectors matched exactly; negative controls: wrong key, altered
-  AD, altered sequence, zero sequence, truncation.
 - Cookie: MAC with the exact 7/19-byte address input, generate/validate,
   expiry, rotation overlap, Appendix A vector match.
 - Counters framework: lands HERE, with its first real users — one counter per

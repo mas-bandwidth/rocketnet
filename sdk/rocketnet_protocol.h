@@ -53,4 +53,103 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 
 int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * title_tag );
 
+// Wire sizes, from the standard's packet size table. Every type has a fixed
+// total size except the payload, which has a range.
+
+#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES     708
+#define ROCKETNET_CONNECTION_DENIED_WIRE_BYTES      32
+#define ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES   64
+#define ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES    48
+#define ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES  32
+#define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES 25
+#define ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES  24
+#define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES      36
+
+#define ROCKETNET_SEQUENCE_BYTES                    4
+#define ROCKETNET_SESSION_NONCE_BYTES               8
+#define ROCKETNET_PACKET_TAG_BYTES                  16
+#define ROCKETNET_PACKET_OVERHEAD_BYTES             24      // prefilter + sequence + tag
+#define ROCKETNET_RESPONSE_PADDING_BYTES            24
+#define ROCKETNET_COOKIE_FIELD_BYTES                24      // expire + mac, echoed in requests
+#define ROCKETNET_COOKIE_MAC_BYTES                  16
+#define ROCKETNET_CONNECTION_SALT_BYTES             8
+
+// the associated data: version, protocol id, packet type and connection salt,
+// plus the client ephemeral public key on types 2 and 3 only. constructed by
+// both ends, never on the wire.
+
+#define ROCKETNET_AD_BYTES                          21
+#define ROCKETNET_AD_WITH_EPHEMERAL_BYTES           53
+
+// returns the associated data length written: 53 when client_ephemeral_public_key
+// is provided (types 2 and 3), 21 otherwise
+
+int rocketnet_write_packet_associated_data( uint8_t * associated_data,
+                                            uint64_t protocol_id,
+                                            uint8_t packet_type,
+                                            const uint8_t * connection_salt,
+                                            const uint8_t * client_ephemeral_public_key );
+
+// Sealed packet construction. Builds prefilter header, the low 32 bits of the
+// sequence, the clear session nonce on types 1 and 2, then the data sealed
+// with ChaCha20-Poly1305 under the sequence-derived nonce and the associated
+// data above. Returns the wire size, or 0 on refusal. session_nonce is
+// required for types 1 and 2 and must be NULL otherwise;
+// client_ephemeral_public_key is required for types 2 and 3 and must be NULL
+// otherwise.
+
+int rocketnet_write_sealed_packet( uint8_t * packet_data,
+                                   uint8_t packet_type,
+                                   const uint8_t * title_tag,
+                                   uint64_t sequence,
+                                   const uint8_t * session_nonce,
+                                   const uint8_t * data,
+                                   int data_bytes,
+                                   uint64_t protocol_id,
+                                   const uint8_t * connection_salt,
+                                   const uint8_t * client_ephemeral_public_key,
+                                   const uint8_t * key );
+
+// Sealed packet opening, the inverse. The caller has already run the
+// prefilter check and reconstructed the 64-bit sequence; this locates the
+// sealed region for the type, reads the clear session nonce on types 1 and 2
+// into out_session_nonce (which those types require), and opens. Returns the
+// opened data length, or -1 on refusal. Refusal reasons are deliberately not
+// distinguished here; the reading order counts them at its own steps.
+
+int rocketnet_open_sealed_packet( uint8_t * out_data,
+                                  uint8_t * out_session_nonce,
+                                  const uint8_t * packet_data,
+                                  int packet_bytes,
+                                  uint8_t packet_type,
+                                  uint64_t sequence,
+                                  uint64_t protocol_id,
+                                  const uint8_t * connection_salt,
+                                  const uint8_t * client_ephemeral_public_key,
+                                  const uint8_t * key );
+
+// the two unsealed packets
+
+void rocketnet_write_connection_request_packet( uint8_t * packet_data,
+                                                const uint8_t * title_tag,
+                                                const uint8_t * return_cookie,        // 24 bytes, or NULL for all zero
+                                                const uint8_t * connection_salt,
+                                                const uint8_t * client_ephemeral_public_key,
+                                                const uint8_t * signed_connect_data,
+                                                const uint8_t * signature );
+
+void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
+                                               const uint8_t * title_tag,
+                                               const uint8_t * connection_salt,
+                                               uint64_t cookie_expire_timestamp,
+                                               const uint8_t * cookie_mac );
+
+// Sequence reconstruction, from the standard: candidates share the wire
+// value's low 32 bits; take the one nearest to the highest successfully
+// opened sequence plus one, and on an exact tie take the larger. Never
+// returns a wrong acceptance -- a wrong reconstruction fails the open -- so
+// this is for determinism between implementations.
+
+uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened );
+
 #endif // #ifndef ROCKETNET_PROTOCOL_H
