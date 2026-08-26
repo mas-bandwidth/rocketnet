@@ -1273,11 +1273,24 @@ bounds both the reuse window and the revocation latency; rate limit issuance per
 authenticated identity rather than per address; and refuse issuance to
 identities that abuse it.
 
-**And the piece this standard does not provide:** there is no feedback path from
-a server back to the backend. A server being flooded by validly issued tokens
-has no way, in this protocol, to report which client ids are responsible. A
-deployment that cares about that must build the channel itself. It is named here
-rather than left for someone to notice under load.
+**The backend and the game servers may talk to each other, and probably will —
+and that is not this standard's business.** It is not our backend and not our
+game. A title's backend and its fleet will have whatever relationship the title
+needs: health reporting, allocation, bans, shutdown, abuse signals. None of it is
+specified here, none of it is required here, and a flood of validly issued
+tokens is handled there.
+
+**That is the connect token's quieter purpose, and it is a product property as
+much as a security one: the token gets this library out of the loop.** A
+customer runs their own backend, authenticates their own players, enforces their
+own bans, and orchestrates their own servers. The only thing that has to cross
+from their world into ours is a signed token, and the only thing we have to do
+with it is verify it. We never need to know how they decided, never need to be
+told when they change their minds, and never need to run anything on their
+behalf. That is what makes this a library a customer adopts rather than a
+service they depend on — and it is why removing the backend-to-server shared
+secret matters beyond cryptography: a shared secret would have put us back in
+the middle of a relationship that is theirs.
 
 **The backend is the real admission control.** A server allocates an encryption
 mapping only for a request carrying a valid backend signature, so the number of
