@@ -4,9 +4,9 @@ rocketnet builds on Linux and macOS with CMake, driven by the Makefile:
 
     make
 
-Binaries and libraries land in `dist/`. Run the test suite with:
+Binaries and libraries land in `bin/`. Run the test suite with:
 
-    ./dist/test
+    ./bin/test
 
 On Linux the build links the XDP dataplane, so it needs the dev packages CI installs:
 
