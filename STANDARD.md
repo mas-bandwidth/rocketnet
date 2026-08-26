@@ -147,7 +147,7 @@ had. Because both addresses belong to one server, they share one used-token
 history, and that history binds a token to the source address that first
 presented it. A client that failed over between families would present the same
 token from a different source address and be refused — locking itself out of
-both paths. Failover between families is therefore not a client behaviour; it is
+both paths. Failover between families is therefore not a client behavior; it is
 the backend's job, exactly as failover between servers is.*
 
 RocketNet is dual stack from day one, not as a later addition:
@@ -178,7 +178,7 @@ the connection is lost.** NAT rebinding, a carrier-grade NAT reassigning a port,
 and a mobile handover between networks all end the session; the client sees a
 timeout and must obtain a fresh connect token and connect again. netcode makes
 the identical assumption, so this is not a regression — but a game whose players
-are largely on mobile networks should know it is choosing this behaviour.
+are largely on mobile networks should know it is choosing this behavior.
 
 QUIC removes this assumption with connection IDs: an identifier carried in every
 packet, independent of the address, so a connection survives a path change. That
@@ -206,7 +206,7 @@ protection QUIC's path validation provides. Cost on ordinary packets: nothing.
 Cost when it fires: one round trip, rarely. **Packet types 7 through 255 are
 reserved and MUST be ignored by a conforming receiver**, so a later
 implementation adding migration degrades gracefully against an earlier one: the
-packet is ignored and the client reconnects, which is exactly today's behaviour.
+packet is ignored and the client reconnects, which is exactly today's behavior.
 
 The case that would justify revisiting this is a title whose players are
 predominantly on mobile networks, where cellular-to-wifi handover is routine
@@ -727,7 +727,7 @@ client's packet sequence number MUST NOT be reset within an attempt.** A new
 attempt means a new salt, hence new keys, so restarting the sequence at zero is
 correct there and only there.
 
-All other client behaviour — send rates, storing and echoing the cookie,
+All other client behavior — send rates, storing and echoing the cookie,
 transition to _connected_ on the first keep-alive, keep-alive generation, timeout
 handling, redundant disconnect packets — is netcode 1.02, reading "sealed" for
 "encrypted".

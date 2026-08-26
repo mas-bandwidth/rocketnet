@@ -24,6 +24,17 @@ Hall. Two-for-one.
   library stays the loose C-like C++ we do — no rewrite in C; the nice C API
   rides on top for Dean to call from C#.
 
+  The C API is for C to call: an `extern "C"` interface with real,
+  non-mangled symbols, consumable from many languages without C++ nonsense.
+  No C++ types cross that surface. C# is the first consumer, not the only
+  one it is shaped for.
+
+* Example backend code, in Go and C#, for creating connect tokens. That is
+  the backend integration story: a customer runs their own backend, and
+  minting a token is the only thing it has to do for us. Go needs no
+  dependency for the signing half — Ed25519 is in its standard library — and
+  sealed boxes are in `nacl/box`.
+
 * Everything is byte buffers, no structure. To Dean these are "packets" he
   can send. RocketNet does not own serialization.
 
