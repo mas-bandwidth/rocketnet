@@ -384,6 +384,23 @@ dedicated server. It is netcode's connect token rebuilt on public keys: the
 backend says "this is a valid client, coming from your matchmaker," and the
 server verifies that statement holding only the backend's public key.
 
+*If it helps to place this: a connect token is a JWT for game servers.* Signed
+claims, an issuer the verifier trusts by public key, an expiry, and an audience —
+the named server — with the whole thing carried by the party it describes. That
+is the same shape, and saying so is worth more than pretending otherwise: this
+converges on a well-understood pattern, which is a point in its favor whichever
+way it was arrived at.
+
+The JWT *format* would be a poor fit, and the places it differs are the places
+JWT has historically gone wrong. There is no algorithm field, so there is no
+`alg: none` and no confusion between verifying an asymmetric signature and a
+symmetric one; the algorithm is fixed by this document and never negotiated. The
+layout is fixed binary rather than base64url JSON, so a verifier in a hot path
+parses nothing and never reads a length out of the data it is validating. And
+the confidential part is a sealed box rather than JWE, which keeps the one thing
+that must be secret from the carrier — the session keys — out of a construction
+that is difficult to use correctly.
+
 ### Private connect token data
 
 What only the server may read. Prior to sealing:
