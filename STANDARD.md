@@ -105,6 +105,21 @@ RocketNet is a binary protocol. All data is written in little-endian byte order
 unless otherwise specified, including sequence numbers converted to nonce byte
 arrays and associated data passed to the AEAD primitive.
 
+**That includes port numbers and the 16-bit groups of an IPv6 address, which is
+the opposite of what socket APIs hand you.** `sockaddr` structures carry ports
+and address words in network byte order; an implementation that copies them to
+the wire unconverted produces buffers whose signatures verify and whose
+addresses never match. Convert at the boundary, in both directions.
+
+**Every structure in this document is packed: fields are laid end to end at the
+offsets their listed sizes imply, with no alignment padding anywhere.** A
+compiler-laid-out struct is not the wire format. The stated total sizes are
+exact, and where they exceed the sum of the listed fields, the remainder is
+explicit zero padding called out in the layout.
+
+**Timestamps are unix time in seconds**: seconds since the unix epoch as an
+unsigned 64-bit count. Sub-second precision is never carried on the wire.
+
 Byte counts from libsodium, named so an implementation checks them against its
 own headers rather than trusting this document:
 
@@ -219,7 +234,7 @@ predominantly on mobile networks, where cellular-to-wifi handover is routine
 rather than rare.
 
 Higher-level transports may name endpoints by an opaque string rather than an IP
-address (per REQUIREMENTS.md). How a non-IP transport encodes its endpoint in a
+address. How a non-IP transport encodes its endpoint in a
 connect token is that transport's business; the address encoding below is the
 form for the IP transports. **Open for design, and it must be decided before
 1.0 freezes: the address fields live inside the signed buffer, so generalising
@@ -293,9 +308,15 @@ for. Seventeen bytes on every packet, forever, for protection the sealed layer
 already provides. The header is 4 bytes here, of which 3 are the marginal cost
 of filtering at all, because the type byte is needed regardless.
 
-**The tag is generated per title.** A tool takes a per-title seed and emits the
-filter as code in both forms from one seed — the userspace check and the XDP
-program — so no two titles share a tag (issue #17). That is what per-title
+**The tag is an arbitrary per-title 3-byte constant, and interoperability is by
+value, not by derivation.** Every implementation of a title carries the same
+three bytes, agreed the way the protocol id is; how a title chooses them is not
+normative. Tooling generates them from a per-title seed and emits the filter as
+code in both forms — the userspace check and the XDP program — so no two titles
+share a tag by accident. **The tag for the embedded test title of this
+standard, used with the published test keys, is `b7 59 01`.**
+
+That is what per-title
 generation buys, and the claim should be stated no wider: **it prevents a single
 universal RocketNet matcher; it does not prevent fingerprinting.** The tag is
 stable for a title by construction, so anyone willing to look at one packet of a
@@ -341,15 +362,52 @@ Every sealed packet spends, before the application's bytes:
                                    ----
                                      24
 
-So payload packets carry **1 to 1208 bytes** of application data.
+So payload packets carry **1 to budget−24 bytes** of application data — 1 to
+1208 at the default budget.
 
 Per-packet overhead is 24 bytes, against netcode 1.02's 18 to 25 — inside its
 range, while carrying a prefilter header netcode has no equivalent of. A fixed
 sequence costs a byte or two more than netcode's variable one in the common
 case; the 4-byte prefilter and the retired variable-length encoding pay for it.
 
+Every packet type has a fixed total size on the wire except the payload, which
+has a range. A receiver checks the size before any other per-type work:
+
+| Type | Packet | Wire size | Composition |
+|---|---|---|---|
+| 0 | connection request | 708 | 4 + 704 |
+| 1 | connection denied | 32 | 4 + 4 + 8 + 0 + 16 |
+| 2 | connection challenge | 64 | 4 + 4 + 8 + 32 + 16 |
+| 3 | connection response | 48 | 4 + 4 + 24 + 16 |
+| 4 | connection keep-alive | 32 | 4 + 4 + 8 + 16 |
+| 5 | connection payload | 25 to budget | 4 + 4 + (1 to budget−24) + 16 |
+| 6 | connection disconnect | 24 | 4 + 4 + 0 + 16 |
+| 7 | connection cookie | 36 | 4 + 8 + 8 + 16 |
+
+The composition columns are prefilter header + sequence + data + AEAD tag for
+sealed types, with the additional 8 being the clear session nonce on types 1 and
+2; the request is prefilter header + its unsealed body; the cookie is prefilter
+header + its three unsealed fields.
+
 The connect token is a fixed 768 bytes, inside a single 1500-byte MTU with room
 to spare, by design.
+
+**The 1232-byte budget is the default, not a ceiling built into the protocol.**
+It is derived from the one MTU that is guaranteed everywhere — and on IPv6 a
+packet exceeding the path MTU is not fragmented in transit but dropped, so
+exceeding it on a 1280-byte tunnel path is silent connection death. On IPv4
+today, everywhere that matters, the real MTU is 1500.
+
+The budget governs **sending**: a sender MUST NOT emit a packet larger than its
+configured budget, default 1232, and a deployment that knows its paths MAY raise
+it, to at most 1400. A receiver accepts payload packets up to 1400 bytes
+regardless of its own budget, so a budget mismatch between two correctly
+implemented ends degrades to nothing worse than one side sending smaller packets
+than it could. The budget is a deployment constant, not negotiated, and not
+carried on the wire. The fixed packet sizes above do not change with it; only
+the payload range does. The 1232 default is the only value that is safe with no
+knowledge of the network; every raise is a statement about paths, and it is the
+deployment's to make.
 
 ## Sequence numbers
 
@@ -359,15 +417,22 @@ before the sealed data.
 **There are four sending sequences per connection: one for each direction of
 each key phase.** Handshake and session packets do not share a counter. Each of
 the four starts at zero and increments by one per packet sent under that key.
-A receiver tracks, per key phase and per direction, the highest sequence it has
-successfully opened — initialized such that the first packet of a phase, with
-wire value zero, reconstructs to zero — and its own replay window.
 
-The value used as the AEAD nonce is the full **64-bit** sequence. The receiver
-reconstructs the high 32 bits: it tracks the highest sequence it has
-successfully opened, and takes the candidate whose low 32 bits match the wire
-value and which is nearest that highest value. A wrong reconstruction produces a
-failed open and a dropped packet, never a wrong acceptance.
+A receiver tracks, per key phase and per direction, the **highest sequence it
+has successfully opened**, and its replay window. At the start of a phase the
+highest-opened value is zero and every window entry is unmarked. The first
+packet of a phase carries wire value zero, reconstructs to zero, is not yet
+marked in the window, and is therefore accepted; zero is a value like any
+other, not a sentinel.
+
+The value used as the AEAD nonce is the full **64-bit** sequence, reconstructed
+from the 4 wire bytes as follows. Let `expected` be the highest successfully
+opened sequence plus one. The candidates are the 64-bit values whose low 32
+bits equal the wire value; take the candidate nearest to `expected`, and if two
+are exactly equidistant — the wire value sits exactly 2^31 away in both
+directions — take the larger. A wrong reconstruction produces a failed open and
+a dropped packet, never a wrong acceptance, so the tie rule is for determinism
+between implementations rather than for security.
 
 *Why not netcode's variable-length encoding.* netcode packs a sequence of 1 to 8
 bytes and puts the byte count in the high nibble of its prefix byte, so every
@@ -791,11 +856,26 @@ doing any work that would give it a key, and before allocating any state at all:
     [cookie mac] (16 bytes)
 
 32 bytes after the prefilter header, 36 on the wire — far smaller than the
-716-byte request that provoked it.
+708-byte request that provoked it.
 
     cookie mac = crypto_generichash( 16 bytes,
                                      client address ‖ connection salt ‖ expire,
                                      server cookie key )
+
+The client address input is exactly this encoding of the request's source, 8 or
+20 bytes:
+
+    [family] (uint8)                    // 1 = IPv4, 2 = IPv6
+    [address] (4 or 16 bytes)           // IPv4 octets in order, or
+                                        // 8 x uint16 groups, little-endian
+    [port] (uint16)                     // little-endian
+
+followed by the 8-byte connection salt and the 8-byte expire timestamp as they
+appear on the wire. The source is normalized per _Addresses and dual stack_
+before encoding, so an IPv4 client observed through a dual-stack socket MACs as
+IPv4. The port is included because address and port together are the connection
+identity. The family byte keeps the two families from ever producing colliding
+inputs.
 
 The cookie proves only that the client can receive at the address it claimed.
 It carries no key material and no key-schedule input; see _Per-connection keys_
@@ -808,7 +888,7 @@ field — and puts them in the return cookie field of every subsequent request i
 **A cookie packet does not provoke a reply.** A client that receives one stores
 it and includes it in its next *scheduled* request; it MUST NOT send a request
 because a cookie arrived. Otherwise the packet becomes an amplifier pointed at
-the server — 44 bytes in, 716 out — that anyone able to see a client's salt
+the server — 36 bytes in, 708 out — that anyone able to see a client's salt
 could drive at whatever rate they chose. With the rule, the client's request
 rate is its own retransmit rate no matter how many cookie packets arrive, and
 the pair is not a provoked pair at all.
@@ -837,24 +917,31 @@ Packet types 1 through 6 are sealed. Type 7, the connection cookie, is not. Prio
 
 The per-packet type data:
 
-_connection denied_: no data.
+_connection denied_: no sealed data — the packet is the tag alone.
 
 _connection challenge_:
 
     [server ephemeral public key] (32 bytes)
 
-The challenge is preceded, in the clear and outside the sealed data, by the
-**session nonce** the server chose for this mapping:
+**The challenge and the denied packet are both preceded, in the clear and
+outside the sealed data, by the session nonce the server chose for the
+mapping**, because both can be the first packet of a handshake the client ever
+receives, and the client cannot derive the handshake key without it:
 
-    [prefilter header] (4 bytes)
-    [sequence number] (4 bytes)
-    [session nonce] (8 bytes)           // in the clear; the key-schedule input
-    [sealed data] (48 bytes)            // 32 + 16
+    challenge:                              denied:
 
-64 bytes on the wire. It is in the clear because the client needs it to derive
-the key that opens the sealed part, and it needs no confidentiality: altering it
-in flight makes the client derive a different key, the open fails, and the
-handshake stops. Nothing is exposed and nothing is accepted.
+    [prefilter header] (4 bytes)            [prefilter header] (4 bytes)
+    [sequence number] (4 bytes)             [sequence number] (4 bytes)
+    [session nonce] (8 bytes)               [session nonce] (8 bytes)
+    [sealed data] (48 bytes)  // 32 + 16    [sealed data] (16 bytes)  // 0 + 16
+
+64 bytes on the wire for the challenge, 32 for the denied. The nonce is in the
+clear because the receiver needs it to derive the key that opens the sealed
+part, and it needs no confidentiality or separate integrity: altering it in
+flight makes the receiver derive a different key, the open fails, and the packet
+is ignored. Nothing is exposed and nothing is accepted. A client that has
+already derived its handshake keys — a denied received after the challenge —
+MUST ignore the carried nonce and use the keys it holds.
 
 _connection response_:
 
@@ -867,7 +954,7 @@ _connection keep-alive_:
 
 _connection payload_:
 
-    [payload data] (1 to 1208 bytes)
+    [payload data] (1 to budget−24 bytes; 1208 at the default budget)
 
 _connection disconnect_: no data.
 
@@ -881,6 +968,10 @@ them:
     [packet type] (uint8)               // binds the type; altering it fails the tag
     [connection salt] (8 bytes)
     [client ephemeral public key] (32 bytes)   // types 2 and 3 only
+
+The associated data is these fields packed with no padding: exactly **21 bytes**
+for types 1, 4, 5 and 6, and exactly **53 bytes** for types 2 and 3. It is
+constructed by both ends and never travels on the wire.
 
 **The client's ephemeral public key is in the associated data of the connection
 challenge and the connection response**, types 2 and 3 only. It is omitted from
@@ -910,29 +1001,41 @@ In this exact order:
 
 * If the prefilter structural check fails, ignore the packet.
 
+* If the type byte is greater than 7, ignore the packet. Types 8 through 255
+  are reserved and MUST be ignored by a conforming receiver.
+
+* **If the packet's total size does not match its type — the exact wire size
+  from the _Packet sizes_ table, or the 25-byte-to-budget range for a payload —
+  ignore it.** Every non-payload type has a single fixed size, so this is one
+  compare, and it runs before any per-type handling so that no later step can
+  read past the end of a short packet.
+
+* The server ignores _connection denied_, _connection challenge_ and _connection
+  cookie_ packets. The client ignores _connection request_ and _connection
+  response_ packets. These types are never legitimately sent in those
+  directions, so they are dropped before any further work.
+
 * **If the type byte is zero this is a connection request: process it per
   _Processing Connection Requests_ and stop.** Everything below applies to
   sealed packets only.
 
-* If the type byte is greater than 7, ignore the packet. Types 8 through 255
-  are reserved and MUST be ignored by a conforming receiver.
+* **If the type byte is 7 this is a connection cookie: the client processes it
+  per _Processing a connection cookie packet_ and stops.** It is not sealed, so
+  nothing below applies to it.
 
-* The server ignores _connection challenge_ and _connection cookie_ packets. The
-  client ignores _connection request_ and _connection response_ packets.
-
-* **If the type byte is 7 this is a connection cookie: the client stores its 24
-  bytes for use in subsequent requests of this attempt, and stops.** It is not
-  sealed, so nothing below applies to it.
-
-* If the packet is smaller than 4 + 4 + 16 bytes, it cannot hold a sequence and
-  a tag; ignore it.
-
-* Look up the encryption mapping for the packet's source address. If there is
-  none, ignore the packet — this is the first check on the sealed path and it
-  costs one lookup. The mapping supplies the keys and the replay state used
-  below.
+* Look up the keys and replay state for the packet's source address. On the
+  server this is the encryption mapping; on the client it is the connection's
+  own state, as _Client-Side Connection Process_ specifies — including the case
+  where
+  the handshake keys do not exist yet and this packet carries the nonce needed
+  to derive them. If there is nothing for this address, ignore the packet.
 
 * Read the 4-byte sequence and reconstruct the 64-bit value.
+
+* **If the type is _connection denied_ (1) or _connection challenge_ (2), read
+  the 8-byte session nonce that follows the sequence.** The sealed data begins
+  after it. For every other type the sealed data begins directly after the
+  sequence.
 
 * If the packet type is _connection keep-alive_, _connection payload_ or
   _connection disconnect_, and it fails the replay-protection already-received
@@ -959,7 +1062,7 @@ In this exact order:
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * [1,1208] bytes — _connection payload_
+  * 1 to budget−24 bytes — _connection payload_
   * 0 bytes — _connection disconnect_
 
 * Otherwise, process the packet.
@@ -1120,11 +1223,52 @@ it — the check still runs, but on the handful of packets that survived instead
 on the flood. That is where the win is, and it keeps one implementation of the
 logic rather than one per transport.
 
+## Timing
+
+Every rate in this protocol is fixed and measured in wall-clock time. None of
+them adapt to the round trip time, and none of them are expressed per
+application update.
+
+| Value | Default | Applies to |
+|---|---|---|
+| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection |
+| Handshake deadline | 5 s | server: mapping created but connection not established |
+| Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
+| Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
+| Cookie lifetime | 3 s | server: how long an issued cookie is accepted |
+| Cookie key rotation | 60 s | server: previous key accepted for one period |
+| Redundant disconnect packets | 10 | either end, on a deliberate disconnect |
+
+**The send rate is a rate in time, not a rate per update.** An implementation
+MUST NOT send a packet per application update. This protocol places no
+constraint on how often an application updates or how many packets it sends, and
+an application may update at a thousand hertz; a handshake that retransmitted on
+every update would flood the network on such an application and starve on a slow
+one. Retransmission and keep-alive generation are driven by elapsed time and
+nothing else.
+
+**Retransmission is at a fixed rate, with no backoff and no round-trip
+estimation.** This is a connection protocol whose handshake completes in a
+handful of packets and whose deadline is a few seconds; an adaptive scheme would
+add state and failure modes to buy nothing measurable over that interval. A
+deployment MAY raise the send rate — 20 Hz is reasonable — and MUST keep it
+constant for the duration of an attempt.
+
+**Every value here is a default and may be tuned by a deployment**, which knows
+its players better than this document does. The defaults are chosen so that a
+game that never touches them is correct and safe.
+
+*A note on one interaction:* the cookie lifetime and the send rate together
+determine whether a client can lose a race — if a cookie expires before the
+client's next scheduled request, the server reissues one and the client uses it
+on the request after that. A cookie lifetime shorter than two send intervals
+makes that race likely and wastes a round trip; a few seconds against a 10 Hz
+send rate leaves ample margin.
+
 ## Client State Machine
 
-Transitions, timeouts and retry rates are netcode 1.02's. The states are
-netcode's with one addition, because this protocol has one more exchange than
-netcode did:
+A client is in exactly one of these states. Rates and deadlines are in
+_Timing_.
 
 * _connect token expired_ (-7)
 * _invalid connect token_ (-6)
@@ -1206,16 +1350,128 @@ client's packet sequence number MUST NOT be reset within an attempt.** A new
 attempt means a new salt, hence new keys, so restarting the sequence at zero is
 correct there and only there.
 
-All other client behavior — send rates, transition to _connected_ on the first
-keep-alive, keep-alive generation, timeout handling, redundant disconnect
-packets — is netcode 1.02, reading "sealed" for "encrypted". Storing and echoing
-the cookie has no netcode equivalent and is specified in _Connection cookie
-packet_ above.
+In each of the three sending states the client retransmits its current packet at
+the send rate until it receives the packet that advances it or a deadline
+elapses. Storing and echoing the cookie is specified in _Connection cookie
+packet_; establishment, keep-alive generation, timeout and disconnect are in
+_Connected Clients_.
+
+## Client-Side Connection Process
+
+The client's half of the handshake, as ordered processing per packet type. The
+governing property is the one stated in _Processing Connection Requests_ from
+the other side: **no single lost packet may strand either end.** Every state the
+client waits in is a state it retransmits from, every retransmission re-provokes
+the server's answer, and every answer is one the server can repeat — so any
+dropped packet, in either direction, is repaired by the next send interval.
+
+### Starting an attempt
+
+* Validate the token and select the address as specified above.
+* Generate the connection salt: 8 bytes from a cryptographically secure random
+  source, fresh for this attempt.
+* Generate the client ephemeral X25519 keypair, fresh for this attempt.
+* Zero the sending sequences for both key phases, with empty replay state.
+* Enter _requesting cookie_ and send a connection request with an all-zero
+  return cookie field at the send rate.
+
+### Processing a connection cookie packet
+
+Processed in _requesting cookie_ and _sending connection request_; ignored in
+every other state.
+
+* If the echoed connection salt does not equal this attempt's salt, ignore the
+  packet.
+* Store the packet's last 24 bytes — the expire timestamp and the MAC —
+  **replacing any cookie already stored.** Replacement matters: if an attempt
+  outlives a cookie's lifetime, the server answers the stale-cookie request with
+  a fresh cookie, and a client that kept the old one would present it forever
+  and never connect.
+* If in _requesting cookie_, transition to _sending connection request_.
+* Do not send anything in response; the next scheduled request carries the
+  cookie. (_Connection cookie packet_ gives the amplification reason this is a
+  MUST.)
+
+### Processing a connection challenge packet
+
+Processed in _sending connection request_ only. In every other state a
+challenge is a duplicate or an injection, and is ignored — a genuine
+retransmitted challenge exists only to answer request retransmissions, and a
+client past _sending connection request_ no longer sends requests.
+
+* Read the clear session nonce following the sequence.
+* Derive the two handshake keys from the token keys, the salt and that nonce,
+  **into temporary storage**. A forged nonce must not be able to overwrite
+  anything: keys are committed only after a successful open.
+* Open the sealed data with the temporary handshake server-to-client key and
+  the type 2 associated data. If the open fails, discard the temporaries and
+  ignore the packet.
+* Compute `shared = crypto_scalarmult( client ephemeral secret, server
+  ephemeral public )` with the key just unsealed. If it returns non-zero,
+  discard everything and ignore the packet; the attempt then ends at its
+  deadline, which is the correct outcome for a peer offering a degenerate key.
+* Derive the two session keys. Commit all four keys and the session nonce.
+* **Erase the client ephemeral secret and the shared secret.** From this moment
+  the client holds only the four derived keys, exactly as the server does.
+* Transition to _sending connection response_ and send the connection response
+  at the send rate. The response MAY additionally be sent immediately on this
+  transition: the challenge that triggered it is authenticated, so this is not
+  a reflection lever, and it saves most of a send interval of latency. The
+  cookie transition has no such allowance because the cookie is unsealed.
+
+### Processing a connection denied packet
+
+Processed in _sending connection request_ and _sending connection response_;
+ignored in every other state.
+
+* If handshake keys are held, ignore the carried nonce and open with the held
+  keys. If not, derive temporary handshake keys from the carried nonce exactly
+  as for a challenge.
+* If the open fails, ignore the packet. An off-path attacker cannot deny a
+  connection: without the token keys, nothing it sends opens.
+* On success, transition to _connection denied_ (-1), stop sending, and release
+  all connection state.
+
+### Processing keep-alive, payload and disconnect packets
+
+These open under the session keys, which exist from _sending connection
+response_ onward; in earlier states there are no keys for them and they are
+ignored at the key lookup.
+
+* A keep-alive in _sending connection response_ carries the client index and
+  the slot count: store both, transition to _connected_. In _connected_ it
+  refreshes the last-received time, as does any opened packet.
+* A payload is delivered to the application in _connected_ only. In _sending
+  connection response_ it is ignored: the client does not yet know its client
+  index, and the server prefixes every payload with a keep-alive while the
+  client is unconfirmed, so the transition arrives with the traffic.
+* A disconnect in _sending connection response_ or _connected_ transitions to
+  _disconnected_ (0) immediately, releasing all state. It is never answered;
+  the sender's redundant copies are the whole delivery mechanism.
+
+### Why no state here can stick
+
+Walk every loss. A lost request or cookie: the client is in states 1–2, still
+retransmitting requests, and every request re-provokes a cookie or the stored
+challenge. A lost challenge: the client retransmits its request, and the
+server's mapping answers it byte-identically. A lost response: the client
+retransmits it at the send rate, and the server's response processing tolerates
+it — the first copy assigns the slot, later copies find the address connected
+and are ignored, while the keep-alives generated at the send rate keep
+answering. A lost keep-alive: the next one is at most a send interval away, in
+both directions, forever. A lost denied: re-provoked by the next retransmitted
+request or response, because the server holds no-slots state (none, or the
+mapping) that repeats it. A lost disconnect: nine more copies follow, and the
+timeout stands behind all ten. There is no packet whose loss leaves either end
+waiting for something that will never be sent again — and any change to the
+protocol MUST preserve this by construction, not by luck: every wait state
+retransmits, and everything a server sends, it can send again.
 
 ## Server-Side Connection Process
 
-The server manages n client slots as in netcode. Implementations are expected to
-support high slot counts; the reference target is 1000.
+A server has a fixed number of client slots, configured at startup.
+Implementations are expected to support high slot counts; the reference target
+is 1000.
 
 ### Processing Connection Requests
 
@@ -1328,6 +1584,18 @@ In this exact order, on a _connection request packet_:
 * If the packet, less the prefilter header, is not 704 bytes, ignore it.
 * **If a client from the request source address and port is already connected,
   ignore it.** This costs one lookup and no crypto.
+* **If an encryption mapping already exists for the source address and port,
+  resend the stored challenge packet, byte-identical, and stop.** This is the
+  ordinary case of a retransmitted request whose challenge was lost, and it is
+  the only correct answer: the mapping already has its session nonce and its
+  keys, and deriving new ones for a source that already holds a mapping is
+  exactly the key-recurrence hazard the nonce exists to prevent. A mapping is
+  created once, answered identically for as long as it lives, and replaced
+  never — a different token from the same address waits until the mapping
+  expires. The resend costs no crypto and is smaller than the request that
+  provoked it, so it is safe this early; it is placed after the
+  already-connected check so an established client's address cannot be made to
+  emit anything.
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
@@ -1353,8 +1621,11 @@ In this exact order, on a _connection request packet_:
   so nothing below may run for an address that has not answered.
 * If the token identifier already appears in the used-token history bound to a
   different source address and port, ignore it. **The token identifier is the
-  first 16 bytes of `crypto_generichash` over the 576-byte signed connect
-  data** — a content-determined value. *(It is deliberately not the signature
+  output of `crypto_generichash` invoked with a 16-byte output length and no
+  key, over the 576-byte signed connect data** — a content-determined value.
+  BLAKE2b binds its output length into the hash, so a 16-byte invocation is not
+  a truncation of the 32-byte one; implementations MUST use the 16-byte output
+  length, not truncate. *(It is deliberately not the signature
   bytes. Signature malleability means an implementation that does not enforce
   canonical Ed25519 verification would see a mangled copy of the same token as a
   new one, and an attacker could mint unbounded distinct identifiers from one
@@ -1389,20 +1660,36 @@ In this exact order, on a _connection request packet_:
   shared secret and both ephemeral public keys.
 * **Erase the shared secret**, and the server's ephemeral secret if it is not
   being reused across a rotation window, as soon as the four keys exist.
-* If no client slots are available, respond with a _connection denied packet_,
+* If no client slots are available, respond with a _connection denied packet_ —
   sealed under the handshake server-to-client key just derived, at sequence
-  zero. *The slot check is placed here rather than earlier because a denied
-  packet is sealed, and before this point no keys exist to seal it with.*
+  zero, carrying the session nonce in the clear — and stop. No mapping is
+  created, so a retransmitted request runs this path again and is denied again.
+  *The slot check is placed here rather than earlier because a denied packet is
+  sealed, and before this point no keys exist to seal it with.*
 
 * Add an encryption mapping for the source address and port, holding the four
   derived keys, the connection salt, the session nonce, the server ephemeral
-  public key, the challenge packet as sent, the client id, the user data, and
-  the sending sequence and replay state for both key phases. It is bound by
-  **two independent deadlines**, described below. If it cannot be added, ignore
-  the packet.
-* Respond with a _connection challenge packet_ carrying the server's ephemeral
-  public key, and store that packet in the mapping so a retransmission can be
-  answered with a byte-identical copy.
+  public key, the client id, the user data, and the sending sequence and replay
+  state for both key phases. It is bound by **two independent deadlines**,
+  described below. If it cannot be added, ignore the packet.
+* Build a _connection challenge packet_ carrying the server's ephemeral public
+  key and the session nonce, send it, and store it in the mapping, so that a
+  retransmitted request is answered with a byte-identical copy for as long as
+  the mapping lives.
+
+**Every valid request is answered every time it arrives, not only the first
+time.** This is an invariant of the whole protocol, and the reason is packet
+loss: a response sent only once is a response that can be lost, leaving the peer
+retransmitting a request that is silently ignored forever — a connection that
+dies not from any failure but from one dropped packet. So a request without a
+valid cookie gets a cookie packet on every arrival; a request whose mapping
+exists gets the stored challenge on every arrival; a request that finds the
+slots full is denied on every arrival; a retransmitted connection response finds
+the client connected and is ignored, but the keep-alives that answer it are
+generated at the send rate for as long as the client is connected, so the answer
+repeats anyway. Silence is reserved for invalid traffic. When adding any new
+exchange, this invariant is part of its design: the response must be repeatable,
+and the state that repeats it must live somewhere.
 
 **Half-open state, and the two deadlines that bound it.** A handshake that is
 started and never finished is the classic way to attack a connection protocol,
@@ -1442,7 +1729,7 @@ server-side configuration value, in seconds, and it is not carried in the token,
 because it protects the server and nothing the client presents should set it.
 
 **It has a sensible default and it is tunable per game.** The default SHOULD be
-five seconds: a client retransmitting at netcode's rate gets tens of attempts
+five seconds: a client retransmitting at the send rate gets tens of attempts
 inside it, which covers ordinary loss and a poor round trip with room to spare,
 while cutting an attacker's hold time to a fraction of a gameplay timeout. But
 five seconds is a judgement about a population of players, not a property of the
@@ -1502,15 +1789,66 @@ only data already verified.
   verified in step 2.
 * If a client from the source address and port is already connected, ignore it.
 * If a client with that client id is already connected, ignore it.
-* If no slots are available, respond with a _connection denied packet_.
+* If no slots are available, respond with a _connection denied packet_ under
+  the handshake keys, carrying the mapping's session nonce, and stop. The
+  mapping is left in place, so a retransmitted response is denied again.
 * Assign a slot, copy the user data from the encryption mapping into it, mark
-  the client unconfirmed, and respond with a _connection keep-alive packet_.
+  the client unconfirmed, and respond with a _connection keep-alive packet_. If
+  this keep-alive is lost, the ones generated at the send rate repeat the
+  answer.
 
 ### Connected Clients
 
-Client slots, the client index, the confirmed flag, keep-alive prefixing until
-confirmation, payload delivery both ways, redundant disconnect packets, and slot
-reset on timeout or disconnect are all netcode 1.02.
+A server has a fixed number of client slots, configured at startup. A slot is
+identified by its **client index**, an integer from zero to one less than the
+slot count, and a slot holds the client id and user data recovered from the
+connect token, the encryption mapping for that client's address, and the
+sending sequence and replay state for each key phase.
+
+**The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
+becomes confirmed the first time the server receives any sealed packet from that
+client on that slot — a keep-alive or a payload. The flag exists because the
+server has not yet observed that the client received its keep-alive, so it does
+not yet know the client considers itself connected.
+
+**While a client is unconfirmed, the server prefixes every payload packet it
+sends to that client with a keep-alive packet.** The keep-alive carries the
+client index and the slot count, which is how the client learns its own index,
+so a client that lost the first keep-alive would otherwise receive payloads it
+cannot interpret. Once confirmed, the server sends payloads alone.
+
+**Keep-alive generation.** The server sends a keep-alive to every connected
+client whenever the send rate interval has elapsed since it last sent that
+client anything. The client does the same toward the server once connected.
+Keep-alives are therefore suppressed by ordinary traffic and appear only when a
+connection is otherwise idle.
+
+**Establishment on the client.** A client transitions to _connected_ on the
+first keep-alive it receives, taking its client index and the slot count from
+that packet.
+
+**Payload delivery.** A payload packet carries application bytes with no
+interpretation. Payloads received on an established connection are delivered in
+the order they arrive; this layer does not reorder, retransmit, or deduplicate
+beyond refusing replays.
+
+**Timeout.** An established connection times out at either end when no packet
+has been received from the peer for the connection timeout interval. The server
+resets the slot and destroys the encryption mapping; the client transitions to
+_connection timed out_.
+
+**Deliberate disconnect.** An end that disconnects on purpose sends ten
+redundant disconnect packets, sealed, at consecutive sequence numbers, and then
+immediately releases its state without waiting for any acknowledgement. The
+redundancy is because a disconnect is never retransmitted — it is the last thing
+sent — so its delivery is bought with copies rather than with time, and losing
+all ten costs only a peer that waits for the timeout instead.
+
+**Slot reset.** Releasing a slot clears the client id, the user data, the
+sequence and replay state, and the confirmed flag, and destroys the associated
+encryption mapping. A released slot is immediately available for reuse. An
+implementation MUST zero the key material rather than merely marking the slot
+free.
 
 ## Observability
 
@@ -1585,6 +1923,7 @@ order:
 | `CONNECTION_REQUEST_RECEIVED` | a request reaches the handler |
 | `..._WRONG_SIZE` | not 704 bytes after the prefilter header |
 | `..._ALREADY_CONNECTED` | source address already holds a slot |
+| `..._CHALLENGE_RESENT` | mapping exists; stored challenge resent |
 | `..._WRONG_VERSION` | version mismatch |
 | `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
 | `..._TOKEN_EXPIRED` | expire timestamp has passed |
@@ -1665,10 +2004,35 @@ copy the backend public key to the server, copy the server public key to
 whatever mints your token, then start both." That is four steps and two file
 copies before a single packet moves.
 
-**Both keys are therefore published in this standard as fixed test values:** a
-test backend Ed25519 keypair, including its secret half, and a test server
-X25519 keypair, including its secret half. Their values are given in the
-reference implementation and are identical for everyone.
+**Both keys are therefore published in this standard as fixed test values,
+identical for everyone.** These are the values, secret halves included —
+publishing the secret halves is the point:
+
+    test backend signing public key (Ed25519):
+
+        b0 ab 03 b3 e2 6e f1 7c 72 e3 bd 99 29 a5 b4 bf
+        48 bd ba 50 57 3f 1b 8d 08 4a 08 d8 58 bd 24 2c
+
+    test backend signing secret key (Ed25519):
+
+        75 29 02 15 e1 ff 4d f2 09 92 57 8a 22 3c 7c d4
+        63 b9 a2 7c f8 3a a7 1c 7a 16 93 1c 01 9b 7c 30
+        b0 ab 03 b3 e2 6e f1 7c 72 e3 bd 99 29 a5 b4 bf
+        48 bd ba 50 57 3f 1b 8d 08 4a 08 d8 58 bd 24 2c
+
+    test server key exchange public key (X25519):
+
+        3d 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47
+        6a 06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c
+
+    test server key exchange secret key (X25519):
+
+        6f fb 8f 73 37 ec 37 76 97 f5 68 de 31 18 d8 39
+        59 56 0b 25 92 8d 22 70 7b a2 29 75 89 d0 8b 97
+
+The Ed25519 secret key is in libsodium's 64-byte form, the seed followed by the
+public key. The test title tag that accompanies these keys is given in _The
+Prefilter Header_.
 
 That reduces development to what it should be:
 
@@ -1800,27 +2164,26 @@ correct; the failure was not re-running this table afterwards.
 
 | Provoking packet | Size | Response | Size | |
 |---|---|---|---|---|
-| connection request | 716 | connection cookie | 44 | ok |
-| connection request | 716 | connection challenge | 56 | ok |
-| connection request | 716 | connection denied | 24 | ok |
-| connection challenge | 56 | connection response | 48 | ok |
+| connection request | 708 | connection cookie | 36 | ok |
+| connection request | 708 | connection challenge, fresh or resent | 64 | ok |
+| connection request | 708 | connection denied | 32 | ok |
+| connection challenge | 64 | connection response | 48 | ok |
 | connection response | 48 | connection keep-alive | 32 | ok |
-| connection response | 48 | connection denied | 24 | ok |
-| connection cookie | 44 | *nothing* | — | see _Connection cookie packet_ |
+| connection response | 48 | connection denied | 32 | ok |
+| connection cookie | 36 | *nothing* | — | see _Connection cookie packet_ |
 
 Two rules keep the table true rather than merely accurate today. **Padding used
 to satisfy it MUST be required on read**, checked for both length and content,
 because padding that is optional is padding an attacker omits. And **a server
 MUST NOT answer a request it has rejected** — every failure path in _Processing
 Connection Requests_ ignores the packet silently, and the single exception is the
-cookie, which is 44 bytes against 716 and is the price of address validation
-having to start somewhere. Today the widest margins are a
-716-byte request answered by a 56-byte challenge or a 44-byte cookie. At those
-ratios the challenge is not usefully a reflection primitive: an attacker
-spoofing a victim's address to place 56 bytes there spends 716 to do it and is
-strictly worse off than sending the 676 at the victim directly. The cost of a
-spoofed request is CPU, which the cookie exchange addresses, rather than
-reflected bytes.
+cookie, which is 36 bytes against 708 and is the price of address validation
+having to start somewhere. The widest margins are a 708-byte request answered by
+a 64-byte challenge or a 36-byte cookie. At those ratios neither response is
+usefully a reflection primitive: an attacker spoofing a victim's address to place
+64 bytes there spends 708 to do it, an eleven-to-one loss, and would do strictly
+better sending those 708 bytes at the victim directly. The cost of a spoofed
+request is CPU, which the cookie exchange addresses, rather than reflected bytes.
 
 **Client proof-of-work was considered and declined.** Requiring a client to
 solve a puzzle before connecting, with difficulty scaled up under attack, is a
@@ -2094,23 +2457,23 @@ completes.
    reconstructed, instead of a variable 1 to 8 bytes packed against the type
    byte. The type byte carries only the type.
 9. The encrypted challenge token is replaced by a MAC cookie: no
-   challenge key, no challenge sequence counter, no challenge nonce space, and
-   the challenge falls from 366 bytes to 56 and the response, which now carries
-    no data at all, to 24.
+   challenge key, no challenge sequence counter, no challenge nonce space. The
+   challenge falls from 366 bytes to 64, and the response, which now carries
+   only required zero padding, to 48.
 10. The version is an opaque 32-bit constant rather than netcode's 14-byte
     ASCII string, which travels in the clear on every connection request and
     would be a universal signature for the protocol.
-11. One packet-size budget of 1232 bytes from the IPv6 minimum MTU; payload
-    packets carry 1 to 1208 bytes; the token is a fixed 768 bytes, one MTU by
-    design.
+11. One packet-size budget, default 1232 bytes from the IPv6 minimum MTU and
+    raisable per deployment; payload packets carry 1 to budget−24 bytes, 1208
+    at the default; the token is a fixed 768 bytes, one MTU by design.
 
 **Keys and nonces**
 
-12. Per-connection keys are derived from the token keys and a client-chosen
-    salt, with separate handshake and session contexts. This deletes netcode's
-    server-restart section and both of its optional mitigations, deletes the
-    2^63 global sequence convention, and removes the reconnect nonce reuse
-    netcode does not document.
+12. Per-connection keys are derived from the token keys, a client-chosen salt
+    and a server-chosen session nonce, with separate handshake and session
+    contexts, so no key ever outlives one connection. This deletes netcode's
+    server-restart section and both of its optional mitigations, and the 2^63
+    global sequence convention.
 13. The connection salt is included in the per-packet associated data.
 
 **Dual stack**
