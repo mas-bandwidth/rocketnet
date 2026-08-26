@@ -1418,15 +1418,24 @@ system every one of its players can forge, which is not a subtle condition, and
 any adversarial look finds it immediately. There is no state in which the test
 keys are quietly load-bearing.
 
-The rules that keep it that way:
+**The test keys are embedded in the library and used by default.** A developer
+who configures nothing gets a working connection, which is the entire objective;
+requiring configuration to reach the working path would put the hoop back where
+it started. Supplying real keys is what takes an act, and that act belongs to
+the deployment, not to the person trying the library for the first time.
 
-* A server MUST NOT accept the test backend key unless explicitly configured to,
-  MUST NOT have that configuration as its default, and SHOULD warn on every
-  start where it is enabled.
-* A server MUST NOT use the test server keypair unless explicitly configured to,
-  under the same conditions.
-* An implementation SHOULD refuse both in a build configured for release, and
-  SHOULD make that refusal impossible to override with configuration alone.
+The rules that keep it honest:
+
+* An implementation MUST warn, unmissably and on every start, whenever either
+  test key is in use. This is the one thing standing between a default that
+  helps everybody and a default that ships, so it is a MUST and not a SHOULD,
+  and it should be hard to filter out of a log.
+* An implementation SHOULD refuse to use either test key in a build configured
+  for release, and where it does, SHOULD NOT allow configuration alone to
+  override that refusal.
+* A deployment that supplies its own backend public key MUST NOT also accept the
+  test one. Accepting both would mean every player could forge a token for a
+  server that looks correctly configured, which is the worst of both worlds.
 
 **Nothing else is relaxed, and that is the point.** The handshake, the cookie
 exchange, the address validation, the sealing, the key derivation, the replay

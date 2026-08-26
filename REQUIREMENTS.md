@@ -33,7 +33,8 @@ Hall. Two-for-one.
   copying keys between machines. Run the server, point the client at its
   address, connected. This is achieved with published test keys — both the
   backend signing keypair and the server key exchange keypair are fixed values
-  printed in the standard — so the default path is the working path. The
+  printed in the standard and embedded in the library, used by default, so the
+  developer configures nothing and the default path is the working path. The
   security comes from the keys being public rather than from a flag being off:
   a deployment that ships with them has an authorization system anyone can
   forge, which fails loudly, where a mode flag that disables checks fails
