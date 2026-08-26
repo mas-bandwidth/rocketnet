@@ -6,10 +6,9 @@ their own conforming implementations. It is the packet-level connection layer
 only; reliability, flows and broadcast ride above it in payload packets and are
 specified separately.
 
-It is netcode 1.02 rebuilt on public key cryptography, and simplified where the
-simplification costs no security. The shape is netcode's — connect token,
-address-validated handshake, address challenge, sealed packets, per-client slots. Two
-things change and they run through everything below.
+The shape is a connect token minted by a game backend, an address-validated
+handshake, sealed packets, and per-client slots. Two properties run through
+everything below.
 
 **There is no secret shared between the backend and the dedicated servers.** The
 backend signs connect tokens with a private key that never leaves the backend;
@@ -17,14 +16,13 @@ it seals the session keys to the target server's own public key. A dedicated
 server holds only the backend's public key and its own keypair. A compromised
 server cannot mint tokens, and leaks only its own sessions. This is what lets a
 title run player-hosted servers on hardware the backend operator does not
-control — netcode's fleet-wide shared private key cannot.
+control.
 
-**Every connection derives fresh keys.** The client contributes a random salt to
-each connection attempt, and both sides derive the working keys from the token
-keys and that salt. netcode reused the token keys directly, which is the root of
-its documented restart hazard and of an undocumented one on reconnect. Deriving
-per connection removes both, and removes the machinery netcode needed to manage
-them.
+**Every connection derives fresh keys, and no key or nonce ever outlives one
+connection.** The client contributes a random salt to each attempt, the server
+contributes a random session nonce to each mapping, and both sides derive the
+working keys from the token keys and those values. Token keys never seal a
+packet directly, so no reconnect, restart or replay can bring a key back.
 
 Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 
@@ -40,7 +38,7 @@ Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 
 ## Architecture
 
-Three components, as in netcode:
+Three components:
 
 1. **The backend** — whatever service authenticates players and decides who
    plays where: a web server, a matchmaker, a game's own service. It holds the
@@ -86,8 +84,8 @@ Every party holds only keys whose exposure it can afford:
 * A **server** additionally holds a per-run secret keying its client lookup
   tables, described under _No lookup may be linear in the number of clients_.
 
-There is no key in the system that is both shared and secret. This is the
-load-bearing difference from netcode 1.02.
+There is no key in the system that is both shared and secret. That property
+is load-bearing everywhere below.
 
 **The one channel that must still be trusted** is server provisioning: the
 backend must learn each server's X25519 public key, bound to that server's
@@ -95,11 +93,15 @@ addresses. That registration MUST be integrity-protected and authenticated to
 the backend. If an attacker can register their own public key against a
 legitimate server's address, the backend will seal real players' session keys to
 the attacker. How registration happens is deployment-specific and outside this
-standard; that it must be authenticated is not. (netcode's shared key arrived
-through the same kind of channel, so this is not a new requirement — but it is
-the trust anchor of the whole design and it is stated rather than assumed.)
+standard; that it must be authenticated is not. (This is the trust anchor of
+the whole design, and it is stated rather than assumed.)
 
 ## General Conventions
+
+The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY in this document are
+to be interpreted as in RFC 2119: MUST is an absolute requirement of
+conformance, SHOULD is a strong default an implementation departs from only
+with understood consequences, MAY is genuinely optional.
 
 RocketNet is a binary protocol. All data is written in little-endian byte order
 unless otherwise specified, including sequence numbers converted to nonce byte
@@ -144,17 +146,16 @@ The server's public key is public, so anyone can seal a block to it.
 Authenticity of a connect token comes only from the backend's Ed25519 signature,
 and a server MUST verify that signature before it trusts anything the sealed
 block contains. This is stated here, in the processing order, and in the
-conformance section, because it is the one way a public-key rebuild of netcode
-fails quietly: an implementation that treats a successful open as authentication
+conformance section, because it is the one way this design fails quietly: an implementation that treats a successful open as authentication
 lets any party mint tokens for that server.
 
 ## Addresses and dual stack
 
 A connect token names **one server**, reachable at up to two addresses: an IPv4
-address and an IPv6 address, each optional, at least one present. (netcode
-allowed a list of up to 32 candidate servers per token; that multi-address
-design was a mistake — a matchmaker assigns a server, and the only real
-multiplicity is address family.)
+address and an IPv6 address, each optional, at least one present. (A matchmaker
+assigns a server, so the only real multiplicity is address family; a list of
+candidate servers inside a token would be stale the moment the matchmaker knew
+better, and failover is a fresh token instead.)
 
 The two addresses are two ways to reach one machine, **not two candidates to try
 in turn**. The client selects the address whose family it can reach and uses
@@ -163,8 +164,7 @@ client does not switch to the other one; it reports failure and the correct
 response is to request a fresh connect token from the backend, which has better
 information about server health than any stale token does.
 
-*This is deliberate, and it closes a defect an earlier draft of this document
-had. Because both addresses belong to one server, they share one used-token
+*This is deliberate. Because both addresses belong to one server, they share one used-token
 history, and that history binds a token to the source address that first
 presented it. A client that failed over between families would present the same
 token from a different source address and be refused — locking itself out of
@@ -174,9 +174,7 @@ the backend's job, exactly as failover between servers is.*
 RocketNet is dual stack from day one, not as a later addition:
 
 * A server MAY advertise both an IPv4 and an IPv6 address, and it accepts a
-  connection request arriving at **either** of them. (netcode's dual stack was
-  retrofitted, and for years its server compared tokens against only its first
-  advertised address; RocketNet does not repeat that.)
+  connection request arriving at **either** of them.
 * Address normalization is a law of this protocol, not an implementation
   convenience: above the platform socket layer, an IPv4-mapped IPv6 address
   (`::ffff:a.b.c.d`) must never exist. A receiver converts a mapped source to
@@ -197,24 +195,18 @@ address is a packet from a different client.
 The consequence, plainly: **if a client's address or port changes mid-session,
 the connection is lost.** NAT rebinding, a carrier-grade NAT reassigning a port,
 and a mobile handover between networks all end the session; the client sees a
-timeout and must obtain a fresh connect token and connect again. netcode makes
-the identical assumption, so this is not a regression — but a game whose players
-are largely on mobile networks should know it is choosing this behavior.
+timeout and must obtain a fresh connect token and connect again. A game whose
+players are largely on mobile networks should know it is choosing this
+behavior.
 
-QUIC removes this assumption with connection IDs: an identifier carried in every
-packet, independent of the address, so a connection survives a path change. That
-is the right design for a general-purpose internet transport, and it is a real
-capability RocketNet does not have.
-
-It is not free. QUIC's goal is *seamless* migration — no interruption, no round
-trip — which requires the identifier to be present on every packet, plus a path
-validation exchange so an attacker cannot redirect a session onto a victim's
-address, plus connection ID rotation so a passive observer cannot use the
-identifier to follow a client across networks. On a 24-byte packet overhead an
-always-present identifier is a third again, paid by every player on a fixed
-connection, for an event most of them never experience. RocketNet's targets are
-PC and console games on fixed connections, and its keep-alives run often enough
-that a NAT binding never goes idle — which removes the common cause of a
+Seamless connection migration in the QUIC style — an address-independent
+connection ID on every packet, path validation against redirection, ID rotation
+against cross-network tracking — is a real capability this protocol does not
+have, and the cost of having it would fall on everyone: on a 24-byte packet
+overhead an always-present identifier is a third again, paid by every player on
+a fixed connection for an event most never experience. The targets here are PC
+and console games on fixed connections, and the keep-alives run often enough
+that a NAT binding never goes idle, which removes the common cause of a
 mid-session address change on such a network.
 
 **Deliberate scope choice, and deliberately not a wire break to reverse.**
@@ -298,15 +290,11 @@ that fails for an unknown source (sealed packets). Even a 10 Gbps flood of minim
 frames — about 14.9 million packets per second — puts roughly one packet per
 second in front of a check that rejects it in a handful of instructions.
 
-*What the earlier design spent for that.* netcode's Network Next ancestor
-smeared a 64-bit hash across 15 bytes plus a 2-byte checksum, each byte
-constrained to a range so the receiver could verify structure without computing
-the hash. It is a clever construction and it delivers 2⁻⁶⁴ against random data —
-but at 3.8 bits of filtering per byte, where a direct comparison delivers 8, and
-2⁻⁶⁴ is roughly forty orders of magnitude more filtering than the threat calls
-for. Seventeen bytes on every packet, forever, for protection the sealed layer
-already provides. The header is 4 bytes here, of which 3 are the marginal cost
-of filtering at all, because the type byte is needed regardless.
+The tag is 3 bytes because that is proportionate to the job. The prefilter is a
+traffic-classification convenience, not a security boundary — the sealed layer
+beneath it carries the guarantees — so a false-positive rate of 2⁻²⁴ against
+random data is ample, and every byte beyond that is spent on every packet
+forever for nothing.
 
 **The tag is an arbitrary per-title 3-byte constant, and interoperability is by
 value, not by derivation.** Every implementation of a title carries the same
@@ -365,10 +353,7 @@ Every sealed packet spends, before the application's bytes:
 So payload packets carry **1 to budget−24 bytes** of application data — 1 to
 1208 at the default budget.
 
-Per-packet overhead is 24 bytes, against netcode 1.02's 18 to 25 — inside its
-range, while carrying a prefilter header netcode has no equivalent of. A fixed
-sequence costs a byte or two more than netcode's variable one in the common
-case; the 4-byte prefilter and the retired variable-length encoding pay for it.
+Per-packet overhead is a fixed 24 bytes, every packet, no variable cases.
 
 Every packet type has a fixed total size on the wire except the payload, which
 has a range. A receiver checks the size before any other per-type work:
@@ -434,14 +419,12 @@ directions — take the larger. A wrong reconstruction produces a failed open an
 a dropped packet, never a wrong acceptance, so the tie rule is for determinism
 between implementations rather than for security.
 
-*Why not netcode's variable-length encoding.* netcode packs a sequence of 1 to 8
-bytes and puts the byte count in the high nibble of its prefix byte, so every
-packet parse does nibble unpacking, a range check, and offset arithmetic that
-depends on the result. That variable geometry was the direct cause of two
-defects found in an earlier draft of this document: a missing size recheck after
-the sequence was consumed, and a read order that dropped every connection
-request because its type byte's high nibble is zero. A fixed field deletes the
-encoding, the range check, the dependent arithmetic, and both defect classes.
+*Why not a variable-length encoding.* Packing the sequence into 1 to 8 bytes
+with the count in a nibble makes every packet parse do nibble unpacking, a
+range check, and offset arithmetic that depends on the result — variable
+geometry that every consumer of the layout has to get right, and the classic
+source of size-recheck and offset defects. A fixed field deletes the encoding,
+the range check and the dependent arithmetic.
 
 *Why not a fixed 8 bytes.* **It is not this protocol's business to decide how
 often an application sends.** A transport that assumes a packet rate becomes the
@@ -449,10 +432,9 @@ thing an application has to work around, and the rates differ by orders of
 magnitude between a turn-based game, a shooter at 60Hz, and a simulation
 fragmenting large state across many packets per frame. Four extra bytes on every
 packet is negligible at the low end and a measurable fraction of the link at the
-high end, so the choice is made where it costs nothing either way: four bytes on
-the wire, a 64-bit value reconstructed, and no rate assumed.
-Four bytes on the wire with a reconstructed 64-bit value costs about ten lines
-and never wraps.
+high end, so the choice is made where it costs nothing either way: four bytes
+on the wire, a 64-bit value reconstructed in about ten lines, never wrapping,
+and no rate assumed.
 
 *Why not two bytes.* A 16-bit sequence wraps quickly enough at high send rates
 to leave no room for reordering or a loss burst, which would put a ceiling on
@@ -462,7 +444,7 @@ impose.
 ## Connect Token
 
 A _connect token_ ensures that only authenticated clients can connect to the
-dedicated server. It is netcode's connect token rebuilt on public keys: the
+dedicated server. The
 backend says "this is a valid client, coming from your matchmaker," and the
 server verifies that statement holding only the backend's public key.
 
@@ -520,7 +502,7 @@ it, so a sealed block can never be meaningfully reused in another token — for
 instance by a backend bug that reissues across two titles sharing one signing
 key.
 
-**The client id is inside the seal deliberately, as it is in netcode.** A
+**The client id is inside the seal deliberately.** A
 connection request crosses the open internet, so anything in its clear portion is
 visible to any observer on the path, and an identifier naming a player must not
 be one of those things.
@@ -627,29 +609,21 @@ encryption mapping, and sent in the clear in the challenge so the client can
 derive with it.
 
 *Choosing it at mapping-creation time rather than earlier is what makes the
-guarantee hold, and an earlier draft got this wrong in a way worth recording.*
-That draft had the server issue its nonce with the cookie. But a cookie is
-replayable for its lifetime, so an attacker could present one nonce, cause the
-mapping to be replaced by presenting a second, then replay the first — producing
-a second mapping with the same derived keys and the sending sequence reset to
-zero, which is a repeated (key, nonce) pair. The same reasoning applied across a
-restart. Binding the nonce to the creation of the mapping removes the whole
+guarantee hold.* A nonce issued earlier — at cookie time, say — inherits the
+cookie's replayability: replaying the exchange that carried it reproduces the
+same derived keys with the sending sequence reset to zero, a repeated
+(key, nonce) pair. The same reasoning applies across a restart. Binding the
+nonce to the creation of the mapping removes the whole
 class: a mapping is created once, gets one nonce, and a nonce a server has used
 is never reachable again, so no lifecycle path — replacement, eviction, expiry,
 rebuild, restart — can recreate a key whose sequence has been reset.
 
-*An earlier draft derived these from the salt alone, and it was wrong in a way
-worth recording, because the mistake is natural. With only the client
-contributing, the client — or anyone who can spoof it — decides whether a key
-recurs. That draft tried to contain the consequence with a rule about when a
-server may replace an encryption mapping, and the rule became the lever: an
-attacker alternating two salts from a victim's address could force the server to
-create, discard and recreate the same key with the sending sequence reset each
-time, producing two plaintexts under one key at one nonce. A lifecycle rule
-cannot be the guarantee, because lifecycles have more exits than the rule
-enumerates — eviction under pressure and expiry-then-retry reach the same place
-with no attacker at all. Making both sides contribute removes the need for the
-rule to hold.*
+*Both sides contribute for a reason that generalizes: whichever party is the
+only contributor to key derivation decides whether a key recurs, and if that
+party is the client, so does anyone who can spoof it. No lifecycle rule about
+mapping replacement can substitute, because lifecycles have more exits —
+eviction, expiry, retry, restart — than any rule enumerates. Key uniqueness has
+to come from the derivation itself.*
 
 The **session** keys additionally mix in an ephemeral key exchange, so that
 recovering the token keys later does not recover the traffic. Each side
@@ -734,29 +708,27 @@ leak from a proxy cache, a log or the backend itself — recomputes every sessio
 key that secret ever produced.
 
 This is a handful of BLAKE2b invocations and two scalar multiplications per
-connection, and it deletes a great deal:
+connection, and it is what makes the following true by construction rather than
+by careful bookkeeping:
 
-* **The restart hazard is gone.** netcode devotes a section to a client
-  presenting an unexpired token to a restarted server and repeating nonces under
-  the same key, and offers two optional mitigations that a conforming server may
-  skip. A fresh salt per attempt means the keys differ, so the sequence spaces
-  never meet. Both mitigations and the section are deleted, not documented.
-* **The reconnect hazard is gone**, and netcode does not name that one at all: a
-  client that reconnects with the same token from the same address gets a fresh
-  slot with sequences back at zero and the *same* keys, replaying every nonce of
-  the previous session under both. Nonce reuse in a Poly1305 construction is not
-  only a confidentiality loss; it can expose the authenticator key and yield
-  forgery. A fresh salt removes it.
-* **The 2^63 hack is gone.** netcode starts the server's global sequence at 2^63
-  so pre-slot packets cannot collide with per-client packets under one key.
-  Separate handshake and session keys make the two spaces independent, so both
-  simply start at zero.
+* **A key exists for exactly one connection, so no sequence space is ever
+  entered twice.** Reusing a token key directly as a packet key would make every
+  event that restarts a sequence counter under an unchanged key — a server
+  restart with an unexpired token, a reconnect from the same address, a replayed
+  handshake — a nonce reuse event, and nonce reuse in a Poly1305 construction is
+  not only a confidentiality loss; it can expose the authenticator key and yield
+  forgery. Here the salt and the session nonce are fresh per connection, so the
+  keys differ before any counter is ever reused, and no restart-tracking or
+  reconnect-tracking machinery needs to exist.
+* **Pre-slot and post-slot traffic cannot collide under one key**, because the
+  handshake and session phases are different keys, not offset ranges of one
+  sequence space. Both phases simply count from zero.
 
 Tampering with the salt in flight makes the two sides derive different keys and
 the handshake fails. That requires an on-path attacker, who can drop the packets
 instead; no key is exposed and nothing is accepted.
 
-## The handshake, and why the third exchange carries no cookie
+## The Handshake
 
 The address is proved once, by the cookie exchange, and never again.
 
@@ -774,10 +746,9 @@ The address is proved once, by the cookie exchange, and never again.
    assigns a slot and sends the first keep-alive.
 
 *The third exchange carries no cookie, and that is a deliberate subtraction.*
-netcode's challenge token existed to prove the client could receive at its
-address while keeping the server stateless until it did — the token carried the
-client id and user data so the server needed to remember nothing. Neither
-purpose survives here. The address was already proved in step 1, so proving it
+A third-exchange cookie would exist to prove the address again, or to carry
+state for a server that stayed stateless through the handshake. Neither purpose
+exists here. The address was already proved in step 1, so proving it
 again is redundant; and by step 3 the server holds a mapping for that address,
 so it is not stateless and has nowhere it needs the client to carry its state
 for it. What remains for the response to prove is possession of the handshake
@@ -959,9 +930,9 @@ _connection payload_:
 _connection disconnect_: no data.
 
 The per-packet data is sealed with `crypto_aead_chacha20poly1305_ietf_encrypt`
-using the following associated data — netcode's construction, with the
-connection salt added so the derived keys are bound to the exchange that chose
-them:
+using the following associated data, which binds the connection's immutable
+identity into every packet and so makes any splice across connections fail the
+tag:
 
     [version] (uint32)                  // 0x4E7C1A93 for RocketNet 1.0
     [protocol id] (uint64)
@@ -1117,18 +1088,18 @@ must still be fillable when the retransmissions arrive, and for the case where a
 receiver falls behind and catches up. Over-sizing costs only memory, which is
 the cheap side of this trade.*
 
-### No lookup may be linear in the number of clients
+### Lookup complexity
 
 Not wire format, but a requirement all the same, because at a thousand clients a
 linear scan is quadratic work in disguise and the protocol is specified for that
 scale.
 
 **Every lookup a server performs per packet or per connection MUST be constant
-time in the number of client slots.** netcode performs all of the following by
-scanning, which was reasonable at its target of a few dozen clients and is not
-at a thousand:
+time in the number of client slots.** A linear scan is tolerable at a few
+dozen clients and is whole cores at the reference target of a thousand,
+because the per-packet rows multiply by the aggregate packet rate:
 
-| Lookup | When netcode does it | Required here |
+| Lookup | Performed | Complexity required |
 |---|---|---|
 | address to encryption mapping | every received packet | constant time |
 | address to client slot | every received packet, and both handshake steps | constant time |
@@ -1136,10 +1107,8 @@ at a thousand:
 | token identifier to history entry | every connection request | constant time |
 | free client slot | every completed connection | constant time |
 
-The per-packet rows are the ones that matter most: a thousand clients sending at
-a high rate means the scan cost multiplies by the aggregate packet rate, and
-becomes whole cores spent comparing addresses. The per-connection rows are less
-severe but are no harder to do properly.
+The per-connection rows are less severe than the per-packet ones, but they are
+no harder to do properly.
 
 **A free slot is found from a free list, not a search** — a stack of unused
 indices, popped on connect and pushed on disconnect.
@@ -1170,7 +1139,7 @@ protocol guards most closely; a keyed hash costs tens of nanoseconds and no
 bytes. The option is recorded because it is the right answer if a future
 deployment ever finds the hash to be the bottleneck.*
 
-### Checks are a sequence, not a location
+### Check placement
 
 **Every check this standard specifies is defined by what it rejects and in what
 order, never by where it runs.** A transport may perform any prefix of the
@@ -1289,9 +1258,7 @@ current position cannot be observed can only be debugged by inference, and the
 failure it is worst at explaining is the one that matters most here: a client
 that never connects and never says why.
 
-*Why the cookie phase gets a state of its own.* netcode's client sent a request
-and waited for a challenge, so one sending state covered the whole pre-challenge
-period. Here the client sends a request with an empty cookie field and waits for
+*Why the cookie phase gets a state of its own.* The client sends a request with an empty cookie field and waits for
 a cookie, then sends a request carrying that cookie and waits for a challenge.
 Those are two different waits with two different failure meanings, and collapsing
 them would make the protocol's two most common deployment faults
@@ -1313,14 +1280,10 @@ the two token defects the client detects before sending anything, fall outside
 it. An implementation SHOULD assert the pairing, so that a state added later
 cannot silently ship without its timeout.
 
-*This renumbers netcode's values.* An integrator porting from netcode must not
-assume the constants match; the names are stable, the numbers are this
-protocol's.
-
 **The ordering is load-bearing, not cosmetic.** The handshake is exactly the
 range `state > disconnected && state < connected`, so any rule that applies
 "while connecting" is one range check that stays correct as states are added
-between. netcode relies on this and so does the rule below.
+between. The rule below relies on it.
 
 **A total connect deadline bounds the client, as the handshake deadline bounds
 the server.** Per-state timeouts alone are not enough on either side: a client
@@ -1333,8 +1296,6 @@ start rather than against the absolute expire timestamp, so that a client whose
 clock disagrees with the backend's still gives up after the intended interval.
 The check stops at _connected_: an established connection is governed by its
 idle timeout, not by the token that admitted it.
-
-This mirrors netcode, which applies the same bound over the same state range.
 
 Before its first request the client verifies the token: the address flags name
 at least one family with bits 2-7 zero, and the create timestamp is not later
@@ -1449,7 +1410,7 @@ ignored at the key lookup.
   _disconnected_ (0) immediately, releasing all state. It is never answered;
   the sender's redundant copies are the whole delivery mechanism.
 
-### Why no state here can stick
+### The loss walkthrough
 
 Walk every loss. A lost request or cookie: the client is in states 1–2, still
 retransmitting requests, and every request re-provokes a cookie or the stored
@@ -1483,7 +1444,7 @@ anyone who has not been sent by the matchmaker at a cost so small that an
 attacker gains nothing by sending it, and the moment rejection stops being
 trivial the token has stopped doing half its job.
 
-netcode's strict rules follow from that intent and hold here: clients must have
+Strict rules follow from that intent: clients must have
 a valid connect token; respond only when necessary; ignore malformed requests as
 cheaply as possible; every response smaller than the request, so there is
 nothing to amplify.
@@ -1496,15 +1457,15 @@ hash, and only an address that has proved it can receive gets any asymmetric
 work spent on it. Read the ordering below as the implementation of the intent
 above, not as a list of checks that happen to be in an order.
 
-**The two properties, and why they need four layers here where netcode needed
-fewer.** What a server must have is a bar that is hard to get over — you cannot
-connect unless the matchmaker sent you — and no way to occupy a slot with a
-zombie client that is not really there. netcode obtained both from one symmetric
-check: the shared key made the bar real *and* made enforcing it cost about a
-microsecond, so cheap rejection and a high bar were the same operation. Removing
-the shared secret separates them, and they have to be rebuilt as a ladder, each
-rung rejecting what it can at its own cost so the expensive rung is reached only
-by traffic that has already cleared the cheap ones:
+**The two properties, and why they take four layers.** What a server must have
+is a bar that is hard to get over — you cannot connect unless the matchmaker
+sent you — and no way to occupy a slot with a zombie client that is not really
+there. A shared-secret design gets both from one symmetric check, because the
+shared key makes the bar real *and* makes enforcing it cost about a
+microsecond, so cheap rejection and a high bar are the same operation. Without
+a shared secret the two separate, and they are rebuilt as a ladder, each rung
+rejecting what it can at its own cost so the expensive rung is reached only by
+traffic that has already cleared the cheap ones:
 
 | Layer | Rejects | Cost | Bar |
 |---|---|---|---|
@@ -1515,14 +1476,15 @@ by traffic that has already cleared the cheap ones:
 
 The bar is the signature and it is as hard as it has ever been — an attacker
 needs a token the backend actually issued, which means authenticating with the
-backend. The zombie is stopped by the challenge, exactly as in netcode: no slot
+backend. The zombie is stopped by the challenge: no slot
 is allocated until the client has answered from the address it claimed. What the
 cookie adds is not a new bar but a cheap gate in front of the expensive one, so
 that the cost of *enforcing* the bar cannot itself be turned into the attack.
 
-Under public key crypto the ordering matters far more than it did in netcode. A
-connection request costs a signature verification and a seal-open — on the order
-of a hundred microseconds, against about one for netcode's symmetric open. Every
+Under public key crypto the ordering of these checks carries real weight. A
+connection request that reaches the crypto costs a signature verification and a
+seal-open — on the order of a hundred microseconds, against about one for a
+symmetric check. Every
 check that can reject without touching the token therefore runs first. In
 particular the already-connected check reads only the packet's source address,
 and it comes **before** the crypto: otherwise an attacker who captures a single
@@ -1535,24 +1497,14 @@ answers a request without one by sending a _connection cookie packet_ and
 stopping. There is no threshold and no mode: the cookie exchange happens on
 every connection.
 
-*An earlier draft made this load-triggered, to avoid spending a round trip on
-players when no attack was happening. That is the wrong trade for two reasons.
-
-**A round trip is cheap here because of what this protocol is for.** RocketNet
-carries long-lived connections — a session lasts minutes, and a connect is
-already expected to take on the order of a second. It is not a request-response
-protocol where a client connects, asks one question and leaves, and where a
-handshake round trip would be a meaningful fraction of the total work. Against a
-session measured in minutes, an extra exchange at the start is invisible, and
-resilience bought with it is bought cheaply. A protocol whose connections were
-short and numerous would have to weigh this differently.
-
-The second reason is that a defence which engages only above a threshold is a
-code path that never executes in normal operation or in testing, which means it
-is most likely to be discovered broken on the day it is first needed. A threshold
-also has to be tuned, and creates a seam an attacker can sit just underneath.
-Always-on deletes the rate measurement, the threshold, the seam, and the
-untested branch.*
+*Always-on rather than load-triggered, for two reasons. The round trip is cheap
+here: connections last minutes and a connect already takes on the order of a
+second, so one extra exchange at the start is invisible — a protocol with short,
+numerous connections would weigh this differently. And a defence that engages
+only above a threshold is a code path that never runs in normal operation or in
+testing, most likely to be found broken the day it is first needed, with a
+tuning knob and a seam an attacker can sit just underneath. Always-on deletes
+the rate measurement, the threshold, the seam, and the untested branch.*
 
 *Why this is required rather than advised, and why the earlier mitigations were
 not enough.* Every check that precedes the signature verify reads a field the
@@ -1565,7 +1517,8 @@ connected. So a request built from public constants and random padding forces a
 full Ed25519 verification, from a spoofed address, with no captured packet and
 no on-path position. At roughly a hundred microseconds each that is about ten
 thousand per second per core, or **tens of megabits per second of attack traffic
-to saturate a core** — where netcode's symmetric open needed gigabits. The
+to saturate a core** — three orders of magnitude below what the same attack
+costs against a symmetric check. The
 prefilter cannot help: it is unkeyed and its code ships in every client. Rate
 limiting cannot help: the source address is spoofable, which this standard
 already says. The used-token history cannot help: it bounds replays of captured
@@ -1699,7 +1652,7 @@ occupy, and how long it can occupy it.
 *What it can occupy is an encryption mapping, never a client slot.* Slots are
 assigned only in step 3, after the client has answered a challenge sent to the
 address it claimed, so no amount of stalling before that point consumes live
-server capacity. This separation is netcode's and it is the structural defence;
+server capacity. This separation is the structural defence;
 everything below is about duration.
 
 *How long it can occupy it is bounded twice, and the second bound is the one
@@ -1741,14 +1694,8 @@ client's total connect deadline: each has a default that works unattended, and
 each can be tuned by a deployment that knows its players better than this
 document does.
 
-*This is a deliberate improvement on netcode 1.02, which has both deadlines but
-gives them the same value:* it sets the mapping's absolute expiry to
-`server->time + timeout_seconds` on creation and clears it on establishment. The
-structure is right and is inherited; only the shared value is not.
-
 **On establishment the handshake deadline is discharged**, and the mapping is
-governed by the idle deadline alone — as in netcode, which clears the absolute
-expiry at the moment the client is connected.
+governed by the idle deadline alone.
 
 **Size the mapping table far above the slot count.** Mappings are small and
 short-lived where slots are large and long-lived, so there is no reason to ration
@@ -1767,7 +1714,7 @@ police it.
 
 **The used-token history** is a fixed-size structure. An implementation MUST
 document its capacity and eviction policy, and SHOULD size it to at least eight
-entries per client slot with oldest-first eviction, as netcode does. Entries
+entries per client slot with oldest-first eviction. Entries
 expire with the tokens they name. Eviction is security-relevant: an attacker
 holding several legitimately obtained tokens can flush a victim's entry and then
 replay the victim's captured request from a different address, so capacity
@@ -2079,42 +2026,37 @@ code path exercised on a laptop is the code path that ships. This document asks
 transports elsewhere not to have defences that only run under attack; the same
 principle applies to itself.
 
-*Compare netcode's negative `timeout seconds`, which disables timeouts entirely
-and is marked "dev only" by a comment. A value that turns a protection off is
-exactly the shape this section avoids.*
+## Security properties
 
-## Security baseline: never weaker than netcode 1.02
+What a conforming implementation guarantees, in one place. Each row names the
+mechanism; a change to any mechanism MUST be checked against the property it
+carries.
 
-**No security property of this protocol may be weaker than netcode 1.02's. That
-is the absolute minimum baseline and it is a conformance requirement.** A change
-that buys a new property at the cost of an old one is a defect, however
-attractive the new property. Where a property is genuinely weaker it is named
-here rather than hidden.
+| Property | Mechanism |
+|---|---|
+| Only backend-authorized clients connect | Ed25519 signature, verified before the seal is opened |
+| Session keys confidential in transit | sealed to the server's public key |
+| Client identity hidden from observers | client id inside the sealed block |
+| Token fields unmodifiable | signature over the whole signed buffer |
+| No asymmetric work for a spoofed source | MAC cookie required before any signature verification |
+| No slot for a client that is not there | challenge answered from the claimed address before any slot |
+| Packet type and salt unmodifiable | AEAD associated data |
+| Packet replay refused | per-phase, per-direction sequence window; sequence is the nonce |
+| Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| No response larger than what provoked it | the amplification table, re-checked on any size change |
+| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| A compromised server mints nothing | servers hold no signing key |
 
-| Property | netcode 1.02 | RocketNet 1.0 | |
-|---|---|---|---|
-| Only backend-authorized clients connect | shared-key AEAD tag | Ed25519 signature, verified before the seal is opened | better |
-| Session keys confidential in transit | encrypted under the shared key | sealed to the server's public key | equal |
-| Client identity hidden from observers | client id inside the encrypted token | client id inside the sealed block | equal |
-| Token fields unmodifiable | AEAD associated data | signature over the whole buffer | better |
-| Source address spoofing | encrypted challenge token, two RTT | MAC cookie, three RTT | better |
-| Packet type unmodifiable | AEAD associated data | AEAD associated data | equal |
-| Packet replay | sequence window, sequence as nonce | identical | equal |
-| Token reuse from another address | history keyed on the AEAD tag | history keyed on a hash of the signed data | equal |
-| Nonce reuse across server restart | documented hazard, two optional mitigations | impossible: keys derived per connection | better |
-| Nonce reuse on reconnect | undocumented hazard | impossible: keys derived per connection | better |
-| Amplification | every response smaller than its request | identical, and the challenge is far smaller | equal |
-| Compromised server | **mints tokens for the entire fleet** | mints nothing, and forward secrecy means recorded past sessions stay closed | better |
-| **CPU cost of one unauthenticated request** | **one symmetric open, ~1 µs** | **Ed25519 verify + seal-open, ~100 µs** | **weaker** |
-
-**The last row is a real and deliberate weakening, and it is the price of
-removing the shared secret.** It is stated rather than argued away. **The mitigation is the cookie, and it is the only one of them that changes the
-attacker's cost.** A request without a valid cookie is refused after one keyed
-hash, so the row above measures a cost an attacker reaches only from an address
-it genuinely holds. The prefilter, the used-token history and per-source rate
-limiting are all real and all specified above, but none of them binds a
-spoofing attacker, and this document says so where each is described. Every
-other row is equal or better.
+**The deliberate cost this design carries: rejecting a request that reaches the
+signature check costs an Ed25519 verify plus a seal-open, on the order of a
+hundred microseconds — roughly a hundred times a symmetric check.** That cost is
+the price of servers that hold no shared secret, and the reason it is safe to
+pay is that it is reachable only from an address that has proven it can receive:
+a request without a valid cookie is refused after one keyed hash. The prefilter,
+the used-token history and per-source rate limiting are all real and all
+specified above, but none of them binds a spoofing attacker, and this document
+says so where each is described. The cookie is the one that does.
 
 ### Security considerations specific to this design
 
@@ -2131,10 +2073,9 @@ the duration of the connection and was never transmitted. What such a compromise
 still yields is the handshake packets — a cookie and a client index — which
 carry nothing worth recovering.
 
-*This closes an exposure that is wider than it first appears, and wider than an
-earlier draft of this document admitted.* The token keys are generated by the
-backend and travel in the clear inside the connect token, so before this change
-the readers of a session's traffic included: the backend, permanently and for
+*The exposure this closes is wider than it first appears.* The token keys are
+generated by the backend and travel inside the connect token, so without the
+ephemeral exchange the readers of a session's traffic would include: the backend, permanently and for
 every server it ever issued for, including player-hosted ones it does not
 control; anyone who obtained a server's X25519 secret at any later date; and
 anyone who found a connect token in a proxy cache, a log or a crash dump. That
@@ -2147,7 +2088,7 @@ authentication break.** An on-path observer can capture a connection request and
 replay it from its own address; it cannot complete the handshake, because the
 challenge returns sealed under a key it does not hold. If its replay arrives
 first, the used-token history binds that token to the attacker's address and the
-legitimate client must obtain a fresh token. Inherited from netcode unchanged. It
+legitimate client must obtain a fresh token. It
 requires an on-path position, from which simply dropping the client's packets is
 a more effective attack — but it is not equivalent, because it is harder to
 attribute: dropped packets look like a broken network and get investigated as
@@ -2157,10 +2098,10 @@ in effect, quieter than the alternative.
 **No response may be larger than the packet that provoked it.** This is a
 normative invariant, not inherited advice, and **every packet type MUST be
 re-checked against it whenever any size changes.** It is easy to break by
-accident and hard to notice: an earlier draft removed a field from the
-_connection response_, which made that packet smaller than the keep-alive it
-provokes and turned a connected client into a small reflector. The removal was
-correct; the failure was not re-running this table afterwards.
+accident and hard to notice, because shrinking one packet quietly changes some
+other pair's margin: the _connection response_ carries 24 bytes of required
+padding for exactly this reason — without it the response would be smaller than
+the keep-alive it provokes, and a connected client would be a small reflector.
 
 | Provoking packet | Size | Response | Size | |
 |---|---|---|---|---|
@@ -2428,77 +2369,3 @@ implementation agrees with itself; only vectors prove two implementations agree
 with each other. The failure this prevents is the expensive one — two correct
 readings of an ambiguous sentence, and a handshake that silently never
 completes.
-
-## Deviations from netcode 1.02, in one place
-
-**Trust model**
-
-1. The private connect token data is sealed to the server with
-   `crypto_box_seal` to its X25519 public key, instead of encrypted under a key
-   shared by the whole fleet.
-2. Token authenticity is an Ed25519 signature, verified before the seal is
-   opened, instead of the shared-key AEAD tag.
-3. A server holds the backend public key and its own keypair; no secret is
-   shared between backend and servers.
-4. The signed data names the server's public key, so a server may hold several
-   keypairs and rotate them.
-5. The used-token history is keyed on a hash of the signed data rather than an
-   authentication tag.
-
-**Structure and size**
-
-6. One server per token at up to two addresses (IPv4 and/or IPv6), instead of a
-   list of up to 32 candidate servers. Failover is a fresh token; the client
-   does not fail over between the two addresses.
-7. The prefilter header is 4 bytes: a type byte and a per-title constant tag,
-   depending on no address, port or length. netcode has no equivalent header;
-   its Network Next ancestor spent 17 bytes on a derived structural one.
-8. The sequence number is a fixed 4 bytes on the wire with the 64-bit value
-   reconstructed, instead of a variable 1 to 8 bytes packed against the type
-   byte. The type byte carries only the type.
-9. The encrypted challenge token is replaced by a MAC cookie: no
-   challenge key, no challenge sequence counter, no challenge nonce space. The
-   challenge falls from 366 bytes to 64, and the response, which now carries
-   only required zero padding, to 48.
-10. The version is an opaque 32-bit constant rather than netcode's 14-byte
-    ASCII string, which travels in the clear on every connection request and
-    would be a universal signature for the protocol.
-11. One packet-size budget, default 1232 bytes from the IPv6 minimum MTU and
-    raisable per deployment; payload packets carry 1 to budget−24 bytes, 1208
-    at the default; the token is a fixed 768 bytes, one MTU by design.
-
-**Keys and nonces**
-
-12. Per-connection keys are derived from the token keys, a client-chosen salt
-    and a server-chosen session nonce, with separate handshake and session
-    contexts, so no key ever outlives one connection. This deletes netcode's
-    server-restart section and both of its optional mitigations, and the 2^63
-    global sequence convention.
-13. The connection salt is included in the per-packet associated data.
-
-**Dual stack**
-
-14. A server accepts a connection request at either advertised address;
-    boundary address normalization is normative.
-
-**Timeouts and state**
-
-15. The client state machine gains _requesting cookie_, because this protocol
-    has one more exchange than netcode did, and all state values are renumbered
-    as a result. The waiting state N times out to -(N+1).
-
-16. The handshake deadline is a server-side configuration value, separate from
-    the token's `timeout seconds`. netcode has the same two deadlines on an
-    encryption mapping — an idle timer and an absolute expiry set at creation —
-    but gives them one value, so half-open state lives as long as a connected
-    player may idle. The structure is inherited; the shared value is not.
-
-**Observability**
-
-17. Counters, connection state and per-frame statistics are specified rather
-    than left to implementations, with one counter required per distinct
-    rejection reason. netcode leaves diagnosis to log lines.
-
-Everything else — the handshake shape, per-packet AEAD and its
-associated data construction, replay protection, the client state model, the
-server slot model, the strict connection-request rules — is netcode 1.02.
