@@ -23,13 +23,14 @@ land. The milestone view is issue #28; this file is the live ordering.
   (a generator parsing bug produced truncated key arrays; caught by the first
   real crypto call, regenerated at full length — never transcribe by hand,
   and never trust a generator without a consumer).
+- Connect token: layouts at the exact offsets (locked against the frozen
+  token's own bytes), mint, verify-then-open in the standard's order, inner
+  consistency, token identifier. The frozen token verifies, opens and
+  recovers every published field; refusals proven per check including the
+  anonymous-box hazard and a hostile-backend inner mismatch.
 
 ## TODO
 
-- Connect token: private block, signed data, token write/read at the exact
-  offsets; mint for tests and the dev path; server-side verify-then-open with
-  the inner consistency checks; token identifier (unkeyed generichash, 16).
-  Frozen-token vector recovers exact fields; negative controls per refusal.
 - Prefilter header: test title tag b7 59 01, write and structural check, pure
   functions tested to death.
 - Packet layouts: write/read every type, exact sizes from the table,
