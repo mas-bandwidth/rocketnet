@@ -12,9 +12,8 @@ On Linux the build links the XDP dataplane, so it needs the dev packages CI inst
 
     sudo apt install cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
 
-The embedded XDP programs (`lib/proton`, `cmd/server_xdp`) are packed as source tarballs by
-the build and compile later on the target kernel, which needs BTF; they are not compiled by
-`make` here.
+The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
+compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 

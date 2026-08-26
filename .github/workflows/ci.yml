@@ -3,10 +3,10 @@
 #
 # This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
 # then run dist/test directly. The Linux build links the XDP dataplane against
-# libbpf/libxdp, so those dev packages are installed there; the XDP programs
-# themselves (lib/proton, cmd/server_xdp) are embedded as source tarballs by the
-# build and compile on the target kernel, so compiling them needs a kernel with
-# BTF and stays outside this workflow.
+# libbpf/libxdp, so those dev packages are installed there; the XDP program
+# itself (server_xdp) is embedded as a source tarball by the build and compiles
+# on the target kernel, so compiling it needs a kernel with BTF and stays
+# outside this workflow.
 
 name: CI
 

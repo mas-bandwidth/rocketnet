@@ -21,42 +21,35 @@ else()
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ../dist)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ../dist)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/dist)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/dist)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-include_directories(
-	"." 
-)
 
 
-# server xdp
+# server xdp — the XDP program source is packed as a tarball into a generated
+# header; the SDK builds and loads it on the target kernel at runtime.
 
 add_custom_command(
     COMMENT "Generating rocketnet_server_xdp.h"
-    OUTPUT ../sdk/rocketnet_server_xdp.h
+    OUTPUT ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
     COMMAND bash -c "mkdir -p rocketnet_server_xdp"
-    COMMAND bash -c "cp ../cmd/server_xdp/Makefile rocketnet_server_xdp"
-    COMMAND bash -c "cp ../cmd/server_xdp/server_xdp.c rocketnet_server_xdp"
+    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/Makefile rocketnet_server_xdp"
+    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c rocketnet_server_xdp"
     COMMAND bash -c "tar -zcvf rocketnet_server_xdp.tar.gz -C rocketnet_server_xdp ." >/dev/null 2>&1
     COMMAND bash -c "rm -rf rocketnet_server_xdp"
-    COMMAND bash -c "xxd -i rocketnet_server_xdp.tar.gz" > ../sdk/rocketnet_server_xdp.h
+    COMMAND bash -c "xxd -i rocketnet_server_xdp.tar.gz" > ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
     COMMAND bash -c "rm -f rocketnet_server_xdp.tar.gz"
-    DEPENDS ../cmd/server_xdp/Makefile ../cmd/server_xdp/server_xdp.c
+    DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c
 )
-
-
-# ---------------------------------------------------------------------
-#                              SDK BELOW HERE
-# ---------------------------------------------------------------------
 
 
 # rocketnet
 
 project(rocketnet)
 enable_language(CXX)
-file(GLOB ROCKETNET_SOURCE ../sdk/*.cpp)
-file(GLOB ROCKETNET_HEADERS ../sdk/*.h)
-add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} ../sdk/rocketnet_server_xdp.h)
+file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
+file(GLOB ROCKETNET_HEADERS sdk/*.h)
+add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
 find_package(Threads REQUIRED)
 if (APPLE)
     target_link_libraries(rocketnet Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
@@ -69,8 +62,8 @@ endif()
 
 project(client)
 enable_language(CXX)
-add_executable(client ../cmd/client/client.cpp)
-target_include_directories(client PRIVATE ../sdk)
+add_executable(client client.cpp)
+target_include_directories(client PRIVATE sdk)
 add_dependencies(client rocketnet)
 target_link_libraries(client rocketnet)
 
@@ -79,8 +72,8 @@ target_link_libraries(client rocketnet)
 
 project(server)
 enable_language(CXX)
-add_executable(server ../cmd/server/server.cpp)
-target_include_directories(server PRIVATE ../sdk)
+add_executable(server server.cpp)
+target_include_directories(server PRIVATE sdk)
 add_dependencies(server rocketnet)
 if (LINUX)
     target_link_libraries(server rocketnet bpf xdp)
@@ -93,8 +86,8 @@ endif()
 
 project(test)
 enable_language(CXX)
-add_executable(test ../cmd/test/test.cpp)
-target_include_directories(test PRIVATE ../sdk)
+add_executable(test test.cpp)
+target_include_directories(test PRIVATE sdk)
 add_dependencies(test rocketnet)
 target_link_libraries(test rocketnet)
 
@@ -103,21 +96,7 @@ target_link_libraries(test rocketnet)
 
 project(keygen)
 enable_language(CXX)
-add_executable(keygen ../cmd/keygen/keygen.cpp)
-target_include_directories(keygen PRIVATE ../sdk)
+add_executable(keygen keygen.cpp)
+target_include_directories(keygen PRIVATE sdk)
 add_dependencies(keygen rocketnet)
 target_link_libraries(keygen rocketnet)
-
-
-if (LINUX)
-
-# sender
-
-project(sender)
-enable_language(CXX)
-add_executable(sender ../cmd/sender/sender.cpp)
-target_include_directories(sender PRIVATE ../sdk)
-add_dependencies(sender rocketnet)
-target_link_libraries(sender rocketnet bpf xdp)
-
-endif()

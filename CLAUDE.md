@@ -132,17 +132,22 @@ because it is a solid middle tier rather than parity.
 
 ## Crypto
 
-`rocketnet_hydrogen.cpp` is [mas-bandwidth/hydrogen](https://github.com/mas-bandwidth/hydrogen),
-the hand-flattened libhydrogen, vendored byte-for-byte. Patch upstream and
-re-vendor; do not edit it here.
+Ruled 2026-08-26: **sodium** (see REQUIREMENTS.md). Hydrogen was evaluated
+and lost on crypto pedigree, backend interop, per-packet overhead (36 vs 16
+bytes), the missing associated data parameter — and then decisively on the
+bench: at 1000 players x 60 Hz its packet crypto alone exceeds one core
+where sodium uses about a fifth, scalar versus scalar on arm64.
 
-Note the tree currently contains **two** crypto libraries: hydrogen inside
-rocketnet, and libsodium in the game's own `network_crypto.*`. sodium is on the way
-out in favour of hydrogen plus
-[proton](https://github.com/mas-bandwidth/proton) — and the reason is
-structural, not preference: proton is a kernel module exposing kfuncs to XDP
-programs, libhydrogen already builds in-kernel upstream, and libsodium assumes
-libc, `mmap` and `mlock` and has no in-kernel build at all.
+Interim, so construction moves quickly: brew libsodium as is on the dev box.
+Before anything ships: a gutted two-file vendor in the shape netcode and
+yojimbo already carry, extended with the Ed25519 and sealed box families the
+public key token design needs.
+
+`rocketnet_hydrogen.cpp` is [mas-bandwidth/hydrogen](https://github.com/mas-bandwidth/hydrogen),
+vendored byte-for-byte; it stays until the sodium construction replaces it.
+Patch upstream and re-vendor; do not edit it here. Hydrogen and
+[proton](https://github.com/mas-bandwidth/proton) remain the kernel/XDP
+experiment track in their own repos, maintained by the open source sweep.
 
 ## Vendoring
 
