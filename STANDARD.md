@@ -1216,6 +1216,69 @@ adopted one. Proof-of-work would only be worth its cost in a design with no
 address validation at all, where it substitutes for proving the client is really
 there — and this protocol has the cookie for that.
 
+### What this layer defends against, and what it does not
+
+Stated plainly, because a protocol document that lists defences without naming
+their limits invites an operator to deploy it believing the problem is solved.
+
+**This layer handles:** traffic that is not this title's, at line rate, for a
+byte comparison. Spoofed source addresses, for one keyed hash and no allocated
+state. Clients the matchmaker never authorized, by a signature they cannot
+produce. Zombie clients that never answer, which never reach a slot.
+Amplification, structurally, since no response may exceed the packet that
+provoked it. Tampering with any packet or any token field, by construction.
+
+**This layer cannot handle, and does not pretend to:** a volumetric flood large
+enough to fill the link. Nothing a server does with a packet matters once the
+pipe is saturated; that is answered by capacity and by upstream scrubbing at the
+provider, and it is where a kernel whitelist would eventually help by moving the
+drop as early as the machine allows. Nor can it handle an attacker holding many
+genuinely issued connect tokens, because such an attacker is past every bar this
+protocol has by definition.
+
+**Both of those are the backend's to answer, and that is the deliberate
+division.** The backend is the only party that knows *who* is asking — an
+account, a session, a payment history — where a server knows only an address.
+Rate limiting by identity is a control that works; rate limiting by address is
+one an attacker routes around. So the real denial-of-service posture of a
+deployment lives in how its backend issues tokens, not in how its servers parse
+packets. This protocol's job is to make sure that anyone the backend did not
+send is rejected as cheaply as possible, and that being rejected is never more
+expensive for the server than for the attacker.
+
+**It is also not a new responsibility.** A backend already decides whether a
+player owns the game, whether they are who they claim to be, and whether they
+are banned. The connect token is that decision made concrete: it is the backend
+saying *I vouch for this player, on this server, until this timestamp*. Declining
+to vouch for someone who is abusing a server is the same gate the backend is
+already standing at, applied for one more reason — not a denial-of-service
+mechanism grafted onto a system that had none. Everything a server enforces here
+is downstream of a judgment the backend was making anyway.
+
+**And it is delegation, not abdication, because the delegated control is made to
+work.** A protocol can push a problem upstream and leave the
+upstream party holding a lever connected to nothing. This one does not: **a
+connect token buys exactly one connection.** The used-token history binds a
+token to the first source address that presents it, a token whose client has
+connected is refused for the remainder of the server run, and a client id
+already connected is refused. An attacker who wants a thousand concurrent
+connections therefore needs a thousand genuinely issued tokens, and their cost
+scales linearly with the number of times they can authenticate to the backend.
+That is what makes issuance limiting an effective control rather than a hopeful
+one.
+
+**What the backend must do to hold up its end**, stated so a deployment does not
+discover it during an incident: issue tokens with short expiry, since expiry
+bounds both the reuse window and the revocation latency; rate limit issuance per
+authenticated identity rather than per address; and refuse issuance to
+identities that abuse it.
+
+**And the piece this standard does not provide:** there is no feedback path from
+a server back to the backend. A server being flooded by validly issued tokens
+has no way, in this protocol, to report which client ids are responsible. A
+deployment that cares about that must build the channel itself. It is named here
+rather than left for someone to notice under load.
+
 **The backend is the real admission control.** A server allocates an encryption
 mapping only for a request carrying a valid backend signature, so the number of
 mappings an attacker can create is bounded by the number of real tokens they
