@@ -72,7 +72,7 @@ Every party holds only keys whose exposure it can afford:
 * Each **server** holds an X25519 key exchange keypair (`crypto_box_keypair`:
   32-byte public key, 32-byte secret key). The secret half never leaves the
   server, and its exposure compromises only sessions on that one server. Each
-  server also generates a random _cookie key_ at start, which never leaves it
+  server also generates a random 32-byte _cookie key_ at start, which never leaves it
   and is never stored.
 
 * Each **client** holds the backend's public key as configuration, and the
@@ -82,7 +82,7 @@ Every party holds only keys whose exposure it can afford:
   secret half is erased as required under _Per-connection keys_.
 
 * A **server** additionally holds a per-run secret keying its client lookup
-  tables, described under _No lookup may be linear in the number of clients_.
+  tables, described under _Lookup complexity_.
 
 There is no key in the system that is both shared and secret. That property
 is load-bearing everywhere below.
@@ -149,6 +149,33 @@ block contains. This is stated here, in the processing order, and in the
 conformance section, because it is the one way this design fails quietly: an implementation that treats a successful open as authentication
 lets any party mint tokens for that server.
 
+## Constants at a glance
+
+An index, not an authority: each value's normative statement is in its own
+section, and this table exists so an implementer never hunts for a number.
+
+| Constant | Value | Section |
+|---|---|---|
+| Version | `0x4E7C1A93` | _Signed connect data_ |
+| Test title tag | `b7 59 01` | _The Prefilter Header_ |
+| Packet types | 0-7; 8-255 reserved, ignored | _Packets_ |
+| Client states | -7 to 4 | _Client State Machine_ |
+| KDF context strings | `RKTNHNDC` `RKTNHNDS` `RKTNSESC` `RKTNSESS` | _Per-connection keys_ |
+| Associated data lengths | 21 bytes; 53 for types 2 and 3 | _Sealed packets_ |
+| Per-packet overhead | 24 bytes | _Packet sizes_ |
+| Send budget | 1232 default, 1400 maximum | _Packet sizes_ |
+| Receive ceiling | 1400, fixed | _Packet sizes_ |
+| Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
+| Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
+| Send rate | 10 Hz default | _Timing_ |
+| Handshake deadline | 5 s default | _Timing_ |
+| Cookie lifetime / key rotation | 3 s / 60 s defaults | _Timing_ |
+| Redundant disconnects | 10 | _Timing_ |
+| Cookie key | 32 bytes | _Keys_ |
+| Replay buffer | max(256, one second of max receive rate) | _Replay window sizing_ |
+| Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
+| Admitted-token set | >= 2x slot count, no unexpired eviction | _Processing Connection Requests_ |
+
 ## Addresses and dual stack
 
 A connect token names **one server**, reachable at up to two addresses: an IPv4
@@ -188,7 +215,9 @@ RocketNet is dual stack from day one, not as a later addition:
 **RocketNet assumes a client keeps the same IP address and port for the whole
 duration of its connection to a server.** This is stated rather than left
 implicit, because it is the assumption everything else rests on: a server keys
-its encryption mapping, its client slot, its replay state and its cookie check
+its encryption mapping — the server's per-address record of derived keys and
+handshake state, specified fully in _Processing Connection Requests_ — its
+client slot, its replay state and its cookie check
 on the client's source address and port. A packet arriving from a different
 address is a packet from a different client.
 
@@ -312,7 +341,8 @@ title's traffic has a signature for all of it. Nothing unkeyed can do better, an
 a protocol should not claim otherwise.
 
 A receiver drops any packet smaller than the minimum for its type, larger than
-1232 bytes, or whose title tag does not match.
+1400 bytes — the receive ceiling, fixed regardless of the local send budget —
+or whose title tag does not match.
 
 There is no keyed or stateful filter. Network Next distributed a rotating
 "magic" value to servers from a backend; a player-hosted server has no backend
@@ -365,7 +395,7 @@ has a range. A receiver checks the size before any other per-type work:
 | 2 | connection challenge | 64 | 4 + 4 + 8 + 32 + 16 |
 | 3 | connection response | 48 | 4 + 4 + 24 + 16 |
 | 4 | connection keep-alive | 32 | 4 + 4 + 8 + 16 |
-| 5 | connection payload | 25 to budget | 4 + 4 + (1 to budget−24) + 16 |
+| 5 | connection payload | 25 to 1400 received; sender bounded by its budget | 4 + 4 + payload + 16 |
 | 6 | connection disconnect | 24 | 4 + 4 + 0 + 16 |
 | 7 | connection cookie | 36 | 4 + 8 + 8 + 16 |
 
@@ -385,10 +415,11 @@ today, everywhere that matters, the real MTU is 1500.
 
 The budget governs **sending**: a sender MUST NOT emit a packet larger than its
 configured budget, default 1232, and a deployment that knows its paths MAY raise
-it, to at most 1400. A receiver accepts payload packets up to 1400 bytes
-regardless of its own budget, so a budget mismatch between two correctly
-implemented ends degrades to nothing worse than one side sending smaller packets
-than it could. The budget is a deployment constant, not negotiated, and not
+it, to at most 1400. **The receive side is not configurable: every receiver
+accepts payload packets up to a flat 1400-byte ceiling, whatever its own send
+budget.** One fixed receive rule means a budget mismatch between two correctly
+implemented ends degrades to nothing worse than one side sending smaller
+packets than it could, and there is no second receive behavior to test. The budget is a deployment constant, not negotiated, and not
 carried on the wire. The fixed packet sizes above do not change with it; only
 the payload range does. The 1232 default is the only value that is safe with no
 knowledge of the network; every raise is a statement about paths, and it is the
@@ -401,7 +432,10 @@ before the sealed data.
 
 **There are four sending sequences per connection: one for each direction of
 each key phase.** Handshake and session packets do not share a counter. Each of
-the four starts at one and increments by one per packet sent under that key.
+the four starts at one and increments by one per packet built under that key.
+A byte-identical retransmission of a stored packet is the same packet, not a
+new one: it repeats its sequence by construction, which is safe precisely
+because the bytes are identical.
 
 **Sequence zero is never sent and never valid: a receiver MUST ignore any
 packet whose reconstructed sequence is zero.** Zero is what an uninitialized
@@ -527,7 +561,7 @@ verbatim, so the server verifies with no shared secret and no other state:
         [protocol id] (uint64)          // unique to this title
         [create timestamp] (uint64)     // unix time the token was created
         [expire timestamp] (uint64)     // unix time the token expires
-        [timeout seconds] (int32)       // negative disables timeout (dev only)
+        [timeout seconds] (int32)       // negative disables timeout (dev only); zero is invalid
         [address flags] (uint8)         // bit 0 = has IPv4, bit 1 = has IPv6;
                                         // at least one set, bits 2-7 zero
         [ipv4 address] (6 bytes)        // a,b,c,d (4 x uint8) + port (uint16);
@@ -728,7 +762,7 @@ by careful bookkeeping:
   reconnect-tracking machinery needs to exist.
 * **Pre-slot and post-slot traffic cannot collide under one key**, because the
   handshake and session phases are different keys, not offset ranges of one
-  sequence space. Both phases simply count from zero.
+  sequence space. Both phases simply count from one.
 
 Tampering with the salt in flight makes the two sides derive different keys and
 the handshake fails. That requires an on-path attacker, who can drop the packets
@@ -839,8 +873,8 @@ doing any work that would give it a key, and before allocating any state at all:
                                      client address ‖ connection salt ‖ expire,
                                      server cookie key )
 
-The client address input is exactly this encoding of the request's source, 8 or
-20 bytes:
+The client address input is exactly this encoding of the request's source — 7
+bytes for IPv4, 19 for IPv6, packed with no padding:
 
     [family] (uint8)                    // 1 = IPv4, 2 = IPv6
     [address] (4 or 16 bytes)           // IPv4 octets in order, or
@@ -880,10 +914,6 @@ ensure every request the client sends carries an unusable cookie, so it never
 passes the gate — a permanent connect denial against a named player for a few
 bytes every hundred milliseconds. With the salt checked, an off-path attacker
 must guess an eight-byte random value it has never seen.
-
-The server verifies the signature over the signed connect data against the
-backend public key, with no shared secret and no other state. Authenticity is
-that signature — never the fact that the sealed block opens.
 
 ### Sealed packets
 
@@ -927,7 +957,7 @@ _connection response_:
 _connection keep-alive_:
 
     [client index] (uint32)
-    [max clients] (uint32)
+    [max clients] (uint32)               // the server's slot count
 
 _connection payload_:
 
@@ -952,8 +982,9 @@ constructed by both ends and never travels on the wire.
 
 **The client's ephemeral public key is in the associated data of the connection
 challenge and the connection response**, types 2 and 3 only. It is omitted from
-the connection denied packet, type 1, which is handshake-keyed but may be sent
-before the ephemeral has been validated, and from the session types 4, 5 and 6 —
+the connection denied packet, type 1, because a denied must be constructible
+from mapping state alone and the mapping does not retain the client ephemeral
+after key derivation, and from the session types 4, 5 and 6 —
 so it costs nothing on any game packet. It is there because the client ephemeral
 travels in the clear, outside the signature, and without this binding an on-path
 attacker who alters it in flight achieves something worse than a dropped packet:
@@ -970,6 +1001,7 @@ as a little-endian value. Post sealing:
 
     [prefilter header] (4 bytes)
     [sequence number] (4 bytes)
+    [session nonce] (8 bytes)           // types 1 and 2 only, in the clear
     [sealed per-packet type data] (per-packet data + 16-byte tag)
 
 ## Reading packets
@@ -982,7 +1014,8 @@ In this exact order:
   are reserved and MUST be ignored by a conforming receiver.
 
 * **If the packet's total size does not match its type — the exact wire size
-  from the _Packet sizes_ table, or the 25-byte-to-budget range for a payload —
+  from the _Packet sizes_ table, or 25 to 1400 bytes for a payload (the fixed
+  receive ceiling; the sender's budget is not a receive-side quantity) —
   ignore it.** Every non-payload type has a single fixed size, so this is one
   compare, and it runs before any per-type handling so that no later step can
   read past the end of a short packet.
@@ -1000,19 +1033,26 @@ In this exact order:
   per _Processing a connection cookie packet_ and stops.** It is not sealed, so
   nothing below applies to it.
 
+* **If the receiver's current state does not process this type** — the state
+  gates are in _Client-Side Connection Process_ and the server sections —
+  ignore the packet. The gate reads only local state and costs nothing.
+
 * Look up the keys and replay state for the packet's source address. On the
   server this is the encryption mapping; on the client it is the connection's
-  own state, as _Client-Side Connection Process_ specifies — including the case
-  where
-  the handshake keys do not exist yet and this packet carries the nonce needed
-  to derive them. If there is nothing for this address, ignore the packet.
+  own state. If there is nothing for this address, ignore the packet.
 
-* Read the 4-byte sequence and reconstruct the 64-bit value.
+* Read the 4-byte sequence and reconstruct the 64-bit value. **If the
+  reconstructed sequence is zero, ignore the packet** — zero is never sent, per
+  _Sequence numbers_ — counting the packet type's `ZERO_SEQUENCE` reason.
 
 * **If the type is _connection denied_ (1) or _connection challenge_ (2), read
   the 8-byte session nonce that follows the sequence.** The sealed data begins
   after it. For every other type the sealed data begins directly after the
-  sequence.
+  sequence. **A client that does not yet hold handshake keys derives them
+  here, from the token keys, its salt and this nonce, into temporary storage,
+  committing them only after the open below succeeds** — a forged nonce must
+  never overwrite working keys. This is the only place keys are derived on
+  receive; the per-type sections below the open assume they exist.
 
 * If the packet type is _connection keep-alive_, _connection payload_ or
   _connection disconnect_, and it fails the replay-protection already-received
@@ -1039,7 +1079,7 @@ In this exact order:
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * 1 to budget−24 bytes — _connection payload_
+  * 1 to 1376 bytes — _connection payload_ (1376 = the 1400 receive ceiling − 24)
   * 0 bytes — _connection disconnect_
 
 * Otherwise, process the packet.
@@ -1080,11 +1120,11 @@ the RFCs require it regardless, and it is four lines.
 
 ### Replay window sizing
 
-A replay buffer of 256 entries per client is a floor, not a recommendation.
-**The application decides its packet rate and this protocol does not constrain
-it, so the buffer is sized from that rate rather than from any assumption made
-here:** an implementation MUST size it to at least one second of the maximum
-per-client receive rate the deployment intends to support. An undersized buffer discards
+**One sizing rule: the buffer is at least one second of the maximum
+per-client receive rate the deployment intends to support, and never smaller
+than 256 entries.** The application decides its packet rate and this protocol
+does not constrain it, which is why the size derives from the deployment's
+own number rather than from any assumption made here. An undersized buffer discards
 legitimate packets; it never accepts a replay, so the failure is lost traffic
 rather than lost security.
 
@@ -1292,9 +1332,12 @@ the packet.
 
 **The numbering carries an invariant: a waiting state N times out to state
 -(N+1).** _requesting cookie_ (1) → -2, _sending connection request_ (2) → -3,
-_sending connection response_ (3) → -4, _connected_ (4) → -5. Only _connection
-denied_ (-1), which is told to the client rather than inferred from silence, and
-the two token defects the client detects before sending anything, fall outside
+_sending connection response_ (3) → -4, _connected_ (4) → -5. Outside the
+pairing: _connection denied_ (-1), which is told to the client rather than
+inferred from silence; _invalid connect token_ (-6), detected before anything
+is sent; and _connect token expired_ (-7), which is the total connect
+deadline's terminal and is also entered before the first send when the token
+is already expired on arrival. These fall outside
 it. An implementation SHOULD assert the pairing, so that a state added later
 cannot silently ship without its timeout.
 
@@ -1326,8 +1369,8 @@ belongs to the first exchange, which is the one it could not begin.
 The client generates its connection salt once per connection attempt, before the
 first request, and reuses it for every retransmission of that attempt. **The
 client's packet sequence number MUST NOT be reset within an attempt.** A new
-attempt means a new salt, hence new keys, so restarting the sequence at zero is
-correct there and only there.
+attempt means a new salt, hence new keys, so restarting the sequence — at one,
+never zero — is correct there and only there.
 
 In each of the three sending states the client retransmits its current packet at
 the send rate until it receives the packet that advances it or a deadline
@@ -1379,13 +1422,10 @@ challenge is a duplicate or an injection, and is ignored — a genuine
 retransmitted challenge exists only to answer request retransmissions, and a
 client past _sending connection request_ no longer sends requests.
 
-* Read the clear session nonce following the sequence.
-* Derive the two handshake keys from the token keys, the salt and that nonce,
-  **into temporary storage**. A forged nonce must not be able to overwrite
-  anything: keys are committed only after a successful open.
-* Open the sealed data with the temporary handshake server-to-client key and
-  the type 2 associated data. If the open fails, discard the temporaries and
-  ignore the packet.
+The nonce read, the temporary key derivation and the open all happen in
+_Reading packets_, which owns those mechanics for every sealed type. What
+follows assumes the packet has opened.
+
 * Compute `shared = crypto_scalarmult( client ephemeral secret, server
   ephemeral public )` with the key just unsealed. If it returns non-zero,
   discard everything and ignore the packet; the attempt then ends at its
@@ -1405,13 +1445,13 @@ client past _sending connection request_ no longer sends requests.
 Processed in _sending connection request_ and _sending connection response_;
 ignored in every other state.
 
-* If handshake keys are held, ignore the carried nonce and open with the held
-  keys. If not, derive temporary handshake keys from the carried nonce exactly
-  as for a challenge.
-* If the open fails, ignore the packet. An off-path attacker cannot deny a
-  connection: without the token keys, nothing it sends opens.
-* On success, transition to _connection denied_ (-1), stop sending, and release
-  all connection state.
+The nonce read, key derivation when no keys are held yet, and the open happen
+in _Reading packets_; a client that already holds handshake keys opens with
+those and ignores the carried nonce. An off-path attacker cannot deny a
+connection either way: without the token keys, nothing it sends opens.
+
+* On a successful open, transition to _connection denied_ (-1), stop sending,
+  and release all connection state.
 
 ### Processing keep-alive, payload and disconnect packets
 
@@ -1613,14 +1653,20 @@ In this exact order, on a _connection request packet_:
 * If the protocol id or expire timestamp inside the sealed block does not equal
   the signed one, ignore the packet.
 * If a client with this client id is already connected, ignore it. If this
-  token's identifier is already bound to a connected client in this run, ignore
-  it — a token admits one connection per server run.
+  token's identifier is in the admitted-token set, ignore it — **a token
+  admits one connection.** The set is per process; across a server restart the
+  guarantee is carried by token expiry, which is why expiry SHOULD be short.
+  The admitted-token set is separate from the used-token history and is
+  specified with it below.
 * Record the token identifier with this source address and port in the used-token
   history.
 
 * **Generate a fresh random 64-bit session nonce for this mapping.** It is
   never reused, and because it is chosen here rather than at cookie time, no
   replayed cookie can cause a key to recur.
+* **Obtain the server ephemeral keypair**: generate a fresh X25519 keypair for
+  this mapping, or take the current one when reusing across a short rotation
+  window per _Per-connection keys_. Nothing before this step needs it.
 * **Compute `shared = crypto_scalarmult( server ephemeral secret, client
   ephemeral public )`. If it returns non-zero, ignore the packet.** libsodium
   returns an error for a small-order peer key, and this check must happen here —
@@ -1732,14 +1778,33 @@ drop it belongs to the game, which knows what a player ought to be doing. This
 layer's obligation is to make it *visible* — see the counters below — not to
 police it.
 
-**The used-token history** is a fixed-size structure. An implementation MUST
-document its capacity and eviction policy, and SHOULD size it to at least eight
-entries per client slot with oldest-first eviction. Entries
-expire with the tokens they name. Eviction is security-relevant: an attacker
-holding several legitimately obtained tokens can flush a victim's entry and then
-replay the victim's captured request from a different address, so capacity
-should exceed the plausible rate of legitimate connections within a token
-lifetime.
+**Two token structures, because they carry two different guarantees and only
+one of them can tolerate eviction.**
+
+**The used-token history** binds a token identifier to the first source address
+that presented it, so a captured request cannot be replayed from elsewhere. It
+is a fixed-size structure; an implementation MUST document its capacity and
+eviction policy, and SHOULD size it to at least eight entries per client slot
+with oldest-first eviction. Entries expire with the tokens they name. Eviction
+is security-relevant: an attacker holding several legitimately obtained tokens
+can flush a victim's entry and then replay the victim's captured request from a
+different address, so capacity should exceed the plausible rate of legitimate
+connections within a token lifetime.
+
+**The admitted-token set** holds the identifier and expire timestamp of every
+token that has admitted a connection, and is what makes "a token admits one
+connection" true rather than probabilistic. Entries leave the set only by
+expiring — **an unexpired entry MUST NOT be evicted** — which is sound because
+an expired entry protects nothing: a token whose entry has expired is a token
+that can no longer pass the expire check at the top of the request path. The
+set is naturally bounded: only admitted connections insert, at most one entry
+per successful connection, so it needs capacity for the connections admitted
+within one token lifetime — the slot count plus reconnect churn; 2x the slot
+count is a reasonable floor, and an implementation MUST document its choice.
+If the set is full, the server refuses new connections (a denied packet) and
+counts `ADMITTED_SET_FULL`: filling it requires genuinely issued tokens, so it
+fails closed against a backend that over-issues rather than open against an
+attacker.
 
 **Rate limiting.** A deployment SHOULD rate limit connection requests per source
 address, and MUST NOT treat that as sufficient: connection requests are
@@ -1764,13 +1829,30 @@ only data already verified.
   this keep-alive is lost, the ones generated at the send rate repeat the
   answer.
 
+### Processing keep-alive, payload and disconnect packets at the server
+
+These arrive under the session keys through _Reading packets_. If the packet's
+mapping has no assigned slot, ignore it — session traffic before a slot exists
+is a lost-response race or an injection, and the retransmitted response repairs
+the former.
+
+* A keep-alive refreshes the slot's last-received time, and confirms the client
+  if it was unconfirmed.
+* A payload confirms an unconfirmed client, refreshes the last-received time,
+  and is delivered to the application.
+* A disconnect resets the slot and destroys the mapping immediately, per _Slot
+  reset_. It is never answered; the sender's redundant copies are the whole
+  delivery mechanism, exactly as on the client.
+
 ### Connected Clients
 
 A server has a fixed number of client slots, configured at startup. A slot is
 identified by its **client index**, an integer from zero to one less than the
 slot count, and a slot holds the client id and user data recovered from the
-connect token, the encryption mapping for that client's address, and the
-sending sequence and replay state for each key phase.
+connect token, the confirmed flag, and a reference to the encryption mapping
+for that client's address. **The sequence counters and replay state live in
+the mapping, and only there, before and after slot assignment** — one home,
+no copy to fall out of sync.
 
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
 becomes confirmed the first time the server receives any sealed packet from that
@@ -1812,10 +1894,11 @@ sent — so its delivery is bought with copies rather than with time, and losing
 all ten costs only a peer that waits for the timeout instead.
 
 **Slot reset.** Releasing a slot clears the client id, the user data, the
-sequence and replay state, and the confirmed flag, and destroys the associated
-encryption mapping. A released slot is immediately available for reuse. An
-implementation MUST zero the key material rather than merely marking the slot
-free.
+confirmed flag and the mapping reference, and destroys the associated
+encryption mapping — which zeroes its keys and its sequence and replay state,
+the mapping being their only home. A released slot is immediately available for
+reuse. An implementation MUST zero the key material rather than merely marking
+the slot free.
 
 ## Observability
 
@@ -1849,11 +1932,14 @@ Counters follow these rules:
 
 * **One flat namespace**, `ROCKETNET_COUNTER_<SUBJECT>_<OUTCOME>`. No hierarchy,
   no tags, no labels.
-* **The outcome vocabulary is small, closed, and reused across every subject**:
-  `RECEIVED`, `WRONG_SIZE`, `WRONG_VERSION`, `WRONG_PROTOCOL_ID`, `EXPIRED`,
-  `DID_NOT_VERIFY`, `DID_NOT_OPEN`, `ALREADY_RECEIVED`, `ALREADY_CONNECTED`,
-  `NO_MAPPING`, `NO_SLOTS`, `ACCEPTED`. Reuse is what keeps a hundred counters
-  memorable, and lets a reader predict a name instead of grepping for it.
+* **The outcome vocabulary is the set of reason terms this document's counter
+  tables use, and it is closed in this sense: an implementation MUST NOT merge
+  two specified reasons, rename one, or coin a synonym for a condition that
+  already has a name here.** A core of terms recurs across subjects —
+  `RECEIVED`, `WRONG_SIZE`, `EXPIRED`, `DID_NOT_VERIFY`, `DID_NOT_OPEN`,
+  `ALREADY_RECEIVED`, `ALREADY_CONNECTED`, `ZERO_SEQUENCE`, `NO_SLOTS` — which
+  is what keeps a hundred counters memorable and names predictable; the
+  request path adds its own step-specific terms below.
 * **Reasons are cross-producted with packet type**, not shared. A replayed
   payload and a replayed keep-alive are separate counters even though the reason
   word is the same.
@@ -1877,12 +1963,13 @@ Counters follow these rules:
 * **Every counter site SHOULD also log**, with the log compiled out in
   production and the counter never compiled out. The log explains one incident;
   the counter reveals the pattern.
-* **Indices, where counters are exposed as a fixed-width array, are a wire
-  contract.** They are never renumbered, new counters take unused slots, and an
-  implementation MUST reject a report whose width it does not recognize.
-  Duplicate indices MUST be checked mechanically: two counters sharing a slot
-  sum into one number, and a rare rejection sharing a slot with a routine
-  success is simply erased.
+* **This document specifies counter names and semantics, not indices.** An
+  implementation that exposes counters as a fixed-width array makes its
+  indices a wire contract of its own: it documents them, never renumbers them,
+  gives new counters unused slots, and rejects a report whose width it does
+  not recognize. Duplicate indices MUST be checked mechanically — two counters
+  sharing a slot sum into one number, and a rare rejection sharing a slot with
+  a routine success is simply erased.
 
 **The connection request path is the one that matters most**, because it is the
 attack surface and because it has the most ways to fail. Every step of the
@@ -1909,7 +1996,8 @@ order:
 | `..._COULD_NOT_OPEN_SEALED_BLOCK` | seal open failed |
 | `..._SEALED_MISMATCH` | inner protocol id or expire disagrees with signed |
 | `..._CLIENT_ID_ALREADY_CONNECTED` | that client id already holds a slot |
-| `..._TOKEN_ALREADY_CONNECTED` | token already admitted a connection this run |
+| `..._TOKEN_ALREADY_CONNECTED` | token already admitted its one connection |
+| `..._ADMITTED_SET_FULL` | admitted-token set full; denied sent |
 | `..._SMALL_ORDER_KEY` | `crypto_scalarmult` refused the peer key |
 | `..._NO_SLOTS` | slot table full; a denied packet was sent |
 | `..._COULD_NOT_ADD_MAPPING` | mapping table full |
@@ -2213,9 +2301,9 @@ is downstream of a judgment the backend was making anyway.
 work.** A protocol can push a problem upstream and leave the
 upstream party holding a lever connected to nothing. This one does not: **a
 connect token buys exactly one connection.** The used-token history binds a
-token to the first source address that presents it, a token whose client has
-connected is refused for the remainder of the server run, and a client id
-already connected is refused. An attacker who wants a thousand concurrent
+token to the first source address that presents it, the admitted-token set
+refuses a token that has already admitted a connection for as long as that
+token lives, and a client id already connected is refused. An attacker who wants a thousand concurrent
 connections therefore needs a thousand genuinely issued tokens, and their cost
 scales linearly with the number of times they can authenticate to the backend.
 That is what makes issuance limiting an effective control rather than a hopeful
@@ -2264,8 +2352,10 @@ recall them. It also bounds how large a used-token history must be to be useful.
 timeouts for development. It is inside the signed data so a client cannot forge
 it, but a backend bug or a leaked development token can produce a connection
 that never times out and never frees its slot. A server SHOULD hold a configured
-maximum and clamp the token's value to it, and SHOULD reject non-positive values
-unless explicitly configured to accept them.
+maximum and clamp the token's value to it. **Zero is invalid: a server MUST
+ignore a request whose token carries a zero timeout.** Negative values disable
+the timeout for development, and a server SHOULD reject them unless explicitly
+configured to accept them.
 
 **Require a strict Ed25519 verification profile.** Ed25519 verifiers disagree in
 practice on non-canonical scalars, small-order points, and cofactored versus
@@ -2324,6 +2414,13 @@ or not at all is a quality-of-implementation choice, since the sealed layer
 beneath it carries the security guarantees.
 
 ### Demonstrating conformance
+
+**A build order that keeps every step testable before the next:** conventions
+and constants; token minting and verification against the frozen token; the
+prefilter; packet layouts against the assembled vectors; sealing against the
+per-type vectors; the cookie; the request path check by check; challenge and
+response; connected traffic, timeouts and disconnect; counters throughout,
+never after.
 
 The ordered check lists in this document are a test plan, and the counters of the
 _Observability_ section are what make it executable. Each numbered step is one
@@ -2532,7 +2629,7 @@ secrets; the shared secret is checked equal from both sides before use.
     9a b0 80 30 1b 70 95 59 85 f3 97 88 87 d9 13 f5
 
     token identifier (16 bytes):
-    07 c9 19 dc f8 2f 78 79 e5 91 70 48 3f fc 9a 1b
+    f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
 
     frozen connect token (768 bytes):
     93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
@@ -2540,41 +2637,41 @@ secrets; the shared secret is checked equal from both sides before use.
     01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
     29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
-    0c f2 21 5f 76 14 f4 80 1c f6 7d 13 8d e8 d3 b7
-    5b f7 d9 0d 3c 95 95 97 70 4d cc 75 1a 41 2a 27
-    ee 54 e0 5c 39 f5 dd a5 48 4e bc b3 a3 ab 31 9e
-    b4 92 ce c5 57 46 a4 95 c1 2d c8 7a 43 1f e5 11
-    1c 8d 20 cf b1 9d c5 d3 e5 73 3e 0e a5 ac 4f d0
-    1b 71 54 ae 1a 6b 5b 88 32 82 a7 ce 89 d1 7d 02
-    9a 0a e1 fe cd aa ba 72 75 ea 8b 92 b1 65 5d 58
-    36 73 c3 0e 84 9b 6f 14 43 1c 07 2b f2 ce 36 9b
-    eb 4a c0 aa 4a 66 f0 fa 3b 3f fc 98 ee 27 ef a0
-    ff db 81 2a 76 37 64 d9 0c bc 18 27 6b 9a 46 bd
-    35 02 6c 7b fa 93 13 32 84 f7 a2 7b 8b ee 4f a3
-    49 12 6c b5 0f 6a 3a fb b9 55 35 db e1 e3 68 a0
-    6c 72 d8 2e cc 1b 75 e9 4a 8d b7 bd a1 c1 0c d2
-    46 46 ce 61 ce 31 ac 10 33 4f a1 79 4c 9b 8a a3
-    bf db a0 41 36 b4 a4 74 b8 92 c1 ed f5 6e 5d f5
-    e0 0b c6 61 88 01 0c 6e f1 a1 c2 08 7e 2e c3 1f
-    4b 11 68 ce da fd f6 08 f1 17 06 ae e8 8c 79 29
-    e6 11 09 fa 96 48 cb 0d 5e 37 d7 06 0e d6 22 85
-    b7 09 39 7a 62 4e f2 85 ad c5 44 e2 3e 98 f1 d4
-    55 95 3b 1a df 41 58 7d cb e0 df 37 cc 70 58 72
-    c4 3f 36 64 f9 78 06 f1 20 b1 d1 98 e7 1c e1 35
-    ff 2a a1 3f e3 b4 d2 9a 00 0f 30 ba 0c 15 2f 33
-    04 3c 94 cc 55 a3 e4 d2 d1 9c 18 e7 63 41 48 4d
-    42 1b 3f f3 40 00 9c 2e 98 36 84 74 30 30 74 a5
-    5d 44 0c c9 cb 2b 88 c6 33 36 4b 94 ab bc 72 3f
-    80 c5 67 dd ed e8 99 7d 1b c2 a3 8d bf c7 c5 37
-    e0 fe 2d 5f f4 8a be 9e 7a 36 76 25 c3 93 02 ae
-    c8 8d 9c fd 83 82 4e 82 47 00 00 00 00 00 00 00
+    0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03 d6 aa
+    d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1 73 20
+    f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08 61 88
+    73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d f1 9e
+    2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86 72 1d
+    81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0
+    68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76 6b 5b
+    b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f
+    62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4 36 66
+    64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26 86 84
+    b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a
+    fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7 45 d6
+    db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34 e8 01
+    d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd
+    44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9 40 4c
+    dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24 8e a7
+    62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf 90 cb
+    2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0
+    b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23 ad c9
+    f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f e7 f1
+    09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29 7e c1
+    1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b
+    cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9 74 8f
+    da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7
+    38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a 55 42
+    0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65 7f a7
+    12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d 13 45
+    ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-    a2 a2 b2 3b c1 e8 da a2 44 c1 60 02 fb 32 eb 25
-    f0 d5 e0 12 d9 be 9b 29 a7 b1 1e 9e 69 76 e9 1e
-    6f 06 e4 89 9f 51 f5 20 ba fc cc d6 df c1 36 da
-    51 91 fa 44 57 18 46 8d 7f 88 86 34 39 58 fd 0a
+    6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83 99 b9
+    85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32 ea 71
+    21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30 d7 53
+    70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e 76 0d
     01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
     11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
     a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
@@ -2583,6 +2680,66 @@ secrets; the shared secret is checked equal from both sides before use.
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+**Assembled wire packets**, byte-complete as they leave the socket — these
+pin the geometry the per-field vectors cannot: the prefilter header, the
+clear session nonce's position on types 1 and 2, and every offset in the
+unsealed request. The request embeds the frozen token below and carries a
+zero return cookie, as the first request of an attempt does; the challenge
+is the type 2 sealed vector above in its full framing at sequence 1.
+
+assembled connection request (708 bytes, zero return cookie):
+    00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 53 41 4c 54
+    30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c
+    de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd
+    a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33 22 11
+    00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00 00 00
+    0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 3d 24 90
+    88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a 06 f7
+    4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3 10 fd
+    d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21 34 f1
+    e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87
+    72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1 bf 01
+    fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6 0c 08
+    f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a 46 58
+    80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c d3 67
+    17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb 10 42
+    bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f 44 e4
+    de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b
+    f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b
+    09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31 66 00
+    c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73 d4 60
+    ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d
+    52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8 02 95
+    f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4 2b 67
+    06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56 55 4f
+    26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50 1f 9e
+    3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3 24 d9
+    03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26
+    06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0 3f 61
+    e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c 1c 5c
+    14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9 5c cb
+    8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc b0 eb
+    7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad d3 20
+    a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c
+    f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68 d8 00
+    d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30 33 40
+    ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60 ff e0
+    77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76 8b 80
+    0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6
+    b0 9e 76 0d
+
+assembled connection challenge (64 bytes):
+    02 b7 59 01 01 00 00 00 4e 4f 4e 43 45 30 30 31
+    68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
+    20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
+    3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
 
 **The frozen connect token** above is not reproducible byte-for-byte — sealing
 draws randomness — so its vector runs the other way: a conforming server-side
