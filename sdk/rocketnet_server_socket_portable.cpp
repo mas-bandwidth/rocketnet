@@ -349,11 +349,6 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
             continue;
         }
 
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-
-        // todo: advanced packet filter
-
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
 
         if ( packet_type == ROCKETNET_PACKET_DIRECT )
         {  

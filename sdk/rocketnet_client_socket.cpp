@@ -239,11 +239,6 @@ void rocketnet_client_socket_process_packet( rocketnet_client_socket_t * client_
         return;
     }
 
-#if ROCKETNET_ADVANCED_PACKET_FILTER
-
-    // todo: advanced packet filter
-
-#endif // #if ROCKETNET_ADVANCED_PACKET_FILTER
 
     // process packet type
 
