@@ -401,6 +401,19 @@ the confidential part is a sealed box rather than JWE, which keeps the one thing
 that must be secret from the carrier — the session keys — out of a construction
 that is difficult to use correctly.
 
+*What the fixed layout does and does not protect against, since it is easy to
+credit it with the wrong thing.* Length extension proper — the Merkle-Damgård
+weakness where `H(secret ‖ message)` can be extended without knowing the secret —
+does not apply anywhere in this protocol, and not because of the layout. Ed25519
+is a Schnorr construction with no message-extension operation, and BLAKE2b
+carries a finalization flag in its last block for exactly this purpose; both
+would be safe with variable-length data. What the fixed layout removes is the
+neighbouring family, which is the one that has actually produced vulnerabilities
+in token formats: a length parsed out of the data being validated, two encodings
+of one logical message with a single signature valid for both, and ambiguity
+about precisely what the signature covered. Fixed offsets over a fixed buffer
+make all three unrepresentable rather than merely unlikely.
+
 ### Private connect token data
 
 What only the server may read. Prior to sealing:
