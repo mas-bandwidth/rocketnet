@@ -1856,7 +1856,11 @@ Counters follow these rules:
   that something never happened, which is the most valuable assertion of the set.
 * **Storage is per-execution-context**, summed only at readout — per-CPU in a
   kernel dataplane, per-thread in userspace — so the hot path never touches a
-  shared cache line.
+  shared cache line. In a multithreaded implementation, each context's block is
+  additionally padded and aligned to 64 bytes, so two threads' counters never
+  share a cache line: without that, per-thread ownership prevents the data race
+  but not the false sharing, and adjacent hot counters ping-pong the line
+  between cores anyway.
 * **Every counter site SHOULD also log**, with the log compiled out in
   production and the counter never compiled out. The log explains one incident;
   the counter reveals the pattern.
