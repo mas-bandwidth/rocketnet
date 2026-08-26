@@ -254,14 +254,13 @@ The case that would justify revisiting this is a title whose players are
 predominantly on mobile networks, where cellular-to-wifi handover is routine
 rather than rare.
 
-Higher-level transports may name endpoints by an opaque string rather than an IP
-address. How a non-IP transport encodes its endpoint in a
-connect token is that transport's business; the address encoding below is the
-form for the IP transports. **Open for design, and it must be decided before
-1.0 freezes: the address fields live inside the signed buffer, so generalising
-them later is a wire break. If a string endpoint lands, it must be a fixed-size
-field with a length byte bounded against a constant — never a length parsed out
-of the data being validated.**
+**RocketNet 1.0 endpoints are IP addresses, and nothing else.** The address
+encoding below is the whole story: an IPv4 or IPv6 address and a port, in the
+token and on the wire. Non-IP transports naming endpoints by opaque strings are
+a future version's concern, carried under a new version constant — which is
+what the version constant is for. A future design doing this must make the
+endpoint a fixed-size field with a length byte bounded against a constant,
+never a length parsed out of the data being validated.
 
 ## The Prefilter Header
 
