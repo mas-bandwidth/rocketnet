@@ -180,17 +180,37 @@ timeout and must obtain a fresh connect token and connect again. netcode makes
 the identical assumption, so this is not a regression — but a game whose players
 are largely on mobile networks should know it is choosing this behaviour.
 
-QUIC removes this assumption with connection IDs: an identifier carried in the
+QUIC removes this assumption with connection IDs: an identifier carried in every
 packet, independent of the address, so a connection survives a path change. That
-is the right design for a general-purpose internet transport and it is a real
-capability RocketNet does not have. It is not free — it requires an identifier in
-every packet, a path validation exchange to prevent an attacker redirecting a
-session to a victim's address, and a linkability decision about whether that
-identifier lets an observer follow a client across networks. For a game session
-on a fixed connection, reconnecting on the rare path change is a smaller cost
-than carrying that machinery on every packet. **This is a deliberate scope
-choice, not an oversight, and it is the natural thing to revisit if RocketNet
-ever targets mobile clients seriously.**
+is the right design for a general-purpose internet transport, and it is a real
+capability RocketNet does not have.
+
+It is not free. QUIC's goal is *seamless* migration — no interruption, no round
+trip — which requires the identifier to be present on every packet, plus a path
+validation exchange so an attacker cannot redirect a session onto a victim's
+address, plus connection ID rotation so a passive observer cannot use the
+identifier to follow a client across networks. On a 24-byte packet overhead an
+always-present identifier is a third again, paid by every player on a fixed
+connection, for an event most of them never experience. RocketNet's targets are
+PC and console games on fixed connections, and its keep-alives run often enough
+that a NAT binding never goes idle — which removes the common cause of a
+mid-session address change on such a network.
+
+**Deliberate scope choice, and deliberately not a wire break to reverse.**
+Migration needs an identifier only at the moment the path changes, not on every
+packet. It can be added later as a new packet type: sealed under the existing
+session keys, carrying an identifier so the server need not trial-decrypt against
+every connected client, and followed by the same cookie round trip to the new
+address that the connection made at connect time — which is the anti-redirection
+protection QUIC's path validation provides. Cost on ordinary packets: nothing.
+Cost when it fires: one round trip, rarely. **Packet types 7 through 255 are
+reserved and MUST be ignored by a conforming receiver**, so a later
+implementation adding migration degrades gracefully against an earlier one: the
+packet is ignored and the client reconnects, which is exactly today's behaviour.
+
+The case that would justify revisiting this is a title whose players are
+predominantly on mobile networks, where cellular-to-wifi handover is routine
+rather than rare.
 
 Higher-level transports may name endpoints by an opaque string rather than an IP
 address (per REQUIREMENTS.md). How a non-IP transport encodes its endpoint in a
