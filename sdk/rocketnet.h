@@ -319,6 +319,10 @@ ROCKETNET_EXPORT_FUNC void rocketnet_random_bytes( uint8_t * data, size_t bytes 
 
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_protocol_version();
 
+ROCKETNET_EXPORT_FUNC double rocketnet_time();
+
+ROCKETNET_EXPORT_FUNC void rocketnet_sleep( double seconds );
+
 // -----------------------------------------
 
 #ifdef __cplusplus

@@ -13,17 +13,6 @@
 #include <signal.h>
 #include <string.h>
 
-
-// the demo's own sleep; the library surface stays minimal
-
-#ifdef _WIN32
-#include <windows.h>
-static void demo_sleep_ms( int ms ) { Sleep( ms ); }
-#else
-#include <time.h>
-static void demo_sleep_ms( int ms ) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = ( ms % 1000 ) * 1000000L; nanosleep( &ts, NULL ); }
-#endif
-
 static volatile int quit;
 
 void interrupt_handler( int signal )
@@ -84,12 +73,12 @@ int main( int argc, char ** argv )
             }
         }
 
-        demo_sleep_ms( 10 );
+        rocketnet_sleep( 0.01 );
     }
 
     printf( "\nclient disconnecting\n" );
     rocketnet_client_transport_disconnect( client );
-    demo_sleep_ms( 100 );
+    rocketnet_sleep( 0.1 );
     rocketnet_client_transport_destroy( client );
 
     rocketnet_term();
