@@ -285,6 +285,8 @@ ROCKETNET_EXPORT_FUNC void rocketnet_error( const char * format, ... );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_debug( const char * format, ... );
 
+ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
+
 // ------------------------------------------
 
 ROCKETNET_EXPORT_FUNC void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );

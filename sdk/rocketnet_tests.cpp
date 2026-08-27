@@ -1631,8 +1631,9 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
+    server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->counters = &test->counters;
-    rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set );
+    rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots );
 
     rocketnet_check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
 }
@@ -1642,6 +1643,7 @@ static void rocketnet_test_server_teardown( struct rocketnet_test_server_t * tes
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
+    rocketnet_client_slots_destroy( test->server.client_slots );
 }
 
 // builds a valid request around a freshly minted token. the caller mutates
@@ -1711,12 +1713,6 @@ static void rocketnet_test_pass_cookie_gate( struct rocketnet_test_server_t * te
     memcpy( request + ROCKETNET_PREFILTER_BYTES, response + 12, ROCKETNET_COOKIE_FIELD_BYTES );
 }
 
-
-static int rocketnet_test_slot_view_no_free_slots( void * context )
-{
-    (void) context;
-    return 0;
-}
 
 void rocketnet_test_request_path_happy()
 {
@@ -2083,10 +2079,13 @@ void rocketnet_test_request_path_slots_and_denial()
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
-    // a slot view with nothing free: the ladder runs all the way to the
-    // denied, sealed under keys derived for this attempt, openable by the
-    // client from the wire bytes alone
-    test.server.slots.num_free_slots = rocketnet_test_slot_view_no_free_slots;
+    // every slot taken: the ladder runs all the way to the denied, sealed
+    // under keys derived for this attempt, openable by the client from the
+    // wire bytes alone
+    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1, dummy_user_data ) == i );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
@@ -2122,7 +2121,8 @@ void rocketnet_test_request_path_slots_and_denial()
     // with slots free again, the same request now builds a mapping -- and
     // when the mapping table itself is full, the refusal is counted twice:
     // the request reason and the lifecycle rollup
-    test.server.slots.num_free_slots = NULL;
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_client_slots_release( test.server.client_slots, i );
     for ( int i = 0; i < 8; i++ )
     {
         char address_string[64];
@@ -2155,18 +2155,6 @@ void rocketnet_test_request_path_slots_and_denial()
     }
 
     rocketnet_test_server_teardown( &test );
-}
-
-static int rocketnet_test_slot_view_connected( void * context, const struct rocketnet_address_t * address )
-{
-    (void) context; (void) address;
-    return 1;
-}
-
-static int rocketnet_test_slot_view_id_connected( void * context, uint64_t client_id )
-{
-    (void) context; (void) client_id;
-    return 1;
 }
 
 void rocketnet_test_request_path_ordering()
@@ -2205,24 +2193,32 @@ void rocketnet_test_request_path_ordering()
     rocketnet_check( response_bytes == 0 );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
 
-    // the already-connected rung, hooked for the first time: one lookup, no
-    // crypto, nothing emitted, and it beats everything below it
-    test.server.slots.address_connected = rocketnet_test_slot_view_connected;
-    rocketnet_test_build_request( request, 0x0C0C, rocketnet_test_salt );
-    before = test.counters;
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( response_bytes == 0 );
-    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED );
-    test.server.slots.address_connected = NULL;
+    // the already-connected rung: a mapping holding a slot for this source
+    // address. one lookup, no crypto, nothing emitted, and it beats
+    // everything below it
+    {
+        int connected_mapping = rocketnet_encryption_map_add( test.server.encryption_map, &test.client_address, 1000.0 );
+        rocketnet_check( connected_mapping != -1 );
+        rocketnet_encryption_map_entry( test.server.encryption_map, connected_mapping )->client_index = 0;
+        rocketnet_test_build_request( request, 0x0C0C, rocketnet_test_salt );
+        before = test.counters;
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( response_bytes == 0 );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED );
+        rocketnet_encryption_map_remove( test.server.encryption_map, connected_mapping );
+    }
 
     // the client-id rung, hooked: reached only after the seal opens
     rocketnet_test_build_request( request, 0x0D0D, rocketnet_test_salt );
     rocketnet_test_pass_cookie_gate( &test, request );
-    test.server.slots.client_id_connected = rocketnet_test_slot_view_id_connected;
+    uint8_t taken_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( taken_user_data, 0, sizeof(taken_user_data) );
+    int taken_slot = rocketnet_client_slots_assign( test.server.client_slots, 0x0D0D, -1, taken_user_data );
+    rocketnet_check( taken_slot != -1 );
     before = test.counters;
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED );
-    test.server.slots.client_id_connected = NULL;
+    rocketnet_client_slots_release( test.server.client_slots, taken_slot );
 
     // the resend rung fires for a garbage body from a mapped address --
     // pinning its position above the version check: a mapping is answered
@@ -2548,6 +2544,350 @@ void rocketnet_test_client_slots()
     }
     rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 32 );
     rocketnet_client_slots_destroy( slots );
+}
+
+// --- the server receive path, end to end ---
+
+// drives a request through the single receive entry
+static int rocketnet_test_process_packet( struct rocketnet_test_server_t * test, const uint8_t * packet, int packet_bytes,
+                                          uint8_t * response, int * response_bytes,
+                                          uint8_t * out_payload, int * out_payload_bytes, int * out_payload_client_index )
+{
+    return rocketnet_server_process_packet( &test->server, &test->client_address, packet, packet_bytes,
+                                            ROCKETNET_TEST_CREATE_TS, 100.0,
+                                            response, response_bytes,
+                                            out_payload, out_payload_bytes, out_payload_client_index );
+}
+
+// the client's half of the handshake, from wire bytes alone: opens the
+// challenge, derives the four keys, returns them
+static void rocketnet_test_client_derive_from_challenge( const uint8_t * challenge, int challenge_bytes,
+                                                         struct rocketnet_connection_keys_t * keys )
+{
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    rocketnet_check( rocketnet_prefilter_check( challenge, challenge_bytes, tag ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+    const uint8_t * p = challenge + ROCKETNET_PREFILTER_BYTES;
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
+
+    uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    memcpy( session_nonce, challenge + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES, ROCKETNET_SESSION_NONCE_BYTES );
+
+    struct rocketnet_connection_keys_t handshake_keys;
+    rocketnet_derive_handshake_keys( &handshake_keys, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                     rocketnet_test_salt, session_nonce );
+
+    uint8_t server_ephemeral[ROCKETNET_KEY_BYTES];
+    rocketnet_check( rocketnet_open_sealed_packet( server_ephemeral, session_nonce, challenge, challenge_bytes,
+                                                   ROCKETNET_CONNECTION_CHALLENGE_PACKET, sequence,
+                                                   ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                   rocketnet_test_client_eph_public,
+                                                   handshake_keys.handshake_server_to_client ) == ROCKETNET_KEY_BYTES );
+
+    rocketnet_check( rocketnet_derive_connection_keys( keys,
+                                                       rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+                                                       rocketnet_test_salt, session_nonce,
+                                                       rocketnet_test_client_eph_secret, server_ephemeral,
+                                                       rocketnet_test_client_eph_public, server_ephemeral ) );
+}
+
+static void rocketnet_test_client_build_response( uint8_t * response, const struct rocketnet_connection_keys_t * keys )
+{
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    rocketnet_check( rocketnet_write_sealed_packet( response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 1,
+                                                    NULL, padding, ROCKETNET_RESPONSE_PADDING_BYTES,
+                                                    ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                    rocketnet_test_client_eph_public,
+                                                    keys->handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+}
+
+// runs request -> cookie -> request -> challenge and hands back the client's
+// derived keys, leaving the server one response away from a connection
+static void rocketnet_test_handshake_to_challenge( struct rocketnet_test_server_t * test, uint64_t client_id,
+                                                   struct rocketnet_connection_keys_t * client_keys )
+{
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, client_id, rocketnet_test_salt );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    rocketnet_check( rocketnet_test_process_packet( test, request, sizeof(request), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + 12, ROCKETNET_COOKIE_FIELD_BYTES );
+
+    rocketnet_check( rocketnet_test_process_packet( test, request, sizeof(request), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
+    rocketnet_test_client_derive_from_challenge( response, response_bytes, client_keys );
+}
+
+void rocketnet_test_server_full_connect()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xC11E17ULL, &client_keys );
+
+    // the response connects: a slot is assigned, the token is consumed, the
+    // mapping is established, and the first keep-alive comes back carrying
+    // the client index and the slot count under the session keys
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+    rocketnet_check( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    rocketnet_check( mapping->established );
+    rocketnet_check( mapping->client_index == 0 );
+
+    uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    memcpy( token_identifier, mapping->token_identifier, sizeof(token_identifier) );
+    rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, token_identifier, ROCKETNET_TEST_CREATE_TS ) );
+
+    // the client opens the keep-alive and learns its index
+    {
+        const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
+        uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
+        uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+        rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, response, response_bytes,
+                                                       ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
+                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                       NULL, client_keys.session_server_to_client ) == 8 );
+        const uint8_t * q = opened;
+        rocketnet_check( rocketnet_read_uint32( &q ) == 0 );        // client index
+        rocketnet_check( rocketnet_read_uint32( &q ) == 4 );        // slot count
+    }
+
+    // a duplicate response is ignored: the connection is already made, and
+    // the periodic keep-alive is what repairs a lost first keep-alive
+    struct rocketnet_counters_t before = test.counters;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED] == before.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED] + 1 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    // the client's first keep-alive confirms it
+    uint8_t keep_alive_data[8];
+    uint8_t * ka = keep_alive_data;
+    rocketnet_write_uint32( &ka, 0 );
+    rocketnet_write_uint32( &ka, 4 );
+    uint8_t client_packet[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_write_sealed_packet( client_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag, 1,
+                                                    NULL, keep_alive_data, 8,
+                                                    ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                    NULL, client_keys.session_client_to_server ) == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED] == 1 );
+
+    // a payload delivers, with the client index attached
+    const uint8_t game_bytes[11] = { 0x67, 0x61, 0x6d, 0x65, 0x20, 0x62, 0x79, 0x74, 0x65, 0x73, 0x21 };
+    int packet_bytes = rocketnet_write_sealed_packet( client_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag, 2,
+                                                      NULL, game_bytes, sizeof(game_bytes),
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      NULL, client_keys.session_client_to_server );
+    rocketnet_check( packet_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + (int) sizeof(game_bytes) );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( payload_out_bytes == (int) sizeof(game_bytes) );
+    rocketnet_check( memcmp( payload_out, game_bytes, sizeof(game_bytes) ) == 0 );
+    rocketnet_check( payload_client_index == 0 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] == 1 );
+
+    // the same payload again is a replay, refused before the open
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] == before.values[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] + 1 );
+    rocketnet_check( payload_out_bytes == 0 );
+
+    // the disconnect releases everything, never answered
+    packet_bytes = rocketnet_write_sealed_packet( client_packet, ROCKETNET_CONNECTION_DISCONNECT_PACKET, tag, 3,
+                                                  NULL, NULL, 0,
+                                                  ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                  NULL, client_keys.session_client_to_server );
+    rocketnet_check( packet_bytes == ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    // and the consumed token cannot connect again, end to end: same token,
+    // same address, everything valid -- refused at the admitted-set rung
+    {
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( request, 0xC11E17ULL, rocketnet_test_salt );
+        // (a fresh token: different seal randomness, different identifier --
+        // so to prove the rule we need the SAME token, which is gone. what we
+        // prove instead: the set still holds the old identifier)
+        rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, token_identifier, ROCKETNET_TEST_CREATE_TS ) );
+    }
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_server_response_denials()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xDEC1ULL, &client_keys );
+
+    // every slot fills between the challenge and the response: the response
+    // is denied under the handshake keys -- and the token is NOT consumed,
+    // because a denied client never connected
+    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF000 + (uint64_t) i, -1, dummy_user_data ) == i );
+
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    memcpy( token_identifier, rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index )->token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_DENIED_WIRE_BYTES );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 1 );
+    rocketnet_check( !rocketnet_admitted_token_set_contains( test.server.admitted_token_set, token_identifier, ROCKETNET_TEST_CREATE_TS ) );
+
+    // the denied opens client-side under the handshake keys at sequence 2
+    {
+        const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
+        uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 1 );
+        rocketnet_check( sequence == 2 );
+        uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+        uint8_t opened[64];
+        rocketnet_check( rocketnet_open_sealed_packet( opened, session_nonce, response, response_bytes,
+                                                       ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
+                                                       ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                       NULL, client_keys.handshake_server_to_client ) == 0 );
+    }
+
+    // a slot frees, the client retransmits the same response, and the
+    // connection completes: the denial consumed nothing
+    rocketnet_client_slots_release( test.server.client_slots, 0 );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, token_identifier, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_server_receive_refusals()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    memset( packet, 0, sizeof(packet) );
+
+    // prefilter garbage: wrong tag never reaches a type counter
+    packet[0] = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
+    packet[1] = 0xFF; packet[2] = 0xFF; packet[3] = 0xFF;
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_DROPPED] == 1 );
+
+    // a reserved type is ignored
+    uint8_t * p = packet;
+    rocketnet_write_prefilter_header( &p, 200, tag );
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == 1 );
+
+    // a wrong-direction type is ignored: a server never processes what only
+    // a server sends
+    p = packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag );
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == 1 );
+
+    // a sealed packet with no mapping is refused after one lookup
+    p = packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag );
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] == 1 );
+
+    // with a handshake in flight: session traffic before the response is
+    // refused as not connected, and a zero sequence never opens
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xE0E0ULL, &client_keys );
+
+    const uint8_t some_bytes[4] = { 1, 2, 3, 4 };
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag, 1,
+                                                      NULL, some_bytes, 4,
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      NULL, client_keys.session_client_to_server );
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] == 1 );
+
+    memset( packet + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_SEQUENCE_BYTES );      // wire sequence zero
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE] == 1 );
+
+    // a response sealed under the wrong keys does not open
+    uint8_t bad_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    const uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    uint8_t wrong_key[32];
+    memset( wrong_key, 0x42, sizeof(wrong_key) );
+    rocketnet_check( rocketnet_write_sealed_packet( bad_response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 1,
+                                                    NULL, padding, ROCKETNET_RESPONSE_PADDING_BYTES,
+                                                    ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                    rocketnet_test_client_eph_public,
+                                                    wrong_key ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+
+    rocketnet_test_server_teardown( &test );
 }
 
 void rocketnet_test_platform_socket()
@@ -3196,6 +3536,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_request_path_crypto_refusals );
         RUN_TEST( test_request_path_state_refusals );
         RUN_TEST( test_request_path_slots_and_denial );
+        RUN_TEST( test_server_full_connect );
+        RUN_TEST( test_server_response_denials );
+        RUN_TEST( test_server_receive_refusals );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );
         RUN_TEST( test_request_path_config_branches );

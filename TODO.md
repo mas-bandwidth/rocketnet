@@ -90,6 +90,19 @@ land. The milestone view is issue #28; this file is the live ordering.
   impossible, below-window refused as too old; slots as parallel arrays
   with a constant-time client-id map, lowest-free assignment, lifecycle
   logs, identity zeroed on release; rocketnet_free NULL-safe centrally.
+- Server receive path: one entry for every packet — prefilter, reserved and
+  wrong-direction refusals, the request ladder, then the sealed types
+  through mapping lookup, phase-keyed sequence reconstruction, replay
+  (session phase only), open, and per-type size proofs including the
+  response's required zero padding. Response processing assigns the slot,
+  consumes the token in the admitted set (slots checked FIRST, so a denied
+  client's token survives — proven by denying a full server then completing
+  the same response after a slot frees), establishes the mapping, and
+  answers the first keep-alive. Keep-alives confirm; payloads deliver with
+  the client index; disconnects release everything, never answered. The
+  interrupted process's admitted-add-before-slots order was a token-burning
+  bug, fixed before tests. Spec gained the two response bullets defining
+  the add placement. 63 tests green.
 
 ## TODO
 
