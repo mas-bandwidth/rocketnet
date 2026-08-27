@@ -123,18 +123,45 @@ land. The milestone view is issue #28; this file is the live ordering.
   live, CLIENT_TIMED_OUT counted); keep-alives paced per client and
   suppressed by ordinary traffic — every send stamps the mapping, if_due
   emits only when idle; time passed in everywhere, nothing reads a clock.
+- Connected traffic complete: keep-alives both ways with suppression proven
+  on both sides, payload delivery both directions, the redundant disconnect
+  burst, timeouts, replay windows, zero-sequence rejection — and a
+  reduce-cases deletion: netcode's keep-alive prefixing for unconfirmed
+  clients is gone from the spec, because our session keys derive at the
+  challenge independent of the client index, so payloads are accepted from
+  sending-connection-response on and there is no window to prefix around.
+  Proven by delivering a payload ahead of the first keep-alive.
+- Network simulator: the seeded in-memory wire — latency, jitter, loss,
+  duplicates under mocked time, failing runs replay exactly; a debug and
+  test instrument, never in the measurement path. The lossy-wire connect
+  proven at 5% loss + 5% duplicates, every injected duplicate refused
+  exactly once at the replay window.
+- THE SWARM: 1000 real clients with churn (800 stay, 100 connect then
+  leave, 100 abandon mid-handshake) plus the garbage generator hammering
+  the reject rungs throughout. All 900 non-abandoners connect; exactly 100
+  mappings reclaimed at the handshake deadline; received == sum of outcomes
+  asserted per packet family over the whole storm; ten must-never-fire
+  reasons proven exactly zero. FIRST BASELINES (dev machine, in-process,
+  single-threaded, diffed from here on — red by regression, never drift):
+  5,759 handshakes/sec; 1,249,675 payloads/sec through the server.
+- Contract pass: dead-counter scan clean (every counter in the enum has a
+  live code path), scaffolding scan clean, client keep-alive suppression
+  completed and proven.
 
 ## TODO
 
-- Connected traffic: keep-alives both ways, confirmed flag and prefixing,
-  payload delivery, disconnect with redundant burst, timeouts, replay window,
-  zero-sequence rejection.
-- Synthetic traffic swarm (part of step 1, not later): real handshakes at
-  scale, churn schedules, a fraction abandoning mid-handshake, a garbage
-  generator so reject paths run under load. Swarm C++ with the tests;
-  orchestration Go.
-- Smoke load target and first perf baseline (pps/core, p99), recorded and
-  diffed thereafter.
-- Contract pass at each rung: remove scaffolding, dedupe, tighten; old
-  flow-era wire code contracts when the new connect replaces its callers, not
-  before.
+- Step 2: transports. The socket layer over the protocol objects (portable
+  sockets first, then the platform work: AF_XDP single-server, io_uring,
+  IOCP), the socket-level swarm with Go orchestration, and the old flow-era
+  wire code (packet filter, old constants, old client/server sockets)
+  contracting as the new connect replaces its callers. server_xdp rewrites
+  to the 4-byte prefilter here (#19 ipv6 too).
+- Soak: hours-to-days at load once sockets exist, per the verification
+  ladder — polite and garbage traffic, counters asserted while running,
+  past 2^32 packets on one connection so sequence reconstruction's wrap is
+  routine.
+- The sodium re-vendor: the gutted two-file flatten with Ed25519 and sealed
+  boxes, replacing brew libsodium before anything ships.
+- The Dean Surface (#22, Glenn's): the outside-in C API design, an input to
+  the top-layer client/server objects.
+- Step 3 (after transports): reliability, flows, broadcast.
