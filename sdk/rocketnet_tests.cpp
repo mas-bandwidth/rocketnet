@@ -1008,7 +1008,7 @@ void rocketnet_test_prefilter()
     rocketnet_check( memcmp( tag, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
 
     // writing the header produces exactly the assembled vectors' first bytes:
-    // a request begins 00 b7 59 01, a challenge begins 02 b7 59 01
+    // a request begins 00 00 b7 59 01 00, a challenge begins 02 00 b7 59 01 00
     uint8_t header[ROCKETNET_PREFILTER_BYTES];
     uint8_t * p = header;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, tag );
@@ -1023,6 +1023,38 @@ void rocketnet_test_prefilter()
     uint8_t packet[64] = { 0 };
     p = packet;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // 1.0 writes the unkeyed epoch, always, and the value follows it
+    rocketnet_check( packet[1] == ROCKETNET_FILTER_EPOCH_UNKEYED );
+    rocketnet_check( memcmp( packet + 2, tag, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+
+    // NEGATIVE: every nonzero epoch names a magic generation this build does
+    // not hold, and is refused -- including on a packet whose filter value is
+    // otherwise perfect. a keyed deployment refuses epoch 0 the same way, and
+    // no default magic exists for either side to fall back to.
+    for ( int epoch = 1; epoch < 256; epoch++ )
+    {
+        packet[1] = (uint8_t) epoch;
+        rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
+    }
+    packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
+    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // NEGATIVE: every single-byte corruption of the filter value is refused,
+    // at every one of its four bytes and every value
+    for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
+    {
+        const uint8_t original = packet[2+i];
+        for ( int v = 0; v < 256; v++ )
+        {
+            if ( (uint8_t) v == original )
+                continue;
+            packet[2+i] = (uint8_t) v;
+            rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
+        }
+        packet[2+i] = original;
+    }
     rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
 
     // the type byte carries the type and nothing else: any value comes back,

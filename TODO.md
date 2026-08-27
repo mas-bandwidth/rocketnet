@@ -208,6 +208,26 @@ land. The milestone view is issue #28; this file is the live ordering.
   the slot and destroys the mapping immediately; the transport stages the
   burst through the frame seam on either backend. Proven in test with a
   negative control on the release, and the reasons live above the library.
+- The v2 prefilter header, designed in now so the future hooks without a
+  wire break: 6 bytes -- packet type, filter epoch, and a 4-byte filter
+  value whose meaning the epoch decides. Epoch 0 is the whole of 1.0 and
+  carries a per-title 32-bit constant (up from 24 bits, one survivor every
+  five minutes against a 10 Gbps random flood); epochs 1-255 name magic
+  generations for a keyed MAC, fully specified in the standard and
+  deliberately unimplemented, with NO default magic published -- that is
+  the one place the dev-keys pattern is refused, because a default magic
+  makes a secured-LOOKING path work out of the box. The epoch is on the
+  wire because it makes verification one MAC instead of the relay's six
+  trial computations. The standard also gained the identity posture: no
+  client address in the token (identity beats IP pinning without NAT's
+  failures), and the connected-set requirement written as a deployment
+  obligation with the client id and the disconnect verb as what the
+  protocol provides. Every wire size moved +2, the two assembled vectors
+  and Appendix A regenerated from the code, and the keyless derived-bytes
+  idea was ruled out in writing because a NAT'd sender cannot know the
+  addresses its receiver observes. Suite green on macos and on the space
+  box, BPF program compiles, both new gates negative-controlled, soaks and
+  the live UDP examples proven on the new format.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -246,30 +266,32 @@ land. The milestone view is issue #28; this file is the live ordering.
 - The socket-level swarm with Go orchestration, against real transports.
 - THE SESSION LAYER, a v2 offering (ruled 2026-08-27, the frame sync
   argument at the connection layer: every game has to work this out, so the
-  library should hand it to them). The requirement, Glenn's words: done
-  completely, it MUST have a backend the server talks to, and that backend
-  must handle identity-based auth whose consequence is giving away your
-  slot -- one identity, one seat, so a shared token steals the sharer's
-  own place and the incentive does the enforcement. The reference
-  implementation already exists and runs: space game's backend.go does
-  exactly this, so the epic is an extraction, not a design -- proven in
+  library should hand it to them). THE HEADER FORMAT IS ALREADY IN -- the
+  6-byte prefilter with its epoch byte ships in 1.0 at epoch 0, so adopting
+  the keyed form later is a configuration change and not a wire break. What
+  remains is the system the epoch selects, and it arrives whole. The
+  requirement, Glenn's words: done completely, it MUST have a backend the
+  server talks to, and that backend must handle identity-based auth whose
+  consequence is giving away your slot -- one identity, one seat, so a
+  shared token steals the sharer's own place and the incentive does the
+  enforcement. That needs the backend to track the connected set across
+  servers live, and to kick the old player when the same user hash pops on
+  elsewhere -- which is exactly what rocketnet_server_disconnect_client
+  exists to serve. The reference implementation already runs as space
+  game's backend.go, so the epic is an EXTRACTION, not a design: proven in
   the game, generalized into the library as an OPTIONAL layer, wanted for
-  space game itself, and sequenced strictly behind the RocketWerkz
-  deliverable. And that only works if
-  the backend can kick the old player off a server when the same user hash
-  pops on elsewhere, which is precisely what this sitting's
-  rocketnet_server_disconnect_client exists to serve: the library verb the
-  backend channel pulls. Everything else hangs off that spine: client address pinning in the connect token (built
-  once on the token-pin branch, reverted, the reference implementation
-  lives in that history: family byte plus 16 address bytes in the signed
-  slack at offset 521, refused ahead of asymmetric work, unforgeable
-  because re-pinning breaks the signature); the rolling magic with the
-  current/previous/next acceptance window; and the derived prefilter bytes
-  (per-title function of source, destination and length with internal
-  redundancy, pittle generalized, needing the userspace/BPF differential
-  gate). Deliberately NOT in v1: standalone IP pinning without the slot
-  economics is not worth its support tail, and none of this is what Dean
-  expects out of the box.
+  space game itself, sequenced strictly behind the RocketWerkz deliverable.
+  Then the rolling magic feeds the keyed filter value (SipHash over type,
+  length and the four bytes after the header, one MAC per packet because
+  the epoch names the generation), the per-title generator emits the
+  constant and the keyed reader in every language plus verifier-clean BPF
+  behind a differential gate, and the aggressive replay window moves into
+  the kernel (Glenn's own replay_protection_buffer at 16 entries, the
+  kernel dropping but never advancing so a forged sequence cannot poison
+  it). Deliberately NOT in v1: no default magic ships, ever -- a published
+  secret would make a secured-LOOKING path work out of the box, which is
+  worse than not having the feature; and standalone IP pinning is out for
+  good, because identity beats it on the merits without NAT's problems.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.

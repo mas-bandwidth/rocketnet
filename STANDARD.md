@@ -2918,57 +2918,58 @@ zero return cookie, as the first request of an attempt does; the challenge
 is the type 2 sealed vector above in its full framing at sequence 1.
 
 assembled connection request (710 bytes, zero return cookie):
-    00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00 00
-    00 00 00 00 00 00 00 00 00 00 00 00 53 41 4c 54
-    30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c
-    de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd
-    a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33 22 11
-    00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00 00 00
-    0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00 00 00
-    00 00 00 00 00 00 00 00 00 00 00 00 00 3d 24 90
-    88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a 06 f7
-    4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3 10 fd
-    d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21 34 f1
-    e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87
-    72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1 bf 01
-    fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6 0c 08
-    f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a 46 58
-    80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c d3 67
-    17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb 10 42
-    bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f 44 e4
-    de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b
-    f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b
-    09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31 66 00
-    c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73 d4 60
-    ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d
-    52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8 02 95
-    f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4 2b 67
-    06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56 55 4f
-    26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50 1f 9e
-    3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3 24 d9
-    03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26
-    06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0 3f 61
-    e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c 1c 5c
-    14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9 5c cb
-    8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc b0 eb
-    7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad d3 20
-    a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c
-    f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68 d8 00
-    d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00 00 00
+    00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 41
+    4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+    9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+    c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+    22 11 00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+    00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+    24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+    06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3
+    10 fd d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21
+    34 f1 e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2
+    f2 87 72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1
+    bf 01 fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6
+    0c 08 f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a
+    46 58 80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c
+    d3 67 17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb
+    10 42 bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f
+    44 e4 de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd
+    8d 7b f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0
+    5e 5b 09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31
+    66 00 c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73
+    d4 60 ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4
+    e0 8d 52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8
+    02 95 f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4
+    2b 67 06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56
+    55 4f 26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50
+    1f 9e 3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3
+    24 d9 03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7
+    96 26 06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0
+    3f 61 e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c
+    1c 5c 14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9
+    5c cb 8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc
+    b0 eb 7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad
+    d3 20 a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d
+    d3 5c f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68
+    d8 00 d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-    00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30 33 40
-    ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60 ff e0
-    77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76 8b 80
-    0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6
-    b0 9e 76 0d
+    00 00 00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30
+    33 40 ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60
+    ff e0 77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76
+    8b 80 0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6
+    4e a6 b0 9e 76 0d
 
 assembled connection challenge (66 bytes):
-    02 b7 59 01 01 00 00 00 4e 4f 4e 43 45 30 30 31
-    68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
-    20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
-    3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
+    02 00 b7 59 01 00 01 00 00 00 4e 4f 4e 43 45 30
+    30 31 68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb
+    b2 91 20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32
+    94 7b 3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7
+    6f 88
 
 **The frozen connect token** above is not reproducible byte-for-byte — sealing
 draws randomness — so its vector runs the other way: a conforming server-side
