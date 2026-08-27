@@ -876,10 +876,17 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
     if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
         return NULL;
 
-    // a connected client index always has a live mapping behind it
+    // A connected slot USUALLY has a live mapping behind it, and must never be
+    // assumed to. rocketnet_client_slots_assign accepts -1 as a mapping index,
+    // so a connected slot without one is a state this API permits rather than
+    // an invariant violation -- and the only thing that stood here was an
+    // assert, which is absent from every shipping build. Release then indexed
+    // the mapping array at -1 and wrote eight bytes in front of it.
 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
-    rocketnet_assert( mapping_index != -1 );
+    if ( mapping_index < 0 )
+        return NULL;
+
     return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 }
 
