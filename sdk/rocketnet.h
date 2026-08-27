@@ -421,6 +421,29 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_send_packet( struct rocketnet_client
 
 ROCKETNET_EXPORT_FUNC int rocketnet_client_receive_packet( struct rocketnet_client_t * client_transport, uint8_t * packet_data );
 
+// the batch behind the copying cursor above: by count and index, and as
+// parallel arrays in one call. valid until the next update.
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_num_payloads( struct rocketnet_client_t * client_transport );
+
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_payload( struct rocketnet_client_t * client_transport, int payload_index, int * payload_bytes );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_payloads( struct rocketnet_client_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes );
+
+// the client's acquire/commit send family: the same shape, layout and
+// threading contract as the server's, minus the client index. NOTE:
+// rocketnet_client_send_packet (the convenience above) flushes the ring
+// inline and is therefore main-thread only, never during an open fill --
+// it is the simple form, not a fill-phase participant.
+
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_start_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_finish_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_abort_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_send_packets( struct rocketnet_client_t * client_transport );
+
 ROCKETNET_EXPORT_FUNC int rocketnet_client_state( struct rocketnet_client_t * client_transport );
 
 ROCKETNET_EXPORT_FUNC int rocketnet_client_client_index( struct rocketnet_client_t * client_transport );
@@ -489,11 +512,64 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_num_payloads( struct rocketnet_server
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport, int payload_index, int * client_index, int * payload_bytes );
 
+// The whole receive batch as parallel arrays in one call, valid until the
+// next update -- the zero-per-item form of the accessors above, for
+// bindings and tight loops. Returns the number of payloads.
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_payloads( struct rocketnet_server_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
+
+// -----------------------------------------
+//                        sending packets
+// -----------------------------------------
+
+// The send surface is acquire, write, commit: start_packet hands back a
+// 16-aligned frame; the payload is written at frame + payload_index --
+// itself 16-aligned, capacity a multiple of eight, so any word-based
+// serializer roots there directly -- and finish_packet seals it in place
+// on the calling thread and stages it. Nothing is copied at any step; the
+// packet is encrypted where it was written. send_packets flushes
+// everything staged.
+//
+// Threading contract: update and send_packets run on the main thread, and
+// so do disconnect, disconnect_client and stop -- never while a fill is
+// open. start_packet, finish_packet and abort_packet may run on any number
+// of game threads strictly between an update and the following
+// send_packets, and the handoff between fill and flush must be a
+// synchronizing operation (a join or a barrier), not a wall-clock wait.
+// send_packets is required once per frame, after update: packets are never
+// sent without it. Calling it again in the same frame is a no-op. The
+// fields of the context are read-only to the caller.
+//
+// finish_packet returns the sealed wire size, or zero when the packet was
+// dropped instead (payload out of range, or the connection gone) -- the
+// sequence is burned either way, which the receiver's replay window
+// tolerates.
+
+struct rocketnet_packet_context_t
+{
+    uint8_t * frame;
+    int payload_index;
+    int payload_capacity;
+    uint64_t packet_id;
+    uint64_t sequence;
+    int client_index;
+};
+
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_transport, int client_index, struct rocketnet_packet_context_t * context );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport );
+
 ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
 // burst goes out on the next flush and the slot frees immediately. Why is
-// the game's decision; this is only the mechanism.
+// the game's decision; this is only the mechanism. Main thread only, never
+// while a fill phase is open -- it tears down the connection state the
+// fill relies on.
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_transport, int client_index );
 
@@ -538,6 +614,87 @@ struct rocketnet_frame_sync_stats_t
 };
 
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
+
+// -----------------------------------------
+//            the serialize read (C++)
+// -----------------------------------------
+
+// Include serialize.h before this header and the stream forms of the
+// acquire/commit surface appear: the same calls, with a WriteStream bound
+// at the frame's aligned payload root on start and measured on finish, and
+// a ReadStream bound over each received payload. Plain C and C# see none
+// of this; it compiles to nothing but the calls above.
+
+#if defined(__cplusplus) && defined(SERIALIZE_H)
+
+namespace rocketnet
+{
+    inline bool server_start_packet( struct rocketnet_server_t * server, int client_index, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        uint8_t * frame = rocketnet_server_start_packet( server, client_index, &context );
+        if ( !frame )
+            return false;
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        return true;
+    }
+
+    // serialize's write side checks bounds with asserts only, by design: a
+    // Release overflow past the payload capacity is not caught here or
+    // there. Size packets to the capacity the context reports.
+
+    inline bool server_finish_packet( struct rocketnet_server_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        stream.Flush();
+        return rocketnet_server_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
+    }
+
+    inline void server_abort_packet( struct rocketnet_server_t * server, struct rocketnet_packet_context_t & context )
+    {
+        rocketnet_server_abort_packet( server, &context );
+    }
+
+    inline bool server_payload( struct rocketnet_server_t * server, int payload_index, serialize::ReadStream & stream, int & client_index )
+    {
+        int payload_bytes;
+        uint8_t * payload = rocketnet_server_payload( server, payload_index, &client_index, &payload_bytes );
+        if ( !payload )
+            return false;
+        stream.Initialize( payload, payload_bytes );
+        return true;
+    }
+
+    inline bool client_start_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        uint8_t * frame = rocketnet_client_start_packet( client, &context );
+        if ( !frame )
+            return false;
+        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        return true;
+    }
+
+    inline bool client_finish_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    {
+        stream.Flush();
+        return rocketnet_client_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
+    }
+
+    inline void client_abort_packet( struct rocketnet_client_t * client, struct rocketnet_packet_context_t & context )
+    {
+        rocketnet_client_abort_packet( client, &context );
+    }
+
+    inline bool client_payload( struct rocketnet_client_t * client, int payload_index, serialize::ReadStream & stream )
+    {
+        int payload_bytes;
+        uint8_t * payload = rocketnet_client_payload( client, payload_index, &payload_bytes );
+        if ( !payload )
+            return false;
+        stream.Initialize( payload, payload_bytes );
+        return true;
+    }
+}
+
+#endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
 
 // -----------------------------------------
 

@@ -31,6 +31,35 @@ struct rocketnet_client_receive_buffer_t
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
+// the client payload ring: the acquire/commit staging, filled from any
+// number of game threads between updates and flushed by send_packets on
+// the main thread. same discipline as the server's: one atomic add per
+// slot, per-slot info alone on its cache line, roots 16-aligned.
+
+#define ROCKETNET_CLIENT_PAYLOAD_RING_SIZE     256
+
+struct alignas(64) rocketnet_client_payload_slot_info_t
+{
+    int wire_bytes;
+};
+
+struct rocketnet_client_payload_ring_t
+{
+    uint8_t padding_0[4096];
+
+    volatile uint64_t num_packets;
+
+    uint8_t padding_1[4096];
+
+    struct rocketnet_client_payload_slot_info_t info[ROCKETNET_CLIENT_PAYLOAD_RING_SIZE];
+
+    uint8_t padding_2[4096];
+
+    alignas(16) uint8_t data[ROCKETNET_FRAME_STRIDE*ROCKETNET_CLIENT_PAYLOAD_RING_SIZE];
+
+    uint8_t padding_3[4096];
+};
+
 struct rocketnet_client_received_packets_t
 {
     int num_packets;
@@ -59,6 +88,8 @@ struct rocketnet_client_t
     double time;                                        // the game's clock, last seen
     int last_state;
     struct rocketnet_client_config_t config;
+
+    struct rocketnet_client_payload_ring_t payload_ring;
 
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t protocol;
@@ -276,12 +307,124 @@ void rocketnet_client_send_packet( rocketnet_client_t * client_transport, const 
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
 
-    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    int wire_bytes = rocketnet_client_protocol_write_payload( &client_transport->protocol, packet_data, packet_bytes, client_transport->time, packet );
-    if ( wire_bytes == 0 )
+    if ( packet_bytes < 1 || packet_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
         return;
 
-    rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, wire_bytes );
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_client_start_packet( client_transport, &context );
+    if ( !frame )
+        return;
+
+    memcpy( frame + context.payload_index, packet_data, packet_bytes );
+
+    rocketnet_client_finish_packet( client_transport, &context, packet_bytes );
+    rocketnet_client_send_packets( client_transport );
+}
+
+// The client's acquire/commit family: the same shape, layout and phase
+// contract as the server's, minus the client index. The convenience send
+// above rides this path and flushes immediately, preserving its
+// send-it-now meaning for simple callers.
+
+uint8_t * rocketnet_client_start_packet( rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( context );
+
+    memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
+
+    uint64_t sequence;
+    if ( !rocketnet_client_protocol_start_payload( &client_transport->protocol, &sequence ) )
+        return NULL;
+
+    struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring;
+
+    uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
+    if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+    {
+        rocketnet_spam( "client payload ring full. packet dropped" );
+        rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        return NULL;
+    }
+
+    ring->info[slot].wire_bytes = 0;
+
+    uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
+
+    rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
+
+    context->frame = frame;
+    context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
+    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->packet_id = slot;
+    context->sequence = sequence;
+    context->client_index = -1;
+
+    return frame;
+}
+
+void rocketnet_client_abort_packet( rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( context );
+
+    if ( !context->frame )
+        return;
+
+    client_transport->payload_ring.info[context->packet_id].wire_bytes = 0;
+    context->frame = NULL;
+}
+
+int rocketnet_client_finish_packet( rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( context );
+
+    if ( !context->frame )
+        return 0;
+
+    if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
+    {
+        rocketnet_client_abort_packet( client_transport, context );
+        return 0;
+    }
+
+    int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client_transport->protocol, context->sequence,
+                                                                   context->frame + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                                   payload_bytes, client_transport->time );
+    if ( wire_bytes == 0 )
+    {
+        rocketnet_client_abort_packet( client_transport, context );
+        return 0;
+    }
+
+    client_transport->payload_ring.info[context->packet_id].wire_bytes = wire_bytes;
+    context->frame = NULL;
+
+    return wire_bytes;
+}
+
+void rocketnet_client_send_packets( rocketnet_client_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+
+    struct rocketnet_client_payload_ring_t * ring = &client_transport->payload_ring;
+
+    uint64_t num_packets = ring->num_packets;
+    if ( num_packets > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
+        num_packets = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+
+    for ( uint64_t i = 0; i < num_packets; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+        {
+            rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
+                                                   ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                   ring->info[i].wire_bytes );
+        }
+    }
+
+    ring->num_packets = 0;
 }
 
 int rocketnet_client_receive_packet( rocketnet_client_t * client_transport, uint8_t * packet_data )
@@ -298,6 +441,45 @@ int rocketnet_client_receive_packet( rocketnet_client_t * client_transport, uint
     memcpy( packet_data, received->packet_data[index], (size_t) received->packet_bytes[index] );
 
     return received->packet_bytes[index];
+}
+
+// the batch the copying cursor above walks, exposed whole: by count and
+// index, and as parallel arrays in one call for bindings and tight loops.
+// valid until the next update.
+
+int rocketnet_client_num_payloads( rocketnet_client_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return client_transport->received_packets.num_packets;
+}
+
+uint8_t * rocketnet_client_payload( rocketnet_client_t * client_transport, int payload_index, int * payload_bytes )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( payload_bytes );
+
+    struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
+
+    if ( payload_index < 0 || payload_index >= received->num_packets )
+    {
+        *payload_bytes = 0;
+        return NULL;
+    }
+
+    *payload_bytes = received->packet_bytes[payload_index];
+    return received->packet_data[payload_index];
+}
+
+int rocketnet_client_payloads( rocketnet_client_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( payload_data );
+    rocketnet_assert( payload_bytes );
+
+    *payload_data = client_transport->received_packets.packet_data;
+    *payload_bytes = client_transport->received_packets.packet_bytes;
+
+    return client_transport->received_packets.num_packets;
 }
 
 int rocketnet_client_state( rocketnet_client_t * client_transport )

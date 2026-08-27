@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
 #include "rocketnet.h"
@@ -735,6 +736,48 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     }
 
     return 0;
+}
+
+// The fill-phase pair behind the client's acquire/commit send surface --
+// the same phase contract as the server's: update on the main thread,
+// start and seal from any game thread strictly between updates, the only
+// shared words a sequence add and a timestamp store.
+
+int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( sequence );
+
+    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+        return 0;
+
+    *sequence = rocketnet_platform_atomic_add_u64( &client->send_sequence_session, 1 );
+
+    return 1;
+}
+
+int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
+                                                  uint64_t sequence,
+                                                  uint8_t * wire_start,
+                                                  int payload_bytes,
+                                                  double current_time )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( wire_start );
+
+    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+        return 0;
+
+    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->filter_value, sequence,
+                                                              payload_bytes, client->signed_fields.protocol_id,
+                                                              client->connection_salt,
+                                                              client->keys.session_client_to_server );
+    if ( wire_bytes == 0 )
+        return 0;
+
+    rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
+
+    return wire_bytes;
 }
 
 int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,

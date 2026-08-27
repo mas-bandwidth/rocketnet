@@ -106,6 +106,15 @@ target_link_libraries(test rocketnet)
 
 project(soak)
 enable_language(C)
+# test_serialize -- the only build that sees the C++ stream surface
+
+project(test_serialize)
+
+add_executable(test_serialize test_serialize.cpp)
+target_include_directories(test_serialize PRIVATE sdk test)
+add_dependencies(test_serialize rocketnet)
+target_link_libraries(test_serialize rocketnet)
+
 add_executable(soak soak.c)
 target_include_directories(soak PRIVATE sdk)
 add_dependencies(soak rocketnet)

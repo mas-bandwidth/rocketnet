@@ -104,6 +104,52 @@ static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
     rocketnet_write_uint64( &p, sequence );
 }
 
+// The in-place twin of rocketnet_write_sealed_packet for the payload type
+// only: the payload is ALREADY at wire_start + 10, written there by the
+// game through the acquire/commit surface, and is sealed where it lies --
+// the header lands in front of it and the tag behind it, no staging copy.
+// libsodium's chacha20poly1305_ietf encrypt is documented safe in place.
+
+int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
+                                             const uint8_t * filter_value,
+                                             uint64_t sequence,
+                                             int payload_bytes,
+                                             uint64_t protocol_id,
+                                             const uint8_t * connection_salt,
+                                             const uint8_t * key )
+{
+    rocketnet_assert( wire_start );
+    rocketnet_assert( filter_value );
+    rocketnet_assert( connection_salt );
+    rocketnet_assert( key );
+
+    if ( sequence == 0 )
+        return 0;
+
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES )
+        return 0;
+
+    uint8_t * p = wire_start;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, filter_value );
+    rocketnet_write_uint32( &p, (uint32_t) ( sequence & 0xFFFFFFFF ) );
+
+    rocketnet_assert( p == wire_start + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET );
+
+    uint8_t associated_data[ROCKETNET_AD_WITH_EPHEMERAL_BYTES];
+    int associated_data_bytes = rocketnet_write_packet_associated_data( associated_data, protocol_id, ROCKETNET_CONNECTION_PAYLOAD_PACKET, connection_salt, NULL );
+
+    uint8_t nonce[12];
+    rocketnet_sequence_nonce( nonce, sequence );
+
+    unsigned long long sealed_bytes = 0;
+    if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p, (unsigned long long) payload_bytes,
+                                                    associated_data, (unsigned long long) associated_data_bytes,
+                                                    NULL, nonce, key ) != 0 )
+        return 0;
+
+    return (int) ( p - wire_start ) + (int) sealed_bytes;
+}
+
 int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    uint8_t packet_type,
                                    const uint8_t * filter_value,

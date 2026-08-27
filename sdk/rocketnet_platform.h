@@ -251,3 +251,53 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // ----------------------------------------------------------------
+
+// The fill-phase atomics: the send path lets any number of game threads
+// acquire and seal packets between update and the flush, and these two are
+// the only shared-word operations that phase needs -- a sequence taken with
+// an add, and a timestamp published with a store. Relaxed ordering is
+// correct for both: each value is meaningful alone and nothing is ordered
+// behind it.
+
+#include <string.h>
+
+#if defined(_MSC_VER)
+
+    #include <intrin.h>
+
+    inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
+    {
+        return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
+    }
+
+    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+    {
+        long long bits;
+        memcpy( &bits, &store, 8 );
+    #if defined(_M_IX86)
+        // 32-bit x86 has no _InterlockedExchange64; emulate with a CAS loop
+        long long expected = *(volatile long long *) value;
+        while ( _InterlockedCompareExchange64( (volatile long long *) value, bits, expected ) != expected )
+            expected = *(volatile long long *) value;
+    #else // #if defined(_M_IX86)
+        _InterlockedExchange64( (volatile long long *) value, bits );
+    #endif // #if defined(_M_IX86)
+    }
+
+#else // #if defined(_MSC_VER)
+
+    inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
+    {
+        return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
+    }
+
+    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+    {
+        uint64_t bits;
+        memcpy( &bits, &store, 8 );
+        __atomic_store_n( (volatile uint64_t *) value, bits, __ATOMIC_RELAXED );
+    }
+
+#endif // #if defined(_MSC_VER)
+
+// ----------------------------------------------------------------

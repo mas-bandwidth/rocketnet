@@ -67,7 +67,7 @@ struct rocketnet_server_socket_send_buffer_t
 
     uint8_t padding_3[4096];
 
-    uint8_t packet_data[ROCKETNET_XDP_SEND_QUEUE_SIZE][ROCKETNET_XDP_FRAME_SIZE];
+    alignas(16) uint8_t packet_data[ROCKETNET_XDP_SEND_QUEUE_SIZE][ROCKETNET_XDP_FRAME_SIZE];
 
     uint8_t padding_4[4096];
 };
@@ -1106,7 +1106,11 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 
     int packet_index = send_buffer->num_packets.fetch_add(1);
 
-    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+    // the lower bound matters too: an app that stages forever without ever
+    // flushing wraps this counter negative after ~2^31 packets, and a
+    // negative index here is an out-of-bounds write, not a dropped packet
+
+    if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
     {
         rocketnet_warn( "sent too many packets!" );
         return NULL;
@@ -1144,12 +1148,17 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index];
 
-    size_t offset = ( packet_data - send_buffer->packet_data[0] );
+    ptrdiff_t offset = ( packet_data - send_buffer->packet_data[0] );
 
     const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
 
-    rocketnet_assert( packet_index >= 0 );
-    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );
+    // derived from pointer arithmetic against the CURRENT staging buffer: a
+    // pointer from before the last flip lands wildly out of range here, and
+    // failing closed turns a contract violation into a lost packet instead
+    // of an out-of-bounds write
+
+    if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+        return;
 
     // the packet is complete wire bytes as the protocol wrote them; nothing
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
@@ -1168,15 +1177,12 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index];
 
-    long offset = ( packet_data - send_buffer->packet_data[0] );
-
-    rocketnet_assert( offset >= 0 );
-    rocketnet_assert( offset < ROCKETNET_XDP_FRAME_SIZE * ROCKETNET_XDP_SEND_QUEUE_SIZE );
+    ptrdiff_t offset = ( packet_data - send_buffer->packet_data[0] );
 
     const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
 
-    rocketnet_assert( packet_index >= 0 );  
-    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );  
+    if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+        return;
 
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
@@ -1566,7 +1572,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                     const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
 
-                    memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i], payload_bytes );
+                    memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
                     uint32_t to_address_big_endian = rocketnet_address_ipv4( &send_buffer->packet_info[i].to );
                     uint16_t to_port_big_endian = rocketnet_platform_htons( send_buffer->packet_info[i].to.port );

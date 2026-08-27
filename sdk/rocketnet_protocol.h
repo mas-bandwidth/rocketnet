@@ -74,6 +74,14 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
 // client_ephemeral_public_key is required for types 2 and 3 and must be NULL
 // otherwise.
 
+int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
+                                             const uint8_t * filter_value,
+                                             uint64_t sequence,
+                                             int payload_bytes,
+                                             uint64_t protocol_id,
+                                             const uint8_t * connection_salt,
+                                             const uint8_t * key );
+
 int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    uint8_t packet_type,
                                    const uint8_t * filter_value,

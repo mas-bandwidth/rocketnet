@@ -113,6 +113,7 @@ int main( int argc, char ** argv )
             generate_payload( payload, payload_size );
             rocketnet_client_send_packet( client, payload, payload_size );
             rocketnet_server_send_packet( server, 0, payload, payload_size );
+            rocketnet_server_send_packets( server );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             const int num_payloads = rocketnet_server_num_payloads( server );

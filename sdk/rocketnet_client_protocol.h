@@ -118,6 +118,14 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // Valid only while connected; returns the wire size, or 0 when not connected
 // or the payload does not fit.
 
+int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence );
+
+int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
+                                                  uint64_t sequence,
+                                                  uint8_t * wire_start,
+                                                  int payload_bytes,
+                                                  double current_time );
+
 int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
