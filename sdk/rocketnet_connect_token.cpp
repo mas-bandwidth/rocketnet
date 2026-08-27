@@ -47,6 +47,8 @@ void rocketnet_write_signed_connect_data( const struct rocketnet_signed_connect_
     rocketnet_write_bytes( &p, input->ipv6_address, 18 );
     rocketnet_write_bytes( &p, input->server_public_key, ROCKETNET_KEY_BYTES );
     rocketnet_write_bytes( &p, input->sealed_private_block, ROCKETNET_SEALED_BLOCK_BYTES );
+    rocketnet_write_uint8( &p, input->client_address_type );
+    rocketnet_write_bytes( &p, input->client_address, ROCKETNET_CLIENT_ADDRESS_BYTES );
     rocketnet_write_zero_bytes( &p, ROCKETNET_SIGNED_CONNECT_DATA_BYTES - (int) ( p - buffer ) );
 }
 
@@ -63,6 +65,8 @@ void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t 
     rocketnet_read_bytes( &p, output->ipv6_address, 18 );
     rocketnet_read_bytes( &p, output->server_public_key, ROCKETNET_KEY_BYTES );
     rocketnet_read_bytes( &p, output->sealed_private_block, ROCKETNET_SEALED_BLOCK_BYTES );
+    output->client_address_type = rocketnet_read_uint8( &p );
+    rocketnet_read_bytes( &p, output->client_address, ROCKETNET_CLIENT_ADDRESS_BYTES );
 }
 
 int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t * signed_fields,
@@ -229,4 +233,53 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
     sodium_memzero( &private_fields, sizeof(private_fields) );
 
     return result;
+}
+
+// The client address pin, encoded without the port. Both halves live here so
+// the minting side and the checking side can never disagree about the layout.
+
+void rocketnet_encode_client_address( uint8_t * output_type, uint8_t * output_address, const struct rocketnet_address_t * address )
+{
+    rocketnet_assert( output_type );
+    rocketnet_assert( output_address );
+
+    memset( output_address, 0, ROCKETNET_CLIENT_ADDRESS_BYTES );
+
+    if ( !address || address->type == ROCKETNET_ADDRESS_NONE )
+    {
+        *output_type = ROCKETNET_ADDRESS_NONE;
+        return;
+    }
+
+    *output_type = address->type;
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        memcpy( output_address, address->data.ipv4, 4 );
+        return;
+    }
+
+    uint8_t * p = output_address;
+    for ( int i = 0; i < 8; i++ )
+        rocketnet_write_uint16( &p, address->data.ipv6[i] );
+}
+
+int rocketnet_client_address_matches( uint8_t token_type, const uint8_t * token_address, const struct rocketnet_address_t * address )
+{
+    rocketnet_assert( token_address );
+    rocketnet_assert( address );
+
+    // an unpinned token is accepted from anywhere; the backend chose that
+
+    if ( token_type == ROCKETNET_ADDRESS_NONE )
+        return 1;
+
+    uint8_t encoded_type;
+    uint8_t encoded_address[ROCKETNET_CLIENT_ADDRESS_BYTES];
+    rocketnet_encode_client_address( &encoded_type, encoded_address, address );
+
+    if ( encoded_type != token_type )
+        return 0;
+
+    return memcmp( encoded_address, token_address, ROCKETNET_CLIENT_ADDRESS_BYTES ) == 0;
 }

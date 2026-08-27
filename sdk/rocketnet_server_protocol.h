@@ -66,7 +66,7 @@ struct rocketnet_server_protocol_t
 // -- with its length in response_bytes; on IGNORED nothing is sent, ever.
 // The exact reason is counted, always, along with the arrival.
 
-int rocketnet_server_process_connection_request( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
                                                  const uint8_t * packet_data,
                                                  int packet_bytes,
@@ -85,7 +85,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
 // the client index in out_payload_client_index; every other outcome leaves
 // out_payload_bytes zero.
 
-int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
                                      const struct rocketnet_address_t * from,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
@@ -104,7 +104,7 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
 // mapping with it. The sweep lives here rather than in the map because the
 // decision touches the slots.
 
-void rocketnet_server_update( struct rocketnet_server_protocol_t * server,
+void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time );
 
 // Builds a keep-alive for a connected client at the mapping's next session
@@ -122,15 +122,29 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
 // connection is otherwise idle. The caller loops the client indices each
 // frame. Returns 0 when not connected or not due.
 
-int rocketnet_server_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
                                               double current_time,
                                               uint8_t * out_packet );
 
+#define ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS 10
+
+// The deliberate server-side disconnect of one connected client: fills the
+// redundant burst -- ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS sealed
+// disconnect packets at consecutive session sequences -- into out_packets,
+// sets out_packet_count, then releases the slot and destroys the mapping
+// immediately. The reasons live above the library: the game decides why.
+// Does nothing (count zero) when the client is not connected.
+
+void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
+                                         int client_index,
+                                         uint8_t * out_packets,
+                                         int * out_packet_count );
+
 // Builds a payload packet for a connected client. Returns the wire size, or
 // 0 when the client is not connected or the payload does not fit.
 
-int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                     int client_index,
                                     const uint8_t * payload_data,
                                     int payload_bytes,

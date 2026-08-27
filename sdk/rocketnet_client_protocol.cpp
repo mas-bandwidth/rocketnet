@@ -54,7 +54,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     client->client_index = -1;
 }
 
-int rocketnet_client_connect( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
                               uint64_t current_timestamp )
@@ -165,7 +165,7 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
     }
 }
 
-void rocketnet_client_update( struct rocketnet_client_protocol_t * client,
+void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                               double current_time,
                               uint8_t * out_packet,
                               int * out_packet_bytes )
@@ -674,7 +674,7 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
     return 1;
 }
 
-int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t * client,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
                                      double current_time,
@@ -737,7 +737,7 @@ int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client
     return 0;
 }
 
-int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
                                     double current_time,
@@ -769,7 +769,7 @@ int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
     return bytes;
 }
 
-void rocketnet_client_disconnect( struct rocketnet_client_protocol_t * client,
+void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
                                   int * out_packet_count )
 {

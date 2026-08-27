@@ -196,6 +196,32 @@ land. The milestone view is issue #28; this file is the live ordering.
   SIGTERM before its buffered stdout flushed, so the redirect count is
   the payload evidence rather than the client's own line; kill it with
   SIGINT, which it handles.
+- The public surface is rocketnet_server_* and rocketnet_client_*, ruled:
+  the transport word is internal, so the forest header now reads
+  rocketnet_server_create/update/payloads/send_packet/is_client_connected/
+  disconnect_client and the client equivalents, netcode voice exactly. The
+  protocol layer's functions moved to the rocketnet_server_protocol_* and
+  rocketnet_client_protocol_* namespace to vacate the public names.
+- The connect token pins the client address, ruled after the packet filter
+  study: the backend saw the client's public address when it minted the
+  token, so it stamps it into the signed connect data (the 55 bytes of
+  existing slack at offset 521; family byte plus 16 address bytes, port
+  deliberately absent since the backend and the server see different source
+  ports). The server refuses a request from any other address ahead of all
+  asymmetric work, counted as CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS. A
+  token with address type none is unpinned and accepted from anywhere; the
+  dev path mints unpinned, so nothing changes out of the box and the frozen
+  vectors hold byte for byte. Re-pinning a stolen token breaks the
+  signature, proven in test. Steam ships the same tolerance stance on
+  web-vs-udp address mismatch. Identity economics (one id, one slot, shared
+  token steals your own slot) stay at the game level per Glenn; the library
+  provides client_id, user_data and the disconnect verb.
+- rocketnet_server_disconnect_client, netcode parity: the deliberate
+  server-side disconnect of one connected client. The protocol writes the
+  same redundant ten-packet sealed burst the client sends, then releases
+  the slot and destroys the mapping immediately; the transport stages the
+  burst through the frame seam on either backend. Proven in test with a
+  negative control on the release, and the reasons live above the library.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -232,6 +258,15 @@ land. The milestone view is issue #28; this file is the live ordering.
   transport selection stays for now; runtime configuration with
   preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
+- The derived prefilter bytes, next rung of the packet filter study: the
+  three title-tag bytes become a per-title function of source address,
+  destination address and length with internal redundancy, pittle's shape
+  generalized -- no visible constant, source-bound, still keyless and
+  checkable in the kernel. Needs the userspace/BPF differential gate first
+  so the two readers can never drift. Ruled out for now, deliberately: the
+  rotating magic (needs a control plane whose absence is a feature here)
+  and chonkle-scale width (32 bits already leaves one survivor per five
+  minutes at 10G).
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.

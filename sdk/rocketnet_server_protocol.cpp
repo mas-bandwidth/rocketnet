@@ -45,7 +45,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
-int rocketnet_server_process_connection_request( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
                                                  const uint8_t * packet_data,
                                                  int packet_bytes,
@@ -192,6 +192,21 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         {
             rocketnet_debug( "server ignored connection request. token names no address this server is advertised at" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+    }
+
+    // the client address pin. checked here, ahead of the signature verify, so a
+    // token replayed from an address it was not issued to is refused before any
+    // asymmetric work -- which is the whole point of pinning it.
+
+    {
+        const uint8_t token_client_address_type = signed_connect_data[ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS];
+        const uint8_t * token_client_address = signed_connect_data + ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS + 1;
+        if ( !rocketnet_client_address_matches( token_client_address_type, token_client_address, from ) )
+        {
+            rocketnet_debug( "server ignored connection request. token is pinned to another client address" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
     }
@@ -764,7 +779,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
 
-int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t * server,
                                      const struct rocketnet_address_t * from,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
@@ -809,7 +824,7 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
     }
 
     if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET )
-        return rocketnet_server_process_connection_request( server, from, packet_data, packet_bytes,
+        return rocketnet_server_protocol_process_connection_request( server, from, packet_data, packet_bytes,
                                                             current_timestamp, current_time,
                                                             response_packet, response_bytes );
 
@@ -831,7 +846,7 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
                                                    out_payload, out_payload_bytes, out_payload_client_index );
 }
 
-void rocketnet_server_update( struct rocketnet_server_protocol_t * server,
+void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time )
 {
     rocketnet_assert( server );
@@ -915,7 +930,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     return bytes;
 }
 
-int rocketnet_server_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
                                               double current_time,
                                               uint8_t * out_packet )
@@ -934,7 +949,7 @@ int rocketnet_server_write_keep_alive_if_due( struct rocketnet_server_protocol_t
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
 }
 
-int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
+int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                     int client_index,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
@@ -967,4 +982,52 @@ int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
     rocketnet_spam( "server sent payload to client %d (%d bytes)", client_index, payload_bytes );
 
     return bytes;
+}
+
+void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
+                                         int client_index,
+                                         uint8_t * out_packets,
+                                         int * out_packet_count )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( out_packets );
+    rocketnet_assert( out_packet_count );
+
+    uint64_t * counters = server->counters->values;
+
+    *out_packet_count = 0;
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return;
+
+    // the same redundant burst the client sends, sealed under the session
+    // keys at consecutive sequences -- the copies are the delivery mechanism,
+    // and nothing is retransmitted afterwards because the mapping is gone
+
+    for ( int i = 0; i < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS; i++ )
+    {
+        int bytes = rocketnet_write_sealed_packet( out_packets + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
+                                                   ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+                                                   server->title_tag, mapping->send_sequence_session,
+                                                   NULL, NULL, 0,
+                                                   server->protocol_id, mapping->connection_salt,
+                                                   NULL, mapping->keys.session_server_to_client );
+        rocketnet_assert( bytes == ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
+        (void) bytes;
+        mapping->send_sequence_session++;
+    }
+
+    *out_packet_count = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+
+    // release the slot and destroy the mapping immediately, exactly as when
+    // a client-sent disconnect arrives
+
+    rocketnet_debug( "server disconnected client %d", client_index );
+    counters[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
+    counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
+
+    int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    rocketnet_client_slots_release( server->client_slots, client_index );
+    rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
 }

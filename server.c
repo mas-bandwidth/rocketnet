@@ -31,7 +31,7 @@ int main( int argc, char ** argv )
 
     const char * public_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, 256 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address, 256 );
     if ( !server )
     {
         rocketnet_term();
@@ -43,7 +43,7 @@ int main( int argc, char ** argv )
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
     if ( !frame_sync )
     {
-        rocketnet_server_transport_destroy( server );
+        rocketnet_server_destroy( server );
         rocketnet_term();
         return 1;
     }
@@ -52,9 +52,9 @@ int main( int argc, char ** argv )
 
     while ( !quit )
     {
-        rocketnet_server_transport_update( server );
+        rocketnet_server_update( server );
 
-        const int num_connected = rocketnet_server_transport_num_connected_clients( server );
+        const int num_connected = rocketnet_server_num_connected_clients( server );
         if ( num_connected != last_num_connected )
         {
             printf( "server has %d client%s connected\n", num_connected, num_connected == 1 ? "" : "s" );
@@ -63,10 +63,10 @@ int main( int argc, char ** argv )
 
         // echo every payload back to its sender
 
-        struct rocketnet_server_transport_payloads_t * payloads = rocketnet_server_transport_payloads( server );
+        struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
         for ( int i = 0; i < payloads->num_payloads; i++ )
         {
-            rocketnet_server_transport_send_packet( server, payloads->client_index[i],
+            rocketnet_server_send_packet( server, payloads->client_index[i],
                                                     payloads->payload_data[i], payloads->payload_bytes[i] );
         }
 
@@ -75,10 +75,10 @@ int main( int argc, char ** argv )
 
     printf( "\nserver stopping\n" );
     rocketnet_frame_sync_destroy( frame_sync );
-    rocketnet_server_transport_stop( server );
-    while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED )
-        rocketnet_server_transport_update( server );
-    rocketnet_server_transport_destroy( server );
+    rocketnet_server_stop( server );
+    while ( rocketnet_server_state( server ) != ROCKETNET_SERVER_STOPPED )
+        rocketnet_server_update( server );
+    rocketnet_server_destroy( server );
 
     rocketnet_term();
 

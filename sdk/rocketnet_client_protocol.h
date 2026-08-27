@@ -82,7 +82,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
 // cookie_. On a bad token the state is the terminal that names why, and 0
 // is returned.
 
-int rocketnet_client_connect( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
                               uint64_t current_timestamp );
@@ -95,7 +95,7 @@ int rocketnet_client_connect( struct rocketnet_client_protocol_t * client,
 // _connect token expired_ once the token's lifetime has elapsed since the
 // attempt began.
 
-void rocketnet_client_update( struct rocketnet_client_protocol_t * client,
+void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                               double current_time,
                               uint8_t * out_packet,
                               int * out_packet_bytes );
@@ -106,7 +106,7 @@ void rocketnet_client_update( struct rocketnet_client_protocol_t * client,
 // (sized at least 1376) with its length in out_payload_bytes; every other
 // outcome leaves it zero.
 
-int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t * client,
                                      const uint8_t * packet_data,
                                      int packet_bytes,
                                      double current_time,
@@ -118,7 +118,7 @@ int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client
 // Valid only while connected; returns the wire size, or 0 when not connected
 // or the payload does not fit.
 
-int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
+int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
                                     double current_time,
@@ -131,7 +131,7 @@ int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
 // for anything. Before the session keys exist there is nothing to seal, so
 // the burst is empty and the state simply resets.
 
-void rocketnet_client_disconnect( struct rocketnet_client_protocol_t * client,
+void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
                                   int * out_packet_count );
 

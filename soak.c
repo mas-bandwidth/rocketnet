@@ -53,11 +53,11 @@ int main( int argc, char ** argv )
 
     const uint64_t max_iterations = argc > 1 ? strtoull( argv[1], NULL, 10 ) : 0;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", 16 );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40100", 16 );
     if ( !server )
         return 1;
 
-    struct rocketnet_client_transport_t * client = NULL;
+    struct rocketnet_client_t * client = NULL;
 
     uint64_t iteration = 0;
     uint64_t connects = 0;
@@ -79,32 +79,32 @@ int main( int argc, char ** argv )
         {
             if ( client )
             {
-                rocketnet_client_transport_disconnect( client );
+                rocketnet_client_disconnect( client );
                 rocketnet_sleep( 0.05 );
-                rocketnet_server_transport_update( server );
-                rocketnet_client_transport_destroy( client );
+                rocketnet_server_update( server );
+                rocketnet_client_destroy( client );
             }
-            client = rocketnet_client_transport_create( NULL, "127.0.0.1:40100" );
+            client = rocketnet_client_create( NULL, "127.0.0.1:40100" );
             if ( !client )
                 break;
             reconnect_time = rocketnet_time();
             connects++;
         }
 
-        rocketnet_client_transport_update( client );
-        rocketnet_server_transport_update( server );
+        rocketnet_client_update( client );
+        rocketnet_server_update( server );
 
-        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             // every size cycles through, both directions, every byte checked
 
             uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
-            rocketnet_client_transport_send_packet( client, payload, payload_size );
-            rocketnet_server_transport_send_packet( server, 0, payload, payload_size );
+            rocketnet_client_send_packet( client, payload, payload_size );
+            rocketnet_server_send_packet( server, 0, payload, payload_size );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
-            struct rocketnet_server_transport_payloads_t * payloads = rocketnet_server_transport_payloads( server );
+            struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
             for ( int i = 0; i < payloads->num_payloads; i++ )
             {
                 if ( verify_payload( payloads->payload_data[i], payloads->payload_bytes[i] ) )
@@ -115,7 +115,7 @@ int main( int argc, char ** argv )
 
             uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_receive_packet( client, received ) ) > 0 )
             {
                 if ( verify_payload( received, received_bytes ) )
                     payloads_verified++;
@@ -141,13 +141,13 @@ int main( int argc, char ** argv )
 
     if ( client )
     {
-        rocketnet_client_transport_disconnect( client );
+        rocketnet_client_disconnect( client );
         rocketnet_sleep( 0.05 );
-        rocketnet_client_transport_destroy( client );
+        rocketnet_client_destroy( client );
     }
-    rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server );
-    rocketnet_server_transport_destroy( server );
+    rocketnet_server_stop( server );
+    rocketnet_server_update( server );
+    rocketnet_server_destroy( server );
 
     rocketnet_term();
 
