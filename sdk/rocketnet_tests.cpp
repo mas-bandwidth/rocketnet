@@ -25,6 +25,7 @@
 #include "rocketnet_token_tables.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_client_protocol.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
 
@@ -2890,6 +2891,426 @@ void rocketnet_test_server_receive_refusals()
     rocketnet_test_server_teardown( &test );
 }
 
+// --- client and server, pumped against each other in memory ---
+
+static void rocketnet_test_mint_token( uint8_t * token_data, uint64_t client_id, uint64_t create, uint64_t expire, int32_t timeout )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+    signed_fields.create_timestamp = create;
+    signed_fields.expire_timestamp = expire;
+    signed_fields.timeout_seconds = timeout;
+    private_fields.client_id = client_id;
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+}
+
+// One pump: client and server exchanging packets through a perfect wire,
+// with at most one packet type dropped, once, in either direction -- the
+// deterministic loss walk. The harness generates the server's periodic
+// keep-alives for connected clients, standing in for the send pacing the
+// server socket layer will own. Returns the client's state at exit.
+
+static int rocketnet_test_pump( struct rocketnet_test_server_t * test,
+                                struct rocketnet_client_protocol_t * client,
+                                int drop_once_packet_type,
+                                double max_seconds )
+{
+    int dropped = 0;
+    double time = 100.0;
+    double stop_time = time + max_seconds;
+    double last_server_keep_alive_time = time;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    while ( time < stop_time )
+    {
+        rocketnet_client_update( client, time, packet, &packet_bytes );
+
+        if ( client->state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            return client->state;
+
+        if ( packet_bytes > 0 )
+        {
+            int type = packet[0];
+            if ( type == drop_once_packet_type && !dropped )
+            {
+                dropped = 1;
+            }
+            else
+            {
+                rocketnet_server_process_packet( &test->server, &test->client_address, packet, packet_bytes,
+                                                 ROCKETNET_TEST_CREATE_TS, time,
+                                                 response, &response_bytes,
+                                                 payload, &payload_bytes, &payload_client_index );
+                if ( response_bytes > 0 )
+                {
+                    int response_type = response[0];
+                    if ( response_type == drop_once_packet_type && !dropped )
+                        dropped = 1;
+                    else
+                        rocketnet_client_process_packet( client, response, response_bytes, time, payload, &payload_bytes );
+                }
+            }
+        }
+
+        // the server's periodic keep-alives, at the send rate per client
+        if ( time - last_server_keep_alive_time >= 0.1 )
+        {
+            last_server_keep_alive_time = time;
+            for ( int i = 0; i < rocketnet_client_slots_max_clients( test->server.client_slots ); i++ )
+            {
+                if ( !rocketnet_client_slots_connected( test->server.client_slots, i ) )
+                    continue;
+                int bytes = rocketnet_server_write_keep_alive( &test->server, i, response );
+                if ( bytes > 0 )
+                {
+                    if ( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET == drop_once_packet_type && !dropped )
+                        dropped = 1;
+                    else
+                        rocketnet_client_process_packet( client, response, bytes, time, payload, &payload_bytes );
+                }
+            }
+        }
+
+        if ( client->state == ROCKETNET_CLIENT_STATE_CONNECTED )
+            return client->state;
+
+        time += 0.05;
+    }
+
+    return client->state;
+}
+
+void rocketnet_test_client_connect_validations()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+
+    // a good token enters requesting cookie
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
+    rocketnet_check( client.server_address.type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_check( client.server_address.port == 40000 );
+
+    // create after expire is an invalid token
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS, 10 );
+    rocketnet_check( !rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+
+    // bad address flags are an invalid token
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.address_flags = 0x05;
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        rocketnet_check( !rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+    }
+
+    // an expired token dies before anything is sent
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 10, 10 );
+    rocketnet_check( !rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS + 10 ) );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
+}
+
+void rocketnet_test_client_server_connect()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xC0FFEEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    // the whole handshake completes through a perfect wire
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( client.client_index == 0 );
+    rocketnet_check( client.max_clients == 4 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+    rocketnet_check( rocketnet_client_slots_client_id( test.server.client_slots, 0 ) == 0xC0FFEEULL );
+
+    // payloads flow both ways
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    const uint8_t to_server[7] = { 1, 2, 3, 4, 5, 6, 7 };
+    int bytes = rocketnet_client_write_payload( &client, to_server, sizeof(to_server), packet );
+    rocketnet_check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + (int) sizeof(to_server) );
+    rocketnet_check( rocketnet_server_process_packet( &test.server, &test.client_address, packet, bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 200.0,
+                                                      response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( payload_bytes == (int) sizeof(to_server) );
+    rocketnet_check( memcmp( payload, to_server, sizeof(to_server) ) == 0 );
+    rocketnet_check( payload_client_index == 0 );
+
+    const uint8_t to_client[3] = { 9, 8, 7 };
+    bytes = rocketnet_server_write_payload( &test.server, 0, to_client, sizeof(to_client), packet );
+    rocketnet_check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + (int) sizeof(to_client) );
+    rocketnet_check( rocketnet_client_process_packet( &client, packet, bytes, 200.0, payload, &payload_bytes ) );
+    rocketnet_check( payload_bytes == (int) sizeof(to_client) );
+    rocketnet_check( memcmp( payload, to_client, sizeof(to_client) ) == 0 );
+
+    // the deliberate disconnect: the redundant burst, the first copy lands,
+    // the rest find nothing, and both sides are clean
+    uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
+    int burst_count = 0;
+    rocketnet_client_disconnect( &client, burst, &burst_count );
+    rocketnet_check( burst_count == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    for ( int i = 0; i < burst_count; i++ )
+    {
+        rocketnet_server_process_packet( &test.server, &test.client_address,
+                                         burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
+                                         ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
+                                         ROCKETNET_TEST_CREATE_TS, 200.0,
+                                         response, &response_bytes,
+                                         payload, &payload_bytes, &payload_client_index );
+    }
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] == (uint64_t) ( burst_count - 1 ) );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_client_server_loss_walk()
+{
+    // every handshake packet lost once, and the connection still completes:
+    // no single loss can strand either side. dropping a request covers both
+    // request sends; the keep-alive drop loses the first one and the
+    // periodic keep-alives repair it.
+
+    const int drop_types[5] = {
+        ROCKETNET_CONNECTION_REQUEST_PACKET,
+        ROCKETNET_CONNECTION_COOKIE_PACKET,
+        ROCKETNET_CONNECTION_CHALLENGE_PACKET,
+        ROCKETNET_CONNECTION_RESPONSE_PACKET,
+        ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+    };
+
+    for ( int i = 0; i < 5; i++ )
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        struct rocketnet_counters_t client_counters;
+        memset( &client_counters, 0, sizeof(client_counters) );
+        struct rocketnet_client_protocol_t client;
+        rocketnet_client_protocol_init( &client, &client_counters );
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_test_mint_token( token_data, 0xA0000ULL + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+        rocketnet_check( rocketnet_test_pump( &test, &client, drop_types[i], 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+        rocketnet_test_server_teardown( &test );
+    }
+}
+
+void rocketnet_test_client_denied_when_server_full()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_ACCEPTED] == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_client_timeout_paths()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    struct rocketnet_client_protocol_t client;
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+
+    // no server at all: requesting cookie times out to cookie request timed
+    // out, the -(N+1) pairing at state 1
+    rocketnet_client_protocol_init( &client, &counters );
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    for ( double time = 100.0; time < 112.0; time += 0.05 )
+        rocketnet_client_update( &client, time, packet, &packet_bytes );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT );
+
+    // a server that answers only cookies: sending connection request times
+    // out to connection request timed out, the pairing at state 2
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+        rocketnet_client_protocol_init( &client, &counters );
+        rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+
+        for ( double time = 100.0; time < 115.0; time += 0.05 )
+        {
+            rocketnet_client_update( &client, time, packet, &packet_bytes );
+            if ( client.state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+                break;
+            if ( packet_bytes > 0 )
+            {
+                rocketnet_server_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                 ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                 payload, &payload_bytes, &payload_client_index );
+                // deliver cookies; swallow challenges
+                if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET )
+                    rocketnet_client_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+            }
+        }
+        rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT );
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // a server that goes silent after the challenge: sending connection
+    // response times out to connection response timed out, the pairing at 3
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+        rocketnet_client_protocol_init( &client, &counters );
+        rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+
+        for ( double time = 100.0; time < 115.0; time += 0.05 )
+        {
+            rocketnet_client_update( &client, time, packet, &packet_bytes );
+            if ( client.state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+                break;
+            if ( packet_bytes > 0 && client.state < ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+            {
+                rocketnet_server_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                 ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                 payload, &payload_bytes, &payload_client_index );
+                if ( response_bytes > 0 )
+                    rocketnet_client_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+            }
+        }
+        rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // connected, then silence: the pairing at 4, connection timed out
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+        struct rocketnet_counters_t client_counters;
+        memset( &client_counters, 0, sizeof(client_counters) );
+        rocketnet_client_protocol_init( &client, &client_counters );
+        rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+        rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+        double connected_time = client.last_receive_time;
+        for ( double time = connected_time; time < connected_time + 12.0; time += 0.05 )
+            rocketnet_client_update( &client, time, packet, &packet_bytes );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT );
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // the total connect deadline: per-state timers disabled by a negative
+    // timeout, and the whole handshake still dies once the token's lifetime
+    // elapses -- connect or be discarded, and no amount of nothing extends it
+    rocketnet_client_protocol_init( &client, &counters );
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    for ( double time = 100.0; time < 107.0; time += 0.05 )
+        rocketnet_client_update( &client, time, packet, &packet_bytes );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
+}
+
+void rocketnet_test_client_cookie_injection()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    // an off-path injection: right shape, wrong salt. refused, nothing
+    // stored, and the state does not move -- the attacker must guess eight
+    // random bytes it has never seen.
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    uint8_t wrong_salt[ROCKETNET_CONNECTION_SALT_BYTES];
+    memcpy( wrong_salt, client.connection_salt, sizeof(wrong_salt) );
+    wrong_salt[0] ^= 1;
+    uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES];
+    memset( mac, 0xAA, sizeof(mac) );
+    uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
+    rocketnet_write_connection_cookie_packet( cookie, tag, wrong_salt, ROCKETNET_TEST_CREATE_TS + 3, mac );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    rocketnet_check( !rocketnet_client_process_packet( &client, cookie, sizeof(cookie), 100.0, payload, &payload_bytes ) );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH] == 1 );
+    rocketnet_check( !client.has_cookie );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
+
+    // the genuine cookie stores and advances
+    uint8_t real_cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
+    uint8_t real_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    struct rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+    rocketnet_check( rocketnet_generate_cookie_mac( real_mac, &client_address, client.connection_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_write_connection_cookie_packet( real_cookie, tag, client.connection_salt, ROCKETNET_TEST_CREATE_TS + 3, real_mac );
+    rocketnet_check( rocketnet_client_process_packet( &client, real_cookie, sizeof(real_cookie), 100.0, payload, &payload_bytes ) );
+    rocketnet_check( client.has_cookie );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -3539,6 +3960,12 @@ void rocketnet_run_tests()
         RUN_TEST( test_server_full_connect );
         RUN_TEST( test_server_response_denials );
         RUN_TEST( test_server_receive_refusals );
+        RUN_TEST( test_client_connect_validations );
+        RUN_TEST( test_client_server_connect );
+        RUN_TEST( test_client_server_loss_walk );
+        RUN_TEST( test_client_denied_when_server_full );
+        RUN_TEST( test_client_timeout_paths );
+        RUN_TEST( test_client_cookie_injection );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );
         RUN_TEST( test_request_path_config_branches );

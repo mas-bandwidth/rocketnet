@@ -827,3 +827,77 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
                                                    response_packet, response_bytes,
                                                    out_payload, out_payload_bytes, out_payload_client_index );
 }
+
+static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
+                                                                                   int client_index )
+{
+    if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return NULL;
+
+    // a connected client index always has a live mapping behind it
+
+    int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    rocketnet_assert( mapping_index != -1 );
+    return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+}
+
+int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * server,
+                                       int client_index,
+                                       uint8_t * out_packet )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( out_packet );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    uint8_t keep_alive_data[8];
+    uint8_t * p = keep_alive_data;
+    rocketnet_write_uint32( &p, (uint32_t) client_index );
+    rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
+
+    int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                               server->title_tag, mapping->send_sequence_session,
+                                               NULL, keep_alive_data, 8,
+                                               server->protocol_id, mapping->connection_salt,
+                                               NULL, mapping->keys.session_server_to_client );
+    rocketnet_assert( bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+    mapping->send_sequence_session++;
+
+    rocketnet_spam( "server sent keep alive to client %d", client_index );
+
+    return bytes;
+}
+
+int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
+                                    int client_index,
+                                    const uint8_t * payload_data,
+                                    int payload_bytes,
+                                    uint8_t * out_packet )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( payload_data );
+    rocketnet_assert( out_packet );
+
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES )
+        return 0;
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                               server->title_tag, mapping->send_sequence_session,
+                                               NULL, payload_data, payload_bytes,
+                                               server->protocol_id, mapping->connection_salt,
+                                               NULL, mapping->keys.session_server_to_client );
+    if ( bytes == 0 )
+        return 0;
+
+    mapping->send_sequence_session++;
+
+    rocketnet_spam( "server sent payload to client %d (%d bytes)", client_index, payload_bytes );
+
+    return bytes;
+}

@@ -47,6 +47,11 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    int mapping_index,
                                    const uint8_t * user_data );
 
+// whether this client index currently holds a connection. safe for any
+// index; the field accessors below are valid only when this returns 1.
+
+int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * slots, int client_index );
+
 // slot fields, valid for a connected client index
 
 uint64_t rocketnet_client_slots_client_id( const struct rocketnet_client_slots_t * slots, int client_index );

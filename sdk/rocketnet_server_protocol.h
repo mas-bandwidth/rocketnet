@@ -96,4 +96,22 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
                                      int * out_payload_bytes,
                                      int * out_payload_client_index );
 
+// Builds a keep-alive for a connected client at the mapping's next session
+// sequence. The caller paces these at the send rate per client -- a rate in
+// time, never per update -- and they are what repair a lost first keep-alive.
+// Returns the wire size, or 0 for a client index that is not connected.
+
+int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * server,
+                                       int client_index,
+                                       uint8_t * out_packet );
+
+// Builds a payload packet for a connected client. Returns the wire size, or
+// 0 when the client is not connected or the payload does not fit.
+
+int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
+                                    int client_index,
+                                    const uint8_t * payload_data,
+                                    int payload_bytes,
+                                    uint8_t * out_packet );
+
 #endif // #ifndef ROCKETNET_SERVER_PROTOCOL_H
