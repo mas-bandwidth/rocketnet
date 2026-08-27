@@ -180,6 +180,22 @@ land. The milestone view is issue #28; this file is the live ordering.
   AF_XDP rings and crafted-frame sends; six garbage packets injected at
   the filter counted exactly -- five wrong tag, one too small -- with
   nothing reaching userspace.
+- The blessed real-NIC bring-up, done on the space box in a window Glenn
+  opened by stopping the game (dead-man auto-restart armed first, players
+  quiet). The XDP program loaded and attached NATIVE on the production
+  Intel NIC, two queues, AF_XDP sockets on both, xdp threads pinned to
+  cores 1 and 2 with core 0 left to the OS per the game server's own
+  isolation recipe, and the frame sync holding SCHED_FIFO on core 0. A
+  client on a laptop connected across the public internet twice, full
+  handshake in about 600ms each time. The kernel filter counted 1816
+  packets redirected, and garbage aimed at the port from the internet was
+  counted exactly -- seven wrong tag, one too small -- none of it
+  reaching userspace. Shutdown detached the program and left the NIC
+  clean; the game restarted with its own program attached at the same tag
+  it carried before. Bench note: the client's payload tally was lost to a
+  SIGTERM before its buffered stdout flushed, so the redirect count is
+  the payload evidence rather than the client's own line; kill it with
+  SIGINT, which it handles.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -212,8 +228,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   is this surface's usage spec.
 - The XDP server transport, remaining rungs: ipv6 in the kernel program
   and the userspace path (#19); surface the kernel filter counters
-  through the transport counter surface; bring-up on a real NIC (the
-  space box, blessed, players quiet); then io_uring and IOCP. Compile-time
+  through the transport counter surface; then io_uring and IOCP. Compile-time
   transport selection stays for now; runtime configuration with
   preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
