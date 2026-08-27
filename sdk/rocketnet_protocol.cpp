@@ -30,8 +30,17 @@ int rocketnet_prefilter_counter( int refusal_code )
         case ROCKETNET_PREFILTER_TOO_SHORT:   return ROCKETNET_COUNTER_PREFILTER_TOO_SHORT;
         case ROCKETNET_PREFILTER_TOO_LARGE:   return ROCKETNET_COUNTER_PREFILTER_TOO_LARGE;
         case ROCKETNET_PREFILTER_WRONG_EPOCH: return ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH;
-        default:                              return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
+        case ROCKETNET_PREFILTER_WRONG_VALUE: return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
+        default: break;
     }
+
+    // every refusal code has a case above. a code arriving here is a caller
+    // passing something that is not one -- loud in development, and landing on
+    // a named counter rather than silently sharing a slot with a real reason,
+    // which is the failure the observability rules name directly.
+
+    rocketnet_assert( 0 );
+    return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
 }
 
 int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value )

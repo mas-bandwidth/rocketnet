@@ -885,7 +885,17 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
+    {
+        // in the shipped protocol this cannot happen: the only production
+        // assignment passes an index that came from a live mapping. it is
+        // counted rather than merely handled because the consequence of a
+        // future regression producing it is a client that quietly stops
+        // receiving keep-alives and times out -- a silent failure needs a
+        // name, or the first person to hit it has nothing to look at.
+
+        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
         return NULL;
+    }
 
     return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 }

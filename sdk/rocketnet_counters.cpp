@@ -77,6 +77,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED:                    return "MAPPING_HANDSHAKE_DEADLINE_EXPIRED";
         case ROCKETNET_COUNTER_MAPPING_TABLE_FULL:                                    return "MAPPING_TABLE_FULL";
         case ROCKETNET_COUNTER_CLIENT_CONNECTED:                                      return "CLIENT_CONNECTED";
+        case ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING:                                  return "SLOT_WITHOUT_MAPPING";
         case ROCKETNET_COUNTER_CLIENT_DISCONNECTED:                                   return "CLIENT_DISCONNECTED";
         case ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT:                            return "SERVER_DISCONNECTED_CLIENT";
         case ROCKETNET_COUNTER_CLIENT_TIMED_OUT:                              return "CLIENT_TIMED_OUT";

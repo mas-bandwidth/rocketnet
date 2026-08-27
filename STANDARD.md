@@ -10,7 +10,9 @@ The shape is a connect token minted by a game backend, an address-validated
 handshake, sealed packets, and per-client slots. Two properties run through
 everything below.
 
-**There is no secret shared between the backend and the dedicated servers.** The
+**There is no secret shared between the backend and the dedicated servers**, with
+the single scoped exception of the optional keyed prefilter magic described in
+_The Prefilter Header_, which protects no session and no key. The
 backend signs connect tokens with a private key that never leaves the backend;
 it seals the session keys to the target server's own public key. A dedicated
 server holds only the backend's public key and its own keypair. A compromised
@@ -241,7 +243,7 @@ behavior.
 Seamless connection migration in the QUIC style — an address-independent
 connection ID on every packet, path validation against redirection, ID rotation
 against cross-network tracking — is a real capability this protocol does not
-have, and the cost of having it would fall on everyone: on a 24-byte packet
+have, and the cost of having it would fall on everyone: on a 26-byte packet
 overhead an always-present identifier is a third again, paid by every player on
 a fixed connection for an event most never experience. The targets here are PC
 and console games on fixed connections, and the keep-alives run often enough
@@ -451,9 +453,13 @@ resist it.*
 
 **How magics reach servers and clients is deliberately not specified here, and
 1.0 provides no channel for it.** The connect token is a fixed 768 bytes with
-every field enumerated, and its only free space lies inside the signed connect
-data, which travels in the clear inside every connection request -- so a secret
-cannot be carried there at all. Specifying the channel belongs with the backend
+every field enumerated, and its free space inside the signature travels in the
+clear inside every connection request, so a secret cannot be carried there.
+Sixty-four bytes of pad do sit outside the signature, beside the clear session
+keys, and that is the one place in the token where a secret could ride -- 1.0
+defines no field there. **And a server never receives that part of the token at
+all**, so no amount of token slack gives a server its magic; that half needs a
+channel of its own regardless. Specifying the channel belongs with the backend
 layer that would distribute it, and this section stops at the wire format the
 channel would feed.
 
@@ -1242,7 +1248,11 @@ In this exact order:
   1400-byte receive ceiling, ignore it.
 
 * If the type byte is greater than 7, ignore the packet. Types 8 through 255
-  are reserved and MUST be ignored by a conforming receiver.
+  are reserved and MUST be ignored by a conforming receiver. **This check and
+  the two filter checks below commute and may be performed in either order**:
+  all three reject silently, so a packet failing more than one is rejected
+  either way and only the counter attributed differs. A kernel filter that has
+  already loaded the filter bytes may check them first at no cost.
 
 * **If the filter epoch names a generation this receiver does not hold, ignore
   the packet** — which for a deployment at epoch 0 means any nonzero epoch, and
@@ -2701,7 +2711,8 @@ an early drop leaks nothing and costs a window lookup instead of an AEAD.
 An implementation conforms if it produces and accepts the exact binary formats
 above, performs the processing steps in the exact orders given, and holds the key
 inventory of the _Keys_ section — in particular, no secret shared between backend
-and servers, and signature verification before the sealed block is trusted.
+and servers beyond the keyed prefilter magic of _The Prefilter Header_, and
+signature verification before the sealed block is trusted.
 
 The prefilter header must be present and correctly formed on every packet an
 implementation sends, and its derivation must not depend on the sender's own
