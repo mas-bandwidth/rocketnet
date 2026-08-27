@@ -4245,14 +4245,21 @@ void rocketnet_test_transport_udp_loopback()
         rocketnet_client_update( client, rocketnet_platform_time() );
         rocketnet_server_update( server, rocketnet_platform_time() );
 
-        struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
-        for ( int i = 0; i < payloads->num_payloads; i++ )
+        const int num_payloads = rocketnet_server_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
         {
-            rocketnet_check( payloads->client_index[i] == 0 );
-            rocketnet_check( payloads->payload_bytes[i] == 5 );
-            rocketnet_check( memcmp( payloads->payload_data[i], "hello", 5 ) == 0 );
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            rocketnet_check( payload_bytes == 5 );
+            rocketnet_check( memcmp( payload, "hello", 5 ) == 0 );
             server_received++;
         }
+
+        // out-of-range indices answer safely rather than trusting the caller
+        int oob_client_index, oob_payload_bytes;
+        rocketnet_check( rocketnet_server_payload( server, num_payloads, &oob_client_index, &oob_payload_bytes ) == NULL );
+        rocketnet_check( rocketnet_server_payload( server, -1, &oob_client_index, &oob_payload_bytes ) == NULL );
 
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes;

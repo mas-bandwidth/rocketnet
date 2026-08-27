@@ -36,6 +36,13 @@
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+// the most payloads one server update can deliver: what the receive path can
+// hand over in a single drain, so a burst is never silently discarded after
+// its sequence has already been consumed. internal -- the public surface
+// iterates payloads by index and never sees a capacity.
+
+#define ROCKETNET_MAX_PAYLOADS_PER_UPDATE                  ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+
 // NOTE the relationship between these two, because it bit once already.
 //
 // The process_packets arrays are sized by MAX_PROCESS_PACKETS (16 * 1000 =

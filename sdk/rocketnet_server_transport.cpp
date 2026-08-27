@@ -38,6 +38,17 @@ struct rocketnet_server_send_buffer_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_SEND_PACKETS];
 };
 
+// the payload batch from the last update -- capacity ROCKETNET_MAX_PAYLOADS_PER_UPDATE
+// covers a full drain. the public surface iterates by index and never sees this layout.
+
+struct rocketnet_server_payloads_t
+{
+    int num_payloads;
+    int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+};
+
 struct rocketnet_server_t
 {
     void * context;
@@ -513,10 +524,30 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 #endif // #if ROCKETNET_SERVER_XDP
 }
 
-struct rocketnet_server_payloads_t * rocketnet_server_payloads( struct rocketnet_server_t * server_transport )
+int rocketnet_server_num_payloads( struct rocketnet_server_t * server_transport )
 {
     rocketnet_assert( server_transport );
-    return &server_transport->payloads;
+    return server_transport->payloads.num_payloads;
+}
+
+uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport, int payload_index, int * client_index, int * payload_bytes )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( client_index );
+    rocketnet_assert( payload_bytes );
+
+    struct rocketnet_server_payloads_t * payloads = &server_transport->payloads;
+
+    if ( payload_index < 0 || payload_index >= payloads->num_payloads )
+    {
+        *client_index = -1;
+        *payload_bytes = 0;
+        return NULL;
+    }
+
+    *client_index = payloads->client_index[payload_index];
+    *payload_bytes = payloads->payload_bytes[payload_index];
+    return payloads->payload_data[payload_index];
 }
 
 void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
