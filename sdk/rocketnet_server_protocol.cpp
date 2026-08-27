@@ -196,21 +196,6 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
     }
 
-    // the client address pin. checked here, ahead of the signature verify, so a
-    // token replayed from an address it was not issued to is refused before any
-    // asymmetric work -- which is the whole point of pinning it.
-
-    {
-        const uint8_t token_client_address_type = signed_connect_data[ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS];
-        const uint8_t * token_client_address = signed_connect_data + ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS + 1;
-        if ( !rocketnet_client_address_matches( token_client_address_type, token_client_address, from ) )
-        {
-            rocketnet_debug( "server ignored connection request. token is pinned to another client address" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS]++;
-            return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
-    }
-
     if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
     {
         rocketnet_debug( "server ignored connection request. token is sealed to a different server key" );

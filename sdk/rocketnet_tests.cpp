@@ -4050,90 +4050,6 @@ void rocketnet_test_swarm()
     rocketnet_test_server_teardown( &test );
 }
 
-void rocketnet_test_token_client_address_pin()
-{
-    // the encode and match pair, both families, port-blind by design
-
-    struct rocketnet_address_t v4a, v4b, v4c, v6a;
-    rocketnet_check( rocketnet_address_parse( &v4a, "198.51.100.7:56789" ) );
-    rocketnet_check( rocketnet_address_parse( &v4b, "198.51.100.7:1234" ) );          // same address, different port
-    rocketnet_check( rocketnet_address_parse( &v4c, "198.51.100.8:56789" ) );         // different address
-    rocketnet_check( rocketnet_address_parse( &v6a, "[2001:db8::7]:56789" ) );
-
-    uint8_t pin_type;
-    uint8_t pin_address[ROCKETNET_CLIENT_ADDRESS_BYTES];
-
-    rocketnet_encode_client_address( &pin_type, pin_address, &v4a );
-    rocketnet_check( pin_type == ROCKETNET_ADDRESS_IPV4 );
-    rocketnet_check( rocketnet_client_address_matches( pin_type, pin_address, &v4a ) );
-    rocketnet_check( rocketnet_client_address_matches( pin_type, pin_address, &v4b ) );      // the port never participates
-    rocketnet_check( !rocketnet_client_address_matches( pin_type, pin_address, &v4c ) );
-    rocketnet_check( !rocketnet_client_address_matches( pin_type, pin_address, &v6a ) );     // family mismatch refuses
-
-    rocketnet_encode_client_address( &pin_type, pin_address, &v6a );
-    rocketnet_check( pin_type == ROCKETNET_ADDRESS_IPV6 );
-    rocketnet_check( rocketnet_client_address_matches( pin_type, pin_address, &v6a ) );
-    rocketnet_check( !rocketnet_client_address_matches( pin_type, pin_address, &v4a ) );
-
-    // an unpinned token is accepted from anywhere; the backend chose that
-
-    rocketnet_encode_client_address( &pin_type, pin_address, NULL );
-    rocketnet_check( pin_type == ROCKETNET_ADDRESS_NONE );
-    rocketnet_check( rocketnet_client_address_matches( pin_type, pin_address, &v4a ) );
-    rocketnet_check( rocketnet_client_address_matches( pin_type, pin_address, &v6a ) );
-
-    // the ladder: a token pinned to another address is refused before any
-    // asymmetric work, counting exactly the arrival and the one reason
-
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
-    rocketnet_encode_client_address( &signed_fields.client_address_type, signed_fields.client_address, &v4c );
-
-    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
-    struct rocketnet_connect_token_t token;
-    rocketnet_read_connect_token( &token, token_data );
-
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
-                                               rocketnet_test_client_eph_public,
-                                               token.signed_connect_data, token.signature );
-
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == 1 );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS] == 1 );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 0 );
-
-    // pinned to the requesting address, the same request proceeds past the
-    // pin into the cookie exchange
-
-    rocketnet_encode_client_address( &signed_fields.client_address_type, signed_fields.client_address, &test.client_address );
-    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
-    rocketnet_read_connect_token( &token, token_data );
-    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
-                                               rocketnet_test_client_eph_public,
-                                               token.signed_connect_data, token.signature );
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS] == 1 );
-
-    // the pin lives inside the signed data: re-pinning a stolen token to a
-    // new address breaks the signature, so it cannot be forged around
-
-    uint8_t tampered[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
-    memcpy( tampered, token.signed_connect_data, sizeof(tampered) );
-    tampered[ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS + 1] ^= 0x01;
-    rocketnet_check( !rocketnet_verify_signed_connect_data( tampered, token.signature, rocketnet_test_backend_public_key ) );
-
-    rocketnet_test_server_teardown( &test );
-}
-
 void rocketnet_test_server_disconnect_client()
 {
     struct rocketnet_test_server_t test;
@@ -5096,7 +5012,6 @@ void rocketnet_run_tests()
         RUN_TEST( test_platform_mutex );
         RUN_TEST( test_value_tracker );
         RUN_TEST( test_wire_server_packet_valid );
-        RUN_TEST( test_token_client_address_pin );
         RUN_TEST( test_server_disconnect_client );
         RUN_TEST( test_anonymize_address_ipv4 );
 #if ROCKETNET_PLATFORM_HAS_IPV6

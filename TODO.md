@@ -202,20 +202,6 @@ land. The milestone view is issue #28; this file is the live ordering.
   disconnect_client and the client equivalents, netcode voice exactly. The
   protocol layer's functions moved to the rocketnet_server_protocol_* and
   rocketnet_client_protocol_* namespace to vacate the public names.
-- The connect token pins the client address, ruled after the packet filter
-  study: the backend saw the client's public address when it minted the
-  token, so it stamps it into the signed connect data (the 55 bytes of
-  existing slack at offset 521; family byte plus 16 address bytes, port
-  deliberately absent since the backend and the server see different source
-  ports). The server refuses a request from any other address ahead of all
-  asymmetric work, counted as CONNECTION_REQUEST_WRONG_CLIENT_ADDRESS. A
-  token with address type none is unpinned and accepted from anywhere; the
-  dev path mints unpinned, so nothing changes out of the box and the frozen
-  vectors hold byte for byte. Re-pinning a stolen token breaks the
-  signature, proven in test. Steam ships the same tolerance stance on
-  web-vs-udp address mismatch. Identity economics (one id, one slot, shared
-  token steals your own slot) stay at the game level per Glenn; the library
-  provides client_id, user_data and the disconnect verb.
 - rocketnet_server_disconnect_client, netcode parity: the deliberate
   server-side disconnect of one connected client. The protocol writes the
   same redundant ten-packet sealed burst the client sends, then releases
@@ -258,15 +244,23 @@ land. The milestone view is issue #28; this file is the live ordering.
   transport selection stays for now; runtime configuration with
   preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
-- The derived prefilter bytes, next rung of the packet filter study: the
-  three title-tag bytes become a per-title function of source address,
-  destination address and length with internal redundancy, pittle's shape
-  generalized -- no visible constant, source-bound, still keyless and
-  checkable in the kernel. Needs the userspace/BPF differential gate first
-  so the two readers can never drift. Ruled out for now, deliberately: the
-  rotating magic (needs a control plane whose absence is a feature here)
-  and chonkle-scale width (32 bits already leaves one survivor per five
-  minutes at 10G).
+- THE SESSION LAYER, a v2 offering (ruled 2026-08-27, the frame sync
+  argument at the connection layer: every game has to work this out, so the
+  library should hand it to them). The whole system arrives together,
+  because its parts fund each other: a real backend the servers talk to,
+  maintaining sessions; the lose-your-slot economics (one identity, one
+  slot, a shared token steals the sharer's own seat -- the incentive does
+  the enforcement); client address pinning in the connect token (built
+  once on the token-pin branch, reverted, the reference implementation
+  lives in that history: family byte plus 16 address bytes in the signed
+  slack at offset 521, refused ahead of asymmetric work, unforgeable
+  because re-pinning breaks the signature); the rolling magic with the
+  current/previous/next acceptance window; and the derived prefilter bytes
+  (per-title function of source, destination and length with internal
+  redundancy, pittle generalized, needing the userspace/BPF differential
+  gate). Deliberately NOT in v1: standalone IP pinning without the slot
+  economics is not worth its support tail, and none of this is what Dean
+  expects out of the box.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.

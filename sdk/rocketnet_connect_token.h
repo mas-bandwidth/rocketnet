@@ -24,7 +24,6 @@
 #define ROCKETNET_USER_DATA_BYTES               256
 #define ROCKETNET_KEY_BYTES                     32
 #define ROCKETNET_TOKEN_IDENTIFIER_BYTES        16
-#define ROCKETNET_CLIENT_ADDRESS_BYTES          16
 
 #define ROCKETNET_ADDRESS_FLAG_IPV4             (1<<0)
 #define ROCKETNET_ADDRESS_FLAG_IPV6             (1<<1)
@@ -40,7 +39,6 @@
 #define ROCKETNET_SIGNED_OFFSET_IPV6            39
 #define ROCKETNET_SIGNED_OFFSET_SERVER_KEY      57
 #define ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK    89
-#define ROCKETNET_SIGNED_OFFSET_CLIENT_ADDRESS  521
 
 // The private connect token data: what the backend seals to the server.
 
@@ -73,8 +71,6 @@ struct rocketnet_signed_connect_data_t
     uint8_t ipv6_address[18];                       // 8 x uint16 groups little-endian + port little-endian
     uint8_t server_public_key[ROCKETNET_KEY_BYTES];
     uint8_t sealed_private_block[ROCKETNET_SEALED_BLOCK_BYTES];
-    uint8_t client_address_type;                    // ROCKETNET_ADDRESS_NONE, _IPV4 or _IPV6
-    uint8_t client_address[ROCKETNET_CLIENT_ADDRESS_BYTES];
 };
 
 void rocketnet_write_signed_connect_data( const struct rocketnet_signed_connect_data_t * input, uint8_t * buffer );
@@ -126,19 +122,6 @@ int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_t
 
 void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * signed_connect_data );
 
-// The client address pin. The backend saw the client's public address when it
-// minted the token, so it stamps it here and the server refuses a request that
-// arrives from anywhere else -- a token stolen, shared or resold is useless away
-// from the address it was issued to, which is the difference between a bearer
-// credential and a bound one. The port is deliberately absent: the backend saw
-// the client on a different source port than the game server will. A token whose
-// type is ROCKETNET_ADDRESS_NONE is not pinned and is accepted from anywhere.
-
-struct rocketnet_address_t;
-
-void rocketnet_encode_client_address( uint8_t * output_type, uint8_t * output_address, const struct rocketnet_address_t * address );
-
-int rocketnet_client_address_matches( uint8_t token_type, const uint8_t * token_address, const struct rocketnet_address_t * address );
 
 // The published development keys, embedded and used by default so
 // development works out of the box: run the server, point a client at its
