@@ -122,4 +122,31 @@ int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_t
 
 void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * signed_connect_data );
 
+// The published development keys, embedded and used by default so
+// development works out of the box: run the server, point a client at its
+// address, connected -- no backend, no configuration, no copying keys
+// between machines. THE SECURITY OF A DEPLOYMENT THAT SHIPS WITH THESE IS
+// ZERO: both secret halves are printed in the standard, so anyone can mint
+// tokens your server accepts and open every session. The keys being public
+// is the loud failure; nothing else is relaxed -- the development path runs
+// the same handshake, sealing and replay protection that ships.
+
+extern const uint8_t rocketnet_dev_backend_public_key[32];
+extern const uint8_t rocketnet_dev_backend_secret_key[64];
+extern const uint8_t rocketnet_dev_server_public_key[32];
+extern const uint8_t rocketnet_dev_server_secret_key[32];
+
+#define ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788ULL
+
+// Mints a development connect token for a server at this address, signed
+// with the published development backend key and sealed to the published
+// development server key. What a real backend does with real keys, done
+// locally so a first connect needs nothing else. Returns 1, or 0 for an
+// address that does not parse.
+
+int rocketnet_write_dev_connect_token( const char * server_address_string,
+                                       uint64_t client_id,
+                                       uint64_t current_timestamp,
+                                       uint8_t * connect_token );
+
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H

@@ -81,6 +81,10 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 
 struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct rocketnet_encryption_map_t * map, int index );
 
+// the address a live mapping is keyed on -- what the server's sends target
+
+const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index );
+
 // Removes a mapping, zeroing all key material before the slot is freed.
 
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );

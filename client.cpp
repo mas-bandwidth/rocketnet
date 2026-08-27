@@ -1,15 +1,19 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
+
+    The out-of-the-box client: connects to a server with a development
+    token minted locally from the published development keys, then
+    exchanges payloads. Run ./bin/server, then ./bin/client. Pass an
+    address to connect elsewhere: ./bin/client 192.0.2.10:40000
 */
 
 #include "rocketnet.h"
-#include "rocketnet_client_socket.h"
+#include "rocketnet_client_transport.h"
 #include "rocketnet_platform.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <signal.h>
+#include <string.h>
 
 static volatile int quit;
 
@@ -18,111 +22,66 @@ void interrupt_handler( int signal )
     (void) signal; quit = 1;
 }
 
-static inline int generate_packet( uint8_t * packet_data, int min_size, int max_size )
+int main( int argc, char ** argv )
 {
-    const int packet_bytes = min_size + rand() % ( max_size - min_size );
-    const int start = packet_bytes % 256;
-    for ( int i = 0; i < packet_bytes; i++ )
-    {
-        packet_data[i] = (uint8_t) ( start + i ) % 256;
-    }
-    return packet_bytes;
-}
-
-static inline bool verify_packet( uint8_t * packet_data, int packet_bytes )
-{
-    const int start = packet_bytes % 256;
-    for ( int i = 0; i < packet_bytes; i++ )
-    {
-        if ( packet_data[i] != (uint8_t) ( ( start + i ) % 256 ) )
-            return false;
-    }
-    return true;
-}
-
-int main()
-{
-    signal( SIGINT, interrupt_handler ); signal( SIGTERM, interrupt_handler );
+    signal( SIGINT, interrupt_handler );
 
     if ( !rocketnet_init() )
     {
-        rocketnet_error( "could not initialize rocketnet" );
-        return 1;        
-    }
-
-    const char * connect = "69.67.149.151:40000";       // space1
-
-    // const char * connect = "64.34.88.117:40000";        // space2
-
-    // const char * connect = "127.0.0.1:40000";
-
-    rocketnet_client_socket_t * client_socket = rocketnet_client_socket_create( NULL, connect );
-    if ( !client_socket )
-    {
-        rocketnet_error( "could not create client socket" );
+        printf( "error: failed to initialize rocketnet\n" );
         return 1;
     }
 
-    rocketnet_info( "connecting..." );
+    const char * connect_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
-    bool previous_connected = false;
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_address );
+    if ( !client )
+    {
+        rocketnet_term();
+        return 1;
+    }
 
-    int count = 0;
+    int last_state = 0;
+    uint64_t payloads_sent = 0;
+    uint64_t payloads_received = 0;
 
     while ( !quit )
     {
-        if ( rocketnet_client_socket_state( client_socket ) <= ROCKETNET_CLIENT_SOCKET_DISCONNECTED )
-            break;
+        rocketnet_client_transport_update( client );
 
-        rocketnet_client_socket_update( client_socket );
-
-        while ( true )
+        const int state = rocketnet_client_transport_state( client );
+        if ( state != last_state )
         {
-            uint8_t packet_data[ROCKETNET_MTU];
-            int packet_bytes = rocketnet_client_socket_receive_packet( client_socket, packet_data );
-            if ( packet_bytes == 0 )
+            printf( "client state: %s\n", rocketnet_client_state_name( state ) );
+            last_state = state;
+            if ( state < ROCKETNET_CLIENT_STATE_DISCONNECTED )
                 break;
+        }
 
-            rocketnet_info( "client received %d byte packet from server", packet_bytes );
+        if ( state == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
+            const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            rocketnet_client_transport_send_packet( client, payload, sizeof(payload) );
+            payloads_sent++;
 
-            if ( !verify_packet( packet_data, packet_bytes ) )
+            uint8_t received[1400];
+            int received_bytes;
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
             {
-                rocketnet_warn( " ---> packet did not verify" );
+                payloads_received++;
+                if ( ( payloads_received % 100 ) == 0 )
+                    printf( "client sent %llu and received %llu payloads\n",
+                            (unsigned long long) payloads_sent, (unsigned long long) payloads_received );
             }
         }
 
-        for ( int i = 0; i < 10; i++ )
-        {
-            uint8_t packet_data[256];
-            const int packet_bytes = generate_packet( packet_data, 100, 256 );
-            rocketnet_client_socket_send_packet( client_socket, packet_data, packet_bytes );
-        }
-
-        if ( !previous_connected )
-        {
-            if ( rocketnet_client_socket_state( client_socket ) == ROCKETNET_CLIENT_SOCKET_CONNECTED )
-            {
-                rocketnet_info( "connected" );
-
-                previous_connected = true;
-            }
-        }
-
-        rocketnet_platform_sleep( 1.0 / 100.0 );
+        rocketnet_platform_sleep( 0.01 );
     }
 
-    rocketnet_info( "disconnecting" );
-
-    rocketnet_client_socket_disconnect( client_socket );
-
-    while ( rocketnet_client_socket_state( client_socket ) > ROCKETNET_CLIENT_SOCKET_DISCONNECTED )
-    {
-        rocketnet_client_socket_update( client_socket );
-    }
-
-    rocketnet_info( "disconnected" );
-
-    rocketnet_client_socket_destroy( client_socket );
+    printf( "\nclient disconnecting\n" );
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_platform_sleep( 0.1 );
+    rocketnet_client_transport_destroy( client );
 
     rocketnet_term();
 

@@ -27,6 +27,8 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_network_simulator.h"
+#include "rocketnet_client_transport.h"
+#include "rocketnet_server_transport.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
 
@@ -482,6 +484,14 @@ void rocketnet_test_crypto_sizes()
 void rocketnet_test_crypto_test_keys()
 {
     rocketnet_test_sodium_ready();
+
+    // the library's embedded development keys are the published test keys,
+    // byte for byte -- two copies of the standard's values that must never
+    // drift apart
+    rocketnet_check( memcmp( rocketnet_dev_backend_public_key, rocketnet_test_backend_public_key, 32 ) == 0 );
+    rocketnet_check( memcmp( rocketnet_dev_backend_secret_key, rocketnet_test_backend_secret_key, 64 ) == 0 );
+    rocketnet_check( memcmp( rocketnet_dev_server_public_key, rocketnet_test_server_public_key, 32 ) == 0 );
+    rocketnet_check( memcmp( rocketnet_dev_server_secret_key, rocketnet_test_server_secret_key, 32 ) == 0 );
 
     // the published test keypairs are self-consistent: the Ed25519 secret key
     // embeds its public half, and the X25519 publics derive from the secrets
@@ -3945,6 +3955,103 @@ void rocketnet_test_swarm()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_transport_udp_loopback()
+{
+    // the first packets on a real socket: the whole connect over UDP through
+    // loopback, on the transports -- flow's IO carrying the connection
+    // protocol, development keys, exactly the out-of-the-box path. real
+    // clocks here; the protocol underneath is the one proven on mocked time.
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:40777", 16 );
+    rocketnet_check( server );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, "127.0.0.1:40777" );
+    rocketnet_check( client );
+
+    // pump both until connected, bounded by the wall clock
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client );
+        rocketnet_server_transport_update( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_client_transport_client_index( client ) == 0 );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+    rocketnet_check( rocketnet_server_transport_is_client_connected( server, 0 ) );
+
+    // payloads both ways through the transport surfaces
+    int server_received = 0;
+    int client_received = 0;
+    int sent_to_server = 0;
+    int sent_to_client = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent_to_server < 10 )
+        {
+            rocketnet_client_transport_send_packet( client, (const uint8_t*) "hello", 5 );
+            sent_to_server++;
+        }
+        if ( sent_to_client < 10 )
+        {
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "world", 5 );
+            sent_to_client++;
+        }
+
+        rocketnet_client_transport_update( client );
+        rocketnet_server_transport_update( server );
+
+        struct rocketnet_server_transport_payloads_t * payloads = rocketnet_server_transport_payloads( server );
+        for ( int i = 0; i < payloads->num_payloads; i++ )
+        {
+            rocketnet_check( payloads->client_index[i] == 0 );
+            rocketnet_check( payloads->payload_bytes[i] == 5 );
+            rocketnet_check( memcmp( payloads->payload_data[i], "hello", 5 ) == 0 );
+            server_received++;
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 5 );
+            rocketnet_check( memcmp( packet, "world", 5 ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= 10 && client_received >= 10 )
+            break;
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received >= 10 );
+    rocketnet_check( client_received >= 10 );
+
+    // the deliberate disconnect crosses the wire and the server empties
+    rocketnet_client_transport_disconnect( client );
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 2.0 )
+    {
+        rocketnet_server_transport_update( server );
+        if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server );
+    rocketnet_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -4607,6 +4714,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_network_simulator );
         RUN_TEST( test_client_server_lossy_wire );
         RUN_TEST( test_swarm );
+        RUN_TEST( test_transport_udp_loopback );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );
         RUN_TEST( test_request_path_config_branches );
