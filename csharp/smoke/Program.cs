@@ -161,18 +161,7 @@ static class Smoke
                     Fail( "payload from wrong client index" );
                 ReadOnlySpan<byte> received = batch[j];
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
-                {
                     got256 = true;
-
-                    // echo it back through the server's acquire/commit path
-                    RocketNet.PacketContext echo = default;
-                    if ( RocketNet.ServerStartPacket( server, clientIndex, ref echo ) == IntPtr.Zero )
-                        Fail( "server start packet" );
-                    Span<byte> echoSpan = RocketNet.PayloadSpan( in echo );
-                    received.CopyTo( echoSpan );
-                    if ( RocketNet.ServerFinishPacket( server, ref echo, received.Length ) == 0 )
-                        Fail( "server finish packet" );
-                }
                 else if ( received.Length == 64 && MatchesPattern( received, 2 ) )
                     got64 = true;
                 else
@@ -185,9 +174,20 @@ static class Smoke
             Fail( $"server did not receive both payloads (acquire/commit {got256}, convenience {got64})" );
         Ok( "client -> server: acquire/commit and convenience payloads byte-exact" );
 
-        // server -> client: the echo above plus one convenience send; drain with
-        // both receive forms — the indexed single accessor and the batch view
+        // server -> client: one payload through the server's acquire/commit path
+        // (the 256-byte pattern sent back) and one through the convenience send.
+        // Both are staged only now, after the drain above: a payload the client
+        // receives while another loop is pumping updates is gone unobserved, so
+        // everything in flight toward the client must be drained by the loop
+        // that expects it. Drained with both receive forms — the indexed single
+        // accessor and the batch view.
 
+        RocketNet.PacketContext down = default;
+        if ( RocketNet.ServerStartPacket( server, clientIndex, ref down ) == IntPtr.Zero )
+            Fail( "server start packet" );
+        FillPattern( RocketNet.PayloadSpan( in down ).Slice( 0, 256 ), 1 );
+        if ( RocketNet.ServerFinishPacket( server, ref down, 256 ) == 0 )
+            Fail( "server finish packet" );
         RocketNet.ServerSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
 
         bool gotEcho = false, gotDown = false;
@@ -212,8 +212,8 @@ static class Smoke
             }
         }
         if ( !gotEcho || !gotDown )
-            Fail( $"client did not receive both payloads (echo {gotEcho}, convenience {gotDown})" );
-        Ok( "server -> client: echoed acquire/commit and convenience payloads byte-exact" );
+            Fail( $"client did not receive both payloads (acquire/commit {gotEcho}, convenience {gotDown})" );
+        Ok( "server -> client: acquire/commit and convenience payloads byte-exact" );
 
         // counters: delivery counted, and the C# counter indices line up with the
         // C names at both ends of the enum
