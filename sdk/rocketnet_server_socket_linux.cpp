@@ -382,11 +382,11 @@ static void rocketnet_server_socket_remove_workdir( const char * workdir )
     }
 }
 
-rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * title_tag, int num_queues, int num_os_cpus )
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
-    rocketnet_assert( title_tag );
+    rocketnet_assert( filter_value );
     
     const char * num_queues_env = getenv( "ROCKETNET_SERVER_NUM_QUEUES" );
     if ( num_queues_env )
@@ -746,7 +746,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->server_port_big_endian = rocketnet_platform_htons( public_address.port );
 
     // configure the kernel prefilter: the destination it accepts and the
-    // per-title tag. until this write the program passes everything through
+    // per-title filter value and epoch. until this write the program passes
     // untouched, so a server that fails before this point never black-holed
     // the box's other traffic.
 
@@ -755,7 +755,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         memset( &config, 0, sizeof(config) );
         config.public_address = server_socket->server_address_big_endian;
         config.public_port = server_socket->server_port_big_endian;
-        memcpy( config.title_tag, title_tag, ROCKETNET_TITLE_TAG_BYTES );
+        memcpy( config.filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+        config.filter_epoch = ROCKETNET_FILTER_EPOCH_UNKEYED;
 
         __u32 key = 0;
         if ( bpf_map_update_elem( server_socket->config_map_fd, &key, &config, BPF_ANY ) != 0 )

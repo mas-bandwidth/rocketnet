@@ -46,8 +46,8 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     rocketnet_assert( client );
     rocketnet_assert( counters );
     memset( client, 0, sizeof(*client) );
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
-    memcpy( client->title_tag, tag, ROCKETNET_TITLE_TAG_BYTES );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( client->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = 10.0;
     client->counters = counters;
     client->state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
@@ -67,12 +67,12 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     // fresh ephemeral, sequences at one. recovery is this same path.
 
     struct rocketnet_counters_t * counters = client->counters;
-    uint8_t title_tag[ROCKETNET_TITLE_TAG_BYTES];
-    memcpy( title_tag, client->title_tag, ROCKETNET_TITLE_TAG_BYTES );
+    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    memcpy( filter_value, client->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     double send_rate = client->send_rate;
 
     memset( client, 0, sizeof(*client) );
-    memcpy( client->title_tag, title_tag, ROCKETNET_TITLE_TAG_BYTES );
+    memcpy( client->filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = send_rate;
     client->counters = counters;
     client->client_index = -1;
@@ -194,7 +194,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         case ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE:
         case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST:
         {
-            rocketnet_write_connection_request_packet( out_packet, client->title_tag,
+            rocketnet_write_connection_request_packet( out_packet, client->filter_value,
                                                        client->has_cookie ? client->return_cookie : NULL,
                                                        client->connection_salt,
                                                        client->client_ephemeral_public_key,
@@ -221,7 +221,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
             rocketnet_write_uint32( &p, (uint32_t) client->client_index );
             rocketnet_write_uint32( &p, (uint32_t) client->max_clients );
             int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                       client->title_tag, client->send_sequence_session,
+                                                       client->filter_value, client->send_sequence_session,
                                                        NULL, keep_alive_data, 8,
                                                        client->signed_fields.protocol_id, client->connection_salt,
                                                        NULL, client->keys.session_client_to_server );
@@ -389,7 +389,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     const uint8_t response_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     int response_bytes = rocketnet_write_sealed_packet( client->stored_response, ROCKETNET_CONNECTION_RESPONSE_PACKET,
-                                                        client->title_tag, client->send_sequence_handshake,
+                                                        client->filter_value, client->send_sequence_handshake,
                                                         NULL, response_padding, ROCKETNET_RESPONSE_PADDING_BYTES,
                                                         client->signed_fields.protocol_id, client->connection_salt,
                                                         client->client_ephemeral_public_key,
@@ -692,11 +692,11 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 
     counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
 
-    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, client->title_tag );
+    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, client->filter_value );
     if ( packet_type < 0 )
     {
         rocketnet_spam( "client dropped packet. prefilter" );
-        counters[ROCKETNET_COUNTER_PREFILTER_DROPPED]++;
+        counters[ rocketnet_prefilter_counter( packet_type ) ]++;
         return 0;
     }
 
@@ -756,7 +756,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
         return 0;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                               client->title_tag, client->send_sequence_session,
+                                               client->filter_value, client->send_sequence_session,
                                                NULL, payload_data, payload_bytes,
                                                client->signed_fields.protocol_id, client->connection_salt,
                                                NULL, client->keys.session_client_to_server );
@@ -789,7 +789,7 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         {
             int bytes = rocketnet_write_sealed_packet( out_packets + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
                                                        ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-                                                       client->title_tag, client->send_sequence_session,
+                                                       client->filter_value, client->send_sequence_session,
                                                        NULL, NULL, 0,
                                                        client->signed_fields.protocol_id, client->connection_salt,
                                                        NULL, client->keys.session_client_to_server );

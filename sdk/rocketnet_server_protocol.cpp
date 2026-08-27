@@ -266,7 +266,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
-            rocketnet_write_connection_cookie_packet( response_packet, server->title_tag, connection_salt, fresh_expire, fresh_mac );
+            rocketnet_write_connection_cookie_packet( response_packet, server->filter_value, connection_salt, fresh_expire, fresh_mac );
             *response_bytes = ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
             return ROCKETNET_SERVER_PROCESS_SEND_COOKIE;
         }
@@ -393,7 +393,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
             int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                              server->title_tag, 1, session_nonce, NULL, 0,
+                                                              server->filter_value, 1, session_nonce, NULL, 0,
                                                               server->protocol_id, connection_salt, NULL,
                                                               keys.handshake_server_to_client );
             sodium_memzero( &keys, sizeof(keys) );
@@ -441,7 +441,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         // for as long as the mapping lives
 
         int challenge_bytes = rocketnet_write_sealed_packet( mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
-                                                             server->title_tag, mapping->send_sequence_handshake,
+                                                             server->filter_value, mapping->send_sequence_handshake,
                                                              mapping->session_nonce,
                                                              mapping->server_ephemeral_public_key, ROCKETNET_KEY_BYTES,
                                                              server->protocol_id, mapping->connection_salt,
@@ -525,7 +525,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     if ( denied )
     {
         int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
-                                                          server->title_tag, mapping->send_sequence_handshake,
+                                                          server->filter_value, mapping->send_sequence_handshake,
                                                           mapping->session_nonce, NULL, 0,
                                                           server->protocol_id, mapping->connection_salt, NULL,
                                                           mapping->keys.handshake_server_to_client );
@@ -561,7 +561,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
 
     int keep_alive_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                          server->title_tag, mapping->send_sequence_session,
+                                                          server->filter_value, mapping->send_sequence_session,
                                                           NULL, keep_alive_data, 8,
                                                           server->protocol_id, mapping->connection_salt, NULL,
                                                           mapping->keys.session_server_to_client );
@@ -793,11 +793,11 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     *out_payload_bytes = 0;
     *out_payload_client_index = -1;
 
-    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->title_tag );
+    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->filter_value );
     if ( packet_type < 0 )
     {
         rocketnet_spam( "server dropped packet. failed prefilter" );
-        counters[ROCKETNET_COUNTER_PREFILTER_DROPPED]++;
+        counters[ rocketnet_prefilter_counter( packet_type ) ]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
@@ -876,10 +876,27 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
     if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
         return NULL;
 
-    // a connected client index always has a live mapping behind it
+    // A connected slot USUALLY has a live mapping behind it, and must never be
+    // assumed to. rocketnet_client_slots_assign accepts -1 as a mapping index,
+    // so a connected slot without one is a state this API permits rather than
+    // an invariant violation -- and the only thing that stood here was an
+    // assert, which is absent from every shipping build. Release then indexed
+    // the mapping array at -1 and wrote eight bytes in front of it.
 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
-    rocketnet_assert( mapping_index != -1 );
+    if ( mapping_index < 0 )
+    {
+        // in the shipped protocol this cannot happen: the only production
+        // assignment passes an index that came from a live mapping. it is
+        // counted rather than merely handled because the consequence of a
+        // future regression producing it is a client that quietly stops
+        // receiving keep-alives and times out -- a silent failure needs a
+        // name, or the first person to hit it has nothing to look at.
+
+        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        return NULL;
+    }
+
     return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 }
 
@@ -903,7 +920,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                               server->title_tag, mapping->send_sequence_session,
+                                               server->filter_value, mapping->send_sequence_session,
                                                NULL, keep_alive_data, 8,
                                                server->protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -955,7 +972,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     mapping->last_send_time = current_time;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                               server->title_tag, mapping->send_sequence_session,
+                                               server->filter_value, mapping->send_sequence_session,
                                                NULL, payload_data, payload_bytes,
                                                server->protocol_id, mapping->connection_salt,
                                                NULL, mapping->keys.session_server_to_client );
@@ -994,7 +1011,7 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     {
         int bytes = rocketnet_write_sealed_packet( out_packets + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
                                                    ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-                                                   server->title_tag, mapping->send_sequence_session,
+                                                   server->filter_value, mapping->send_sequence_session,
                                                    NULL, NULL, 0,
                                                    server->protocol_id, mapping->connection_salt,
                                                    NULL, mapping->keys.session_server_to_client );

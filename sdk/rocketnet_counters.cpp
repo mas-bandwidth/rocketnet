@@ -11,7 +11,10 @@ const char * rocketnet_counter_name( int counter )
     switch ( counter )
     {
         case ROCKETNET_COUNTER_PACKETS_RECEIVED:                                      return "PACKETS_RECEIVED";
-        case ROCKETNET_COUNTER_PREFILTER_DROPPED:                                     return "PREFILTER_DROPPED";
+        case ROCKETNET_COUNTER_PREFILTER_TOO_SHORT:                                   return "PREFILTER_TOO_SHORT";
+        case ROCKETNET_COUNTER_PREFILTER_TOO_LARGE:                                   return "PREFILTER_TOO_LARGE";
+        case ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH:                                 return "PREFILTER_WRONG_EPOCH";
+        case ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE:                                 return "PREFILTER_WRONG_VALUE";
         case ROCKETNET_COUNTER_RESERVED_TYPE:                                         return "RESERVED_TYPE";
         case ROCKETNET_COUNTER_WRONG_DIRECTION:                                       return "WRONG_DIRECTION";
         case ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED:                           return "CONNECTION_REQUEST_RECEIVED";
@@ -74,6 +77,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED:                    return "MAPPING_HANDSHAKE_DEADLINE_EXPIRED";
         case ROCKETNET_COUNTER_MAPPING_TABLE_FULL:                                    return "MAPPING_TABLE_FULL";
         case ROCKETNET_COUNTER_CLIENT_CONNECTED:                                      return "CLIENT_CONNECTED";
+        case ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING:                                  return "SLOT_WITHOUT_MAPPING";
         case ROCKETNET_COUNTER_CLIENT_DISCONNECTED:                                   return "CLIENT_DISCONNECTED";
         case ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT:                            return "SERVER_DISCONNECTED_CLIENT";
         case ROCKETNET_COUNTER_CLIENT_TIMED_OUT:                              return "CLIENT_TIMED_OUT";

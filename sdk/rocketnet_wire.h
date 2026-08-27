@@ -29,17 +29,25 @@
 
 // types 8 through 255 are reserved and ignored by a conforming receiver
 
-// the prefilter header: 4 bytes on the front of every packet. the first byte
-// is the packet type and carries the type and nothing else; the other three
-// are the per-title tag, an arbitrary constant agreed by value.
+// the prefilter header: 6 bytes on the front of every packet -- the packet
+// type, the filter epoch, and a 4-byte filter value whose meaning the epoch
+// decides. The geometry never varies.
 
-#define ROCKETNET_PREFILTER_BYTES               4
-#define ROCKETNET_TITLE_TAG_BYTES               3
+#define ROCKETNET_PREFILTER_BYTES               6
+#define ROCKETNET_FILTER_VALUE_BYTES            4
 
-// the published test title tag, embedded so development works out of the box.
-// production titles get their own tag from the per-title generator.
+// the filter epoch selects what produced the filter value: 0 is the unkeyed
+// per-title constant, which is the whole of 1.0. Generations 1 through 255 are
+// keyed MACs under a magic distributed by a backend -- specified in the
+// standard, deliberately not implemented here, and no default magic exists.
 
-#define ROCKETNET_TEST_TITLE_TAG                { 0xb7, 0x59, 0x01 }
+#define ROCKETNET_FILTER_EPOCH_UNKEYED          0
+
+// the published test filter value, embedded so development works out of the
+// box at epoch 0. production titles get their own constant from the per-title
+// generator. there is no default magic and none is published: see the standard.
+
+#define ROCKETNET_TEST_FILTER_VALUE             { 0xb7, 0x59, 0x01, 0x00 }
 
 // the receive ceiling: fixed for every receiver, whatever its send budget
 
@@ -48,14 +56,14 @@
 // Wire sizes, from the standard's packet size table. Every type has a fixed
 // total size except the payload, which has a range.
 
-#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES     708
-#define ROCKETNET_CONNECTION_DENIED_WIRE_BYTES      32
-#define ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES   64
-#define ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES    48
-#define ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES  32
-#define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES 25
-#define ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES  24
-#define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES      36
+#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES     710
+#define ROCKETNET_CONNECTION_DENIED_WIRE_BYTES      34
+#define ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES   66
+#define ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES    50
+#define ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES  34
+#define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES 27
+#define ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES  26
+#define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES      38
 
 // The server-inbound rule, usable from BPF and from tests alike: the five
 // types a server ever receives, each at its exact wire size (the payload at
@@ -80,28 +88,30 @@
 // The kernel filter's configuration, written by userspace at server start
 // and read per-packet in the XDP program. One definition serves both sides
 // of the map, and the padding is explicit so the layout cannot depend on
-// either compiler: 4 + 2 + 3 + 3 = 12 bytes, no implicit holes.
+// either compiler: 4 + 2 + 4 + 1 + 1 = 12 bytes, no implicit holes.
 
 struct rocketnet_server_xdp_config_t
 {
     uint32_t public_address;                    // big endian; 0 = accept any destination address
     uint16_t public_port;                       // big endian
-    uint8_t title_tag[ROCKETNET_TITLE_TAG_BYTES];
-    uint8_t pad[3];
+    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
+    uint8_t filter_epoch;                       // the only epoch this server accepts; 0 in 1.0
+    uint8_t pad[1];
 };
 
 // The kernel filter's counters, incremented in the XDP program per verdict
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the four drop reasons.
+// received == redirected + the five drop reasons.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE          2
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_TAG          3
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER       3
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE       4
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       5
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       6
 
 struct rocketnet_server_xdp_stats_t
 {

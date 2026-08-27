@@ -72,8 +72,8 @@ int main( int argc, char ** argv )
     memset( &server, 0, sizeof(server) );
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
-    memcpy( server.title_tag, tag, ROCKETNET_TITLE_TAG_BYTES );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( server.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_dev_server_secret_key, 32 );

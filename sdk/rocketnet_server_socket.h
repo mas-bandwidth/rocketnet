@@ -18,10 +18,10 @@ struct rocketnet_server_socket_t;
 #define ROCKETNET_SERVER_SOCKET_RUNNING    1
 #define ROCKETNET_SERVER_SOCKET_STOPPING   2
 
-// The title tag configures the kernel prefilter: only packets carrying it
-// reach the AF_XDP rings. It is the same tag the protocol object checks.
+// The filter value configures the kernel prefilter: only packets carrying it
+// reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
 
-struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * title_tag, int num_xdp_queues = 7, int num_os_cpus = 1 );
+struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * filter_value, int num_xdp_queues = 7, int num_os_cpus = 1 );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 

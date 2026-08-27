@@ -181,7 +181,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
 
     server_transport->context = context;
 
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
 #if ROCKETNET_SERVER_XDP
 
@@ -221,7 +221,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     protocol->send_rate = 10.0;
-    memcpy( protocol->title_tag, tag, ROCKETNET_TITLE_TAG_BYTES );
+    memcpy( protocol->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( protocol->server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( protocol->server_secret_key, rocketnet_dev_server_secret_key, 32 );
