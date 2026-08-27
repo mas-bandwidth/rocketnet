@@ -165,6 +165,19 @@ land. The milestone view is issue #28; this file is the live ordering.
 
 ## TODO
 
+- ClientTransport and ServerTransport virtual interfaces (with Glenn):
+  light C++ like flow, sparingly -- the free-function transport surfaces
+  map one to one onto methods, the portable implementations become the
+  first concrete transports, and the interface is what makes runtime
+  transport selection by preference possible later. The protocol core
+  below stays as it is.
+- The public surface above it all, ruled: the root header Dean sees is
+  netcode-style pure C -- rocketnet_client_t with functions,
+  rocketnet_server_t with functions, maybe the address type, nothing
+  else. Real non-mangled symbols, so C# lands on P/Invoke and every other
+  language binds the same way; whether the inside shims to C++ is an
+  implementation privilege, not a surface concern. The Dean Surface (#22)
+  is this surface's usage spec.
 - The XDP server transport: port the protocol into the linux backend (the
   pre-merge XDP relay is the exemplar), rewrite server_xdp to the 4-byte
   prefilter (#19 ipv6 too), and contract the old server socket files and
