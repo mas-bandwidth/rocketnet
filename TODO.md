@@ -250,8 +250,11 @@ land. The milestone view is issue #28; this file is the live ordering.
   completely, it MUST have a backend the server talks to, and that backend
   must handle identity-based auth whose consequence is giving away your
   slot -- one identity, one seat, so a shared token steals the sharer's
-  own place and the incentive does the enforcement. Everything else hangs
-  off that spine: client address pinning in the connect token (built
+  own place and the incentive does the enforcement. And that only works if
+  the backend can kick the old player off a server when the same user hash
+  pops on elsewhere, which is precisely what this sitting's
+  rocketnet_server_disconnect_client exists to serve: the library verb the
+  backend channel pulls. Everything else hangs off that spine: client address pinning in the connect token (built
   once on the token-pin branch, reverted, the reference implementation
   lives in that history: family byte plus 16 address bytes in the signed
   slack at offset 521, refused ahead of asymmetric work, unforgeable
