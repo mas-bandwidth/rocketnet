@@ -14,6 +14,7 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_client_slots.h"
 
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
@@ -25,19 +26,8 @@
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1
 #define ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE     2
 #define ROCKETNET_SERVER_PROCESS_SEND_DENIED        3
-
-// The slot view: the ladder needs three answers about client slots, which
-// live above this aspect. The interface is three functions and a context, in
-// the library's hook style. All three may be NULL while no slot system
-// exists, which reads as: nobody connected, slots available.
-
-struct rocketnet_server_slot_view_t
-{
-    void * context;
-    int (*address_connected)( void * context, const struct rocketnet_address_t * address );
-    int (*client_id_connected)( void * context, uint64_t client_id );
-    int (*num_free_slots)( void * context );
-};
+#define ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE    4
+#define ROCKETNET_SERVER_PROCESS_ACCEPTED           5
 
 struct rocketnet_server_protocol_t
 {
@@ -63,7 +53,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_encryption_map_t * encryption_map;
     struct rocketnet_used_token_history_t * used_token_history;
     struct rocketnet_admitted_token_set_t * admitted_token_set;
-    struct rocketnet_server_slot_view_t slots;
+    struct rocketnet_client_slots_t * client_slots;
     struct rocketnet_counters_t * counters;
 };
 
@@ -83,5 +73,27 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
                                                  double current_time,
                                                  uint8_t * response_packet,
                                                  int * response_bytes );
+
+// The server's receive entry for every packet: the reading order from the
+// standard over one function. Runs the prefilter, refuses reserved types and
+// wrong-direction types, hands type 0 to the request ladder, and takes the
+// sealed types through mapping lookup, sequence reconstruction, replay and
+// open, then dispatches. On SEND_* the response is in response_packet with
+// its length in response_bytes. A payload that opens for a connected client
+// returns ACCEPTED with the bytes in out_payload (sized at least 1376) and
+// the client index in out_payload_client_index; every other outcome leaves
+// out_payload_bytes zero.
+
+int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index );
 
 #endif // #ifndef ROCKETNET_SERVER_PROTOCOL_H

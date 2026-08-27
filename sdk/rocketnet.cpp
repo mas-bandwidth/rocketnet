@@ -201,6 +201,18 @@ void rocketnet_debug( const char * format, ... )
     va_end( args );
 }
 
+void rocketnet_spam( const char * format, ... )
+{
+    if ( ROCKETNET_LOG_LEVEL_SPAM > log_level )
+        return;
+    va_list args;
+    va_start( args, format );
+    char buffer[1024];
+    vsnprintf( buffer, sizeof( buffer ), format, args );
+    log_function( ROCKETNET_LOG_LEVEL_SPAM, "%s", buffer );
+    va_end( args );
+}
+
 // ------------------------------------------------------------
 
 void * rocketnet_default_malloc_function( void * context, size_t bytes )

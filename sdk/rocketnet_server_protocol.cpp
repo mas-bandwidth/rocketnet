@@ -6,25 +6,11 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_keys.h"
+#include "rocketnet_replay.h"
 #include "rocketnet.h"
 
 #include <sodium.h>
 #include <string.h>
-
-static int rocketnet_slot_view_address_connected( const struct rocketnet_server_slot_view_t * slots, const struct rocketnet_address_t * address )
-{
-    return slots->address_connected ? slots->address_connected( slots->context, address ) : 0;
-}
-
-static int rocketnet_slot_view_client_id_connected( const struct rocketnet_server_slot_view_t * slots, uint64_t client_id )
-{
-    return slots->client_id_connected ? slots->client_id_connected( slots->context, client_id ) : 0;
-}
-
-static int rocketnet_slot_view_num_free_slots( const struct rocketnet_server_slot_view_t * slots )
-{
-    return slots->num_free_slots ? slots->num_free_slots( slots->context ) : 1;
-}
 
 // the address fields of the signed connect data, encoded as the token
 // encodes them, for comparison against this server's advertised addresses
@@ -76,6 +62,7 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
     rocketnet_assert( server->encryption_map );
     rocketnet_assert( server->used_token_history );
     rocketnet_assert( server->admitted_token_set );
+    rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
 
     uint64_t * counters = server->counters->values;
@@ -93,26 +80,23 @@ int rocketnet_server_process_connection_request( struct rocketnet_server_protoco
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // one lookup, no crypto: an established client's address never provokes
-    // anything from this path
-
-    if ( rocketnet_slot_view_address_connected( &server->slots, from ) )
-    {
-        rocketnet_debug( "server ignored connection request. a client is already connected from this address" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
-
-    // a mapping already exists: the ordinary retransmitted request whose
-    // challenge was lost. resend the stored challenge byte-identical and
-    // stop -- a mapping is created once, answered identically for as long as
-    // it lives, and replaced never.
+    // one lookup serves the next two rungs: a mapping with a slot is a
+    // connected client, whose address never provokes anything from this
+    // path; a mapping without one is a handshake in flight, answered with
+    // its stored challenge byte-identical for as long as it lives -- a
+    // mapping is created once and replaced never.
 
     {
         int existing = rocketnet_encryption_map_find( server->encryption_map, from );
         if ( existing != -1 )
         {
             const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
+            if ( mapping->client_index != -1 )
+            {
+                rocketnet_debug( "server ignored connection request. a client is already connected from this address" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -356,7 +340,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( rocketnet_slot_view_client_id_connected( &server->slots, private_data->client_id ) )
+    if ( rocketnet_client_slots_find( server->client_slots, private_data->client_id ) != -1 )
     {
         rocketnet_debug( "server ignored connection request. a client with this id is already connected" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED]++;
@@ -406,7 +390,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         // carrying the session nonce in the clear. no mapping is created, so
         // a retransmitted request runs this path again and is denied again.
 
-        if ( rocketnet_slot_view_num_free_slots( &server->slots ) <= 0 )
+        if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
             int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
                                                               server->title_tag, 1, session_nonce, NULL, 0,
@@ -481,4 +465,365 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
         return ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE;
     }
+}
+
+// the connection response: the packet has already opened under this
+// mapping's handshake client-to-server key, which is all it has to prove.
+// the checks and the slot assignment follow the standard's order.
+
+static int rocketnet_server_process_connection_response( struct rocketnet_server_protocol_t * server,
+                                                         int mapping_index,
+                                                         uint64_t current_timestamp,
+                                                         double current_time,
+                                                         uint8_t * response_packet,
+                                                         int * response_bytes )
+{
+    uint64_t * counters = server->counters->values;
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+
+    (void) current_time;
+
+    if ( mapping->client_index != -1 )
+    {
+        rocketnet_spam( "server ignored connection response. client is already connected" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( rocketnet_client_slots_find( server->client_slots, mapping->client_id ) != -1 )
+    {
+        rocketnet_debug( "server ignored connection response. a client with this id is already connected" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // the slots check runs before the admitted-token set takes its entry: a
+    // client denied for a full server has not connected, and its token must
+    // stay usable for the retry. the set consumes the token only at the
+    // moment it actually admits a connection. the set never evicts unexpired
+    // entries, so a full set refuses -- fail closed -- with a denied the
+    // client can open.
+
+    int denied = 0;
+
+    if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
+    {
+        rocketnet_debug( "server denied connection response. no client slots available" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
+        denied = 1;
+    }
+
+    if ( !denied && !rocketnet_admitted_token_set_add( server->admitted_token_set, mapping->token_identifier, mapping->token_expire_timestamp, current_timestamp ) )
+    {
+        rocketnet_debug( "server denied connection response. admitted token set is full" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL]++;
+        denied = 1;
+    }
+
+    if ( denied )
+    {
+        int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
+                                                          server->title_tag, mapping->send_sequence_handshake,
+                                                          mapping->session_nonce, NULL, 0,
+                                                          server->protocol_id, mapping->connection_salt, NULL,
+                                                          mapping->keys.handshake_server_to_client );
+        if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
+        {
+            rocketnet_assert( 0 );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+        mapping->send_sequence_handshake++;
+        *response_bytes = denied_bytes;
+        return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
+    }
+
+    int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index, mapping->user_data );
+    rocketnet_assert( client_index != -1 );     // num_free was checked above
+
+    mapping->client_index = client_index;
+    mapping->established = 1;
+
+    rocketnet_debug( "client %d connected", client_index );
+    counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
+    counters[ROCKETNET_COUNTER_CLIENT_CONNECTED]++;
+
+    // the first keep-alive: how the client learns its index and transitions
+    // to connected
+
+    uint8_t keep_alive_data[8];
+    uint8_t * p = keep_alive_data;
+    rocketnet_write_uint32( &p, (uint32_t) client_index );
+    rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
+
+    int keep_alive_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                                          server->title_tag, mapping->send_sequence_session,
+                                                          NULL, keep_alive_data, 8,
+                                                          server->protocol_id, mapping->connection_salt, NULL,
+                                                          mapping->keys.session_server_to_client );
+    if ( keep_alive_bytes != ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES )
+    {
+        rocketnet_assert( 0 );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
+        return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+    }
+    mapping->send_sequence_session++;
+    *response_bytes = keep_alive_bytes;
+
+    return ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE;
+}
+
+// the sealed types through the reading order: mapping, sequence, replay,
+// open, then dispatch. the counter groups are per type, so the bookkeeping
+// is table driven and the flow is one straight ladder.
+
+struct rocketnet_sealed_type_counters_t
+{
+    int received;
+    int no_mapping;
+    int zero_sequence;
+    int already_received;
+    int did_not_open;
+    int not_connected;
+};
+
+static int rocketnet_server_process_sealed_packet( struct rocketnet_server_protocol_t * server,
+                                                   const struct rocketnet_address_t * from,
+                                                   uint8_t packet_type,
+                                                   const uint8_t * packet_data,
+                                                   int packet_bytes,
+                                                   uint64_t current_timestamp,
+                                                   double current_time,
+                                                   uint8_t * response_packet,
+                                                   int * response_bytes,
+                                                   uint8_t * out_payload,
+                                                   int * out_payload_bytes,
+                                                   int * out_payload_client_index )
+{
+    uint64_t * counters = server->counters->values;
+
+    static const struct rocketnet_sealed_type_counters_t table[4] = {
+        { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
+          ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
+          ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, -1 },
+        { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING,
+          ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE, ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED,
+          ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN, ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED },
+        { ROCKETNET_COUNTER_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING,
+          ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE, ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,
+          ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN, ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED },
+        { ROCKETNET_COUNTER_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING,
+          ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE, ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED,
+          ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN, ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED },
+    };
+    const struct rocketnet_sealed_type_counters_t * type_counters = &table[ packet_type - ROCKETNET_CONNECTION_RESPONSE_PACKET ];
+
+    counters[type_counters->received]++;
+
+    int mapping_index = rocketnet_encryption_map_find( server->encryption_map, from );
+    if ( mapping_index == -1 )
+    {
+        rocketnet_spam( "server ignored sealed packet. no mapping for this address" );
+        counters[type_counters->no_mapping]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+
+    // the phase: the response rides the handshake keys; everything after
+    // rides the session keys. handshake types are exempt from replay
+    // marking; the session types check before the open and advance after it.
+
+    int session_phase = packet_type != ROCKETNET_CONNECTION_RESPONSE_PACKET;
+    const uint8_t * key = session_phase ? mapping->keys.session_client_to_server : mapping->keys.handshake_client_to_server;
+    struct rocketnet_replay_protection_t * replay = session_phase ? &mapping->replay_session : &mapping->replay_handshake;
+
+    const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
+    uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), replay->highest_opened );
+
+    if ( sequence == 0 )
+    {
+        rocketnet_spam( "server ignored sealed packet. zero sequence" );
+        counters[type_counters->zero_sequence]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( session_phase && rocketnet_replay_already_received( replay, sequence ) )
+    {
+        rocketnet_spam( "server ignored sealed packet. already received" );
+        counters[type_counters->already_received]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // type 3 binds the client ephemeral into its associated data; the
+    // session types carry the minimal 21 bytes
+
+    const uint8_t * ephemeral = packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET ? mapping->client_ephemeral_public_key : NULL;
+
+    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_data, packet_bytes, packet_type,
+                                                     sequence, server->protocol_id, mapping->connection_salt,
+                                                     ephemeral, key );
+    if ( opened_bytes < 0 )
+    {
+        rocketnet_spam( "server ignored sealed packet. did not open" );
+        counters[type_counters->did_not_open]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // the response proves 24 bytes of zero padding -- required, checked, the
+    // anti-amplification floor; the fixed types prove their exact sizes
+
+    if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+    {
+        if ( opened_bytes != ROCKETNET_RESPONSE_PADDING_BYTES )
+        {
+            rocketnet_spam( "server ignored connection response. wrong size" );
+            counters[type_counters->did_not_open]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+        for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
+        {
+            if ( opened[i] != 0 )
+            {
+                rocketnet_spam( "server ignored connection response. padding is not zero" );
+                counters[type_counters->did_not_open]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
+        }
+    }
+    else if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && opened_bytes != 8 )
+    {
+        rocketnet_spam( "server ignored keep alive. wrong size" );
+        counters[type_counters->did_not_open]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+    else if ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && opened_bytes != 0 )
+    {
+        rocketnet_spam( "server ignored disconnect. wrong size" );
+        counters[type_counters->did_not_open]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( session_phase )
+        rocketnet_replay_advance( replay, sequence );
+    else if ( sequence > replay->highest_opened )
+        replay->highest_opened = sequence;
+
+    mapping->last_receive_time = current_time;
+
+    if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+        return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
+
+    // session traffic for a mapping with no slot is a lost-response race or
+    // an injection; the retransmitted response repairs the former
+
+    if ( mapping->client_index == -1 )
+    {
+        rocketnet_spam( "server ignored sealed packet. not connected" );
+        counters[type_counters->not_connected]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    int client_index = mapping->client_index;
+
+    if ( !rocketnet_client_slots_confirmed( server->client_slots, client_index ) )
+        rocketnet_client_slots_confirm( server->client_slots, client_index );
+
+    if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
+    {
+        rocketnet_spam( "server received keep alive from client %d", client_index );
+        counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED]++;
+        return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+    }
+
+    if ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
+    {
+        rocketnet_spam( "server received payload from client %d (%d bytes)", client_index, opened_bytes );
+        counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
+        memcpy( out_payload, opened, (size_t) opened_bytes );
+        *out_payload_bytes = opened_bytes;
+        *out_payload_client_index = client_index;
+        return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+    }
+
+    // the disconnect: release the slot and destroy the mapping immediately,
+    // never answered -- the sender's redundant copies are the delivery
+    // mechanism
+
+    rocketnet_debug( "client %d disconnected", client_index );
+    counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED]++;
+    counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
+    rocketnet_client_slots_release( server->client_slots, client_index );
+    rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+
+    return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+}
+
+int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server,
+                                     const struct rocketnet_address_t * from,
+                                     const uint8_t * packet_data,
+                                     int packet_bytes,
+                                     uint64_t current_timestamp,
+                                     double current_time,
+                                     uint8_t * response_packet,
+                                     int * response_bytes,
+                                     uint8_t * out_payload,
+                                     int * out_payload_bytes,
+                                     int * out_payload_client_index )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( from );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( response_packet );
+    rocketnet_assert( response_bytes );
+    rocketnet_assert( out_payload );
+    rocketnet_assert( out_payload_bytes );
+    rocketnet_assert( out_payload_client_index );
+
+    uint64_t * counters = server->counters->values;
+
+    counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
+
+    *response_bytes = 0;
+    *out_payload_bytes = 0;
+    *out_payload_client_index = -1;
+
+    int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->title_tag );
+    if ( packet_type < 0 )
+    {
+        rocketnet_spam( "server dropped packet. failed prefilter" );
+        counters[ROCKETNET_COUNTER_PREFILTER_DROPPED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( packet_type > ROCKETNET_CONNECTION_COOKIE_PACKET )
+    {
+        rocketnet_spam( "server dropped packet. reserved type" );
+        counters[ROCKETNET_COUNTER_RESERVED_TYPE]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+        return rocketnet_server_process_connection_request( server, from, packet_data, packet_bytes,
+                                                            current_timestamp, current_time,
+                                                            response_packet, response_bytes );
+
+    // a server never processes what only a server sends -- denied,
+    // challenge, cookie arriving here are reflections or junk
+
+    if ( packet_type == ROCKETNET_CONNECTION_DENIED_PACKET ||
+         packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ||
+         packet_type == ROCKETNET_CONNECTION_COOKIE_PACKET )
+    {
+        rocketnet_spam( "server dropped packet. wrong direction" );
+        counters[ROCKETNET_COUNTER_WRONG_DIRECTION]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    return rocketnet_server_process_sealed_packet( server, from, (uint8_t) packet_type, packet_data, packet_bytes,
+                                                   current_timestamp, current_time,
+                                                   response_packet, response_bytes,
+                                                   out_payload, out_payload_bytes, out_payload_client_index );
 }
