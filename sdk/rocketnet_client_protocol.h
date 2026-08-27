@@ -71,6 +71,19 @@ struct rocketnet_client_protocol_t
     double last_receive_time;
     uint64_t total_deadline_seconds;                        // expire - create
     int32_t timeout_seconds;                                // from the token
+
+    // quality measurement for the transport's stats. rtt is sampled from the
+    // handshake's round trips -- the server answers a request, a challenge
+    // provocation and a response immediately, so first-send-in-state to
+    // first-answer is the round trip; the estimate keeps the minimum across
+    // the three exchanges, which discards any sample inflated by a lost
+    // first send. received_session_sequence is the session sequence of the
+    // packet the last process_packet call accepted, zero when it accepted
+    // none -- the transport feeds its loss and jitter trackers from it.
+    double state_first_send_time;                           // -1 until the state's first send
+    double rtt_estimate;                                    // seconds; 0 until the first sample
+    int rtt_session_sampled;                                // the session round trip is sampled once
+    uint64_t received_session_sequence;
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );

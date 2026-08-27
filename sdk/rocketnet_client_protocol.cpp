@@ -53,6 +53,27 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     client->counters = counters;
     client->state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
     client->client_index = -1;
+    client->state_first_send_time = -1.0;
+}
+
+// one rtt sample: first send in the current state to the first packet that
+// answers it, folded as a running minimum. disarms until the next state's
+// first send, so each handshake exchange contributes at most one sample.
+
+static void rocketnet_client_rtt_sample( struct rocketnet_client_protocol_t * client, double current_time )
+{
+    if ( client->state_first_send_time < 0.0 )
+        return;
+
+    const double sample = current_time - client->state_first_send_time;
+
+    client->state_first_send_time = -1.0;
+
+    if ( sample < 0.0 )
+        return;
+
+    if ( client->rtt_estimate == 0.0 || sample < client->rtt_estimate )
+        client->rtt_estimate = sample;
 }
 
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
@@ -78,6 +99,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     client->counters = counters;
     client->client_index = -1;
     client->state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+    client->state_first_send_time = -1.0;
 
     rocketnet_read_connect_token( &client->token, connect_token );
     rocketnet_read_signed_connect_data( &client->signed_fields, client->token.signed_connect_data );
@@ -190,6 +212,9 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 
     client->last_send_time = current_time;
 
+    if ( client->state_first_send_time < 0.0 )
+        client->state_first_send_time = current_time;
+
     switch ( client->state )
     {
         case ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE:
@@ -285,7 +310,10 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     rocketnet_debug( "client stored cookie" );
 
     if ( client->state == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE )
+    {
+        rocketnet_client_rtt_sample( client, current_time );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
+    }
 
     return 1;
 }
@@ -400,6 +428,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     client->send_sequence_handshake++;
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_ACCEPTED]++;
+    rocketnet_client_rtt_sample( client, current_time );
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
 
     return 1;
@@ -553,6 +582,17 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     client->last_receive_time = current_time;
     *out_sequence = sequence;
 
+    client->received_session_sequence = sequence;
+
+    // the first session packet accepted before the connection is confirmed
+    // answers the connection response: the third handshake round trip
+
+    if ( !client->rtt_session_sampled && client->state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+    {
+        rocketnet_client_rtt_sample( client, current_time );
+        client->rtt_session_sampled = 1;
+    }
+
     return opened_bytes;
 }
 
@@ -690,6 +730,8 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     uint64_t * counters = client->counters->values;
 
     *out_payload_bytes = 0;
+
+    client->received_session_sequence = 0;
 
     counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
 

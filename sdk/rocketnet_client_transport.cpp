@@ -8,6 +8,9 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
+#include "rocketnet_memory_checks.h"
+#include "rocketnet_packet_loss_tracker.h"
+#include "rocketnet_jitter_tracker.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -69,6 +72,26 @@ struct rocketnet_client_received_packets_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
+// the stats bucket ring, the space game's pattern: one bucket per update,
+// accumulation riding the walks the transport already makes, published
+// per-second numbers summing only buckets younger than one second. the two
+// fields past the reference set carry receive-side packet loss: session
+// packets accepted, and losses the tracker detected, in the same window.
+
+#define ROCKETNET_NUM_CLIENT_STATS_FRAMES 256
+
+struct alignas(64) rocketnet_client_stats_frame_t
+{
+    double time;
+    uint64_t frame;
+    uint64_t packets_sent;
+    uint64_t packets_received;
+    uint64_t bytes_sent;
+    uint64_t bytes_received;
+    uint64_t session_packets_received;
+    uint64_t packets_lost;
+};
+
 struct rocketnet_client_t
 {
     void * context;
@@ -86,6 +109,7 @@ struct rocketnet_client_t
     rocketnet_client_receive_buffer_t receive_buffer[2];
 
     double time;                                        // the game's clock, last seen
+    uint64_t frame;                                     // advanced once per update; indexes the stats ring
     int last_state;
     struct rocketnet_client_config_t config;
 
@@ -93,6 +117,11 @@ struct rocketnet_client_t
 
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t protocol;
+
+    struct rocketnet_client_stats_t client_stats;
+    struct rocketnet_client_stats_frame_t stats_frames[ROCKETNET_NUM_CLIENT_STATS_FRAMES];
+    struct rocketnet_packet_loss_tracker_t packet_loss_tracker;
+    struct rocketnet_jitter_tracker_t jitter_tracker;
 };
 
 static void rocketnet_client_thread_function( void * data );
@@ -126,6 +155,9 @@ rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * co
     memset( (char*) client_transport, 0, sizeof(rocketnet_client_t) );
 
     client_transport->context = context;
+
+    rocketnet_packet_loss_tracker_reset( &client_transport->packet_loss_tracker );
+    rocketnet_jitter_tracker_reset( &client_transport->jitter_tracker );
 
     rocketnet_address_t bind_address;
     memset( &bind_address, 0, sizeof(bind_address) );
@@ -223,7 +255,7 @@ void rocketnet_client_destroy( rocketnet_client_t * client_transport )
     rocketnet_clear_and_free( client_transport->context, client_transport, sizeof(rocketnet_client_t) );
 }
 
-static void rocketnet_client_process_packet( rocketnet_client_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time )
+static void rocketnet_client_process_packet( rocketnet_client_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time )
 {
     // only the dialed server is listened to; everything else is junk
 
@@ -238,9 +270,26 @@ static void rocketnet_client_process_packet( rocketnet_client_t * client_transpo
     uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 
-    if ( rocketnet_client_protocol_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
-                                          payload ? payload : overflow, &payload_bytes ) &&
-         payload_bytes > 0 && payload )
+    rocketnet_client_protocol_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
+                                              payload ? payload : overflow, &payload_bytes );
+
+    // an accepted session packet feeds the quality trackers: loss from gaps
+    // in the session sequence, jitter from the receive thread's per-packet
+    // stamp -- the stamp is already taken on arrival, and only its deltas
+    // matter, so it never mixes with the game's clock
+
+    const uint64_t session_sequence = client_transport->protocol.received_session_sequence;
+
+    if ( session_sequence != 0 )
+    {
+        rocketnet_packet_loss_tracker_packet_received( &client_transport->packet_loss_tracker, session_sequence );
+        rocketnet_jitter_tracker_packet_received( &client_transport->jitter_tracker, session_sequence, receive_time );
+
+        const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
+        client_transport->stats_frames[stats_index].session_packets_received++;
+    }
+
+    if ( payload_bytes > 0 && payload )
     {
         const int index = received->num_packets;
         received->packet_data[index] = payload;
@@ -263,12 +312,81 @@ static void rocketnet_client_update_swap_receive_buffers( rocketnet_client_t * c
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
+// process the previous stats frames into published per-second numbers, then
+// open the next bucket, then run the loss tracker's bounded sweep into it.
+// rtt and jitter live in the protocol and the jitter tracker and are read by
+// the getter; the windowed numbers -- rates, bandwidth, loss -- are computed
+// here, once per update, at flat cost.
+
+static void rocketnet_client_update_stats( rocketnet_client_t * client_transport, double time )
+{
+    // process previous stats frames
+    {
+        uint64_t total_packets_sent = 0;
+        uint64_t total_packets_received = 0;
+        uint64_t total_bytes_sent = 0;
+        uint64_t total_bytes_received = 0;
+        uint64_t total_session_packets_received = 0;
+        uint64_t total_packets_lost = 0;
+
+        for ( int i = 0; i < ROCKETNET_NUM_CLIENT_STATS_FRAMES; i++ )
+        {
+            // IMPORTANT: only sum the last second worth of stats frames, we want "packets sent per-second, bandwidth sent per-second etc..."
+            if ( client_transport->stats_frames[i].frame == 0 || client_transport->stats_frames[i].time + 1.0 < time )
+                continue;
+
+            total_packets_sent += client_transport->stats_frames[i].packets_sent;
+            total_packets_received += client_transport->stats_frames[i].packets_received;
+            total_bytes_sent += client_transport->stats_frames[i].bytes_sent;
+            total_bytes_received += client_transport->stats_frames[i].bytes_received;
+            total_session_packets_received += client_transport->stats_frames[i].session_packets_received;
+            total_packets_lost += client_transport->stats_frames[i].packets_lost;
+        }
+
+        client_transport->client_stats.packets_sent_per_second = (int) total_packets_sent;
+        client_transport->client_stats.packets_received_per_second = (int) total_packets_received;
+
+        client_transport->client_stats.bandwidth_sent_kbps = (int) ( ( (double) total_bytes_sent * 8.0 ) / 1000.0 );
+        client_transport->client_stats.bandwidth_received_kbps = (int) ( ( (double) total_bytes_received * 8.0 ) / 1000.0 );
+
+        const uint64_t loss_denominator = total_packets_lost + total_session_packets_received;
+
+        client_transport->client_stats.packet_loss = loss_denominator > 0 ?
+            (float) ( ( (double) total_packets_lost * 100.0 ) / (double) loss_denominator ) : 0.0f;
+    }
+
+    // setup next stats frame
+    {
+        client_transport->frame++;
+
+        const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
+
+        client_transport->stats_frames[stats_index].time = time;
+        client_transport->stats_frames[stats_index].frame = client_transport->frame;
+        client_transport->stats_frames[stats_index].packets_sent = 0;
+        client_transport->stats_frames[stats_index].packets_received = 0;
+        client_transport->stats_frames[stats_index].bytes_sent = 0;
+        client_transport->stats_frames[stats_index].bytes_received = 0;
+        client_transport->stats_frames[stats_index].session_packets_received = 0;
+        client_transport->stats_frames[stats_index].packets_lost = 0;
+
+        // the loss tracker's sweep is bounded by its safety margin and runs
+        // once per update; losses it finds land in the fresh bucket
+
+        const int lost_packets = rocketnet_packet_loss_tracker_update( &client_transport->packet_loss_tracker );
+
+        client_transport->stats_frames[stats_index].packets_lost += (uint64_t) lost_packets;
+    }
+}
+
 void rocketnet_client_update( rocketnet_client_t * client_transport, double time )
 {
     rocketnet_assert( client_transport );
 
     const double current_time = time;
     client_transport->time = time;
+
+    rocketnet_client_update_stats( client_transport, time );
 
     const int state_before = client_transport->protocol.state;
 
@@ -279,9 +397,14 @@ void rocketnet_client_update( rocketnet_client_t * client_transport, double time
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
 
+    const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
+
     for ( int i = 0; i < receive_buffer->num_packets; i++ )
     {
-        rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time );
+        client_transport->stats_frames[stats_index].packets_received++;
+        client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+        rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time, receive_buffer->receive_time[i] );
     }
 
     receive_buffer->num_packets = 0;
@@ -292,7 +415,12 @@ void rocketnet_client_update( rocketnet_client_t * client_transport, double time
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
     if ( packet_bytes > 0 )
+    {
+        client_transport->stats_frames[stats_index].packets_sent++;
+        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
         rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, packet_bytes );
+    }
 
     // one callback per update crossing: enough to observe every terminal,
     // and the poll of rocketnet_client_state stays the source of truth
@@ -414,10 +542,18 @@ void rocketnet_client_send_packets( rocketnet_client_t * client_transport )
     if ( num_packets > ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
         num_packets = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
 
+    const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
+
     for ( uint64_t i = 0; i < num_packets; i++ )
     {
         if ( ring->info[i].wire_bytes > 0 )
         {
+            // the payload accumulation rides the flush walk: the ring already
+            // holds every committed packet's wire size, so this costs nothing
+
+            client_transport->stats_frames[stats_index].packets_sent++;
+            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
             rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
                                                    ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
                                                    ring->info[i].wire_bytes );
@@ -502,16 +638,40 @@ void rocketnet_client_disconnect( rocketnet_client_t * client_transport )
     int burst_count = 0;
     rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count );
 
+    const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
+
     for ( int i = 0; i < burst_count; i++ )
+    {
+        client_transport->stats_frames[stats_index].packets_sent++;
+        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
         rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
                                                burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
                                                ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
+    }
 }
 
 const struct rocketnet_counters_t * rocketnet_client_counters( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
     return &client_transport->counters;
+}
+
+void rocketnet_client_stats( rocketnet_client_t * client_transport, struct rocketnet_client_stats_t * stats )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( stats );
+
+    memset( stats, 0, sizeof(struct rocketnet_client_stats_t) );
+
+    stats->rtt = (float) ( client_transport->protocol.rtt_estimate * 1000.0 );
+    stats->jitter = (float) ( client_transport->jitter_tracker.jitter * 1000.0 );
+    stats->packet_loss = client_transport->client_stats.packet_loss;
+
+    stats->packets_sent_per_second = client_transport->client_stats.packets_sent_per_second;
+    stats->packets_received_per_second = client_transport->client_stats.packets_received_per_second;
+    stats->bandwidth_sent_kbps = client_transport->client_stats.bandwidth_sent_kbps;
+    stats->bandwidth_received_kbps = client_transport->client_stats.bandwidth_received_kbps;
 }
 
 static void rocketnet_client_receive_packets( rocketnet_client_t * client_transport )
