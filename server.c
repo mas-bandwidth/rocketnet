@@ -11,6 +11,7 @@
 #include "rocketnet.h"
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
 
 static volatile int quit;
 
@@ -31,7 +32,17 @@ int main( int argc, char ** argv )
 
     const char * public_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address, 256 );
+    const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    if ( public_address_env )
+    {
+        public_address = public_address_env;
+    }
+
+    struct rocketnet_server_config_t config;
+    rocketnet_server_dev_config( &config );
+    config.max_clients = 256;
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address, &config, rocketnet_time() );
     if ( !server )
     {
         rocketnet_term();
@@ -52,7 +63,7 @@ int main( int argc, char ** argv )
 
     while ( !quit )
     {
-        rocketnet_server_update( server );
+        rocketnet_server_update( server, rocketnet_time() );
 
         const int num_connected = rocketnet_server_num_connected_clients( server );
         if ( num_connected != last_num_connected )
@@ -77,7 +88,7 @@ int main( int argc, char ** argv )
     rocketnet_frame_sync_destroy( frame_sync );
     rocketnet_server_stop( server );
     while ( rocketnet_server_state( server ) != ROCKETNET_SERVER_STOPPED )
-        rocketnet_server_update( server );
+        rocketnet_server_update( server, rocketnet_time() );
     rocketnet_server_destroy( server );
 
     rocketnet_term();

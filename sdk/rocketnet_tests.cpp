@@ -4146,6 +4146,25 @@ void rocketnet_test_server_disconnect_client()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_server_refuses_keyless_config()
+{
+    // the no-default-keys gate: a config with no keys is refused, never
+    // silently defaulted -- default keys are how every deployment of a
+    // protocol ends up sharing one identity. the dev posture is explicit.
+
+    struct rocketnet_server_config_t config;
+    rocketnet_server_default_config( &config );
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+
+    // and out-of-range client counts are refused at the same gate
+
+    rocketnet_server_dev_config( &config );
+    config.max_clients = 0;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+    config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
+    rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+}
+
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -4175,18 +4194,25 @@ void rocketnet_test_transport_udp_loopback()
     // protocol, development keys, exactly the out-of-the-box path. real
     // clocks here; the protocol underneath is the one proven on mocked time.
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40777", 16 );
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40777", &server_config, rocketnet_platform_time() );
     rocketnet_check( server );
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, "127.0.0.1:40777" );
+    uint8_t loopback_connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40777", rocketnet_random_uint64(), (uint64_t) time( NULL ), loopback_connect_token ) );
+
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, loopback_connect_token, NULL, rocketnet_platform_time() );
     rocketnet_check( client );
 
     // pump both until connected, bounded by the wall clock
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
     {
-        rocketnet_client_update( client );
-        rocketnet_server_update( server );
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
              rocketnet_server_num_connected_clients( server ) == 1 )
             break;
@@ -4216,8 +4242,8 @@ void rocketnet_test_transport_udp_loopback()
             sent_to_client++;
         }
 
-        rocketnet_client_update( client );
-        rocketnet_server_update( server );
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
 
         struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
         for ( int i = 0; i < payloads->num_payloads; i++ )
@@ -4250,7 +4276,7 @@ void rocketnet_test_transport_udp_loopback()
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 2.0 )
     {
-        rocketnet_server_update( server );
+        rocketnet_server_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_num_connected_clients( server ) == 0 )
             break;
         rocketnet_platform_sleep( 0.001 );
@@ -4260,7 +4286,7 @@ void rocketnet_test_transport_udp_loopback()
 
     rocketnet_client_destroy( client );
     rocketnet_server_stop( server );
-    rocketnet_server_update( server );
+    rocketnet_server_update( server, rocketnet_platform_time() );
     rocketnet_check( rocketnet_server_state( server ) == ROCKETNET_SERVER_STOPPED );
     rocketnet_server_destroy( server );
 }
@@ -5072,6 +5098,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_server_lossy_wire );
         RUN_TEST( test_swarm );
         RUN_TEST( test_payload_size_sweep );
+        RUN_TEST( test_server_refuses_keyless_config );
         RUN_TEST( test_transport_payload_capacity );
         RUN_TEST( test_transport_udp_loopback );
         RUN_TEST( test_request_path_ordering );

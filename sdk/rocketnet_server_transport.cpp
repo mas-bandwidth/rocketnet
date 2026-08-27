@@ -58,6 +58,8 @@ struct rocketnet_server_t
     struct rocketnet_server_send_buffer_t send_buffer;
 #endif // #if !ROCKETNET_SERVER_XDP
 
+    double time;                                        // the game's clock, last seen
+
     struct rocketnet_server_payloads_t payloads;
     uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
@@ -145,17 +147,60 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_t * serve
     frame->data = NULL;
 }
 
+void rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+{
+    rocketnet_assert( config );
+    memset( config, 0, sizeof(struct rocketnet_server_config_t) );
+    config->max_clients = 64;
+    const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( config->filter_value, test_filter, ROCKETNET_FILTER_VALUE_BYTES );
+}
+
+void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+{
+    rocketnet_assert( config );
+    rocketnet_server_default_config( config );
+    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
+}
+
+static int rocketnet_server_config_has_keys( const struct rocketnet_server_config_t * config )
+{
+    uint8_t zero[32];
+    memset( zero, 0, sizeof(zero) );
+    return memcmp( config->server_secret_key, zero, 32 ) != 0 &&
+           memcmp( config->server_public_key, zero, 32 ) != 0 &&
+           memcmp( config->backend_public_key, zero, 32 ) != 0;
+}
+
 struct rocketnet_server_t * rocketnet_server_create( void * context,
                                                                          const char * public_address_string,
-                                                                         int max_clients )
+                                                                         const struct rocketnet_server_config_t * config,
+                                                                         double time )
 {
     rocketnet_assert( public_address_string );
-    rocketnet_assert( max_clients > 0 );
+    rocketnet_assert( config );
 
-    const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    if ( public_address_env )
+    (void) time;
+
+    const int max_clients = config->max_clients;
+
+    if ( max_clients <= 0 || max_clients > ROCKETNET_MAX_CLIENTS )
     {
-        public_address_string = public_address_env;
+        rocketnet_error( "server config max_clients %d is out of range (1 to %d)", max_clients, ROCKETNET_MAX_CLIENTS );
+        return NULL;
+    }
+
+    // a server with no keys is refused, never defaulted: default keys are how
+    // every deployment of a protocol ends up sharing one identity. development
+    // wants rocketnet_server_dev_config, which fills the published keys loudly.
+
+    if ( !rocketnet_server_config_has_keys( config ) )
+    {
+        rocketnet_error( "server config has no keys: fill rocketnet_server_dev_config() for development, or supply production keys" );
+        return NULL;
     }
 
     rocketnet_info( "server transport public address is %s", public_address_string );
@@ -181,11 +226,18 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
 
     server_transport->context = context;
 
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES];
+    memcpy( tag, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0;
+    (void) development_keys;
 
 #if ROCKETNET_SERVER_XDP
 
-    server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag );
+    const int num_xdp_queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : 7;
+    const int num_os_cpus = config->num_os_cpus > 0 ? config->num_os_cpus : 1;
+
+    server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
     if ( server_transport->xdp_socket == NULL )
     {
         rocketnet_error( "could not create xdp server socket" );
@@ -194,7 +246,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "server transport started on %s [xdp] (development keys)", rocketnet_address_to_string( &public_address, address_string ) );
+    rocketnet_info( "server transport started on %s [xdp] (%s keys)", rocketnet_address_to_string( &public_address, address_string ), development_keys ? "development" : "production" );
 
 #else // #if ROCKETNET_SERVER_XDP
 
@@ -207,7 +259,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "server transport started on %s (development keys)", rocketnet_address_to_string( &bind_address, address_string ) );
+    rocketnet_info( "server transport started on %s (%s keys)", rocketnet_address_to_string( &bind_address, address_string ), development_keys ? "development" : "production" );
 
 #endif // #if ROCKETNET_SERVER_XDP
 
@@ -215,16 +267,16 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     server_transport->public_address = public_address;
     server_transport->state = ROCKETNET_SERVER_RUNNING;
 
-    // the protocol, on the published development keys, advertised at the
-    // public address -- the address development tokens are minted for
+    // the protocol, on the configured identity, advertised at the public
+    // address -- the address connect tokens are minted for
 
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
-    protocol->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    protocol->protocol_id = config->protocol_id;
     protocol->send_rate = 10.0;
     memcpy( protocol->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
-    memcpy( protocol->backend_public_key, rocketnet_dev_backend_public_key, 32 );
-    memcpy( protocol->server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( protocol->server_secret_key, rocketnet_dev_server_secret_key, 32 );
+    memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
+    memcpy( protocol->server_public_key, config->server_public_key, 32 );
+    memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
 
     if ( public_address.type == ROCKETNET_ADDRESS_IPV4 )
         protocol->advertised_ipv4 = public_address;
@@ -301,9 +353,11 @@ int rocketnet_server_state( struct rocketnet_server_t * server_transport )
     return server_transport->state;
 }
 
-void rocketnet_server_update( struct rocketnet_server_t * server_transport )
+void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
+
+    server_transport->time = time;
 
     if ( server_transport->state == ROCKETNET_SERVER_STOPPING )
     {
@@ -315,8 +369,8 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport )
         return;
     }
 
-    const double current_time = rocketnet_platform_time();
-    const uint64_t current_timestamp = (uint64_t) time( NULL );
+    const double current_time = time;
+    const uint64_t current_timestamp = (uint64_t) ::time( NULL );
 
     server_transport->payloads.num_payloads = 0;
 
@@ -488,7 +542,7 @@ void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
     // the socket
 
     int wire_bytes = rocketnet_server_protocol_write_payload( &server_transport->protocol, client_index, payload_data, payload_bytes,
-                                                     rocketnet_platform_time(), frame_data );
+                                                     server_transport->time, frame_data );
     if ( wire_bytes > 0 )
         rocketnet_server_commit_send_frame( server_transport, &frame, wire_bytes );
     else

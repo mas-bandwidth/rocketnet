@@ -56,31 +56,34 @@ struct rocketnet_client_t
     rocketnet_client_received_packets_t received_packets;
     rocketnet_client_receive_buffer_t receive_buffer[2];
 
+    double time;                                        // the game's clock, last seen
+    int last_state;
+    struct rocketnet_client_config_t config;
+
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t protocol;
 };
 
 static void rocketnet_client_thread_function( void * data );
 
-rocketnet_client_t * rocketnet_client_create( void * context, const char * connect_address_string )
+void rocketnet_client_default_config( struct rocketnet_client_config_t * config )
 {
-    rocketnet_assert( connect_address_string );
+    rocketnet_assert( config );
+    memset( config, 0, sizeof(struct rocketnet_client_config_t) );
+    const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( config->filter_value, test_filter, ROCKETNET_FILTER_VALUE_BYTES );
+}
 
-    const char * connect_address_env = getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS" );
-    if ( connect_address_env )
+rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, double time )
+{
+    rocketnet_assert( connect_token );
+
+    struct rocketnet_client_config_t default_config;
+    if ( !config )
     {
-        connect_address_string = connect_address_env;
+        rocketnet_client_default_config( &default_config );
+        config = &default_config;
     }
-
-    rocketnet_address_t server_address;
-    if ( !rocketnet_address_parse( &server_address, connect_address_string ) )
-    {
-        rocketnet_error( "client could not parse connect address" );
-        return NULL;
-    }
-
-    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client connecting to %s (development token)", rocketnet_address_to_string( &server_address, string_buffer ) );
 
     rocketnet_client_t * client_transport = (rocketnet_client_t*) rocketnet_malloc( context, sizeof(rocketnet_client_t) );
     if ( !client_transport )
@@ -129,27 +132,26 @@ rocketnet_client_t * rocketnet_client_create( void * context, const char * conne
 
     client_transport->bound_port = bind_address.port;
 
-    // the development connect: mint a token for the dialed address with the
-    // published development keys and start the handshake. the transport owns
-    // the real clocks; the protocol never reads one.
+    // connect with the caller's token: the token names the server and is
+    // the credential. the game owns the clock; unix time is read here once
+    // for the token expiry check, which is wall-clock by definition.
 
     rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
 
-    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    uint64_t client_id;
-    rocketnet_random_bytes( (uint8_t*) &client_id, 8 );
-    if ( !rocketnet_write_dev_connect_token( connect_address_string, client_id, (uint64_t) time( NULL ), connect_token ) )
+    memcpy( client_transport->protocol.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    client_transport->config = *config;
+    client_transport->time = time;
+    client_transport->last_state = client_transport->protocol.state;
+
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
     {
-        rocketnet_error( "client could not mint dev connect token" );
         rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, rocketnet_platform_time(), (uint64_t) time( NULL ) ) )
-    {
-        rocketnet_client_destroy( client_transport );
-        return NULL;
-    }
+    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
     {
@@ -230,11 +232,14 @@ static void rocketnet_client_update_swap_receive_buffers( rocketnet_client_t * c
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
-void rocketnet_client_update( rocketnet_client_t * client_transport )
+void rocketnet_client_update( rocketnet_client_t * client_transport, double time )
 {
     rocketnet_assert( client_transport );
 
-    const double current_time = rocketnet_platform_time();
+    const double current_time = time;
+    client_transport->time = time;
+
+    const int state_before = client_transport->protocol.state;
 
     rocketnet_client_update_swap_receive_buffers( client_transport );
 
@@ -257,6 +262,12 @@ void rocketnet_client_update( rocketnet_client_t * client_transport )
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
     if ( packet_bytes > 0 )
         rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, packet_bytes );
+
+    // one callback per update crossing: enough to observe every terminal,
+    // and the poll of rocketnet_client_state stays the source of truth
+
+    if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
+        client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
 }
 
 void rocketnet_client_send_packet( rocketnet_client_t * client_transport, const uint8_t * packet_data, int packet_bytes )
@@ -266,7 +277,7 @@ void rocketnet_client_send_packet( rocketnet_client_t * client_transport, const 
     rocketnet_assert( packet_bytes > 0 );
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    int wire_bytes = rocketnet_client_protocol_write_payload( &client_transport->protocol, packet_data, packet_bytes, rocketnet_platform_time(), packet );
+    int wire_bytes = rocketnet_client_protocol_write_payload( &client_transport->protocol, packet_data, packet_bytes, client_transport->time, packet );
     if ( wire_bytes == 0 )
         return;
 

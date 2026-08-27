@@ -388,11 +388,34 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_client_state_name( int state );
 struct rocketnet_client_t;
 struct rocketnet_counters_t;
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_client_t * rocketnet_client_create( void * context, const char * connect_address_string );
+#define ROCKETNET_CONNECT_TOKEN_BYTES 768
+
+// The client connects with a token, never an address: the token names the
+// server, carries the keys, and is the credential -- minted by a backend in
+// production, or locally by rocketnet_write_dev_connect_token against the
+// published development keys. The config carries what the token does not:
+// the per-title filter value and an optional state-change callback. NULL
+// config is the development posture: the published test filter, no callback.
+
+struct rocketnet_client_config_t
+{
+    uint8_t filter_value[4];
+    void (*state_change_callback)( void * context, int previous_state, int current_state );
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_default_config( struct rocketnet_client_config_t * config );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
+
+// time is the game's clock, a double in seconds, monotonic; pass the same
+// clock to every call that takes one. The library never reads a clock of
+// its own on these paths, so a game owns time and a test can hold it still.
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_destroy( struct rocketnet_client_t * client_transport );      // disconnect and pump a few updates first
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_update( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_update( struct rocketnet_client_t * client_transport, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_send_packet( struct rocketnet_client_t * client_transport, const uint8_t * packet_data, int packet_bytes );
 
@@ -416,7 +439,31 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_count
 
 struct rocketnet_server_t;
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_server_t * rocketnet_server_create( void * context, const char * public_address_string, int max_clients );
+// The server is configured explicitly. rocketnet_server_default_config gives
+// the shape with no keys -- create refuses it until keys are supplied,
+// because default keys are how every deployment of a protocol ends up
+// sharing one identity. rocketnet_server_dev_config fills the published
+// development keys and test filter for local work, loudly. num_xdp_queues
+// and num_os_cpus configure the XDP transport's queue and core layout;
+// zero means the transport default, and the portable build ignores both.
+
+struct rocketnet_server_config_t
+{
+    uint64_t protocol_id;
+    int max_clients;
+    uint8_t filter_value[4];
+    uint8_t backend_public_key[32];
+    uint8_t server_public_key[32];
+    uint8_t server_secret_key[32];
+    int num_xdp_queues;
+    int num_os_cpus;
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_default_config( struct rocketnet_server_config_t * config );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_t * rocketnet_server_create( void * context, const char * public_address_string, const struct rocketnet_server_config_t * config, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_destroy( struct rocketnet_server_t * server_transport );      // stop and wait for stopped first
 
@@ -424,7 +471,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_stop( struct rocketnet_server_t * se
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_state( struct rocketnet_server_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_update( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time );
 
 // The most payloads one update can deliver. Sized to what the receive path can
 // actually hand over in a single drain -- ROCKETNET_RECEIVE_PACKETS_PER_CLIENT

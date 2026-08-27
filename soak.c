@@ -11,6 +11,7 @@
 
 #include "rocketnet.h"
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <signal.h>
 
@@ -53,7 +54,11 @@ int main( int argc, char ** argv )
 
     const uint64_t max_iterations = argc > 1 ? strtoull( argv[1], NULL, 10 ) : 0;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40100", 16 );
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40100", &server_config, rocketnet_time() );
     if ( !server )
         return 1;
 
@@ -81,18 +86,24 @@ int main( int argc, char ** argv )
             {
                 rocketnet_client_disconnect( client );
                 rocketnet_sleep( 0.05 );
-                rocketnet_server_update( server );
+                rocketnet_server_update( server, rocketnet_time() );
                 rocketnet_client_destroy( client );
             }
-            client = rocketnet_client_create( NULL, "127.0.0.1:40100" );
+            uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+            if ( !rocketnet_write_dev_connect_token( "127.0.0.1:40100", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
+            {
+                printf( "soak: failed to write dev connect token\n" );
+                exit( 1 );
+            }
+            client = rocketnet_client_create( NULL, connect_token, NULL, rocketnet_time() );
             if ( !client )
                 break;
             reconnect_time = rocketnet_time();
             connects++;
         }
 
-        rocketnet_client_update( client );
-        rocketnet_server_update( server );
+        rocketnet_client_update( client, rocketnet_time() );
+        rocketnet_server_update( server, rocketnet_time() );
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
@@ -146,7 +157,7 @@ int main( int argc, char ** argv )
         rocketnet_client_destroy( client );
     }
     rocketnet_server_stop( server );
-    rocketnet_server_update( server );
+    rocketnet_server_update( server, rocketnet_time() );
     rocketnet_server_destroy( server );
 
     rocketnet_term();
