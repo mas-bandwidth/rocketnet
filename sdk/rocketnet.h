@@ -453,6 +453,29 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_disconnect( struct rocketnet_client_
 
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_counters( struct rocketnet_client_t * client_transport );
 
+// The client's connection quality: rtt and jitter in milliseconds, packet
+// loss as a percentage, and the last second's packet rates and bandwidth
+// both ways. The rates come from a ring of per-frame buckets filled as the
+// existing send and receive walks run and summed over the trailing second,
+// so the cost per update is flat and no walk is added for them. rtt is
+// measured from the handshake's round trips -- the exchanges the server
+// answers immediately -- and holds from there; jitter is inter-arrival
+// jitter over the session sequence; packet loss is receive-side, from gaps
+// in the session sequence. These numbers feed time synchronization.
+
+struct rocketnet_client_stats_t
+{
+    float rtt;                                      // round trip time (milliseconds)
+    float jitter;                                   // inter-arrival jitter (milliseconds)
+    float packet_loss;                              // percent
+    int packets_sent_per_second;
+    int packets_received_per_second;
+    int bandwidth_sent_kbps;
+    int bandwidth_received_kbps;
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_stats( struct rocketnet_client_t * client_transport, struct rocketnet_client_stats_t * stats );
+
 // -----------------------------------------
 //                                  server
 // -----------------------------------------
@@ -581,6 +604,25 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_is_client_connected( struct rocketnet
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_client_id( struct rocketnet_server_t * server_transport, int client_index );
 
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_counters( struct rocketnet_server_t * server_transport );
+
+// The server's whole-socket rates: packets and bandwidth per second, both
+// directions, over the trailing second. Accumulation rides the walks the
+// transport already makes -- the receive drain and the send flush -- into a
+// ring of per-frame buckets, and the published numbers sum only buckets
+// younger than one second, so the cost per frame is flat by construction:
+// no per-client sweep, no extra pass over any buffer. At 1000 clients the
+// update pays the same fixed bucket sum it pays at one. These numbers feed
+// time synchronization.
+
+struct rocketnet_server_stats_t
+{
+    uint64_t packets_sent_per_second;
+    uint64_t packets_received_per_second;
+    float bandwidth_sent_kbps;
+    float bandwidth_received_kbps;
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_stats( struct rocketnet_server_t * server_transport, struct rocketnet_server_stats_t * stats );
 
 // -----------------------------------------
 //                              frame sync
