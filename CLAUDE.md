@@ -135,6 +135,9 @@ all three pass:
    simplest to most complex; negative tests assert the specific reason counter
    AND the packet type's arrival counter, so "rejected" always means "rejected
    here"; known-answer vectors (STANDARD.md Appendix A) prove interop.
+   On success a test prints its name and nothing else — measurements and
+   diagnostics belong to failures and to the profiling instruments, never to
+   a passing run's output.
 2. **Load profiling** proves performance, and without it the library does not
    work — performance is the spec ("fastest correct", 1000+ players, not IO
    bound). Real shape: ~1000 real connections at game-like rates and sizes
