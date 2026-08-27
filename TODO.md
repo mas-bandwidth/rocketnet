@@ -103,12 +103,23 @@ land. The milestone view is issue #28; this file is the live ordering.
   interrupted process's admitted-add-before-slots order was a token-burning
   bug, fixed before tests. Spec gained the two response bullets defining
   the add placement. 63 tests green.
+- The client state machine, and the first full connect: monotonic climb
+  1-2-3-4 entering each state once, per-type processing as early-return
+  functions with the state gate first, temporaries committed only after the
+  open, the ephemeral secret erased at commit, the response stored and
+  retransmitted byte-identical, one sending rule at the send rate, the
+  -(N+1) deadline pairing plus the total connect deadline, the redundant
+  disconnect burst, state transitions logged at info in netcode's voice.
+  Server gained keep-alive generation and payload send. PROVEN IN MEMORY:
+  client and server pumped against each other -- the whole handshake, then
+  payloads both ways, then the disconnect burst leaving both sides clean;
+  every handshake packet type dropped once and the connect still completes;
+  a full server denies cleanly; all five timeout pairings fire to their
+  exact states; the wrong-salt cookie injection refused with nothing
+  stored. 69 tests green.
 
 ## TODO
 
-- Challenge and response, client state machine: monotonic climb 1-4, per-type
-  client processing, temporaries committed only on successful open, every
-  packet loss walked.
 - Connected traffic: keep-alives both ways, confirmed flag and prefixing,
   payload delivery, disconnect with redundant burst, timeouts, replay window,
   zero-sequence rejection.
