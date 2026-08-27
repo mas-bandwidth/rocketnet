@@ -103,7 +103,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name
 // why. A payload delivered on an established connection lands in out_payload
-// (sized at least 1374) with its length in out_payload_bytes; every other
+// (sized at least 1400) with its length in out_payload_bytes; every other
 // outcome leaves it zero.
 
 int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t * client,
