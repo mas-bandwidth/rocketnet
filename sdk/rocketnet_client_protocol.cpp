@@ -747,6 +747,7 @@ int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client
 int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
+                                    double current_time,
                                     uint8_t * out_packet )
 {
     rocketnet_assert( client );
@@ -755,6 +756,8 @@ int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
 
     if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
         return 0;
+
+    client->last_send_time = current_time;
 
     if ( payload_bytes < 1 || payload_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES )
         return 0;
