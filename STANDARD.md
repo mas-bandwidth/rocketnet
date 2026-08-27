@@ -1830,7 +1830,15 @@ only data already verified.
 * If a client with that client id is already connected, ignore it.
 * If no slots are available, respond with a _connection denied packet_ under
   the handshake keys, carrying the mapping's session nonce, and stop. The
-  mapping is left in place, so a retransmitted response is denied again.
+  mapping is left in place, so a retransmitted response is denied again. This
+  check runs before the admitted-token set takes its entry: a client denied
+  for a full server has not connected, and its token MUST stay usable for the
+  retry.
+* **Add the token identifier to the admitted-token set.** This is the moment
+  the token admits its connection, and the only place entries enter the set.
+  If the set is full of unexpired entries, respond with a _connection denied
+  packet_ exactly as above and count `ADMITTED_SET_FULL` — the set never
+  evicts unexpired entries, so it fails closed.
 * Assign a slot, copy the user data from the encryption mapping into it, mark
   the client unconfirmed, and respond with a _connection keep-alive packet_. If
   this keep-alive is lost, the ones generated at the send rate repeat the
