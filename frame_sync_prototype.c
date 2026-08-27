@@ -74,6 +74,39 @@ static void sleep_until_ns( uint64_t deadline )
 
 #define ABSOLUTE_SLEEP_NAME "mach_wait_until"
 
+#elif defined(_WIN32)
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <timeapi.h>
+
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+static LARGE_INTEGER qpc_frequency;
+static HANDLE waitable_timer;
+
+static uint64_t now_ns( void )
+{
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter( &counter );
+    return (uint64_t) ( (double) counter.QuadPart * ( 1e9 / (double) qpc_frequency.QuadPart ) );
+}
+
+static void sleep_until_ns( uint64_t deadline )
+{
+    const uint64_t t = now_ns();
+    if ( t >= deadline )
+        return;
+    LARGE_INTEGER due;
+    due.QuadPart = -(LONGLONG) ( ( deadline - t ) / 100 );      // relative, 100ns units
+    SetWaitableTimer( waitable_timer, &due, 0, NULL, NULL, FALSE );
+    WaitForSingleObject( waitable_timer, INFINITE );
+}
+
+#define ABSOLUTE_SLEEP_NAME "waitable timer highres"
+
 #else
 
 static uint64_t now_ns( void ) { return 0; }
@@ -84,9 +117,18 @@ static void sleep_until_ns( uint64_t deadline ) { (void) deadline; }
 
 static uint64_t thread_cpu_ns( void )
 {
+#if defined(_WIN32)
+    FILETIME creation, exit_time, kernel, user;
+    GetThreadTimes( GetCurrentThread(), &creation, &exit_time, &kernel, &user );
+    ULARGE_INTEGER k, u;
+    k.LowPart = kernel.dwLowDateTime;  k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime;    u.HighPart = user.dwHighDateTime;
+    return ( k.QuadPart + u.QuadPart ) * 100;
+#else
     struct timespec ts;
     clock_gettime( CLOCK_THREAD_CPUTIME_ID, &ts );
     return (uint64_t) ts.tv_sec * NANOS_PER_SECOND + (uint64_t) ts.tv_nsec;
+#endif
 }
 
 // ---- results ----
@@ -177,8 +219,12 @@ static void measure( struct results_t * r, int mode )
             if ( t < deadline )
             {
                 const uint64_t remaining = deadline - t;
+#if defined(_WIN32)
+                Sleep( (DWORD) ( remaining / 1000000 ) );       // the space game's shipped path
+#else
                 struct timespec ts = { (time_t) ( remaining / NANOS_PER_SECOND ), (long) ( remaining % NANOS_PER_SECOND ) };
                 nanosleep( &ts, NULL );
+#endif
             }
         }
         else
@@ -346,11 +392,42 @@ static void restore_priority( void )
                        (thread_policy_t) &policy, THREAD_STANDARD_POLICY_COUNT );
 }
 
+#elif defined(_WIN32)
+
+static int elevate_priority( struct results_t * r )
+{
+    if ( !SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL ) )
+    {
+        snprintf( r->note, sizeof(r->note), "TIME_CRITICAL refused: %lu", (unsigned long) GetLastError() );
+        return 0;
+    }
+    snprintf( r->note, sizeof(r->note), "TIME_CRITICAL" );
+    return 1;
+}
+
+static void restore_priority( void )
+{
+    SetThreadPriority( GetCurrentThread(), THREAD_PRIORITY_NORMAL );
+}
+
 #endif
 
 // ---- optional contention ----
 
 static volatile int load_running;
+
+#if defined(_WIN32)
+
+static DWORD WINAPI load_thread( LPVOID arg )
+{
+    (void) arg;
+    volatile uint64_t x = 0;
+    while ( load_running )
+        x++;
+    return 0;
+}
+
+#else
 
 static void * load_thread( void * arg )
 {
@@ -361,14 +438,25 @@ static void * load_thread( void * arg )
     return NULL;
 }
 
+#endif
+
 int main( int argc, char ** argv )
 {
 #if defined(__APPLE__)
     mach_timebase_info( &timebase );
 #endif
+#if defined(_WIN32)
+    QueryPerformanceFrequency( &qpc_frequency );
+    waitable_timer = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+    if ( !waitable_timer )
+    {
+        printf( "high resolution waitable timer unavailable, using standard\n" );
+        waitable_timer = CreateWaitableTimerExW( NULL, NULL, 0, TIMER_ALL_ACCESS );
+    }
+#endif
 
-#if !defined(__linux__) && !defined(__APPLE__)
-    printf( "frame_sync_prototype supports linux and macos\n" );
+#if !defined(__linux__) && !defined(__APPLE__) && !defined(_WIN32)
+    printf( "frame_sync_prototype supports linux, macos and windows\n" );
     return 0;
 #else
 
@@ -377,6 +465,21 @@ int main( int argc, char ** argv )
     printf( "frame sync prototype: %d frames at %.0fHz per mechanism%s (errors in microseconds)\n\n",
             MEASURE_FRAMES, FRAME_RATE_HZ, with_load ? ", with busy threads contending" : ", quiet" );
 
+#if defined(_WIN32)
+    HANDLE threads[64];
+    int num_threads = 0;
+    if ( with_load )
+    {
+        load_running = 1;
+        SYSTEM_INFO info;
+        GetSystemInfo( &info );
+        num_threads = (int) info.dwNumberOfProcessors;
+        if ( num_threads > 64 ) num_threads = 64;
+        for ( int i = 0; i < num_threads; i++ )
+            threads[i] = CreateThread( NULL, 0, load_thread, NULL, 0, NULL );
+        printf( "started %d busy threads\n\n", num_threads );
+    }
+#else
     pthread_t threads[64];
     int num_threads = 0;
     if ( with_load )
@@ -388,11 +491,21 @@ int main( int argc, char ** argv )
             pthread_create( &threads[i], NULL, load_thread, NULL );
         printf( "started %d busy threads\n\n", num_threads );
     }
+#endif
 
     static struct results_t r;
 
+#if defined(_WIN32)
+    memset( &r, 0, sizeof(r) ); r.name = "Sleep(ms)";
+    measure( &r, 0 ); report( &r );
+
+    timeBeginPeriod( 1 );
+    memset( &r, 0, sizeof(r) ); r.name = "Sleep(ms) + timeBeginPeriod(1)";
+    measure( &r, 0 ); report( &r );
+#else
     memset( &r, 0, sizeof(r) ); r.name = "relative nanosleep";
     measure( &r, 0 ); report( &r );
+#endif
 
     memset( &r, 0, sizeof(r) ); r.name = ABSOLUTE_SLEEP_NAME;
     measure( &r, 1 ); report( &r );
@@ -416,9 +529,17 @@ int main( int argc, char ** argv )
     if ( with_load )
     {
         load_running = 0;
+#if defined(_WIN32)
+        WaitForMultipleObjects( (DWORD) num_threads, threads, TRUE, INFINITE );
+#else
         for ( int i = 0; i < num_threads; i++ )
             pthread_join( threads[i], NULL );
+#endif
     }
+
+#if defined(_WIN32)
+    timeEndPeriod( 1 );
+#endif
 
     return 0;
 
