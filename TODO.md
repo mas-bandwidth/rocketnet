@@ -246,11 +246,12 @@ land. The milestone view is issue #28; this file is the live ordering.
 - The socket-level swarm with Go orchestration, against real transports.
 - THE SESSION LAYER, a v2 offering (ruled 2026-08-27, the frame sync
   argument at the connection layer: every game has to work this out, so the
-  library should hand it to them). The whole system arrives together,
-  because its parts fund each other: a real backend the servers talk to,
-  maintaining sessions; the lose-your-slot economics (one identity, one
-  slot, a shared token steals the sharer's own seat -- the incentive does
-  the enforcement); client address pinning in the connect token (built
+  library should hand it to them). The requirement, Glenn's words: done
+  completely, it MUST have a backend the server talks to, and that backend
+  must handle identity-based auth whose consequence is giving away your
+  slot -- one identity, one seat, so a shared token steals the sharer's
+  own place and the incentive does the enforcement. Everything else hangs
+  off that spine: client address pinning in the connect token (built
   once on the token-pin branch, reverted, the reference implementation
   lives in that history: family byte plus 16 address bytes in the signed
   slack at offset 521, refused ahead of asymmetric work, unforgeable
