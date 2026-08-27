@@ -159,7 +159,8 @@ section, and this table exists so an implementer never hunts for a number.
 | Version | `0x4E7C1A93` | _Signed connect data_ |
 | Prefilter header | 6 bytes: type, epoch, 4-byte value | _The Prefilter Header_ |
 | Test title constant | `b7 59 01 00` at epoch 0 | _The Prefilter Header_ |
-| Filter epoch | 0 = unkeyed; 1-255 = magic generation | _The Prefilter Header_ |
+| Filter epoch | 0 = unkeyed; 1-255 = magic generation, wrapping 255 to 1 | _The Prefilter Header_ |
+| Magic | 16 bytes, backend distributed, rotated | _The Prefilter Header_ |
 | Packet types | 0-7; 8-255 reserved, ignored | _Packets_ |
 | Client states | -7 to 4 | _Client State Machine_ |
 | KDF context strings | `RKTNHNDC` `RKTNHNDS` `RKTNSESC` `RKTNSESS` | _Per-connection keys_ |
@@ -362,10 +363,11 @@ a schedule, several generations live at once.
                                 following the prefilter header )
                    truncated to its low 4 bytes, little-endian
 
-Packet length is the UDP payload length as a little-endian uint16. **The four
-bytes following the header are taken uniformly for every packet type**, with no
-per-type case: for sealed packets they are the sequence number, for a connection
-request the first four bytes of the return cookie field, and for a connection
+**The magic is 16 bytes**, SipHash-2-4's key length. Packet type is the single
+type byte, and packet length is the UDP payload length as a little-endian
+uint16. **The four bytes following the header are taken uniformly for every
+packet type**, with no per-type case: for sealed packets they are the sequence
+number, for a connection request the first four bytes of the return cookie field, and for a connection
 cookie the first four bytes of the connection salt. One rule, one offset, and
 nothing to get wrong per type.
 
@@ -384,11 +386,22 @@ its magic array once and computes **one** MAC. A packet whose epoch names a
 generation the receiver does not hold is dropped before any MAC is computed at
 all, on a comparison.
 
-**A receiver MUST accept more than one live generation**, so that a rotation does
-not break packets already in flight, and MUST drop any epoch outside that
-window. **A receiver MUST NOT treat epoch 0 as keyed**, and a deployment that has
-adopted the keyed form MUST reject epoch 0 rather than falling back to a
-constant: a fallback an attacker can select is not a filter.
+**Generations advance 1, 2, 3 and so on, wrapping from 255 back to 1.** Zero is
+never a generation, so the unkeyed meaning of epoch 0 is unambiguous forever and
+a wrap cannot silently turn a keyed deployment into an unkeyed one.
+
+**A receiver MUST accept at least two live generations**, so that a rotation does
+not break packets already in flight, and MUST drop any epoch outside that window.
+*How many beyond two, and how long a generation lasts, are deployment choices
+rather than interoperability ones: a sender always uses the epoch it was most
+recently given, and a receiver's window is purely local policy — widening it
+accepts older packets and narrows nothing.* The window must be small enough that
+a captured packet stops being replayable quickly, which is the property rotation
+exists to buy.
+
+**A receiver MUST NOT treat epoch 0 as keyed**, and a deployment that has adopted
+the keyed form MUST reject epoch 0 rather than falling back to a constant: a
+fallback an attacker can select is not a filter.
 
 **A 32-bit MAC is proportionate and is not authentication.** It admits one forged
 packet in 4.3 billion, which at a 10 Gbps flood is one every five minutes
