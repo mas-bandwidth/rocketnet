@@ -51,7 +51,7 @@
 
 // the receive ceiling: fixed for every receiver, whatever its send budget
 
-#define ROCKETNET_RECEIVE_CEILING               1400
+#define ROCKETNET_RECEIVE_CEILING               1426
 
 // Wire sizes, from the standard's packet size table. Every type has a fixed
 // total size except the payload, which has a range.

@@ -175,8 +175,8 @@ section, and this table exists so an implementer never hunts for a number.
 | KDF context strings | `RKTNHNDC` `RKTNHNDS` `RKTNSESC` `RKTNSESS` | _Per-connection keys_ |
 | Associated data lengths | 21 bytes; 53 for types 2 and 3 | _Sealed packets_ |
 | Per-packet overhead | 26 bytes | _Packet sizes_ |
-| Send budget | 1232 default, 1400 maximum | _Packet sizes_ |
-| Receive ceiling | 1400, fixed | _Packet sizes_ |
+| Send budget | 1232 default, 1426 maximum | _Packet sizes_ |
+| Receive ceiling | 1426, fixed | _Packet sizes_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
 | Send rate | 10 Hz default | _Timing_ |
@@ -482,7 +482,7 @@ operator controls.
 ### Structural checks that accompany the header
 
 A receiver drops any packet smaller than the minimum for its type, larger than
-1400 bytes — the receive ceiling, fixed regardless of the local send budget — or
+1426 bytes — the receive ceiling, fixed regardless of the local send budget — or
 whose filter value does not match. **The type and size checks are part of the
 same cheap pass** and are specified in _Reading packets_; every non-payload type
 has a single fixed size, so the pair costs one compare and rejects most malformed
@@ -535,7 +535,7 @@ has a range. A receiver checks the size before any other per-type work:
 | 2 | connection challenge | 66 | 6 + 4 + 8 + 32 + 16 |
 | 3 | connection response | 50 | 6 + 4 + 24 + 16 |
 | 4 | connection keep-alive | 34 | 6 + 4 + 8 + 16 |
-| 5 | connection payload | 27 to 1400 received; sender bounded by its budget | 6 + 4 + payload + 16 |
+| 5 | connection payload | 27 to 1426 received; sender bounded by its budget | 6 + 4 + payload + 16 |
 | 6 | connection disconnect | 26 | 6 + 4 + 0 + 16 |
 | 7 | connection cookie | 38 | 6 + 8 + 8 + 16 |
 
@@ -555,15 +555,19 @@ today, everywhere that matters, the real MTU is 1500.
 
 The budget governs **sending**: a sender MUST NOT emit a packet larger than its
 configured budget, default 1232, and a deployment that knows its paths MAY raise
-it, to at most 1400. **The receive side is not configurable: every receiver
-accepts payload packets up to a flat 1400-byte ceiling, whatever its own send
+it, to at most 1426. **The receive side is not configurable: every receiver
+accepts payload packets up to a flat 1426-byte ceiling, whatever its own send
 budget.** One fixed receive rule means a budget mismatch between two correctly
 implemented ends degrades to nothing worse than one side sending smaller
 packets than it could, and there is no second receive behavior to test. The budget is a deployment constant, not negotiated, and not
 carried on the wire. The fixed packet sizes above do not change with it; only
 the payload range does. The 1232 default is the only value that is safe with no
 knowledge of the network; every raise is a statement about paths, and it is the
-deployment's to make.
+deployment's to make. The 1426 maximum is itself such a statement, made on
+evidence: it carries a 1400-byte payload, and this protocol's ancestor shipped
+1468-byte frames to players on the open internet for years without incident.
+1426 leaves 46 bytes of headroom under the 1472 available on plain 1500-MTU
+ethernet.
 
 ## Sequence numbers
 
@@ -1245,7 +1249,7 @@ as a little-endian value. Post sealing:
 In this exact order:
 
 * If the packet is shorter than the 6-byte prefilter header, or longer than the
-  1400-byte receive ceiling, ignore it.
+  1426-byte receive ceiling, ignore it.
 
 * If the type byte is greater than 7, ignore the packet. Types 8 through 255
   are reserved and MUST be ignored by a conforming receiver. **This check and
@@ -1270,7 +1274,7 @@ In this exact order:
   ordinary compare is correct.
 
 * **If the packet's total size does not match its type — the exact wire size
-  from the _Packet sizes_ table, or 27 to 1400 bytes for a payload (the fixed
+  from the _Packet sizes_ table, or 27 to 1426 bytes for a payload (the fixed
   receive ceiling; the sender's budget is not a receive-side quantity) —
   ignore it.** Every non-payload type has a single fixed size, so this is one
   compare, and it runs before any per-type handling so that no later step can
@@ -1335,7 +1339,7 @@ In this exact order:
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * 1 to 1374 bytes — _connection payload_ (1374 = the 1400 receive ceiling − 26)
+  * 1 to 1400 bytes — _connection payload_ (1400 = the 1426 receive ceiling − 26)
   * 0 bytes — _connection disconnect_
 
 * Otherwise, process the packet.
