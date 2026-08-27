@@ -545,11 +545,13 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
             rocketnet_server_abort_send_frame( server_transport, &frame );
     }
 
-    // flush
+    // flush. the portable response ring sends inline here; the XDP socket is
+    // flushed ONCE per frame, by rocketnet_server_send_packets -- its buffer
+    // flip retargets the drain and zeroes the buffers behind it, so a second
+    // flip in the same frame destroys whatever the first one staged before
+    // the xdp thread has copied it out. update stages; send_packets flushes.
 
 #if ROCKETNET_SERVER_XDP
-
-    rocketnet_server_socket_send_packets( server_transport->xdp_socket );
 
 #else // #if ROCKETNET_SERVER_XDP
 
