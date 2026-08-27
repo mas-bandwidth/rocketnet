@@ -426,12 +426,20 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_state( struct rocketnet_server_t * se
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_update( struct rocketnet_server_t * server_transport );
 
+// The most payloads one update can deliver. Sized to what the receive path can
+// actually hand over in a single drain -- ROCKETNET_RECEIVE_PACKETS_PER_CLIENT
+// times the client ceiling -- so a burst is never silently discarded after its
+// sequence has already been consumed. Identical on every build, so a binding in
+// another language sees one shape.
+
+#define ROCKETNET_MAX_PAYLOADS_PER_UPDATE                      ( 16 * ROCKETNET_MAX_CLIENTS )
+
 struct rocketnet_server_payloads_t                                    // delivered by the last update, valid until the next
 {
     int num_payloads;
-    int client_index[256];
-    uint8_t * payload_data[256];
-    int payload_bytes[256];
+    int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
 
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_payloads_t * rocketnet_server_payloads( struct rocketnet_server_t * server_transport );
