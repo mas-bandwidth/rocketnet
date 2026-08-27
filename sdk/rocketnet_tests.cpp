@@ -4165,6 +4165,210 @@ void rocketnet_test_server_refuses_keyless_config()
     rocketnet_check( rocketnet_server_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
 }
 
+struct rocketnet_test_hammer_args_t
+{
+    struct rocketnet_server_t * server;
+    int thread_id;
+    int packets;
+};
+
+static void rocketnet_test_hammer_thread( void * data )
+{
+    struct rocketnet_test_hammer_args_t * args = (struct rocketnet_test_hammer_args_t*) data;
+    for ( int i = 0; i < args->packets; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_start_packet( args->server, 0, &context );
+        rocketnet_check( frame );
+        uint8_t * payload = frame + context.payload_index;
+        payload[0] = (uint8_t) args->thread_id;
+        payload[1] = (uint8_t) i;
+        for ( int j = 2; j < 16; j++ )
+            payload[j] = (uint8_t) ( args->thread_id * 31 + i * 7 + j );
+        rocketnet_server_finish_packet( args->server, &context, 16 );
+    }
+}
+
+void rocketnet_test_transport_concurrent_fill()
+{
+    // the lock-free claim under real threads: four fillers acquire, write
+    // and seal concurrently in one fill phase, the main thread flushes, and
+    // every packet arrives distinct -- which also proves every sequence was
+    // unique, because the client replay window would eat a duplicate.
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40890", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40890", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    const int NUM_THREADS = 4;
+    const int PACKETS_PER_THREAD = 50;
+
+    struct rocketnet_test_hammer_args_t args[NUM_THREADS];
+    rocketnet_platform_thread_t * threads[NUM_THREADS];
+
+    for ( int t = 0; t < NUM_THREADS; t++ )
+    {
+        args[t].server = server;
+        args[t].thread_id = t;
+        args[t].packets = PACKETS_PER_THREAD;
+        threads[t] = rocketnet_platform_thread_create( NULL, rocketnet_test_hammer_thread, &args[t] );
+        rocketnet_check( threads[t] );
+    }
+
+    for ( int t = 0; t < NUM_THREADS; t++ )
+    {
+        rocketnet_platform_thread_join( threads[t] );
+        rocketnet_platform_thread_destroy( threads[t] );
+    }
+
+    rocketnet_server_send_packets( server );
+
+    // every one of the two hundred distinct packets arrives
+
+    int seen[NUM_THREADS][PACKETS_PER_THREAD];
+    memset( seen, 0, sizeof(seen) );
+    int received = 0;
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && received < NUM_THREADS * PACKETS_PER_THREAD )
+    {
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
+
+        uint8_t * const * payload_data;
+        const int * payload_bytes;
+        int num_payloads = rocketnet_client_payloads( client, &payload_data, &payload_bytes );
+
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            rocketnet_check( payload_bytes[i] == 16 );
+            const int thread_id = payload_data[i][0];
+            const int index = payload_data[i][1];
+            rocketnet_check( thread_id >= 0 && thread_id < NUM_THREADS );
+            rocketnet_check( index >= 0 && index < PACKETS_PER_THREAD );
+            for ( int j = 2; j < 16; j++ )
+                rocketnet_check( payload_data[i][j] == (uint8_t) ( thread_id * 31 + index * 7 + j ) );
+            rocketnet_check( !seen[thread_id][index] );
+            seen[thread_id][index] = 1;
+            received++;
+        }
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_check( received == NUM_THREADS * PACKETS_PER_THREAD );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
+void rocketnet_test_transport_start_finish_shape()
+{
+    // the acquire/commit surface, proven over loopback: aligned roots, the
+    // documented layout, seal in place, oversize refused, aborts harmless.
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:40889", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40889", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    // a packet before connect for a bogus slot is refused at start
+
+    struct rocketnet_packet_context_t context;
+    rocketnet_check( rocketnet_server_start_packet( server, 3, &context ) == NULL );
+
+    // acquire: the root and the payload pointer are both 16-aligned, the
+    // layout is the documented one, and the capacity is qword-clean
+
+    uint8_t * frame = rocketnet_server_start_packet( server, 0, &context );
+    rocketnet_check( frame );
+    rocketnet_check( ( (uintptr_t) frame % 16 ) == 0 );
+    rocketnet_check( context.payload_index == 16 );
+    rocketnet_check( ( (uintptr_t) ( frame + context.payload_index ) % 16 ) == 0 );
+    rocketnet_check( context.payload_capacity == ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_check( context.payload_capacity % 8 == 0 );
+    rocketnet_check( context.sequence > 0 );
+
+    // oversize is refused at finish and consumes nothing visible
+
+    rocketnet_server_finish_packet( server, &context, context.payload_capacity + 1 );
+
+    // an aborted packet is harmless
+
+    frame = rocketnet_server_start_packet( server, 0, &context );
+    rocketnet_check( frame );
+    rocketnet_server_abort_packet( server, &context );
+
+    // commit: write at the payload pointer, finish, flush, and the client
+    // receives exactly those bytes
+
+    frame = rocketnet_server_start_packet( server, 0, &context );
+    rocketnet_check( frame );
+    memcpy( frame + context.payload_index, "shape", 5 );
+    rocketnet_server_finish_packet( server, &context, 5 );
+    rocketnet_server_send_packets( server );
+
+    int received = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && !received )
+    {
+        rocketnet_client_update( client, rocketnet_platform_time() );
+        rocketnet_server_update( server, rocketnet_platform_time() );
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_receive_packet( client, packet ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 5 );
+            rocketnet_check( memcmp( packet, "shape", 5 ) == 0 );
+            received = 1;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received );
+
+    rocketnet_client_destroy( client );
+    rocketnet_server_destroy( server );
+}
+
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -4241,6 +4445,8 @@ void rocketnet_test_transport_udp_loopback()
             rocketnet_server_send_packet( server, 0, (const uint8_t*) "world", 5 );
             sent_to_client++;
         }
+
+        rocketnet_server_send_packets( server );
 
         rocketnet_client_update( client, rocketnet_platform_time() );
         rocketnet_server_update( server, rocketnet_platform_time() );
@@ -5106,6 +5312,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_swarm );
         RUN_TEST( test_payload_size_sweep );
         RUN_TEST( test_server_refuses_keyless_config );
+        RUN_TEST( test_transport_concurrent_fill );
+        RUN_TEST( test_transport_start_finish_shape );
         RUN_TEST( test_transport_payload_capacity );
         RUN_TEST( test_transport_udp_loopback );
         RUN_TEST( test_request_path_ordering );

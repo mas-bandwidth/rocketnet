@@ -36,6 +36,17 @@
 
 #define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
+// the send frame layout. every slot a transport hands out is a 16-aligned
+// root; the wire packet begins at the wire offset inside it and the payload
+// begins at the payload offset, which is the wire offset plus the 10-byte
+// sealed-payload header -- and is itself a multiple of 16, so the pointer a
+// caller writes payload at is always aligned for any word-based serializer.
+// the six bytes before the wire offset are memory-only slack, never sent.
+
+#define ROCKETNET_FRAME_WIRE_OFFSET                             6
+#define ROCKETNET_FRAME_PAYLOAD_OFFSET                          16
+#define ROCKETNET_FRAME_STRIDE                                  1440        // 16-aligned; holds 6 slack + 10 header + 1400 payload + 16 mac
+
 // the most payloads one server update can deliver: what the receive path can
 // hand over in a single drain, so a burst is never silently discarded after
 // its sequence has already been consumed. internal -- the public surface

@@ -82,6 +82,8 @@ int main( int argc, char ** argv )
             rocketnet_server_send_packet( server, client_index, payload, payload_bytes );
         }
 
+        rocketnet_server_send_packets( server );
+
         rocketnet_frame_sync_wait( frame_sync );
     }
 

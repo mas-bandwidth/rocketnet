@@ -144,6 +144,18 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
 // Builds a payload packet for a connected client. Returns the wire size, or
 // 0 when the client is not connected or the payload does not fit.
 
+int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t * server,
+                                             int client_index,
+                                             struct rocketnet_address_t * to,
+                                             uint64_t * sequence );
+
+int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protocol_t * server,
+                                                  int client_index,
+                                                  uint64_t sequence,
+                                                  uint8_t * wire_start,
+                                                  int payload_bytes,
+                                                  double current_time );
+
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                     int client_index,
                                     const uint8_t * payload_data,

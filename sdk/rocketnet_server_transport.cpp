@@ -38,6 +38,43 @@ struct rocketnet_server_send_buffer_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_SEND_PACKETS];
 };
 
+// the portable payload ring: what the acquire/commit surface fills between
+// update and the flush, from any number of game threads. slot acquisition is
+// one atomic add; each slot's info sits alone on its cache line so
+// concurrent finishes never share one; the frame stride keeps every root
+// 16-aligned. the response ring above stays single-threaded under update
+// and is deliberately not this.
+
+#define ROCKETNET_SERVER_PAYLOAD_RING_SIZE      ROCKETNET_SERVER_MAX_SEND_PACKETS
+
+struct alignas(64) rocketnet_server_payload_slot_info_t
+{
+    rocketnet_address_t to;
+    int wire_bytes;
+    int client_index;
+};
+
+struct rocketnet_server_payload_ring_t
+{
+    uint8_t padding_0[4096];
+
+    volatile uint64_t num_packets;
+
+    uint8_t padding_1[4096];
+
+    struct rocketnet_server_payload_slot_info_t info[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+
+    uint8_t padding_2[4096];
+
+    alignas(16) uint8_t data[ROCKETNET_FRAME_STRIDE*ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+
+    uint8_t padding_3[4096];
+};
+
+static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every slot root 16-aligned" );
+static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
+static_assert( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload pointer handed to the caller must be 16-aligned" );
+
 // the payload batch from the last update -- capacity ROCKETNET_MAX_PAYLOADS_PER_UPDATE
 // covers a full drain. the public surface iterates by index and never sees this layout.
 
@@ -67,6 +104,7 @@ struct rocketnet_server_t
 
 #if !ROCKETNET_SERVER_XDP
     struct rocketnet_server_send_buffer_t send_buffer;
+    struct rocketnet_server_payload_ring_t payload_ring;
 #endif // #if !ROCKETNET_SERVER_XDP
 
     double time;                                        // the game's clock, last seen
@@ -407,6 +445,9 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
         uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
 
+        if ( response )
+            response += ROCKETNET_FRAME_WIRE_OFFSET;
+
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
@@ -454,6 +495,9 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
         uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
 
+        if ( response )
+            response += ROCKETNET_FRAME_WIRE_OFFSET;
+
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
@@ -494,7 +538,7 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
             break;
-        int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data );
+        int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
         if ( keep_alive_bytes > 0 )
             rocketnet_server_commit_send_frame( server_transport, &frame, keep_alive_bytes );
         else
@@ -515,7 +559,7 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
         {
             rocketnet_platform_socket_send_packet( server_transport->socket,
                                                    &server_transport->send_buffer.to[i],
-                                                   server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE,
+                                                   server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET,
                                                    server_transport->send_buffer.packet_bytes[i] );
         }
     }
@@ -527,6 +571,20 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 int rocketnet_server_num_payloads( struct rocketnet_server_t * server_transport )
 {
     rocketnet_assert( server_transport );
+    return server_transport->payloads.num_payloads;
+}
+
+int rocketnet_server_payloads( struct rocketnet_server_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( client_index );
+    rocketnet_assert( payload_data );
+    rocketnet_assert( payload_bytes );
+
+    *client_index = server_transport->payloads.client_index;
+    *payload_data = server_transport->payloads.payload_data;
+    *payload_bytes = server_transport->payloads.payload_bytes;
+
     return server_transport->payloads.num_payloads;
 }
 
@@ -550,6 +608,153 @@ uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport
     return payloads->payload_data[payload_index];
 }
 
+// The acquire/commit send surface. Phase contract, which is what makes the
+// whole family lock-free: rocketnet_server_update and
+// rocketnet_server_send_packets run on the main thread; start, finish and
+// abort may run on any number of game threads strictly between them. During
+// that fill phase connections are stable -- only update creates or tears
+// down mappings -- so acquisition is one atomic add for the slot and one
+// for the sequence, sealing runs on the caller's thread in place in the
+// frame, and the flush walks finished slots single-threaded.
+
+uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_transport, int client_index, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( context );
+
+    memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
+
+    if ( server_transport->state != ROCKETNET_SERVER_RUNNING )
+        return NULL;
+
+    rocketnet_address_t to;
+    uint64_t sequence;
+    if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+        return NULL;
+
+    uint8_t * frame = NULL;
+
+#if ROCKETNET_SERVER_XDP
+
+    uint64_t packet_id;
+    frame = rocketnet_server_socket_start_packet( server_transport->xdp_socket, &to, &packet_id );
+    if ( !frame )
+        return NULL;
+    context->packet_id = packet_id;
+
+#else // #if ROCKETNET_SERVER_XDP
+
+    struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
+
+    uint64_t slot = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );
+    if ( slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+    {
+        rocketnet_spam( "server payload ring full. packet dropped" );
+        return NULL;
+    }
+
+    ring->info[slot].to = to;
+    ring->info[slot].client_index = client_index;
+    ring->info[slot].wire_bytes = 0;
+
+    frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
+    context->packet_id = slot;
+
+#endif // #if ROCKETNET_SERVER_XDP
+
+    rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
+
+    context->frame = frame;
+    context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
+    context->payload_capacity = ROCKETNET_MAX_PAYLOAD_BYTES;
+    context->sequence = sequence;
+    context->client_index = client_index;
+
+    return frame;
+}
+
+void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( context );
+
+    if ( !context->frame )
+        return;
+
+#if ROCKETNET_SERVER_XDP
+    rocketnet_server_socket_abort_packet( server_transport->xdp_socket, context->packet_id, context->frame );
+#else // #if ROCKETNET_SERVER_XDP
+    server_transport->payload_ring.info[context->packet_id].wire_bytes = 0;
+#endif // #if ROCKETNET_SERVER_XDP
+
+    context->frame = NULL;
+}
+
+void rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( context );
+
+    if ( !context->frame )
+        return;
+
+    if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
+    {
+        rocketnet_server_abort_packet( server_transport, context );
+        return;
+    }
+
+    int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
+                                                                   context->sequence, context->frame + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                                   payload_bytes, server_transport->time );
+    if ( wire_bytes == 0 )
+    {
+        rocketnet_server_abort_packet( server_transport, context );
+        return;
+    }
+
+#if ROCKETNET_SERVER_XDP
+    rocketnet_server_socket_finish_packet( server_transport->xdp_socket, context->packet_id, context->frame, wire_bytes );
+#else // #if ROCKETNET_SERVER_XDP
+    server_transport->payload_ring.info[context->packet_id].wire_bytes = wire_bytes;
+#endif // #if ROCKETNET_SERVER_XDP
+
+    context->frame = NULL;
+}
+
+void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+
+#if ROCKETNET_SERVER_XDP
+
+    rocketnet_server_socket_send_packets( server_transport->xdp_socket );
+
+#else // #if ROCKETNET_SERVER_XDP
+
+    struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
+
+    uint64_t num_packets = ring->num_packets;
+    if ( num_packets > ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
+        num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
+
+    for ( uint64_t i = 0; i < num_packets; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+        {
+            rocketnet_platform_socket_send_packet( server_transport->socket, &ring->info[i].to,
+                                                   ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                   ring->info[i].wire_bytes );
+        }
+    }
+
+    ring->num_packets = 0;
+
+#endif // #if ROCKETNET_SERVER_XDP
+}
+
+// the convenience: the same path underneath, plus one memcpy the caller chose
+
 void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
                                              int client_index,
                                              const uint8_t * payload_data,
@@ -558,26 +763,17 @@ void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
     rocketnet_assert( server_transport );
     rocketnet_assert( payload_data );
 
-    if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, client_index ) )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
         return;
 
-    int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, client_index );
-    const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
-
-    struct rocketnet_server_frame_t frame;
-    uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
-    if ( !frame_data )
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_start_packet( server_transport, client_index, &context );
+    if ( !frame )
         return;
 
-    // sealed in place into the send frame -- no copy between the seal and
-    // the socket
+    memcpy( frame + context.payload_index, payload_data, payload_bytes );
 
-    int wire_bytes = rocketnet_server_protocol_write_payload( &server_transport->protocol, client_index, payload_data, payload_bytes,
-                                                     server_transport->time, frame_data );
-    if ( wire_bytes > 0 )
-        rocketnet_server_commit_send_frame( server_transport, &frame, wire_bytes );
-    else
-        rocketnet_server_abort_send_frame( server_transport, &frame );
+    rocketnet_server_finish_packet( server_transport, &context, payload_bytes );
 }
 
 void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_transport, int client_index )

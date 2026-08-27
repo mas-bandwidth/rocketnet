@@ -1566,7 +1566,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                     const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
 
-                    memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i], payload_bytes );
+                    memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
                     uint32_t to_address_big_endian = rocketnet_address_ipv4( &send_buffer->packet_info[i].to );
                     uint16_t to_port_big_endian = rocketnet_platform_htons( send_buffer->packet_info[i].to.port );

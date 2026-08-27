@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
@@ -949,6 +950,66 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
         return 0;
 
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
+}
+
+// The fill-phase pair behind the acquire/commit send surface. Any number of
+// game threads run these between update and the flush; the phase contract is
+// what makes them safe -- mappings are created and torn down only by update,
+// which never runs during a fill, so the lookup is over stable state and the
+// only shared words touched are the sequence (an atomic add) and the send
+// timestamp (an atomic store).
+
+int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t * server,
+                                             int client_index,
+                                             struct rocketnet_address_t * to,
+                                             uint64_t * sequence )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( to );
+    rocketnet_assert( sequence );
+
+    if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return 0;
+
+    int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    if ( mapping_index < 0 )
+    {
+        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        return 0;
+    }
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+
+    *to = *rocketnet_encryption_map_address( server->encryption_map, mapping_index );
+    *sequence = rocketnet_platform_atomic_add_u64( &mapping->send_sequence_session, 1 );
+
+    return 1;
+}
+
+int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protocol_t * server,
+                                                  int client_index,
+                                                  uint64_t sequence,
+                                                  uint8_t * wire_start,
+                                                  int payload_bytes,
+                                                  double current_time )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( wire_start );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, server->filter_value, sequence,
+                                                              payload_bytes, server->protocol_id,
+                                                              mapping->connection_salt,
+                                                              mapping->keys.session_server_to_client );
+    if ( wire_bytes == 0 )
+        return 0;
+
+    rocketnet_platform_atomic_store_double( &mapping->last_send_time, current_time );
+
+    return wire_bytes;
 }
 
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
