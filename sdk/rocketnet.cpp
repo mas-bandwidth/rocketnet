@@ -252,6 +252,16 @@ void rocketnet_free( void * context, void * p )
     return rocketnet_free_function( context, p );
 }
 
+double rocketnet_time()
+{
+    return rocketnet_platform_time();
+}
+
+void rocketnet_sleep( double seconds )
+{
+    rocketnet_platform_sleep( seconds );
+}
+
 void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
 {
     memset( p, 0, p_size );
