@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net8.0 (LTS) is the floor so game servers on .NET 8 can reference the
+         binding (family precedent: serialize.cs, netcode.cs). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- the smoke test is its own project in smoke/; keep it out of the
+       classlib's default source glob -->
+  <ItemGroup>
+    <Compile Remove="smoke/**" />
+    <None Remove="smoke/**" />
+  </ItemGroup>
+
+  <!-- family value: zero third-party dependencies. no package references, ever.
+       the native side is librocketnet, the shared library this repo builds. -->
+
+</Project>
