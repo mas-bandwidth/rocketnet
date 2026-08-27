@@ -11,7 +11,10 @@ const char * rocketnet_counter_name( int counter )
     switch ( counter )
     {
         case ROCKETNET_COUNTER_PACKETS_RECEIVED:                                      return "PACKETS_RECEIVED";
-        case ROCKETNET_COUNTER_PREFILTER_DROPPED:                                     return "PREFILTER_DROPPED";
+        case ROCKETNET_COUNTER_PREFILTER_TOO_SHORT:                                   return "PREFILTER_TOO_SHORT";
+        case ROCKETNET_COUNTER_PREFILTER_TOO_LARGE:                                   return "PREFILTER_TOO_LARGE";
+        case ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH:                                 return "PREFILTER_WRONG_EPOCH";
+        case ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE:                                 return "PREFILTER_WRONG_VALUE";
         case ROCKETNET_COUNTER_RESERVED_TYPE:                                         return "RESERVED_TYPE";
         case ROCKETNET_COUNTER_WRONG_DIRECTION:                                       return "WRONG_DIRECTION";
         case ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED:                           return "CONNECTION_REQUEST_RECEIVED";

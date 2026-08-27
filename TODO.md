@@ -164,7 +164,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   landing, their findings recorded in #56.
 - The XDP server transport, first two rungs. The kernel program rewritten
   from flow's byte-range filter to the rocketnet 4-byte prefilter: config
-  map carrying public address, port and per-title tag (written at create;
+  map carrying public address, port, filter value and epoch (written at create;
   until then the program passes all traffic untouched), the shared wire
   rule from rocketnet_wire.h -- one header included by the BPF program,
   the sdk and the tests, so the kernel filter and the userspace refusal

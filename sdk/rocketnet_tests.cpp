@@ -1004,7 +1004,7 @@ void rocketnet_test_prefilter()
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
-    // the embedded test title tag is the published one from the standard
+    // the embedded test filter value is the published one from the standard
     rocketnet_check( memcmp( tag, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
 
     // writing the header produces exactly the assembled vectors' first bytes:
@@ -1036,7 +1036,7 @@ void rocketnet_test_prefilter()
     for ( int epoch = 1; epoch < 256; epoch++ )
     {
         packet[1] = (uint8_t) epoch;
-        rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
+        rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_PREFILTER_WRONG_EPOCH );
     }
     packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
     rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
@@ -1051,7 +1051,7 @@ void rocketnet_test_prefilter()
             if ( (uint8_t) v == original )
                 continue;
             packet[2+i] = (uint8_t) v;
-            rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
+            rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_PREFILTER_WRONG_VALUE );
         }
         packet[2+i] = original;
     }
@@ -1065,21 +1065,22 @@ void rocketnet_test_prefilter()
 
     // NEGATIVE: shorter than the header is refused, at every length
     for ( int bytes = 0; bytes < ROCKETNET_PREFILTER_BYTES; bytes++ )
-        rocketnet_check( rocketnet_prefilter_check( packet, bytes, tag ) == -1 );
+        rocketnet_check( rocketnet_prefilter_check( packet, bytes, tag ) == ROCKETNET_PREFILTER_TOO_SHORT );
 
     // NEGATIVE: larger than the receive ceiling is refused; the ceiling
     // itself is accepted
-    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, tag ) == -1 );
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
     rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
 
-    // NEGATIVE: a wrong tag byte, any of the three, is refused
-    for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
-    {
-        packet[1+i] ^= 1;
-        rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
-        packet[1+i] ^= 1;
-    }
-    rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // every refusal has its own counter and no two share one -- the standard
+    // requires one counter per distinct reason, and a rollup cannot say which
+    // branch a packet actually hit
+    const int codes[4] = { ROCKETNET_PREFILTER_TOO_SHORT, ROCKETNET_PREFILTER_TOO_LARGE,
+                           ROCKETNET_PREFILTER_WRONG_EPOCH, ROCKETNET_PREFILTER_WRONG_VALUE };
+    for ( int i = 0; i < 4; i++ )
+        for ( int j = i + 1; j < 4; j++ )
+            rocketnet_check( rocketnet_prefilter_counter( codes[i] ) != rocketnet_prefilter_counter( codes[j] ) );
 }
 
 void rocketnet_test_packet_associated_data()
@@ -2232,7 +2233,7 @@ void rocketnet_test_request_path_ordering()
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE );
 
     // a bad version AND no cookie: the version check wins and NOTHING is
-    // emitted -- a garbage packet carrying the title tag must never turn the
+    // emitted -- a garbage packet carrying the filter value must never turn the
     // server into a cookie reflector
     rocketnet_test_build_request( request, 0x0B0B, rocketnet_test_salt );
     request[signed_offset + ROCKETNET_SIGNED_OFFSET_VERSION] ^= 1;
@@ -2873,12 +2874,24 @@ void rocketnet_test_server_receive_refusals()
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     memset( packet, 0, sizeof(packet) );
 
-    // prefilter garbage: wrong tag never reaches a type counter
+    // prefilter garbage: a wrong filter value never reaches a type counter,
+    // and lands on its own reason rather than a rollup
     packet[0] = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
     packet[2] = 0xFF; packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
     rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
                                                     payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_DROPPED] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH] == 0 );
+
+    // and a wrong epoch is a different reason again, distinguishable in the
+    // counters -- which is the whole point of splitting them
+    packet[2] = tag[0]; packet[3] = tag[1]; packet[4] = tag[2]; packet[5] = tag[3];
+    packet[1] = 7;
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE] == 1 );
+    packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
 
     // a reserved type is ignored
     uint8_t * p = packet;
@@ -4056,7 +4069,10 @@ void rocketnet_test_swarm()
     }
 
     // the storm did its work: every garbage shape landed where it should
-    rocketnet_check( counters[ROCKETNET_COUNTER_PREFILTER_DROPPED] > 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE] +
+                     counters[ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH] +
+                     counters[ROCKETNET_COUNTER_PREFILTER_TOO_SHORT] +
+                     counters[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] > 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RESERVED_TYPE] > 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] > 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] > 0 );

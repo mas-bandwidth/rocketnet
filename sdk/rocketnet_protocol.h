@@ -28,7 +28,18 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 // refusal. Deliberately knows nothing about types or per-type sizes; those
 // are later steps of the reading order.
 
+// the refusal codes, one per distinct reason, so a caller counts which branch
+// it hit rather than collapsing them -- the standard requires one counter per
+// reason, and the kernel filter already splits them the same way
+
+#define ROCKETNET_PREFILTER_TOO_SHORT       -1
+#define ROCKETNET_PREFILTER_TOO_LARGE       -2
+#define ROCKETNET_PREFILTER_WRONG_EPOCH     -3
+#define ROCKETNET_PREFILTER_WRONG_VALUE     -4
+
 int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value );
+
+int rocketnet_prefilter_counter( int refusal_code );
 
 #define ROCKETNET_SEQUENCE_BYTES                    4
 #define ROCKETNET_SESSION_NONCE_BYTES               8

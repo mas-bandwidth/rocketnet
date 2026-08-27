@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_protocol.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet.h"
@@ -19,24 +20,38 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
     rocketnet_write_bytes( p, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
+// maps a refusal code to its counter, so both receive paths attribute the
+// reason identically and neither invents its own mapping
+
+int rocketnet_prefilter_counter( int refusal_code )
+{
+    switch ( refusal_code )
+    {
+        case ROCKETNET_PREFILTER_TOO_SHORT:   return ROCKETNET_COUNTER_PREFILTER_TOO_SHORT;
+        case ROCKETNET_PREFILTER_TOO_LARGE:   return ROCKETNET_COUNTER_PREFILTER_TOO_LARGE;
+        case ROCKETNET_PREFILTER_WRONG_EPOCH: return ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH;
+        default:                              return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
+    }
+}
+
 int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value )
 {
     if ( packet_bytes < ROCKETNET_PREFILTER_BYTES )
-        return -1;
+        return ROCKETNET_PREFILTER_TOO_SHORT;
 
     if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-        return -1;
+        return ROCKETNET_PREFILTER_TOO_LARGE;
 
     // the epoch decides what produced the filter value. 1.0 is unkeyed only:
     // any other generation names a magic this build does not hold, and is
     // refused on a comparison before the value is even examined.
 
     if ( packet_data[1] != ROCKETNET_FILTER_EPOCH_UNKEYED )
-        return -1;
+        return ROCKETNET_PREFILTER_WRONG_EPOCH;
 
     if ( packet_data[2] != filter_value[0] || packet_data[3] != filter_value[1] ||
          packet_data[4] != filter_value[2] || packet_data[5] != filter_value[3] )
-        return -1;
+        return ROCKETNET_PREFILTER_WRONG_VALUE;
 
     return packet_data[0];
 }

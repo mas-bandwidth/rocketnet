@@ -746,7 +746,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->server_port_big_endian = rocketnet_platform_htons( public_address.port );
 
     // configure the kernel prefilter: the destination it accepts and the
-    // per-title tag. until this write the program passes everything through
+    // per-title filter value and epoch. until this write the program passes
     // untouched, so a server that fails before this point never black-holed
     // the box's other traffic.
 

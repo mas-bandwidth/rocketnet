@@ -32,7 +32,8 @@ Crypto is libsodium. Nothing here needs a primitive outside a stock build:
 * BLAKE2b keyed hashing (`crypto_generichash`) — the address validation cookie,
   and session key derivation.
 * X25519 (`crypto_scalarmult`) — the ephemeral exchange giving forward secrecy.
-* SipHash-2-4 (`crypto_shorthash`) — keying the server's client lookup tables.
+* SipHash-2-4 (`crypto_shorthash`) — keying the server's client lookup tables,
+  and the keyed prefilter value where a deployment adopts it.
 * ChaCha20-Poly1305 IETF AEAD (`crypto_aead_chacha20poly1305_ietf`) — every
   sealed packet.
 
@@ -84,8 +85,14 @@ Every party holds only keys whose exposure it can afford:
 * A **server** additionally holds a per-run secret keying its client lookup
   tables, described under _Lookup complexity_.
 
-There is no key in the system that is both shared and secret. That property
-is load-bearing everywhere below.
+There is no key in the system that is both shared and secret, and that
+property is load-bearing everywhere below. **The keyed prefilter of _The
+Prefilter Header_ is the single exception, and it is scoped so the property
+still holds where it matters**: the magic is shared between a backend, its
+servers and its clients, it protects nothing but the filter, and no session,
+token or key derivation depends on it. A deployment that adopts it accepts one
+shared secret in exchange for cheap flood rejection; every guarantee this
+standard makes survives its disclosure.
 
 **The one channel that must still be trusted** is server provisioning: the
 backend must learn each server's X25519 public key, bound to that server's
@@ -332,8 +339,12 @@ port. Against that it is decisive. A 32-bit constant admits one packet in 4.3
 billion, and the type and size checks that accompany it cost nothing; even a 10
 Gbps flood of minimum-size frames — about 14.9 million packets per second — puts
 one packet every five minutes in front of a check that rejects it in a handful of
-instructions. **The drop is silent**: no error, no response, no timing signal, so
-a flood tool receives nothing to iterate against.
+instructions. **The drop is silent**: no error, no response, no timing signal, so a flood
+tool receives nothing to iterate against. *That last clause is true of the
+unkeyed form only. A keyed receiver rejects a dead epoch on a comparison and
+spends a MAC on a live one, which is measurable from outside and tells a patient
+prober which generations are live -- the cost of making verification cheap, and
+worth naming rather than leaving to be discovered.*
 
 The value is 4 bytes because that is proportionate to the job and because the
 keyed form needs the same width. **Interoperability is by value, not by
@@ -375,13 +386,13 @@ nothing to get wrong per type.
 request the return cookie field is zero, so the filter value is constant for a
 given epoch, type and length. That path is already the one the address
 validation cookie exists to rate limit, and it costs an attacker a captured
-packet and gains them entry to a gate that answers with 36 bytes.*
+packet and gains them entry to a gate that answers with 38 bytes.*
 
 **The epoch byte is what makes verification cheap, and it is the reason it is on
 the wire.** A receiver holding several live magics would otherwise have to try
 each in turn — the design this one descends from tried its three generations
-against two server addresses, up to six MAC computations for every packet that
-reached that stage. Here the sender names the generation, so the receiver indexes
+that way, one MAC computation per live generation for every packet that reached
+that stage. Here the sender names the generation, so the receiver indexes
 its magic array once and computes **one** MAC. A packet whose epoch names a
 generation the receiver does not hold is dropped before any MAC is computed at
 all, on a comparison.
@@ -423,8 +434,8 @@ which is worse than not having the feature.*
 
 ### Where the keyed form comes from, and what it is for
 
-**The magic is a secret the client never ships.** It reaches a client in its
-connect token, per generation, from the backend — so an attacker who
+**The magic is a secret the client never ships**, but receives at run time
+from the backend — so an attacker who
 disassembles a game client obtains the algorithm and the layout and can still
 mint nothing. The security of the keyed filter reduces exactly to the
 confidentiality of connect tokens and the rotation period, both of which are
@@ -438,9 +449,29 @@ than a cryptographic construction chosen to survive analysis: a key that outlive
 its own cryptanalysis by less than the time cryptanalysis takes does not need to
 resist it.*
 
+**How magics reach servers and clients is deliberately not specified here, and
+1.0 provides no channel for it.** The connect token is a fixed 768 bytes with
+every field enumerated, and its only free space lies inside the signed connect
+data, which travels in the clear inside every connection request -- so a secret
+cannot be carried there at all. Specifying the channel belongs with the backend
+layer that would distribute it, and this section stops at the wire format the
+channel would feed.
+
+*Which scopes the claim this format is designed on: adopting the keyed form
+costs no change to the packet header, because the epoch and the value are
+already there. It is not a promise that nothing else changes -- carrying magics
+will require a token field or a server-side channel that 1.0 does not have.*
+
 **None of this is available without a backend the servers talk to**, which is
 the same requirement the identity posture below rests on, and the two arrive
 together or not at all.
+
+**And it is unavailable to player-hosted fleets, which is the deployment model
+this standard headlines.** A player-hosted server is untrusted by construction --
+that is why the backend shares no secret with it -- and the keyed filter would
+hand it a live magic, and through it every client's. A title running community
+servers runs at epoch 0; the keyed form belongs to fleets whose servers the
+operator controls.
 
 ### Structural checks that accompany the header
 
@@ -738,7 +769,7 @@ shared from an account that paid for one, and the backend's authentication —
 the thing the whole architecture exists to enforce — is bypassed without ever
 being attacked.
 
-**The only posture that closes it is identity based: a given player may be
+**The only posture that removes the incentive is identity based: a given player may be
 connected to one server at a time.** Connect elsewhere and the previous session
 ends. A token handed to somebody else does not multiply the sharer's access, it
 **transfers** it: whoever connects second takes the seat and the other is put
@@ -1220,7 +1251,13 @@ In this exact order:
 
 * **If the filter value does not match, ignore the packet**: the per-title
   constant at epoch 0, or the MAC recomputed under the named magic. Both are
-  specified in _The Prefilter Header_.
+  specified in _The Prefilter Header_. **A keyed receiver ignores any packet
+  shorter than 10 bytes before computing anything**, because the MAC covers the
+  four bytes after the header and those bytes must exist; the per-type size
+  check below is a later step and cannot be relied on to bound this one.
+  **The comparison MUST be constant time when the epoch is nonzero**, as for
+  every other MAC in this standard -- at epoch 0 the value is public and an
+  ordinary compare is correct.
 
 * **If the packet's total size does not match its type — the exact wire size
   from the _Packet sizes_ table, or 27 to 1400 bytes for a payload (the fixed
@@ -1384,6 +1421,15 @@ stronger:
   the table is not attacker-chosen in the first place. This is a property of the
   handshake rather than of the data structure, and it holds even if the hash were
   predictable.
+
+*The header spends two bytes on the epoch and the wider filter value, and this
+document declines two bytes twice elsewhere — the slot index just below, and a
+connection identifier under _The client address is the connection identity_. The
+difference is that both of those buy a capability for the packet carrying them,
+where these two buy the ability to change the filter later without moving the
+wire, which is a cost paid once against a break that would otherwise be paid by
+every implementation at once. A reader who weighs it the other way is not being
+unreasonable.*
 
 *An alternative was considered and declined: carrying the client's slot index in
 the clear in every packet, so a server indexes its slot array directly and
@@ -2160,6 +2206,14 @@ rejected**, not one per category. `wrong size`, `token expired` and
 error counter tells you something is wrong, which you already knew, while a
 counter per reason tells you which check refused and therefore where to look.
 
+**The prefilter is not exempt, and it has four reasons rather than one**: too
+short, too large, wrong epoch, and wrong filter value. A single
+`prefilter_dropped` would answer none of the questions worth asking of it — a
+deployment that has just rotated a magic needs to know whether it is refusing
+epochs or values, and a title investigating a flood needs to know whether the
+traffic is malformed or merely foreign. The same split belongs in a kernel
+filter, so the two report in the same shape.
+
 Counters follow these rules:
 
 * **One flat namespace**, `ROCKETNET_COUNTER_<SUBJECT>_<OUTCOME>`. No hierarchy,
@@ -2462,10 +2516,10 @@ the keep-alive it provokes, and a connected client would be a small reflector.
 | connection request | 710 | connection cookie | 38 | ok |
 | connection request | 710 | connection challenge, fresh or resent | 66 | ok |
 | connection request | 710 | connection denied | 34 | ok |
-| connection challenge | 64 | connection response | 48 | ok |
-| connection response | 48 | connection keep-alive | 32 | ok |
-| connection response | 48 | connection denied | 32 | ok |
-| connection cookie | 36 | *nothing* | — | see _Connection cookie packet_ |
+| connection challenge | 66 | connection response | 50 | ok |
+| connection response | 50 | connection keep-alive | 34 | ok |
+| connection response | 50 | connection denied | 34 | ok |
+| connection cookie | 38 | *nothing* | — | see _Connection cookie packet_ |
 
 Two rules keep the table true rather than merely accurate today. **Padding used
 to satisfy it MUST be required on read**, checked for both length and content,
@@ -2474,7 +2528,7 @@ MUST NOT answer a request it has rejected** — every failure path in _Processin
 Connection Requests_ ignores the packet silently, and the single exception is the
 cookie, which is 38 bytes against 710 and is the price of address validation
 having to start somewhere. The widest margins are a 710-byte request answered by
-a 64-byte challenge or a 36-byte cookie. At those ratios neither response is
+a 66-byte challenge or a 38-byte cookie. At those ratios neither response is
 usefully a reflection primitive: an attacker spoofing a victim's address to place
 66 bytes there spends 710 to do it, an eleven-to-one loss, and would do strictly
 better sending those 710 bytes at the victim directly. The cost of a spoofed
@@ -2651,9 +2705,12 @@ and servers, and signature verification before the sealed block is trusted.
 
 The prefilter header must be present and correctly formed on every packet an
 implementation sends, and its derivation must not depend on the sender's own
-source address. Whether a receiver checks it in userspace, in a kernel program,
-or not at all is a quality-of-implementation choice, since the sealed layer
-beneath it carries the security guarantees.
+source address. **Where a receiver checks it — userspace, a kernel program, or
+both — is a quality-of-implementation choice; whether it checks is not.** At
+epoch 0 a receiver that skips the check loses only flood rejection, since the
+sealed layer beneath carries the security guarantees; a deployment that has
+adopted the keyed form MUST perform the check, because its refusal of epoch 0 is
+what stops an attacker selecting the unkeyed path.
 
 ### Demonstrating conformance
 

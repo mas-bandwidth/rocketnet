@@ -797,7 +797,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     if ( packet_type < 0 )
     {
         rocketnet_spam( "server dropped packet. failed prefilter" );
-        counters[ROCKETNET_COUNTER_PREFILTER_DROPPED]++;
+        counters[ rocketnet_prefilter_counter( packet_type ) ]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 

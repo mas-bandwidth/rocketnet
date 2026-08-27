@@ -696,7 +696,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     if ( packet_type < 0 )
     {
         rocketnet_spam( "client dropped packet. prefilter" );
-        counters[ROCKETNET_COUNTER_PREFILTER_DROPPED]++;
+        counters[ rocketnet_prefilter_counter( packet_type ) ]++;
         return 0;
     }
 
