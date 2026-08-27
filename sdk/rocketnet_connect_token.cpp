@@ -5,6 +5,8 @@
 
 #include "rocketnet_connect_token.h"
 #include "rocketnet_read_write.h"
+#include "rocketnet_address.h"
+#include "rocketnet.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -144,4 +146,87 @@ void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * s
     crypto_generichash( identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES,
                         signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                         NULL, 0 );
+}
+
+// the published development keys, from the standard, byte for byte -- the
+// test suite asserts these equal the vector copies, so they cannot drift
+
+const uint8_t rocketnet_dev_backend_public_key[32] =
+{
+    0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99,
+    0x29, 0xa5, 0xb4, 0xbf, 0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d,
+    0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c};
+
+const uint8_t rocketnet_dev_backend_secret_key[64] =
+{
+    0x75, 0x29, 0x02, 0x15, 0xe1, 0xff, 0x4d, 0xf2, 0x09, 0x92, 0x57, 0x8a,
+    0x22, 0x3c, 0x7c, 0xd4, 0x63, 0xb9, 0xa2, 0x7c, 0xf8, 0x3a, 0xa7, 0x1c,
+    0x7a, 0x16, 0x93, 0x1c, 0x01, 0x9b, 0x7c, 0x30, 0xb0, 0xab, 0x03, 0xb3,
+    0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf,
+    0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8,
+    0x58, 0xbd, 0x24, 0x2c};
+
+const uint8_t rocketnet_dev_server_public_key[32] =
+{
+    0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57,
+    0x70, 0xcb, 0x71, 0x47, 0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c,
+    0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c};
+
+const uint8_t rocketnet_dev_server_secret_key[32] =
+{
+    0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde,
+    0x31, 0x18, 0xd8, 0x39, 0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70,
+    0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97};
+
+int rocketnet_write_dev_connect_token( const char * server_address_string,
+                                       uint64_t client_id,
+                                       uint64_t current_timestamp,
+                                       uint8_t * connect_token )
+{
+    rocketnet_assert( server_address_string );
+    rocketnet_assert( connect_token );
+
+    struct rocketnet_address_t server_address;
+    if ( !rocketnet_address_parse( &server_address, server_address_string ) )
+        return 0;
+    if ( server_address.type != ROCKETNET_ADDRESS_IPV4 && server_address.type != ROCKETNET_ADDRESS_IPV6 )
+        return 0;
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = current_timestamp;
+    signed_fields.expire_timestamp = current_timestamp + 300;
+    signed_fields.timeout_seconds = 10;
+    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
+
+    uint8_t * p;
+    if ( server_address.type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+        p = signed_fields.ipv4_address;
+        rocketnet_write_bytes( &p, server_address.data.ipv4, 4 );
+        rocketnet_write_uint16( &p, server_address.port );
+    }
+    else
+    {
+        signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV6;
+        p = signed_fields.ipv6_address;
+        for ( int i = 0; i < 8; i++ )
+            rocketnet_write_uint16( &p, server_address.data.ipv6[i] );
+        rocketnet_write_uint16( &p, server_address.port );
+    }
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof(private_fields) );
+    private_fields.client_id = client_id;
+    randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
+    randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
+
+    int result = rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, connect_token );
+
+    sodium_memzero( &private_fields, sizeof(private_fields) );
+
+    return result;
 }

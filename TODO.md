@@ -148,14 +148,30 @@ land. The milestone view is issue #28; this file is the live ordering.
   live code path), scaffolding scan clean, client keep-alive suppression
   completed and proven.
 
+- Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
+  the connection protocol — the client transport keeps the dual-stack bind,
+  preferred ports and receive-thread double buffering verbatim, with the
+  protocol at the main-thread seam; the server transport keeps the
+  zero-copy shape (payloads out as pointers, sends sealed in place into
+  frames, flushed together). The dev surface implemented: published dev
+  keys embedded (asserted byte-equal to the test vectors so the copies
+  cannot drift) and local dev-token minting. client.cpp and server.cpp are
+  the simplest out-of-the-box demos — make && ./bin/server, ./bin/client,
+  connected in ~234ms over real UDP with the state machine narrating at
+  info level, payloads echoing, clean disconnect. Proven by the transport
+  UDP loopback functional test and by running the real binaries. The old
+  client socket contracted (deleted, no callers); old server socket files
+  remain until the XDP transport rung ports the protocol into them.
+
 ## TODO
 
-- Step 2: transports. The socket layer over the protocol objects (portable
-  sockets first, then the platform work: AF_XDP single-server, io_uring,
-  IOCP), the socket-level swarm with Go orchestration, and the old flow-era
-  wire code (packet filter, old constants, old client/server sockets)
-  contracting as the new connect replaces its callers. server_xdp rewrites
-  to the 4-byte prefilter here (#19 ipv6 too).
+- The XDP server transport: port the protocol into the linux backend (the
+  pre-merge XDP relay is the exemplar), rewrite server_xdp to the 4-byte
+  prefilter (#19 ipv6 too), and contract the old server socket files and
+  the old packet filter as their callers go. Then io_uring and IOCP.
+  Compile-time transport selection stays for now; runtime configuration
+  with preference ordering is a named follow-on.
+- The socket-level swarm with Go orchestration, against real transports.
 - Soak: hours-to-days at load once sockets exist, per the verification
   ladder — polite and garbage traffic, counters asserted while running,
   past 2^32 packets on one connection so sequence reconstruction's wrap is

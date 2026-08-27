@@ -151,6 +151,14 @@ struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct r
     return &map->mapping[index];
 }
 
+const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index )
+{
+    rocketnet_assert( map );
+    rocketnet_assert( index >= 0 && index < map->capacity );
+    rocketnet_assert( map->live[index] );
+    return &map->address[index];
+}
+
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
 {
     rocketnet_assert( map );
