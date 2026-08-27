@@ -967,7 +967,11 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         xdp_program__close( server_socket->program );
     }
 
-    for ( int i = 0; i < server_socket->num_queues; i++ )
+    // the queue array is allocated late in create, so a create that failed
+    // before it exists reaches here with num_queues already set and the
+    // array still null -- walk it only when it is real
+
+    for ( int i = 0; server_socket->socket != NULL && i < server_socket->num_queues; i++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[i];
 
