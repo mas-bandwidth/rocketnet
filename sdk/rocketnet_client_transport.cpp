@@ -343,6 +343,7 @@ uint8_t * rocketnet_client_start_packet( rocketnet_client_t * client_transport, 
     if ( slot >= ROCKETNET_CLIENT_PAYLOAD_RING_SIZE )
     {
         rocketnet_spam( "client payload ring full. packet dropped" );
+        rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
         return NULL;
     }
 
@@ -374,18 +375,18 @@ void rocketnet_client_abort_packet( rocketnet_client_t * client_transport, struc
     context->frame = NULL;
 }
 
-void rocketnet_client_finish_packet( rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+int rocketnet_client_finish_packet( rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( context );
 
     if ( !context->frame )
-        return;
+        return 0;
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
         rocketnet_client_abort_packet( client_transport, context );
-        return;
+        return 0;
     }
 
     int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client_transport->protocol, context->sequence,
@@ -394,11 +395,13 @@ void rocketnet_client_finish_packet( rocketnet_client_t * client_transport, stru
     if ( wire_bytes == 0 )
     {
         rocketnet_client_abort_packet( client_transport, context );
-        return;
+        return 0;
     }
 
     client_transport->payload_ring.info[context->packet_id].wire_bytes = wire_bytes;
     context->frame = NULL;
+
+    return wire_bytes;
 }
 
 void rocketnet_client_send_packets( rocketnet_client_t * client_transport )

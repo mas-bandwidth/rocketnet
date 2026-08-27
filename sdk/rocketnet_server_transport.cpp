@@ -109,8 +109,16 @@ struct rocketnet_server_t
 
     double time;                                        // the game's clock, last seen
 
+#if ROCKETNET_SERVER_XDP
+    volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
+    uint64_t send_flushed;                              // main thread only
+#endif // #if ROCKETNET_SERVER_XDP
+
     struct rocketnet_server_payloads_t payloads;
-    uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
+    // any buffer a ReadStream is bound over must extend at least 8 bytes past
+    // the end of its data -- this is the last member, so the slack is real.
+    uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
 // The send frame seam both backends serve: reserve hands back a frame to
@@ -546,12 +554,17 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
     }
 
     // flush. the portable response ring sends inline here; the XDP socket is
-    // flushed ONCE per frame, by rocketnet_server_send_packets -- its buffer
-    // flip retargets the drain and zeroes the buffers behind it, so a second
-    // flip in the same frame destroys whatever the first one staged before
-    // the xdp thread has copied it out. update stages; send_packets flushes.
+    // flushed by rocketnet_server_send_packets -- its buffer flip retargets
+    // the drain and zeroes the buffers behind it, so flipping with nothing
+    // staged would destroy in-flight packets. update marks itself staged
+    // (responses and keep-alives ride the same buffers) and the flush below
+    // flips only when something has staged since the last flip, which makes
+    // a redundant send_packets call a no-op instead of the failure this
+    // machinery produced live.
 
 #if ROCKETNET_SERVER_XDP
+
+    server_transport->send_staged++;
 
 #else // #if ROCKETNET_SERVER_XDP
 
@@ -641,7 +654,11 @@ uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_tran
     uint64_t packet_id;
     frame = rocketnet_server_socket_start_packet( server_transport->xdp_socket, &to, &packet_id );
     if ( !frame )
+    {
+        rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
         return NULL;
+    }
+    rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
     context->packet_id = packet_id;
 
 #else // #if ROCKETNET_SERVER_XDP
@@ -652,6 +669,7 @@ uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_tran
     if ( slot >= ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
     {
         rocketnet_spam( "server payload ring full. packet dropped" );
+        rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
         return NULL;
     }
 
@@ -692,18 +710,18 @@ void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport
     context->frame = NULL;
 }
 
-void rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
 
     if ( !context->frame )
-        return;
+        return 0;
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
         rocketnet_server_abort_packet( server_transport, context );
-        return;
+        return 0;
     }
 
     int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
@@ -712,7 +730,7 @@ void rocketnet_server_finish_packet( struct rocketnet_server_t * server_transpor
     if ( wire_bytes == 0 )
     {
         rocketnet_server_abort_packet( server_transport, context );
-        return;
+        return 0;
     }
 
 #if ROCKETNET_SERVER_XDP
@@ -722,6 +740,8 @@ void rocketnet_server_finish_packet( struct rocketnet_server_t * server_transpor
 #endif // #if ROCKETNET_SERVER_XDP
 
     context->frame = NULL;
+
+    return wire_bytes;
 }
 
 void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport )
@@ -730,7 +750,14 @@ void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport
 
 #if ROCKETNET_SERVER_XDP
 
-    rocketnet_server_socket_send_packets( server_transport->xdp_socket );
+    // flip only when something staged since the last flip: the flip is
+    // destructive to run twice on one staging generation
+
+    if ( server_transport->send_staged != server_transport->send_flushed )
+    {
+        server_transport->send_flushed = server_transport->send_staged;
+        rocketnet_server_socket_send_packets( server_transport->xdp_socket );
+    }
 
 #else // #if ROCKETNET_SERVER_XDP
 
@@ -801,7 +828,7 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_tran
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &client_address, &frame );
         if ( !frame_data )
             break;
-        memcpy( frame_data, burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
+        memcpy( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
         rocketnet_server_commit_send_frame( server_transport, &frame, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
     }
 }

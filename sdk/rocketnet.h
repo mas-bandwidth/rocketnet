@@ -431,11 +431,14 @@ ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_payload( struct rocketnet_clien
 ROCKETNET_EXPORT_FUNC int rocketnet_client_payloads( struct rocketnet_client_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes );
 
 // the client's acquire/commit send family: the same shape, layout and
-// threading contract as the server's, minus the client index.
+// threading contract as the server's, minus the client index. NOTE:
+// rocketnet_client_send_packet (the convenience above) flushes the ring
+// inline and is therefore main-thread only, never during an open fill --
+// it is the simple form, not a fill-phase participant.
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_start_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_finish_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_finish_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_abort_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
 
@@ -527,10 +530,20 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_payloads( struct rocketnet_server_t *
 // packet is encrypted where it was written. send_packets flushes
 // everything staged.
 //
-// Threading contract: update and send_packets run on the main thread.
-// start_packet, finish_packet and abort_packet may run on any number of
-// game threads strictly between an update and the following send_packets.
-// The fields of the context are read-only to the caller.
+// Threading contract: update and send_packets run on the main thread, and
+// so do disconnect, disconnect_client and stop -- never while a fill is
+// open. start_packet, finish_packet and abort_packet may run on any number
+// of game threads strictly between an update and the following
+// send_packets, and the handoff between fill and flush must be a
+// synchronizing operation (a join or a barrier), not a wall-clock wait.
+// send_packets is required once per frame, after update: packets are never
+// sent without it. Calling it again in the same frame is a no-op. The
+// fields of the context are read-only to the caller.
+//
+// finish_packet returns the sealed wire size, or zero when the packet was
+// dropped instead (payload out of range, or the connection gone) -- the
+// sequence is burned either way, which the receiver's replay window
+// tolerates.
 
 struct rocketnet_packet_context_t
 {
@@ -544,7 +557,7 @@ struct rocketnet_packet_context_t
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_transport, int client_index, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context );
 
@@ -554,7 +567,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packet( struct rocketnet_server
 
 // Disconnects one connected client deliberately: the redundant disconnect
 // burst goes out on the next flush and the slot frees immediately. Why is
-// the game's decision; this is only the mechanism.
+// the game's decision; this is only the mechanism. Main thread only, never
+// while a fill phase is open -- it tears down the connection state the
+// fill relies on.
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_transport, int client_index );
 
@@ -623,10 +638,14 @@ namespace rocketnet
         return true;
     }
 
-    inline void server_finish_packet( struct rocketnet_server_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    // serialize's write side checks bounds with asserts only, by design: a
+    // Release overflow past the payload capacity is not caught here or
+    // there. Size packets to the capacity the context reports.
+
+    inline bool server_finish_packet( struct rocketnet_server_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        rocketnet_server_finish_packet( server, &context, (int) stream.GetBytesProcessed() );
+        return rocketnet_server_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
     }
 
     inline void server_abort_packet( struct rocketnet_server_t * server, struct rocketnet_packet_context_t & context )
@@ -653,10 +672,10 @@ namespace rocketnet
         return true;
     }
 
-    inline void client_finish_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    inline bool client_finish_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        rocketnet_client_finish_packet( client, &context, (int) stream.GetBytesProcessed() );
+        return rocketnet_client_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
     }
 
     inline void client_abort_packet( struct rocketnet_client_t * client, struct rocketnet_packet_context_t & context )

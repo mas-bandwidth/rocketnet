@@ -274,7 +274,14 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         long long bits;
         memcpy( &bits, &store, 8 );
+    #if defined(_M_IX86)
+        // 32-bit x86 has no _InterlockedExchange64; emulate with a CAS loop
+        long long expected = *(volatile long long *) value;
+        while ( _InterlockedCompareExchange64( (volatile long long *) value, bits, expected ) != expected )
+            expected = *(volatile long long *) value;
+    #else // #if defined(_M_IX86)
         _InterlockedExchange64( (volatile long long *) value, bits );
+    #endif // #if defined(_M_IX86)
     }
 
 #else // #if defined(_MSC_VER)
