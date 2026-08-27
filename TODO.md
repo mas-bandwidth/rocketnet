@@ -162,6 +162,24 @@ land. The milestone view is issue #28; this file is the live ordering.
   transports stay loop-agnostic. server.c runs it at 60Hz out of the box.
   The prototype and its windows dispatch workflow contracted with the
   landing, their findings recorded in #56.
+- The XDP server transport, first two rungs. The kernel program rewritten
+  from flow's byte-range filter to the rocketnet 4-byte prefilter: config
+  map carrying public address, port and per-title tag (written at create;
+  until then the program passes all traffic untouched), the shared wire
+  rule from rocketnet_wire.h -- one header included by the BPF program,
+  the sdk and the tests, so the kernel filter and the userspace refusal
+  ladder cannot drift -- and a per-CPU stats map counting every verdict.
+  The AF_XDP socket de-flowed: no pittle/chonkle, no app header, frames
+  are complete wire bytes; config map actually populated (it never was);
+  create-failure destroy crash fixed. The server transport gained the
+  compile-time XDP backend behind a reserve/commit/abort frame seam, the
+  portable path unchanged. Contracted: the old packet filter and its
+  tests, rocketnet_packets.h, the flow-era portable server socket. PROVEN
+  LIVE on the space box, veth pair in a netns, real NIC untouched: full
+  handshake and 1800 pattern payloads echoed through kernel program,
+  AF_XDP rings and crafted-frame sends; six garbage packets injected at
+  the filter counted exactly -- five wrong tag, one too small -- with
+  nothing reaching userspace.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -192,12 +210,12 @@ land. The milestone view is issue #28; this file is the live ordering.
   language binds the same way; whether the inside shims to C++ is an
   implementation privilege, not a surface concern. The Dean Surface (#22)
   is this surface's usage spec.
-- The XDP server transport: port the protocol into the linux backend (the
-  pre-merge XDP relay is the exemplar), rewrite server_xdp to the 4-byte
-  prefilter (#19 ipv6 too), and contract the old server socket files and
-  the old packet filter as their callers go. Then io_uring and IOCP.
-  Compile-time transport selection stays for now; runtime configuration
-  with preference ordering is a named follow-on.
+- The XDP server transport, remaining rungs: ipv6 in the kernel program
+  and the userspace path (#19); surface the kernel filter counters
+  through the transport counter surface; bring-up on a real NIC (the
+  space box, blessed, players quiet); then io_uring and IOCP. Compile-time
+  transport selection stays for now; runtime configuration with
+  preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
