@@ -188,6 +188,15 @@ land. The milestone view is issue #28; this file is the live ordering.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.
+- The ultimate soak: re-integrate rocketnet into the space game (vendored
+  byte-for-byte per the vendoring law) and the space server on ssh space
+  soaks it under real conditions -- how flow itself was developed.
+  Integration note that matters: the space server pegs to real time with
+  drop-frame detection and spinlock-plus-sleep to exact frame ends, never
+  naive sleeps -- rocketnet's update is non-blocking with time passed in
+  and bounded O(max) walks, which is exactly what that loop requires, and
+  nothing in the transports may ever block or take unbounded time in
+  update.
 - XDP test harnesses, its own thing at its own rung: packet blaster
   loads to prove line rate, and simulated clients against the XDP server.
   Right on the line; complicated; not now.
