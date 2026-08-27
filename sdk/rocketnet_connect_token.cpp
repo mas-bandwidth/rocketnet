@@ -230,3 +230,4 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
 
     return result;
 }
+

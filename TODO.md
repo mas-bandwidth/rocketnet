@@ -196,6 +196,18 @@ land. The milestone view is issue #28; this file is the live ordering.
   SIGTERM before its buffered stdout flushed, so the redirect count is
   the payload evidence rather than the client's own line; kill it with
   SIGINT, which it handles.
+- The public surface is rocketnet_server_* and rocketnet_client_*, ruled:
+  the transport word is internal, so the forest header now reads
+  rocketnet_server_create/update/payloads/send_packet/is_client_connected/
+  disconnect_client and the client equivalents, netcode voice exactly. The
+  protocol layer's functions moved to the rocketnet_server_protocol_* and
+  rocketnet_client_protocol_* namespace to vacate the public names.
+- rocketnet_server_disconnect_client, netcode parity: the deliberate
+  server-side disconnect of one connected client. The protocol writes the
+  same redundant ten-packet sealed burst the client sends, then releases
+  the slot and destroys the mapping immediately; the transport stages the
+  burst through the frame seam on either backend. Proven in test with a
+  negative control on the release, and the reasons live above the library.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -232,6 +244,32 @@ land. The milestone view is issue #28; this file is the live ordering.
   transport selection stays for now; runtime configuration with
   preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
+- THE SESSION LAYER, a v2 offering (ruled 2026-08-27, the frame sync
+  argument at the connection layer: every game has to work this out, so the
+  library should hand it to them). The requirement, Glenn's words: done
+  completely, it MUST have a backend the server talks to, and that backend
+  must handle identity-based auth whose consequence is giving away your
+  slot -- one identity, one seat, so a shared token steals the sharer's
+  own place and the incentive does the enforcement. The reference
+  implementation already exists and runs: space game's backend.go does
+  exactly this, so the epic is an extraction, not a design -- proven in
+  the game, generalized into the library as an OPTIONAL layer, wanted for
+  space game itself, and sequenced strictly behind the RocketWerkz
+  deliverable. And that only works if
+  the backend can kick the old player off a server when the same user hash
+  pops on elsewhere, which is precisely what this sitting's
+  rocketnet_server_disconnect_client exists to serve: the library verb the
+  backend channel pulls. Everything else hangs off that spine: client address pinning in the connect token (built
+  once on the token-pin branch, reverted, the reference implementation
+  lives in that history: family byte plus 16 address bytes in the signed
+  slack at offset 521, refused ahead of asymmetric work, unforgeable
+  because re-pinning breaks the signature); the rolling magic with the
+  current/previous/next acceptance window; and the derived prefilter bytes
+  (per-title function of source, destination and length with internal
+  redundancy, pittle generalized, needing the userspace/BPF differential
+  gate). Deliberately NOT in v1: standalone IP pinning without the slot
+  economics is not worth its support tail, and none of this is what Dean
+  expects out of the box.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.

@@ -187,7 +187,7 @@ int main( int argc, char ** argv )
             randombytes_buf( private_fields.server_to_client_key, 32 );
             rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data );
 
-            rocketnet_client_connect( &client, token_data, time, timestamp );
+            rocketnet_client_protocol_connect( &client, token_data, time, timestamp );
             attempts++;
         }
 
@@ -221,7 +221,7 @@ int main( int argc, char ** argv )
         {
             uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
             int burst_count = 0;
-            rocketnet_client_disconnect( &client, burst, &burst_count );
+            rocketnet_client_protocol_disconnect( &client, burst, &burst_count );
             for ( int i = 0; i < burst_count; i++ )
                 rocketnet_network_simulator_send( simulator, &client_address[c], &server_address,
                                                   burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
@@ -230,7 +230,7 @@ int main( int argc, char ** argv )
 
         // client drives, wire carries, server answers, wire carries back
 
-        rocketnet_client_update( &client, time, packet, &packet_bytes );
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
         if ( packet_bytes > 0 )
             rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
 
@@ -238,7 +238,7 @@ int main( int argc, char ** argv )
         {
             uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
-            int bytes = rocketnet_client_write_payload( &client, payload, payload_size, time, packet );
+            int bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet );
             if ( bytes > 0 )
                 rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, bytes, time );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
@@ -255,7 +255,7 @@ int main( int argc, char ** argv )
             uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
             int delivered_bytes = 0;
             int delivered_client_index = -1;
-            rocketnet_server_process_packet( &server, &from, packet, bytes, timestamp, time,
+            rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
                                              response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index );
             if ( response_bytes > 0 )
                 rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
@@ -268,11 +268,11 @@ int main( int argc, char ** argv )
             }
         }
 
-        rocketnet_server_update( &server, time );
+        rocketnet_server_protocol_update( &server, time );
         for ( int i = 0; i < 16; i++ )
         {
             uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
-            int keep_alive_bytes = rocketnet_server_write_keep_alive_if_due( &server, i, time, keep_alive );
+            int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server, i, time, keep_alive );
             if ( keep_alive_bytes > 0 )
             {
                 int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
@@ -287,7 +287,7 @@ int main( int argc, char ** argv )
             {
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
-                if ( rocketnet_client_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) && delivered_bytes > 0 )
+                if ( rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) && delivered_bytes > 0 )
                 {
                     if ( verify_payload( delivered, delivered_bytes ) )
                         payloads_verified++;

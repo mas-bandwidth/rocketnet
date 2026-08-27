@@ -18,7 +18,7 @@
 // the receive thread fills one buffer while update processes the other --
 // flow's IO, carried over whole
 
-struct rocketnet_client_transport_receive_buffer_t
+struct rocketnet_client_receive_buffer_t
 {
     int num_packets;
     rocketnet_address_t from[ROCKETNET_NUM_CLIENT_PACKETS];
@@ -31,7 +31,7 @@ struct rocketnet_client_transport_receive_buffer_t
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
-struct rocketnet_client_transport_received_packets_t
+struct rocketnet_client_received_packets_t
 {
     int num_packets;
     int receive_index;
@@ -40,7 +40,7 @@ struct rocketnet_client_transport_received_packets_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
-struct rocketnet_client_transport_t
+struct rocketnet_client_t
 {
     void * context;
 
@@ -53,16 +53,16 @@ struct rocketnet_client_transport_t
     std::atomic<bool> quit;
 
     int receive_buffer_index;
-    rocketnet_client_transport_received_packets_t received_packets;
-    rocketnet_client_transport_receive_buffer_t receive_buffer[2];
+    rocketnet_client_received_packets_t received_packets;
+    rocketnet_client_receive_buffer_t receive_buffer[2];
 
     struct rocketnet_counters_t counters;
     struct rocketnet_client_protocol_t protocol;
 };
 
-static void rocketnet_client_transport_thread_function( void * data );
+static void rocketnet_client_thread_function( void * data );
 
-rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const char * connect_address_string )
+rocketnet_client_t * rocketnet_client_create( void * context, const char * connect_address_string )
 {
     rocketnet_assert( connect_address_string );
 
@@ -82,14 +82,14 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_info( "client connecting to %s (development token)", rocketnet_address_to_string( &server_address, string_buffer ) );
 
-    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) rocketnet_malloc( context, sizeof(rocketnet_client_transport_t) );
+    rocketnet_client_t * client_transport = (rocketnet_client_t*) rocketnet_malloc( context, sizeof(rocketnet_client_t) );
     if ( !client_transport )
     {
         rocketnet_error( "could not allocate client" );
         return NULL;
     }
 
-    memset( (char*) client_transport, 0, sizeof(rocketnet_client_transport_t) );
+    memset( (char*) client_transport, 0, sizeof(rocketnet_client_t) );
 
     client_transport->context = context;
 
@@ -120,7 +120,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     if ( client_transport->socket == NULL )
     {
         rocketnet_error( "client could not create socket" );
-        rocketnet_client_transport_destroy( client_transport );
+        rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
@@ -141,35 +141,35 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     if ( !rocketnet_write_dev_connect_token( connect_address_string, client_id, (uint64_t) time( NULL ), connect_token ) )
     {
         rocketnet_error( "client could not mint dev connect token" );
-        rocketnet_client_transport_destroy( client_transport );
+        rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
-    if ( !rocketnet_client_connect( &client_transport->protocol, connect_token, rocketnet_platform_time(), (uint64_t) time( NULL ) ) )
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, rocketnet_platform_time(), (uint64_t) time( NULL ) ) )
     {
-        rocketnet_client_transport_destroy( client_transport );
+        rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
     {
         rocketnet_error( "client could not create mutex" );
-        rocketnet_client_transport_destroy( client_transport );
+        rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
-    client_transport->thread = rocketnet_platform_thread_create( NULL, rocketnet_client_transport_thread_function, client_transport );
+    client_transport->thread = rocketnet_platform_thread_create( NULL, rocketnet_client_thread_function, client_transport );
     if ( !client_transport->thread )
     {
         rocketnet_error( "client could not create thread" );
-        rocketnet_client_transport_destroy( client_transport );
+        rocketnet_client_destroy( client_transport );
         return NULL;
     }
 
     return client_transport;
 }
 
-void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
+void rocketnet_client_destroy( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
 
@@ -187,17 +187,17 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
-    rocketnet_clear_and_free( client_transport->context, client_transport, sizeof(rocketnet_client_transport_t) );
+    rocketnet_clear_and_free( client_transport->context, client_transport, sizeof(rocketnet_client_t) );
 }
 
-static void rocketnet_client_transport_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time )
+static void rocketnet_client_process_packet( rocketnet_client_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time )
 {
     // only the dialed server is listened to; everything else is junk
 
     if ( !rocketnet_address_equal( from, &client_transport->protocol.server_address ) )
         return;
 
-    struct rocketnet_client_transport_received_packets_t * received = &client_transport->received_packets;
+    struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
     uint8_t * payload = received->num_packets < ROCKETNET_NUM_CLIENT_PACKETS ?
         received->data + received->num_packets * ROCKETNET_FRAME_SIZE : NULL;
@@ -205,7 +205,7 @@ static void rocketnet_client_transport_process_packet( rocketnet_client_transpor
     uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 
-    if ( rocketnet_client_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
+    if ( rocketnet_client_protocol_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
                                           payload ? payload : overflow, &payload_bytes ) &&
          payload_bytes > 0 && payload )
     {
@@ -216,7 +216,7 @@ static void rocketnet_client_transport_process_packet( rocketnet_client_transpor
     }
 }
 
-static void rocketnet_client_transport_update_swap_receive_buffers( rocketnet_client_transport_t * client_transport )
+static void rocketnet_client_update_swap_receive_buffers( rocketnet_client_t * client_transport )
 {
     rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
@@ -230,22 +230,22 @@ static void rocketnet_client_transport_update_swap_receive_buffers( rocketnet_cl
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
-void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport )
+void rocketnet_client_update( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
 
     const double current_time = rocketnet_platform_time();
 
-    rocketnet_client_transport_update_swap_receive_buffers( client_transport );
+    rocketnet_client_update_swap_receive_buffers( client_transport );
 
-    struct rocketnet_client_transport_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[client_transport->receive_buffer_index];
+    struct rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[client_transport->receive_buffer_index];
 
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
 
     for ( int i = 0; i < receive_buffer->num_packets; i++ )
     {
-        rocketnet_client_transport_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time );
+        rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time );
     }
 
     receive_buffer->num_packets = 0;
@@ -254,31 +254,31 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
-    rocketnet_client_update( &client_transport->protocol, current_time, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
     if ( packet_bytes > 0 )
         rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, packet_bytes );
 }
 
-void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
+void rocketnet_client_send_packet( rocketnet_client_t * client_transport, const uint8_t * packet_data, int packet_bytes )
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    int wire_bytes = rocketnet_client_write_payload( &client_transport->protocol, packet_data, packet_bytes, rocketnet_platform_time(), packet );
+    int wire_bytes = rocketnet_client_protocol_write_payload( &client_transport->protocol, packet_data, packet_bytes, rocketnet_platform_time(), packet );
     if ( wire_bytes == 0 )
         return;
 
     rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, wire_bytes );
 }
 
-int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * client_transport, uint8_t * packet_data )
+int rocketnet_client_receive_packet( rocketnet_client_t * client_transport, uint8_t * packet_data )
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
 
-    struct rocketnet_client_transport_received_packets_t * received = &client_transport->received_packets;
+    struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
     if ( received->receive_index >= received->num_packets )
         return 0;
@@ -289,25 +289,25 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
     return received->packet_bytes[index];
 }
 
-int rocketnet_client_transport_state( rocketnet_client_transport_t * client_transport )
+int rocketnet_client_state( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
     return client_transport->protocol.state;
 }
 
-int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )
+int rocketnet_client_client_index( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
     return client_transport->protocol.client_index;
 }
 
-void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
+void rocketnet_client_disconnect( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
 
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
     int burst_count = 0;
-    rocketnet_client_disconnect( &client_transport->protocol, burst, &burst_count );
+    rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count );
 
     for ( int i = 0; i < burst_count; i++ )
         rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
@@ -315,13 +315,13 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
                                                ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
 }
 
-const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
+const struct rocketnet_counters_t * rocketnet_client_counters( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
     return &client_transport->counters;
 }
 
-static void rocketnet_client_transport_receive_packets( rocketnet_client_transport_t * client_transport )
+static void rocketnet_client_receive_packets( rocketnet_client_t * client_transport )
 {
     rocketnet_assert( client_transport );
 
@@ -329,7 +329,7 @@ static void rocketnet_client_transport_receive_packets( rocketnet_client_transpo
 
     const int off_index = client_transport->receive_buffer_index ? 0 : 1;
 
-    rocketnet_client_transport_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
+    rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
 
     while ( 1 )
     {
@@ -362,13 +362,13 @@ static void rocketnet_client_transport_receive_packets( rocketnet_client_transpo
     rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
-static void rocketnet_client_transport_thread_function( void * data )
+static void rocketnet_client_thread_function( void * data )
 {
-    rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) data;
+    rocketnet_client_t * client_transport = (rocketnet_client_t*) data;
 
     while ( !client_transport->quit )
     {
-        rocketnet_client_transport_receive_packets( client_transport );
+        rocketnet_client_receive_packets( client_transport );
 
         rocketnet_platform_sleep( 0.001 );
     }

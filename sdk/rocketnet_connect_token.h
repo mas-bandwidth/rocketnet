@@ -122,6 +122,7 @@ int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_t
 
 void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * signed_connect_data );
 
+
 // The published development keys, embedded and used by default so
 // development works out of the box: run the server, point a client at its
 // address, connected -- no backend, no configuration, no copying keys
