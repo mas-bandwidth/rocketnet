@@ -250,7 +250,12 @@ land. The milestone view is issue #28; this file is the live ordering.
   completely, it MUST have a backend the server talks to, and that backend
   must handle identity-based auth whose consequence is giving away your
   slot -- one identity, one seat, so a shared token steals the sharer's
-  own place and the incentive does the enforcement. And that only works if
+  own place and the incentive does the enforcement. The reference
+  implementation already exists and runs: space game's backend.go does
+  exactly this, so the epic is an extraction, not a design -- proven in
+  the game, generalized into the library as an OPTIONAL layer, wanted for
+  space game itself, and sequenced strictly behind the RocketWerkz
+  deliverable. And that only works if
   the backend can kick the old player off a server when the same user hash
   pops on elsewhere, which is precisely what this sitting's
   rocketnet_server_disconnect_client exists to serve: the library verb the
