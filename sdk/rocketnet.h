@@ -387,6 +387,7 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_client_state_name( int state );
 
 struct rocketnet_client_t;
 struct rocketnet_counters_t;
+struct rocketnet_packet_context_t;      // defined below, with the send surface
 
 #define ROCKETNET_CONNECT_TOKEN_BYTES 768
 
