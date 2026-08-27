@@ -35,11 +35,12 @@ add_custom_command(
     COMMAND bash -c "mkdir -p rocketnet_server_xdp"
     COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/Makefile rocketnet_server_xdp"
     COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c rocketnet_server_xdp"
+    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h rocketnet_server_xdp"
     COMMAND bash -c "tar -zcvf rocketnet_server_xdp.tar.gz -C rocketnet_server_xdp ." >/dev/null 2>&1
     COMMAND bash -c "rm -rf rocketnet_server_xdp"
     COMMAND bash -c "xxd -i rocketnet_server_xdp.tar.gz" > ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
     COMMAND bash -c "rm -f rocketnet_server_xdp.tar.gz"
-    DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c
+    DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h
 )
 
 

@@ -3,6 +3,14 @@
 
     Licensed under the GNU General Public License 3.0
 
+    Drops everything that is not a well-formed RocketNet packet for this
+    server before it costs a ring slot: UDP to the configured address and
+    port, wire size in bounds, the per-title tag, and a server-inbound
+    packet type at its exact wire size -- the same rule the userspace
+    refusal ladder applies, shared via rocketnet_wire.h so the two can
+    never drift apart. Survivors redirect into the AF_XDP socket for their
+    queue; traffic for any other port passes untouched.
+
     USAGE:
 
         make
@@ -25,39 +33,12 @@
 #include <linux/string.h>
 #include <bpf/bpf_helpers.h>
 
-
-
-
-
-struct server_xdp_config
-{
-    __u32 public_address;                                               // big endian
-};
-
-#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define ROCKETNET_LITTLE_ENDIAN 1
-#elif defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define ROCKETNET_BIG_ENDIAN 1
-#else
-#error "Endianness detection needs to be set up for your compiler?!"
-#endif
-
-#if ROCKETNET_LITTLE_ENDIAN 
-#define bpf_ntohl(x)        __builtin_bswap32(x)
-#define bpf_htonl(x)        __builtin_bswap32(x)
-#define bpf_ntohs(x)        __builtin_bswap16(x)
-#define bpf_htons(x)        __builtin_bswap16(x)
-#else // #if ROCKETNET_LITTLE_ENDIAN
-#define bpf_ntohl(x)        (x)
-#define bpf_htonl(x)        (x)
-#define bpf_ntohs(x)        (x)
-#define bpf_htons(x)        (x)
-#endif // #if ROCKETNET_LITTLE_ENDIAN
+#include "rocketnet_wire.h"
 
 struct {
     __uint( type, BPF_MAP_TYPE_ARRAY );
     __type( key, __u32 );
-    __type( value, struct server_xdp_config );
+    __type( value, struct rocketnet_server_xdp_config_t );
     __uint( max_entries, 1 );
     __uint( pinning, LIBBPF_PIN_BY_NAME );
 } server_xdp_config_map SEC(".maps");
@@ -70,7 +51,25 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } server_xdp_socket_map SEC(".maps");
 
-#define DEBUG 1
+struct {
+    __uint( type, BPF_MAP_TYPE_PERCPU_ARRAY );
+    __type( key, __u32 );
+    __type( value, struct rocketnet_server_xdp_stats_t );
+    __uint( max_entries, 1 );
+    __uint( pinning, LIBBPF_PIN_BY_NAME );
+} server_xdp_stats_map SEC(".maps");
+
+static void server_xdp_count( __u32 counter )
+{
+    int key = 0;
+    struct rocketnet_server_xdp_stats_t * stats = (struct rocketnet_server_xdp_stats_t*) bpf_map_lookup_elem( &server_xdp_stats_map, &key );
+    if ( stats && counter < ROCKETNET_SERVER_XDP_NUM_COUNTERS )
+    {
+        stats->counters[counter]++;
+    }
+}
+
+#define DEBUG 0
 
 #if DEBUG
 #define debug_printf bpf_printk
@@ -78,12 +77,11 @@ struct {
 #define debug_printf(...) do { } while (0)
 #endif // #if DEBUG
 
+SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
+{
+    void * data = (void*) (long) ctx->data;
 
-SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx ) 
-{ 
-    void * data = (void*) (long) ctx->data; 
-
-    void * data_end = (void*) (long) ctx->data_end; 
+    void * data_end = (void*) (long) ctx->data_end;
 
     struct ethhdr * eth = data;
 
@@ -106,63 +104,59 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                 if ( (void*)udp + sizeof(struct udphdr) <= data_end )
                 {
                     int key = 0;
-                    struct server_xdp_config * config = (struct server_xdp_config*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
-                    if ( config == NULL )
+                    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
+                    if ( config == NULL || config->public_port == 0 )
                     {
-                        debug_printf( "config is null" );
+                        debug_printf( "server_xdp is not configured" );
                         return XDP_PASS;
                     }
 
-                    // todo: hard coded for now
-
-                    // const __u32 server_address = 0x97954345;
-                    const __u16 server_port = 16540;
-
-                    if ( /*ip->daddr == server_address &&*/ udp->dest == server_port )
+                    if ( udp->dest == config->public_port && ( config->public_address == 0 || ip->daddr == config->public_address ) )
                     {
                         __u8 * packet_data = (unsigned char*) (void*)udp + sizeof(struct udphdr);
 
+                        // wire size bounds: nothing a server accepts is smaller
+                        // than the smallest inbound type or larger than the
+                        // receive ceiling
 
-                        // Drop packets that are too small to be valid
-
-                        if ( (void*)packet_data + 18 > data_end )
+                        if ( (void*)packet_data + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES > data_end )
                         {
                             debug_printf( "packet is too small" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
                             return XDP_DROP;
                         }
-
-                        // Drop packets that are too large to be valid
 
                         int packet_bytes = data_end - (void*)udp - sizeof(struct udphdr);
 
-                        if ( packet_bytes > 1400 )
+                        if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
                         {
                             debug_printf( "packet is too large" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
                             return XDP_DROP;
                         }
 
-                        // Basic packet filter
+                        // the prefilter header: the per-title tag, then a
+                        // server-inbound packet type at its exact wire size
 
-                        if ( packet_data[2] != ( 1 | ( ( 255 - packet_data[1] ) ^ 113 ) )                                             ||
-                             packet_data[3] < 0x2A || packet_data[3] > 0x2D                                                           ||
-                             packet_data[4] < 0xC8 || packet_data[4] > 0xE7                                                           ||
-                             packet_data[5] < 0x05 || packet_data[5] > 0x44                                                           ||
-                             packet_data[7] < 0x4E || packet_data[7] > 0x51                                                           ||
-                             packet_data[8] < 0x60 || packet_data[8] > 0xDF                                                           ||
-                             packet_data[9] < 0x64 || packet_data[9] > 0xE3                                                           ||
-                             packet_data[10] != 0x07 && packet_data[10] != 0x4F                                                       ||
-                             packet_data[11] != 0x25 && packet_data[11] != 0x53                                                       ||
-                             packet_data[12] < 0x7C || packet_data[12] > 0x83                                                         ||
-                             packet_data[13] < 0xAF || packet_data[13] > 0xB6                                                         ||
-                             packet_data[14] < 0x21 || packet_data[14] > 0x60                                                         ||
-                             packet_data[15] != 0x61 && packet_data[15] != 0x05 && packet_data[15] != 0x2B && packet_data[15] != 0x0D ||
-                             packet_data[16] < 0xD2 || packet_data[16] > 0xF1                                                         ||
-                             packet_data[17] < 0x11 || packet_data[17] > 0x90 )
+                        if ( packet_data[1] != config->title_tag[0] ||
+                             packet_data[2] != config->title_tag[1] ||
+                             packet_data[3] != config->title_tag[2] )
                         {
-                            debug_printf( "basic packet filter dropped packet" );
+                            debug_printf( "wrong title tag" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_TAG );
                             return XDP_DROP;
                         }
 
+                        const __u8 packet_type = packet_data[0];
+
+                        if ( !ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes ) )
+                        {
+                            debug_printf( "invalid packet type or size" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+                            return XDP_DROP;
+                        }
+
+                        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 
                         const __u32 queue_id = ctx->rx_queue_index;
                         bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );

@@ -9,8 +9,8 @@
 #define ROCKETNET_SERVER_SOCKET_H
 
 #include "rocketnet_address.h"
-#include "rocketnet_packets.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_wire.h"
 
 struct rocketnet_server_socket_t;
 
@@ -18,7 +18,10 @@ struct rocketnet_server_socket_t;
 #define ROCKETNET_SERVER_SOCKET_RUNNING    1
 #define ROCKETNET_SERVER_SOCKET_STOPPING   2
 
-struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, int num_xdp_queues = 7, int num_os_cpus = 1 );
+// The title tag configures the kernel prefilter: only packets carrying it
+// reach the AF_XDP rings. It is the same tag the protocol object checks.
+
+struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * title_tag, int num_xdp_queues = 7, int num_os_cpus = 1 );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 
@@ -31,6 +34,12 @@ int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_soc
 uint64_t rocketnet_server_socket_id( struct rocketnet_server_socket_t * server_socket );
 
 int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * server_socket );
+
+// The kernel prefilter's counters, summed across CPUs into an array of
+// ROCKETNET_SERVER_XDP_NUM_COUNTERS values -- what the XDP program dropped
+// and why, and what it redirected, before userspace ever saw a byte.
+
+void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters );
 
 // send packets (zero copy)
 

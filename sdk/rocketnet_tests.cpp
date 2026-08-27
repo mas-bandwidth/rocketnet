@@ -11,7 +11,6 @@
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_hash.h"
-#include "rocketnet_packet_filter.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
@@ -4429,111 +4428,55 @@ void rocketnet_test_value_tracker()
     }
 }
 
-void rocketnet_test_packet_filter()
+void rocketnet_test_wire_server_packet_valid()
 {
-    uint8_t output[ROCKETNET_MAX_PACKET_BYTES];
-    memset( output, 0, sizeof(output) );
-    output[0] = 1;
+    // the same rule the server_xdp kernel program applies, from the shared
+    // header -- held against the protocol's own truths here so the kernel
+    // filter and the userspace refusal ladder can never drift apart.
 
-    for ( int i = 0; i < 10000; ++i )
+    // every server-inbound type passes at its exact wire size, the payload
+    // across its whole range
+
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_REQUEST_PACKET, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_RECEIVE_CEILING ) );
+
+    // and refuses one byte off in either direction for every fixed size
+
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_REQUEST_PACKET, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_REQUEST_PACKET, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES + 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES + 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES + 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_DISCONNECT_PACKET, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES + 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_RECEIVE_CEILING + 1 ) );
+
+    // the server-to-client types never pass, including at their own sizes
+
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_COOKIE_PACKET, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES ) );
+
+    // exhaustive: over every type and every size to the ceiling, exactly the
+    // four fixed sizes and the payload range are accepted and nothing else
+
+    int accepted = 0;
+    for ( int type = 0; type < 256; type++ )
     {
-        uint8_t magic[8];
-        uint8_t from_address[4];
-        uint8_t to_address[4];
-
-        rocketnet_random_bytes( magic, 8 );
-        rocketnet_random_bytes( from_address, 4 );
-        rocketnet_random_bytes( to_address, 4 );
-
-        int packet_length = 18 + ( i % ( sizeof(output) - 18 ) );
-        
-        rocketnet_generate_pittle( output + 1, from_address, to_address, packet_length );
-
-        rocketnet_generate_chonkle( output + 3, magic, from_address, to_address, packet_length );
-
-        rocketnet_check( rocketnet_basic_packet_filter( output, packet_length ) );
-
-    }
-}
-
-// The filter must grant no exemption keyed on the type byte: a zero first
-// byte never excuses a packet from the 18-byte minimum or the pittle and
-// chonkle checks, and a real ROCKETNET_PACKET_DIRECT (0) packet with a valid
-// header must still pass on its merits.
-//
-// rocketnet_test_basic_packet_filter above cannot cover this: it fuzzes from a
-// fixed srand(100), and that seed happens never to produce a zero first byte
-// on a packet long enough to matter. This test does not depend on luck.
-void rocketnet_test_packet_filter_no_type_zero_bypass()
-{
-    // the minimal attack: a single zero byte
-    uint8_t one_zero_byte[1];
-    one_zero_byte[0] = 0;
-    rocketnet_check( !rocketnet_basic_packet_filter( one_zero_byte, 1 ) );
-
-    // a zero first byte must not excuse a short packet at any length below the
-    // 18-byte header minimum
-    uint8_t zeroes[64];
-    memset( zeroes, 0, sizeof(zeroes) );
-    for ( uint16_t length = 0; length < 18; ++length )
-    {
-        rocketnet_check( !rocketnet_basic_packet_filter( zeroes, length ) );
-    }
-
-    // nor a long one that carries no valid header
-    rocketnet_check( !rocketnet_basic_packet_filter( zeroes, sizeof(zeroes) ) );
-
-    // and the converse: a real direct packet -- ROCKETNET_PACKET_DIRECT is
-    // type 0 -- with a valid pittle and chonkle header still passes on its
-    // merits.
-    uint8_t output[256];
-    memset( output, 0, sizeof(output) );
-    uint8_t magic[8];
-    uint8_t from_address[4];
-    uint8_t to_address[4];
-    memset( magic, 0, sizeof(magic) );
-    memset( from_address, 0, sizeof(from_address) );
-    memset( to_address, 0, sizeof(to_address) );
-
-    const int packet_length = 64;
-    output[0] = 0; // ROCKETNET_PACKET_DIRECT
-    rocketnet_generate_pittle( output + 1, from_address, to_address, packet_length );
-    rocketnet_generate_chonkle( output + 3, magic, from_address, to_address, packet_length );
-    rocketnet_check( rocketnet_basic_packet_filter( output, packet_length ) );
-}
-
-void rocketnet_test_basic_packet_filter()
-{
-    uint8_t output[256];
-    memset( output, 0, sizeof(output) );
-    uint64_t pass = 0;
-    uint64_t iterations = 100;
-    srand( 100 );
-    for ( int i = 0; i < int(iterations); ++i )
-    {
-        for ( int j = 0; j < int(sizeof(output)); ++j )
+        for ( int bytes = 0; bytes <= ROCKETNET_RECEIVE_CEILING; bytes++ )
         {
-            output[j] = uint8_t( rand() % 256 );
-        }
-        if ( rocketnet_basic_packet_filter( output, rand() % sizeof(output) ) )
-        {
-            pass++;
+            if ( ROCKETNET_WIRE_SERVER_PACKET_VALID( type, bytes ) )
+                accepted++;
         }
     }
-    rocketnet_check( pass == 0 );
-}
-
-void rocketnet_test_address_data_ipv4()
-{
-    rocketnet_address_t address;
-    rocketnet_address_parse( &address, "127.0.0.1:50000" );
-    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV4 );
-    uint8_t address_data[4];
-    rocketnet_address_data( &address, address_data );
-    rocketnet_check( address_data[0] == 127 );
-    rocketnet_check( address_data[1] == 0 );
-    rocketnet_check( address_data[2] == 0 );
-    rocketnet_check( address_data[3] == 1 );
+    const int expected = 4 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 );
+    rocketnet_check( accepted == expected );
 }
 
 void rocketnet_test_anonymize_address_ipv4()
@@ -5021,10 +4964,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
         RUN_TEST( test_value_tracker );
-        RUN_TEST( test_packet_filter );
-        RUN_TEST( test_basic_packet_filter );
-        RUN_TEST( test_packet_filter_no_type_zero_bypass );
-        RUN_TEST( test_address_data_ipv4 );
+        RUN_TEST( test_wire_server_packet_valid );
         RUN_TEST( test_anonymize_address_ipv4 );
 #if ROCKETNET_PLATFORM_HAS_IPV6
         RUN_TEST( test_anonymize_address_ipv6 );
