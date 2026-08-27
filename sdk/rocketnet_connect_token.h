@@ -145,9 +145,12 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 // locally so a first connect needs nothing else. Returns 1, or 0 for an
 // address that does not parse.
 
-int rocketnet_write_dev_connect_token( const char * server_address_string,
-                                       uint64_t client_id,
-                                       uint64_t current_timestamp,
-                                       uint8_t * connect_token );
+// C linkage: this one is also the public dev helper on the rocketnet.h
+// surface, and the two declarations must agree.
+
+extern "C" int rocketnet_write_dev_connect_token( const char * server_address_string,
+                                                  uint64_t client_id,
+                                                  uint64_t current_timestamp,
+                                                  uint8_t * connect_token );
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H

@@ -11,6 +11,8 @@
 #include "rocketnet.h"
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <time.h>
 
 static volatile int quit;
 
@@ -31,7 +33,24 @@ int main( int argc, char ** argv )
 
     const char * connect_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_address );
+    const char * connect_address_env = getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS" );
+    if ( connect_address_env )
+    {
+        connect_address = connect_address_env;
+    }
+
+    // the development connect: mint a token locally against the published
+    // development keys. a production client is handed its token by a backend.
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    if ( !rocketnet_write_dev_connect_token( connect_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
+    {
+        printf( "error: failed to write dev connect token\n" );
+        rocketnet_term();
+        return 1;
+    }
+
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, NULL, rocketnet_time() );
     if ( !client )
     {
         rocketnet_term();
@@ -44,7 +63,7 @@ int main( int argc, char ** argv )
 
     while ( !quit )
     {
-        rocketnet_client_update( client );
+        rocketnet_client_update( client, rocketnet_time() );
 
         const int state = rocketnet_client_state( client );
         if ( state != last_state )
