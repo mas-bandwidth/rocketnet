@@ -1,0 +1,46 @@
+# The nightly soak: the hostile-lite simulator soak (eight parallel clients,
+# light loss where any failure to connect is a finding) and the real-UDP
+# loopback soak, bounded to fit the runner. A red night is a found bug.
+# The same binaries run unbounded by hand for the multi-day soaks on real
+# hardware: ./bin/soak_sim and ./bin/soak, and belief comes after days.
+
+name: nightly-soak
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  soak:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+
+      - name: Build
+        run: make
+
+      - name: Tests
+        run: ./bin/test
+
+      - name: Simulator soak (eight clients, light loss, any failure is a finding)
+        run: ./bin/soak_sim 10000000
+
+      - name: UDP loopback soak
+        run: ./bin/soak 200000

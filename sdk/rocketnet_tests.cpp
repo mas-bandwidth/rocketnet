@@ -1591,6 +1591,29 @@ void rocketnet_test_encryption_map_iterator()
 }
 
 
+
+// payloads generated with a pattern verifiable from the bytes alone: the
+// start value derives from the length, so corruption anywhere and
+// truncation to any other length both fail verification
+
+static void rocketnet_test_generate_payload( uint8_t * payload_data, int payload_bytes )
+{
+    const int start = payload_bytes % 256;
+    for ( int i = 0; i < payload_bytes; i++ )
+        payload_data[i] = (uint8_t) ( start + i );
+}
+
+static int rocketnet_test_verify_payload( const uint8_t * payload_data, int payload_bytes )
+{
+    const int start = payload_bytes % 256;
+    for ( int i = 0; i < payload_bytes; i++ )
+    {
+        if ( payload_data[i] != (uint8_t) ( start + i ) )
+            return 0;
+    }
+    return 1;
+}
+
 // --- the request path ladder ---
 
 // one test server, built fresh per test: the vector keys, advertised at the
@@ -3556,6 +3579,76 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+void rocketnet_test_client_server_harsh_wire()
+{
+    // the harsh version, bounded and seeded: heavy loss, latency, jitter and
+    // duplication, but tuned so a client still completes well inside its
+    // timeouts -- proven by the connect landing every run at this seed. the
+    // soak runs light loss, where any failure is a finding; this test keeps
+    // the brutal path exercised on every test run.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 1024, 0x5EED5EED5EED5EEDULL );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.2, 0.1, 25.0f, 25.0f );
+
+    struct rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x4A125ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    struct rocketnet_address_t from;
+
+    for ( double time = 100.0; time < 110.0 && client.state != ROCKETNET_CLIENT_STATE_CONNECTED; time += 0.01 )
+    {
+        rocketnet_client_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes > 0 )
+            rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, packet, packet_bytes, time );
+
+        int bytes;
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        {
+            rocketnet_server_process_packet( &test.server, &from, packet, bytes,
+                                             ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                             payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+        }
+
+        rocketnet_server_update( &test.server, time );
+        for ( int i = 0; i < 4; i++ )
+        {
+            int keep_alive_bytes = rocketnet_server_write_keep_alive_if_due( &test.server, i, time, response );
+            if ( keep_alive_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, response, keep_alive_bytes, time );
+        }
+
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
+            rocketnet_client_process_packet( &client, packet, bytes, time, payload, &payload_bytes );
+    }
+
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_client_server_lossy_wire()
 {
     // the stochastic proof beside the deterministic loss walk: a wire with
@@ -4052,6 +4145,66 @@ void rocketnet_test_transport_udp_loopback()
     rocketnet_server_transport_update( server );
     rocketnet_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rocketnet_server_transport_destroy( server );
+}
+
+void rocketnet_test_payload_size_sweep()
+{
+    // every payload size from one byte to the maximum, both directions,
+    // every byte verified from the packet alone -- the whole pipeline
+    // proven against corruption and truncation at every length, including
+    // the boundary
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x51EE9ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
+    int delivered_bytes = 0;
+    int delivered_client_index = -1;
+
+    double time = 200.0;
+
+    for ( int size = 1; size <= ROCKETNET_MAX_PAYLOAD_BYTES; size++ )
+    {
+        time += 0.001;
+
+        // client to server
+        rocketnet_test_generate_payload( payload, size );
+        int packet_bytes = rocketnet_client_write_payload( &client, payload, size, time, packet );
+        rocketnet_check( packet_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + size );
+        rocketnet_check( rocketnet_server_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                          delivered, &delivered_bytes, &delivered_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( delivered_bytes == size );
+        rocketnet_check( rocketnet_test_verify_payload( delivered, delivered_bytes ) );
+
+        // server to client
+        rocketnet_test_generate_payload( payload, size );
+        packet_bytes = rocketnet_server_write_payload( &test.server, 0, payload, size, time, packet );
+        rocketnet_check( packet_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + size );
+        rocketnet_check( rocketnet_client_process_packet( &client, packet, packet_bytes, time, delivered, &delivered_bytes ) );
+        rocketnet_check( delivered_bytes == size );
+        rocketnet_check( rocketnet_test_verify_payload( delivered, delivered_bytes ) );
+    }
+
+    // one past the maximum refuses to build, both sides
+    rocketnet_check( rocketnet_client_write_payload( &client, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+    rocketnet_check( rocketnet_server_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
+
+    rocketnet_test_server_teardown( &test );
 }
 
 void rocketnet_test_platform_socket()
@@ -4714,8 +4867,10 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_timeout_paths );
         RUN_TEST( test_client_cookie_injection );
         RUN_TEST( test_network_simulator );
+        RUN_TEST( test_client_server_harsh_wire );
         RUN_TEST( test_client_server_lossy_wire );
         RUN_TEST( test_swarm );
+        RUN_TEST( test_payload_size_sweep );
         RUN_TEST( test_transport_udp_loopback );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );

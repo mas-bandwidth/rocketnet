@@ -185,6 +185,12 @@ land. The milestone view is issue #28; this file is the live ordering.
   Compile-time transport selection stays for now; runtime configuration
   with preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
+- The multi-day soaks: soak_sim and soak run unbounded on real hardware
+  (the Studio, manually kicked) for days of parallel clients before the
+  connect layer is believed; the nightly CI soak is the bounded sentinel.
+- XDP test harnesses, its own thing at its own rung: packet blaster
+  loads to prove line rate, and simulated clients against the XDP server.
+  Right on the line; complicated; not now.
 - Soak: hours-to-days at load once sockets exist, per the verification
   ladder — polite and garbage traffic, counters asserted while running,
   past 2^32 packets on one connection so sequence reconstruction's wrap is
