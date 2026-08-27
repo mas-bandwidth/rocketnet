@@ -5,8 +5,8 @@
 
     Drops everything that is not a well-formed RocketNet packet for this
     server before it costs a ring slot: UDP to the configured address and
-    port, wire size in bounds, the per-title tag, and a server-inbound
-    packet type at its exact wire size -- the same rule the userspace
+    port, wire size in bounds, the filter epoch and value, and a
+    server-inbound packet type at its exact wire size -- the same rule the userspace
     refusal ladder applies, shared via rocketnet_wire.h so the two can
     never drift apart. Survivors redirect into the AF_XDP socket for their
     queue; traffic for any other port passes untouched.
@@ -135,15 +135,25 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                             return XDP_DROP;
                         }
 
-                        // the prefilter header: the per-title tag, then a
-                        // server-inbound packet type at its exact wire size
+                        // the prefilter header: the epoch names which rule
+                        // produced the filter value, so a generation this
+                        // server does not hold dies on a comparison before
+                        // the value is even examined
 
-                        if ( packet_data[1] != config->title_tag[0] ||
-                             packet_data[2] != config->title_tag[1] ||
-                             packet_data[3] != config->title_tag[2] )
+                        if ( packet_data[1] != config->filter_epoch )
                         {
-                            debug_printf( "wrong title tag" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_TAG );
+                            debug_printf( "wrong filter epoch" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
+                            return XDP_DROP;
+                        }
+
+                        if ( packet_data[2] != config->filter_value[0] ||
+                             packet_data[3] != config->filter_value[1] ||
+                             packet_data[4] != config->filter_value[2] ||
+                             packet_data[5] != config->filter_value[3] )
+                        {
+                            debug_printf( "wrong filter value" );
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
                             return XDP_DROP;
                         }
 

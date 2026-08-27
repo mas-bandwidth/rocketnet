@@ -20,7 +20,7 @@
 
 #include "rocketnet_wire.h"
 
-void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * title_tag );
+void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value );
 
 // The prefilter structural check from the standard's reading order: the
 // packet is at least a prefilter header, no larger than the receive ceiling,
@@ -28,12 +28,12 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 // refusal. Deliberately knows nothing about types or per-type sizes; those
 // are later steps of the reading order.
 
-int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * title_tag );
+int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * filter_value );
 
 #define ROCKETNET_SEQUENCE_BYTES                    4
 #define ROCKETNET_SESSION_NONCE_BYTES               8
 #define ROCKETNET_PACKET_TAG_BYTES                  16
-#define ROCKETNET_PACKET_OVERHEAD_BYTES             24      // prefilter + sequence + tag
+#define ROCKETNET_PACKET_OVERHEAD_BYTES             26      // prefilter + sequence + tag
 #define ROCKETNET_RESPONSE_PADDING_BYTES            24
 #define ROCKETNET_COOKIE_FIELD_BYTES                24      // expire + mac, echoed in requests
 #define ROCKETNET_COOKIE_MAC_BYTES                  16
@@ -65,7 +65,7 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
 
 int rocketnet_write_sealed_packet( uint8_t * packet_data,
                                    uint8_t packet_type,
-                                   const uint8_t * title_tag,
+                                   const uint8_t * filter_value,
                                    uint64_t sequence,
                                    const uint8_t * session_nonce,
                                    const uint8_t * data,
@@ -96,7 +96,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
 // the two unsealed packets
 
 void rocketnet_write_connection_request_packet( uint8_t * packet_data,
-                                                const uint8_t * title_tag,
+                                                const uint8_t * filter_value,
                                                 const uint8_t * return_cookie,        // 24 bytes, or NULL for all zero
                                                 const uint8_t * connection_salt,
                                                 const uint8_t * client_ephemeral_public_key,
@@ -104,7 +104,7 @@ void rocketnet_write_connection_request_packet( uint8_t * packet_data,
                                                 const uint8_t * signature );
 
 void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
-                                               const uint8_t * title_tag,
+                                               const uint8_t * filter_value,
                                                const uint8_t * connection_salt,
                                                uint64_t cookie_expire_timestamp,
                                                const uint8_t * cookie_mac );

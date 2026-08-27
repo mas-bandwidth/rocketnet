@@ -157,12 +157,14 @@ section, and this table exists so an implementer never hunts for a number.
 | Constant | Value | Section |
 |---|---|---|
 | Version | `0x4E7C1A93` | _Signed connect data_ |
-| Test title tag | `b7 59 01` | _The Prefilter Header_ |
+| Prefilter header | 6 bytes: type, epoch, 4-byte value | _The Prefilter Header_ |
+| Test title constant | `b7 59 01 00` at epoch 0 | _The Prefilter Header_ |
+| Filter epoch | 0 = unkeyed; 1-255 = magic generation | _The Prefilter Header_ |
 | Packet types | 0-7; 8-255 reserved, ignored | _Packets_ |
 | Client states | -7 to 4 | _Client State Machine_ |
 | KDF context strings | `RKTNHNDC` `RKTNHNDS` `RKTNSESC` `RKTNSESS` | _Per-connection keys_ |
 | Associated data lengths | 21 bytes; 53 for types 2 and 3 | _Sealed packets_ |
-| Per-packet overhead | 24 bytes | _Packet sizes_ |
+| Per-packet overhead | 26 bytes | _Packet sizes_ |
 | Send budget | 1232 default, 1400 maximum | _Packet sizes_ |
 | Receive ceiling | 1400, fixed | _Packet sizes_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
@@ -264,20 +266,39 @@ never a length parsed out of the data being validated.
 
 ## The Prefilter Header
 
-Every RocketNet UDP packet begins with a 4-byte prefilter header:
+Every RocketNet UDP packet begins with a 6-byte prefilter header:
 
     [packet type] (uint8)
-    [title tag] (3 bytes)               // a per-title constant
+    [filter epoch] (uint8)              // 0 = unkeyed; 1-255 select a magic
+    [filter value] (4 bytes)
 
-It is not cryptography and it protects nothing. It exists so a server — in
-particular a kernel XDP program in front of a server — can drop garbage and
-off-path noise at line rate before any cryptographic work happens. The check is
-a 3-byte comparison against a constant compiled into the filter.
+It exists so a server — in particular a kernel XDP program in front of a
+server — can drop garbage and off-path noise at line rate before any
+cryptographic work happens, and before any per-connection state is touched.
+
+**The geometry never varies and the meaning of the filter value is decided by
+one byte.** The epoch selects which rule produced the value, so a receiver
+branches once on a byte it has already loaded, and every packet is parsed with
+the same fixed offsets whatever the deployment. There is no length prefix, no
+optional field and no per-type layout.
+
+| Epoch | Filter value | Available to |
+|---|---|---|
+| 0 | a per-title 32-bit constant | any deployment, no backend |
+| 1-255 | a keyed MAC under magic generation N | deployments with a backend |
+
+**Epoch 0 is the whole of RocketNet 1.0.** A title with no backend feeding its
+servers per-packet secrets carries its constant, and the header costs one
+compare against 32 bits. The keyed form is specified here, in full, and is not
+implemented by 1.0 — *the format exists now so that adopting it later is a
+configuration change and not a wire break.*
+
+### What the unkeyed value can and cannot do
 
 **The tag depends on nothing but the title.** Not the source address, not the
 destination address, not the port, not the packet length. This is a
-requirement, not a simplification for its own sake, and it is the accumulated
-lesson of the design this one descends from:
+requirement, not a simplification, and it is the accumulated lesson of the
+design this one descends from:
 
 * **A client behind NAT cannot know its own source address.** It knows its
   pre-NAT address; the server sees the post-NAT one. Network Next solved this by
@@ -287,83 +308,153 @@ lesson of the design this one descends from:
 * **Ports cannot be used at all under carrier-grade NAT**, which rewrites them.
   Network Next had already learned this: its filter binds four IPv4 address
   bytes and deliberately excludes the port.
-* **A server often does not know its own public address either** — behind a load
-  balancer, or on a cloud instance holding a private address while clients
-  address a public one. Binding the destination makes the filter a configuration
-  problem.
+* **A server does not always know its own public address either** — on a cloud
+  instance holding a private address while clients address a public one.
+  Dedicated game servers are stateful and therefore are not typically behind
+  load balancers, which removes the sharpest form of this objection, but the
+  cloud case remains and binding the destination makes the filter a
+  configuration problem.
 
-Every one of those disappears if the tag is a constant, and nothing is lost,
-because of the property below.
+*This is the reason the keyless per-packet structural header — a value derived
+from the addresses and the length, varying every packet with no secret
+involved — is not available to this protocol and is not specified. It is a real
+technique and the design this one descends from used it; it requires the sender
+to know the addresses the receiver will observe, and under NAT the sender does
+not. What replaces it here is the keyed value, which the sender computes from a
+secret and its own packet alone.*
 
-**RocketNet also does not assume that the address a client uses to reach the
-backend is the address it uses to reach the server.** Steam Datagram Relay takes
-that assumption as a baseline, and it is usually true — but not always: some
-carrier-grade NAT deployments egress from an address pool, so a client's TCP and
-UDP flows can leave on different public addresses, and a dual-stack client may
-reach an HTTPS backend over IPv6 while reaching a game server over IPv4. Network
-Next did not assume it either; it had the server observe the client's address and
-tell it, which is robust but creates the bootstrap dependency noted above.
-Depending on no address at all is the only one of the three approaches that needs
-neither the assumption nor the round trip.
+**The unkeyed filter cannot resist a targeted attacker, and is not asked to.**
+Nothing in it is secret: an attacker who observes one packet learns the constant
+and can reproduce it forever. So the only threat it addresses is *unaimed*
+traffic: internet background noise, scanners, and floods of random bytes at the
+port. Against that it is decisive. A 32-bit constant admits one packet in 4.3
+billion, and the type and size checks that accompany it cost nothing; even a 10
+Gbps flood of minimum-size frames — about 14.9 million packets per second — puts
+one packet every five minutes in front of a check that rejects it in a handful of
+instructions. **The drop is silent**: no error, no response, no timing signal, so
+a flood tool receives nothing to iterate against.
 
-**The filter cannot resist a targeted attacker, and is not asked to.** Nothing
-in it is secret: an attacker who observes one packet learns the tag and can
-reproduce it forever. That is equally true of a derived, per-packet structural
-header — observing one packet reveals the construction. So the only threat the
-filter can address is *unaimed* traffic: internet background noise, scanners,
-and floods of random bytes at the port. Against that, a 3-byte tag admits one
-packet in 16.7 million, and a false pass costs almost nothing, because the next
-step is a fixed size check (connection requests) or an encryption-mapping lookup
-that fails for an unknown source (sealed packets). Even a 10 Gbps flood of minimum-size
-frames — about 14.9 million packets per second — puts roughly one packet per
-second in front of a check that rejects it in a handful of instructions.
+The value is 4 bytes because that is proportionate to the job and because the
+keyed form needs the same width. **Interoperability is by value, not by
+derivation**: every implementation of a title carries the same four bytes, agreed
+the way the protocol id is, and how a title chooses them is not normative.
+Tooling generates them from a per-title seed and emits the filter as code in
+both forms — the userspace check and the XDP program — so no two titles share a
+constant by accident.
 
-The tag is 3 bytes because that is proportionate to the job. The prefilter is a
-traffic-classification convenience, not a security boundary — the sealed layer
-beneath it carries the guarantees — so a false-positive rate of 2⁻²⁴ against
-random data is ample, and every byte beyond that is spent on every packet
-forever for nothing.
+That is what per-title generation buys, and the claim should be stated no wider:
+**it prevents a single universal RocketNet matcher; it does not prevent
+fingerprinting.** The constant is stable for a title by construction, so anyone
+willing to look at one packet of a title's traffic has a signature for all of
+it. Nothing unkeyed can do better, and a protocol should not claim otherwise.
 
-**The tag is an arbitrary per-title 3-byte constant, and interoperability is by
-value, not by derivation.** Every implementation of a title carries the same
-three bytes, agreed the way the protocol id is; how a title chooses them is not
-normative. Tooling generates them from a per-title seed and emits the filter as
-code in both forms — the userspace check and the XDP program — so no two titles
-share a tag by accident. **The tag for the embedded test title of this
-standard, used with the published test keys, is `b7 59 01`.**
+**The constant for the embedded test title of this standard, used with the
+published test keys, is `b7 59 01 00`.**
 
-That is what per-title
-generation buys, and the claim should be stated no wider: **it prevents a single
-universal RocketNet matcher; it does not prevent fingerprinting.** The tag is
-stable for a title by construction, so anyone willing to look at one packet of a
-title's traffic has a signature for all of it. Nothing unkeyed can do better, and
-a protocol should not claim otherwise.
+### The keyed filter value
+
+When the epoch is not zero, the filter value is a MAC computed under a **magic**
+— a shared secret distributed to servers and clients by the backend, rotated on
+a schedule, several generations live at once.
+
+    filter value = SipHash-2-4( magic[epoch],
+                                packet type ‖ packet length ‖ the four bytes
+                                following the prefilter header )
+                   truncated to its low 4 bytes, little-endian
+
+Packet length is the UDP payload length as a little-endian uint16. **The four
+bytes following the header are taken uniformly for every packet type**, with no
+per-type case: for sealed packets they are the sequence number, for a connection
+request the first four bytes of the return cookie field, and for a connection
+cookie the first four bytes of the connection salt. One rule, one offset, and
+nothing to get wrong per type.
+
+*The honest limit of that uniformity: on a client's very first connection
+request the return cookie field is zero, so the filter value is constant for a
+given epoch, type and length. That path is already the one the address
+validation cookie exists to rate limit, and it costs an attacker a captured
+packet and gains them entry to a gate that answers with 36 bytes.*
+
+**The epoch byte is what makes verification cheap, and it is the reason it is on
+the wire.** A receiver holding several live magics would otherwise have to try
+each in turn — the design this one descends from tried its three generations
+against two server addresses, up to six MAC computations for every packet that
+reached that stage. Here the sender names the generation, so the receiver indexes
+its magic array once and computes **one** MAC. A packet whose epoch names a
+generation the receiver does not hold is dropped before any MAC is computed at
+all, on a comparison.
+
+**A receiver MUST accept more than one live generation**, so that a rotation does
+not break packets already in flight, and MUST drop any epoch outside that
+window. **A receiver MUST NOT treat epoch 0 as keyed**, and a deployment that has
+adopted the keyed form MUST reject epoch 0 rather than falling back to a
+constant: a fallback an attacker can select is not a filter.
+
+**A 32-bit MAC is proportionate and is not authentication.** It admits one forged
+packet in 4.3 billion, which at a 10 Gbps flood is one every five minutes
+reaching the next check, and the next check is replay protection followed by an
+AEAD that the attacker cannot satisfy at all. The filter's job is to make floods
+cheap to refuse, not to prove anything; **the sealed layer beneath it carries
+every guarantee this protocol makes**, and no deployment should read a passing
+filter value as evidence of anything.
+
+**There are no default magics, and a conforming implementation MUST NOT ship
+one.** A published secret is not a secret, and a protocol that ships one invites
+a deployment to inherit it and believe it has the property. A deployment either
+has a backend distributing real magics or it runs at epoch 0 and knows exactly
+what it has. *This is the one place where the published development keys pattern
+used elsewhere in this standard is deliberately not repeated: those keys make an
+unsecured development path work out of the box and are documented as worthless,
+where a default magic would make a **secured-looking** path work out of the box,
+which is worse than not having the feature.*
+
+### Where the keyed form comes from, and what it is for
+
+**The magic is a secret the client never ships.** It reaches a client in its
+connect token, per generation, from the backend — so an attacker who
+disassembles a game client obtains the algorithm and the layout and can still
+mint nothing. The security of the keyed filter reduces exactly to the
+confidentiality of connect tokens and the rotation period, both of which are
+already the backend's job. **Obscurity is thereby demoted to what it is good
+for**: making commodity flood tooling not work.
+
+The rotation period bounds every attack that gets past it. A captured packet is
+replayable only while its generation is live; a magic extracted by any means is
+worthless one rotation later. *This is why the MAC is a fast keyed hash rather
+than a cryptographic construction chosen to survive analysis: a key that outlives
+its own cryptanalysis by less than the time cryptanalysis takes does not need to
+resist it.*
+
+**None of this is available without a backend the servers talk to**, which is
+the same requirement the identity posture below rests on, and the two arrive
+together or not at all.
+
+### Structural checks that accompany the header
 
 A receiver drops any packet smaller than the minimum for its type, larger than
-1400 bytes — the receive ceiling, fixed regardless of the local send budget —
-or whose title tag does not match.
-
-There is no keyed or stateful filter. Network Next distributed a rotating
-"magic" value to servers from a backend; a player-hosted server has no backend
-feeding it per-packet secrets, so the concept is absent by design rather than
-deferred.
+1400 bytes — the receive ceiling, fixed regardless of the local send budget — or
+whose filter value does not match. **The type and size checks are part of the
+same cheap pass** and are specified in _Reading packets_; every non-payload type
+has a single fixed size, so the pair costs one compare and rejects most malformed
+traffic before the filter value is even examined.
 
 **The upgrade path for a deployment that needs to resist a targeted flood is a
 whitelist in the kernel** — an XDP map of currently authorized source addresses.
 That is stateful, is outside this standard, and is the only thing that actually
-helps; no unkeyed header can substitute for it.
+helps; no header, keyed or not, can substitute for it.
 
 *Where such a whitelist gets its addresses is the design decision that matters,
 and this protocol makes the better answer available.* Steam Datagram Relay
-populates its relay whitelist with the client address the backend observed
-during the backend conversation — which inherits the same-address assumption
-above, and fails wherever that assumption does. A RocketNet server does not need
-to guess: the address-validated handshake ends with the server holding the client's actual
-UDP source address, **proven** by the cookie round trip rather than assumed. A
-whitelist populated after the handshake, from verified addresses, is correct
-under CGNAT address pools and dual-stack mismatch alike. Populating one from a
-backend-supplied address would import a defect this design does not otherwise
-have.
+populates its relay whitelist with the client address the backend observed during
+the backend conversation, which assumes a client reaches the backend and the
+server from the same address — usually true, and not always: some carrier-grade
+NAT deployments egress from an address pool, and a dual-stack client may reach an
+HTTPS backend over IPv6 while reaching a game server over IPv4. A RocketNet
+server does not need to guess: the address-validated handshake ends with the
+server holding the client's actual UDP source address, **proven** by the cookie
+round trip rather than assumed. A whitelist populated after the handshake, from
+verified addresses, is correct under CGNAT address pools and dual-stack mismatch
+alike.
 
 ## Packet sizes
 
@@ -373,30 +464,30 @@ UDP payload that never fragments on either family.
 
 Every sealed packet spends, before the application's bytes:
 
-    prefilter header                  4
+    prefilter header                  6
     sequence number                   4
     AEAD tag                         16
                                    ----
-                                     24
+                                     26
 
-So payload packets carry **1 to budget−24 bytes** of application data — 1 to
-1208 at the default budget.
+So payload packets carry **1 to budget−26 bytes** of application data — 1 to
+1206 at the default budget.
 
-Per-packet overhead is a fixed 24 bytes, every packet, no variable cases.
+Per-packet overhead is a fixed 26 bytes, every packet, no variable cases.
 
 Every packet type has a fixed total size on the wire except the payload, which
 has a range. A receiver checks the size before any other per-type work:
 
 | Type | Packet | Wire size | Composition |
 |---|---|---|---|
-| 0 | connection request | 708 | 4 + 704 |
-| 1 | connection denied | 32 | 4 + 4 + 8 + 0 + 16 |
-| 2 | connection challenge | 64 | 4 + 4 + 8 + 32 + 16 |
-| 3 | connection response | 48 | 4 + 4 + 24 + 16 |
-| 4 | connection keep-alive | 32 | 4 + 4 + 8 + 16 |
-| 5 | connection payload | 25 to 1400 received; sender bounded by its budget | 4 + 4 + payload + 16 |
-| 6 | connection disconnect | 24 | 4 + 4 + 0 + 16 |
-| 7 | connection cookie | 36 | 4 + 8 + 8 + 16 |
+| 0 | connection request | 710 | 6 + 704 |
+| 1 | connection denied | 34 | 6 + 4 + 8 + 0 + 16 |
+| 2 | connection challenge | 66 | 6 + 4 + 8 + 32 + 16 |
+| 3 | connection response | 50 | 6 + 4 + 24 + 16 |
+| 4 | connection keep-alive | 34 | 6 + 4 + 8 + 16 |
+| 5 | connection payload | 27 to 1400 received; sender bounded by its budget | 6 + 4 + payload + 16 |
+| 6 | connection disconnect | 26 | 6 + 4 + 0 + 16 |
+| 7 | connection cookie | 38 | 6 + 8 + 8 + 16 |
 
 The composition columns are prefilter header + sequence + data + AEAD tag for
 sealed types, with the additional 8 being the clear session nonce on types 1 and
@@ -588,7 +679,7 @@ be on the wire in the clear, because the connection request carries the signed
 data a server verifies before it trusts anything. A protocol banner in ASCII
 would be a universal signature for every RocketNet deployment in existence,
 readable by anyone scanning traffic, which would undo in the connect path what
-the per-title prefilter tag is for. A future version takes an unrelated
+the per-title prefilter constant is for. A future version takes an unrelated
 constant rather than an increment.
 
 The buffer is 576 bytes and uses 521, leaving 55 free **deliberately**. The
@@ -619,6 +710,100 @@ carrier — the client. The clear copies are outside the signature: they are
 trusted because the secure channel delivered them, which is also why the client
 does not verify the signature at all. A tampered clear copy causes the handshake
 to fail, and nothing worse.
+
+## Connect token sharing, and the connected set
+
+A connect token is a **bearer credential**. The backend does the work of
+authenticating a player and deciding they may play, and the token is the result;
+a server presented with a valid token admits whoever presented it. Nothing in
+the token, and nothing a server can check alone, distinguishes the player the
+backend authenticated from anyone that player handed the token to.
+
+**The attack is not subtle and it is not theoretical.** Authenticate, obtain a
+token, give it to somebody else, repeat. Each token is a playable seat sold or
+shared from an account that paid for one, and the backend's authentication —
+the thing the whole architecture exists to enforce — is bypassed without ever
+being attacked.
+
+**The only posture that closes it is identity based: a given player may be
+connected to one server at a time.** Connect elsewhere and the previous session
+ends. A token handed to somebody else does not multiply the sharer's access, it
+**transfers** it: whoever connects second takes the seat and the other is put
+out. Sharing stops being a way to get more and becomes a way to lose what you
+have, so the system does not have to detect it — the incentive does the
+enforcement, and detection and bans are needed only for the abusive tail.
+
+*This is stated as strongly as it is because the protocol this one descends from
+does not do it, and the omission is a real defect rather than a scope choice.
+netcode 1.02 binds a token to a server address and an expiry and stops there; a
+token is transferable for its whole lifetime and nothing in the protocol
+notices. Every later refinement of token security is downstream of getting this
+one right.*
+
+### Why not pin the token to a client address
+
+The obvious alternative is to stamp the client's public IP into the token — the
+backend saw it when the token was requested — and have the server refuse a
+request arriving from anywhere else. It is cheap, it needs no backend
+conversation, and **it should not be done.**
+
+* **It does not actually solve sharing.** Two players behind one household or
+  campus NAT share a public address and can pass tokens freely; two players on
+  different networks cannot, so the rule falls unevenly on players by
+  circumstance rather than on the behavior it means to stop.
+* **It breaks correct clients.** A client may reach an HTTPS backend and a UDP
+  server from different addresses: carrier-grade NAT egressing from an address
+  pool, or a dual-stack client using IPv6 for one and IPv4 for the other. Those
+  players cannot connect at all, and the failure is silent and unexplainable
+  from their side.
+* **The identity posture gets the same result without either problem**, because
+  it constrains *who is playing where* rather than *where they are connecting
+  from* — and a player's identity, unlike their address, is exactly what the
+  backend already knows.
+
+**So this standard specifies no client address field in the connect token**, and
+a server MUST NOT require that a request arrive from any particular address. The
+address is still the connection identity once a connection exists, per _The
+client address is the connection identity_, and the handshake still proves the
+client can receive at the address it claimed. Those are properties of a
+*connection*; they are not a property of the *credential*.
+
+### What it requires, and where it lives
+
+**This cannot be implemented by a server alone.** A server knows only its own
+connected clients; the property is about all servers at once. It requires a
+backend that maintains the connected set — which players are on which servers,
+live — and that can tell a server to end a session when the same player appears
+elsewhere.
+
+That makes it a **deployment property rather than a wire property**, and this
+standard specifies it as a requirement on deployments that need it rather than
+as packet format:
+
+* The backend MUST track the connected set across servers, updated as players
+  connect and disconnect.
+* On admitting a player already connected elsewhere, the backend MUST cause the
+  earlier session to be disconnected.
+* Servers MUST report connections and disconnections to the backend, and MUST
+  act on a backend instruction to disconnect a given client.
+
+**The protocol carries what those steps need and no more.** The client id in the
+sealed private connect token data is the identity a backend keys on, unforgeable
+because it is sealed to the server and covered by the signature. The 256 bytes of
+user data carry whatever else a backend wants bound to the session. And a server
+implementation MUST expose a means of disconnecting a specific connected client,
+which is the one verb this posture needs from the transport — the reasons for
+disconnecting are the game's and the backend's, never the transport's.
+
+**A single server still enforces the property locally, with no backend at all**,
+and this standard requires it: a connection request or response naming a client
+id already connected to this server is refused, per _Processing Connection
+Requests_. That is the same rule at the scope one server can see. The backend
+widens the scope from one server to the fleet; it does not introduce the idea.
+
+*A deployment without a backend connected set has a weaker property, and should
+know which one it has: tokens are transferable between players, and the only
+cost to a sharer is that they cannot both be on the same server.*
 
 ## Per-connection keys
 
@@ -830,7 +1015,7 @@ RocketNet has the following packets:
 * _connection disconnect packet_ (6)
 * _connection cookie packet_ (7)
 
-Every packet begins with the 4-byte prefilter header, whose first byte is the
+Every packet begins with the 6-byte prefilter header, whose first byte is the
 packet type. The type byte carries the type and nothing else.
 
 ### Connection request packet
@@ -843,7 +1028,7 @@ The connection request (0) is not sealed. After the prefilter header:
     [signed connect data] (576 bytes)   // from the token, verbatim
     [signature] (64 bytes)              // from the token, verbatim
 
-A fixed 704 bytes after the prefilter header, 708 bytes on the wire.
+A fixed 704 bytes after the prefilter header, 710 bytes on the wire.
 
 The connection salt and the client ephemeral public key sit outside the
 signature, because the backend fixed the signed data when it issued the token
@@ -865,8 +1050,8 @@ doing any work that would give it a key, and before allocating any state at all:
     [cookie expire timestamp] (uint64)
     [cookie mac] (16 bytes)
 
-32 bytes after the prefilter header, 36 on the wire — far smaller than the
-708-byte request that provoked it.
+32 bytes after the prefilter header, 38 on the wire — far smaller than the
+710-byte request that provoked it.
 
     cookie mac = crypto_generichash( 16 bytes,
                                      client address ‖ connection salt ‖ expire,
@@ -898,7 +1083,7 @@ field — and puts them in the return cookie field of every subsequent request i
 **A cookie packet does not provoke a reply.** A client that receives one stores
 it and includes it in its next *scheduled* request; it MUST NOT send a request
 because a cookie arrived. Otherwise the packet becomes an amplifier pointed at
-the server — 36 bytes in, 708 out — that anyone able to see a client's salt
+the server — 38 bytes in, 710 out — that anyone able to see a client's salt
 could drive at whatever rate they chose. With the rule, the client's request
 rate is its own retransmit rate no matter how many cookie packets arrive, and
 the pair is not a provoked pair at all.
@@ -936,12 +1121,12 @@ receives, and the client cannot derive the handshake key without it:
 
     challenge:                              denied:
 
-    [prefilter header] (4 bytes)            [prefilter header] (4 bytes)
+    [prefilter header] (6 bytes)            [prefilter header] (6 bytes)
     [sequence number] (4 bytes)             [sequence number] (4 bytes)
     [session nonce] (8 bytes)               [session nonce] (8 bytes)
     [sealed data] (48 bytes)  // 32 + 16    [sealed data] (16 bytes)  // 0 + 16
 
-64 bytes on the wire for the challenge, 32 for the denied. The nonce is in the
+66 bytes on the wire for the challenge, 34 for the denied. The nonce is in the
 clear because the receiver needs it to derive the key that opens the sealed
 part, and it needs no confidentiality or separate integrity: altering it in
 flight makes the receiver derive a different key, the open fails, and the packet
@@ -960,7 +1145,7 @@ _connection keep-alive_:
 
 _connection payload_:
 
-    [payload data] (1 to budget−24 bytes; 1208 at the default budget)
+    [payload data] (1 to budget−26 bytes; 1206 at the default budget)
 
 _connection disconnect_: no data.
 
@@ -1000,7 +1185,7 @@ never responds, and no slot is ever allocated.
 The 96-bit nonce is 4 zero bytes followed by the reconstructed 64-bit sequence
 as a little-endian value. Post sealing:
 
-    [prefilter header] (4 bytes)
+    [prefilter header] (6 bytes)
     [sequence number] (4 bytes)
     [session nonce] (8 bytes)           // types 1 and 2 only, in the clear
     [sealed per-packet type data] (per-packet data + 16-byte tag)
@@ -1009,13 +1194,23 @@ as a little-endian value. Post sealing:
 
 In this exact order:
 
-* If the prefilter structural check fails, ignore the packet.
+* If the packet is shorter than the 6-byte prefilter header, or longer than the
+  1400-byte receive ceiling, ignore it.
 
 * If the type byte is greater than 7, ignore the packet. Types 8 through 255
   are reserved and MUST be ignored by a conforming receiver.
 
+* **If the filter epoch names a generation this receiver does not hold, ignore
+  the packet** — which for a deployment at epoch 0 means any nonzero epoch, and
+  for a keyed deployment means epoch 0 and anything outside its live window.
+  This is a comparison and it runs before any MAC is computed.
+
+* **If the filter value does not match, ignore the packet**: the per-title
+  constant at epoch 0, or the MAC recomputed under the named magic. Both are
+  specified in _The Prefilter Header_.
+
 * **If the packet's total size does not match its type — the exact wire size
-  from the _Packet sizes_ table, or 25 to 1400 bytes for a payload (the fixed
+  from the _Packet sizes_ table, or 27 to 1400 bytes for a payload (the fixed
   receive ceiling; the sender's budget is not a receive-side quantity) —
   ignore it.** Every non-payload type has a single fixed size, so this is one
   compare, and it runs before any per-type handling so that no later step can
@@ -1080,7 +1275,7 @@ In this exact order:
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * 1 to 1376 bytes — _connection payload_ (1376 = the 1400 receive ceiling − 24)
+  * 1 to 1374 bytes — _connection payload_ (1374 = the 1400 receive ceiling − 26)
   * 0 bytes — _connection disconnect_
 
 * Otherwise, process the packet.
@@ -1322,7 +1517,7 @@ a cookie, then sends a request carrying that cookie and waits for a challenge.
 Those are two different waits with two different failure meanings, and collapsing
 them would make the protocol's two most common deployment faults
 indistinguishable: _cookie request timed out_ means nothing was ever heard from
-the server — wrong address, wrong port, wrong title tag, server down, a firewall
+the server — wrong address, wrong port, wrong filter value, server down, a firewall
 — while _connection request timed out_ means the server answered, issued a
 cookie, and then silently refused the token, which points at the signature, the
 sealed block, the advertised address or the protocol id. Both surface as a client
@@ -1580,7 +1775,11 @@ no on-path position. At roughly a hundred microseconds each that is about ten
 thousand per second per core, or **tens of megabits per second of attack traffic
 to saturate a core** — three orders of magnitude below what the same attack
 costs against a symmetric check. The
-prefilter cannot help: it is unkeyed and its code ships in every client. Rate
+prefilter cannot help at epoch 0: it is unkeyed and its constant ships in every
+client. A keyed filter raises the cost — a forger without the magic is refused
+before the request is parsed at all — but it is available only to a deployment
+with a backend, and the magic itself reaches clients, so a real account still
+yields one. Rate
 limiting cannot help: the source address is spoofable, which this standard
 already says. The used-token history cannot help: it bounds replays of captured
 tokens, not fabrications. **The cookie is the only one of these that changes the
@@ -1632,7 +1831,7 @@ In this exact order, on a _connection request packet_:
   the position is deliberate on both sides.* Everything above is a fixed-offset
   comparison against a constant that rejects silently and costs nothing, so a
   server must not answer a packet that fails one of them: doing so would emit a
-  cookie packet for any datagram carrying the right title tag and a zero type
+  cookie packet for any datagram carrying a passing filter value and a zero type
   byte, making the server a packet-rate reflector for garbage and spending a hash
   and a system call on every piece of it. Everything below it is expensive — the
   used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
@@ -1923,7 +2122,7 @@ the slot free.
 ## Observability
 
 A protocol this layered fails in ways that are invisible from outside. A client
-that will not connect looks identical whether the title tag was wrong, the cookie
+that will not connect looks identical whether the filter value was wrong, the cookie
 never arrived, the signature failed, or every slot was full — and at scale, logs
 are the wrong instrument for telling them apart, because the volume that makes a
 problem visible is the same volume that makes logs unreadable.
@@ -2111,8 +2310,17 @@ publishing the secret halves is the point:
         59 56 0b 25 92 8d 22 70 7b a2 29 75 89 d0 8b 97
 
 The Ed25519 secret key is in libsodium's 64-byte form, the seed followed by the
-public key. The test title tag that accompanies these keys is given in _The
-Prefilter Header_.
+public key. The test title constant that accompanies these keys is given in _The
+Prefilter Header_, and the development path runs at filter epoch 0.
+
+**There is no test magic, and this standard publishes none.** The published keys
+above make an unsecured path work out of the box and are documented as worthless
+precisely so nobody mistakes them for security. A default magic would be a
+different thing: it would make a **secured-looking** path work out of the box,
+and a deployment inheriting it would hold a filter that verifies against a secret
+every attacker also has. The keyed filter is available to deployments that have a
+backend distributing real magics, and to nobody else — see _The Prefilter
+Header_.
 
 That reduces development to what it should be:
 
@@ -2238,9 +2446,9 @@ the keep-alive it provokes, and a connected client would be a small reflector.
 
 | Provoking packet | Size | Response | Size | |
 |---|---|---|---|---|
-| connection request | 708 | connection cookie | 36 | ok |
-| connection request | 708 | connection challenge, fresh or resent | 64 | ok |
-| connection request | 708 | connection denied | 32 | ok |
+| connection request | 710 | connection cookie | 38 | ok |
+| connection request | 710 | connection challenge, fresh or resent | 66 | ok |
+| connection request | 710 | connection denied | 34 | ok |
 | connection challenge | 64 | connection response | 48 | ok |
 | connection response | 48 | connection keep-alive | 32 | ok |
 | connection response | 48 | connection denied | 32 | ok |
@@ -2251,12 +2459,12 @@ to satisfy it MUST be required on read**, checked for both length and content,
 because padding that is optional is padding an attacker omits. And **a server
 MUST NOT answer a request it has rejected** — every failure path in _Processing
 Connection Requests_ ignores the packet silently, and the single exception is the
-cookie, which is 36 bytes against 708 and is the price of address validation
-having to start somewhere. The widest margins are a 708-byte request answered by
+cookie, which is 38 bytes against 710 and is the price of address validation
+having to start somewhere. The widest margins are a 710-byte request answered by
 a 64-byte challenge or a 36-byte cookie. At those ratios neither response is
 usefully a reflection primitive: an attacker spoofing a victim's address to place
-64 bytes there spends 708 to do it, an eleven-to-one loss, and would do strictly
-better sending those 708 bytes at the victim directly. The cost of a spoofed
+66 bytes there spends 710 to do it, an eleven-to-one loss, and would do strictly
+better sending those 710 bytes at the victim directly. The cost of a spoofed
 request is CPU, which the cookie exchange addresses, rather than reflected bytes.
 
 **Client proof-of-work was considered and declined.** Requiring a client to
@@ -2519,7 +2727,7 @@ input is fixed and stated here; an implementation reproduces the deterministic
 outputs exactly, and verifies the frozen token. All values are hex bytes in
 wire order.
 
-**Fixed inputs.** The test backend and server keypairs and the test title tag
+**Fixed inputs.** The test backend and server keypairs and the test title constant
 are the published values from _Development without a backend_ and _The
 Prefilter Header_. In addition:
 
@@ -2709,7 +2917,7 @@ unsealed request. The request embeds the frozen token below and carries a
 zero return cookie, as the first request of an attempt does; the challenge
 is the type 2 sealed vector above in its full framing at sequence 1.
 
-assembled connection request (708 bytes, zero return cookie):
+assembled connection request (710 bytes, zero return cookie):
     00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00 00 00 00 00 53 41 4c 54
     30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c
@@ -2756,7 +2964,7 @@ assembled connection request (708 bytes, zero return cookie):
     0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6
     b0 9e 76 0d
 
-assembled connection challenge (64 bytes):
+assembled connection challenge (66 bytes):
     02 b7 59 01 01 00 00 00 4e 4f 4e 43 45 30 30 31
     68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
     20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b

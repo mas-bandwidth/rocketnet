@@ -1002,10 +1002,10 @@ void rocketnet_test_prefilter()
     // two homes of that number must never drift
     rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES == ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES );
 
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the embedded test title tag is the published one from the standard
-    rocketnet_check( memcmp( tag, rocketnet_test_title_tag, ROCKETNET_TITLE_TAG_BYTES ) == 0 );
+    rocketnet_check( memcmp( tag, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
 
     // writing the header produces exactly the assembled vectors' first bytes:
     // a request begins 00 b7 59 01, a challenge begins 02 b7 59 01
@@ -1041,7 +1041,7 @@ void rocketnet_test_prefilter()
     rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
 
     // NEGATIVE: a wrong tag byte, any of the three, is refused
-    for ( int i = 0; i < ROCKETNET_TITLE_TAG_BYTES; i++ )
+    for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
     {
         packet[1+i] ^= 1;
         rocketnet_check( rocketnet_prefilter_check( packet, 64, tag ) == -1 );
@@ -1076,7 +1076,7 @@ void rocketnet_test_packet_associated_data()
 
 void rocketnet_test_sealed_packets()
 {
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
 
     // the challenge at sequence 1 reproduces the assembled vector completely:
@@ -1148,7 +1148,7 @@ void rocketnet_test_sealed_packets()
 
 void rocketnet_test_sealed_packet_refusals()
 {
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
 
@@ -1204,7 +1204,7 @@ void rocketnet_test_sealed_packet_refusals()
 
 void rocketnet_test_unsealed_packets()
 {
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the request writer reproduces the assembled vector completely, from the
     // frozen token's parts, the vector salt and ephemeral, and a zero cookie
@@ -1224,11 +1224,12 @@ void rocketnet_test_unsealed_packets()
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     rocketnet_write_connection_cookie_packet( cookie, tag, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_mac );
     rocketnet_check( cookie[0] == ROCKETNET_CONNECTION_COOKIE_PACKET );
-    rocketnet_check( memcmp( cookie + 1, tag, 3 ) == 0 );
-    rocketnet_check( memcmp( cookie + 4, rocketnet_test_salt, 8 ) == 0 );
-    const uint8_t * p = cookie + 12;
+    rocketnet_check( cookie[1] == ROCKETNET_FILTER_EPOCH_UNKEYED );
+    rocketnet_check( memcmp( cookie + 2, tag, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+    rocketnet_check( memcmp( cookie + ROCKETNET_PREFILTER_BYTES, rocketnet_test_salt, 8 ) == 0 );
+    const uint8_t * p = cookie + ROCKETNET_PREFILTER_BYTES + 8;
     rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_CREATE_TS + 3 );
-    rocketnet_check( memcmp( cookie + 20, rocketnet_test_cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
+    rocketnet_check( memcmp( cookie + ROCKETNET_PREFILTER_BYTES + 16, rocketnet_test_cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
 }
 
 void rocketnet_test_sequence_reconstruction()
@@ -1632,8 +1633,8 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
-    memcpy( server->title_tag, tag, ROCKETNET_TITLE_TAG_BYTES );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( server->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
@@ -1677,7 +1678,7 @@ static void rocketnet_test_build_request( uint8_t * request, uint64_t client_id,
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
 
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     rocketnet_write_connection_request_packet( request, tag, NULL, salt,
                                                rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
@@ -1724,8 +1725,8 @@ static void rocketnet_test_pass_cookie_gate( struct rocketnet_test_server_t * te
 
     // the cookie packet echoes the salt in the clear; the client stores its
     // last 24 bytes and carries them in the return cookie field
-    rocketnet_check( memcmp( response + 4, request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, 8 ) == 0 );
-    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + 12, ROCKETNET_COOKIE_FIELD_BYTES );
+    rocketnet_check( memcmp( response + ROCKETNET_PREFILTER_BYTES, request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, 8 ) == 0 );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 }
 
 
@@ -1758,7 +1759,7 @@ void rocketnet_test_request_path_happy()
     // the client completes its side from the wire bytes alone: reconstruct
     // the sequence, read the clear nonce, derive, open, recover the server
     // ephemeral -- the full loop the handshake depends on
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.title_tag ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -1873,7 +1874,7 @@ void rocketnet_test_request_path_refusals()
         rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
         struct rocketnet_connect_token_t token;
         rocketnet_read_connect_token( &token, token_data );
-        const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+        const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
                                                    rocketnet_test_client_eph_public,
                                                    token.signed_connect_data, token.signature );
@@ -2035,7 +2036,7 @@ void rocketnet_test_request_path_crypto_refusals()
         rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, attacker_sk, token_data ) );
         struct rocketnet_connect_token_t token;
         rocketnet_read_connect_token( &token, token_data );
-        const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+        const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
                                                    rocketnet_test_client_eph_public,
                                                    token.signed_connect_data, token.signature );
@@ -2117,7 +2118,7 @@ void rocketnet_test_request_path_slots_and_denial()
 
     // the client opens the denied from the wire: sequence 1, the clear
     // nonce, handshake keys derived from it
-    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.title_tag ) == ROCKETNET_CONNECTION_DENIED_PACKET );
+    rocketnet_check( rocketnet_prefilter_check( response, response_bytes, test.server.filter_value ) == ROCKETNET_CONNECTION_DENIED_PACKET );
     const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     rocketnet_check( sequence == 1 );
@@ -2262,7 +2263,7 @@ void rocketnet_test_request_path_uncovered_rungs()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     struct rocketnet_counters_t before;
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
 
     // SEALED_MISMATCH: a validly signed token whose sealed protocol id
@@ -2338,7 +2339,7 @@ void rocketnet_test_request_path_config_branches()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
     // but THIS server's ipv6 is accepted -- either advertised address, not
@@ -2579,7 +2580,7 @@ static int rocketnet_test_process_packet( struct rocketnet_test_server_t * test,
 static void rocketnet_test_client_derive_from_challenge( const uint8_t * challenge, int challenge_bytes,
                                                          struct rocketnet_connection_keys_t * keys )
 {
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     rocketnet_check( rocketnet_prefilter_check( challenge, challenge_bytes, tag ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
     const uint8_t * p = challenge + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
@@ -2607,7 +2608,7 @@ static void rocketnet_test_client_derive_from_challenge( const uint8_t * challen
 
 static void rocketnet_test_client_build_response( uint8_t * response, const struct rocketnet_connection_keys_t * keys )
 {
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     const uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     rocketnet_check( rocketnet_write_sealed_packet( response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 1,
                                                     NULL, padding, ROCKETNET_RESPONSE_PADDING_BYTES,
@@ -2632,7 +2633,7 @@ static void rocketnet_test_handshake_to_challenge( struct rocketnet_test_server_
 
     rocketnet_check( rocketnet_test_process_packet( test, request, sizeof(request), response, &response_bytes,
                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
-    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + 12, ROCKETNET_COOKIE_FIELD_BYTES );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
 
     rocketnet_check( rocketnet_test_process_packet( test, request, sizeof(request), response, &response_bytes,
                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
@@ -2646,7 +2647,7 @@ void rocketnet_test_server_full_connect()
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
@@ -2830,7 +2831,7 @@ void rocketnet_test_server_receive_refusals()
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
@@ -2842,7 +2843,7 @@ void rocketnet_test_server_receive_refusals()
 
     // prefilter garbage: wrong tag never reaches a type counter
     packet[0] = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
-    packet[1] = 0xFF; packet[2] = 0xFF; packet[3] = 0xFF;
+    packet[2] = 0xFF; packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
     rocketnet_check( rocketnet_test_process_packet( &test, packet, 64, response, &response_bytes,
                                                     payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_DROPPED] == 1 );
@@ -3484,7 +3485,7 @@ void rocketnet_test_client_cookie_injection()
     // an off-path injection: right shape, wrong salt. refused, nothing
     // stored, and the state does not move -- the attacker must guess eight
     // random bytes it has never seen.
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t wrong_salt[ROCKETNET_CONNECTION_SALT_BYTES];
     memcpy( wrong_salt, client.connection_salt, sizeof(wrong_salt) );
     wrong_salt[0] ^= 1;
@@ -3807,7 +3808,7 @@ void rocketnet_test_swarm()
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
-    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     uint64_t garbage_rng = 0x6A6B6A6BULL;
     #define ROCKETNET_SWARM_RANDOM() ( garbage_rng ^= garbage_rng << 13, garbage_rng ^= garbage_rng >> 7, garbage_rng ^= garbage_rng << 17, garbage_rng )
@@ -3857,14 +3858,14 @@ void rocketnet_test_swarm()
             {
                 uint8_t * p = packet;
                 rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag );
-                for ( int b = 4; b < 64; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
+                for ( int b = ROCKETNET_PREFILTER_BYTES; b < 64; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
                 garbage_bytes = 64;                          // sealed junk, no mapping
             }
             else
             {
                 uint8_t * p = packet;
                 rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, tag );
-                for ( int b = 4; b < ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
+                for ( int b = ROCKETNET_PREFILTER_BYTES; b < ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
                 garbage_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;    // junk request: dies at the version
             }
             rocketnet_server_protocol_process_packet( &test.server, &garbage_addresses[g], packet, garbage_bytes,

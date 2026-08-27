@@ -33,7 +33,7 @@ struct rocketnet_server_protocol_t
 {
     uint64_t protocol_id;
     double send_rate;                                       // keep-alives per second per client, default style: 10
-    uint8_t title_tag[ROCKETNET_TITLE_TAG_BYTES];
+    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
 
     uint8_t backend_public_key[ROCKETNET_KEY_BYTES];
     uint8_t server_public_key[ROCKETNET_KEY_BYTES];

@@ -29,7 +29,7 @@
 struct rocketnet_client_protocol_t
 {
     // configuration, set before connect
-    uint8_t title_tag[ROCKETNET_TITLE_TAG_BYTES];
+    uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
     double send_rate;                                       // packets per second, default 10
     struct rocketnet_counters_t * counters;
 
