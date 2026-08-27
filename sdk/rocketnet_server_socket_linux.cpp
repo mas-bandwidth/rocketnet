@@ -394,6 +394,12 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         num_queues = atoi( num_queues_env );
     }
 
+    const char * num_os_cpus_env = getenv( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+    if ( num_os_cpus_env )
+    {
+        num_os_cpus = atoi( num_os_cpus_env );
+    }
+
     const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
     if ( public_address_env )
     {
