@@ -9,10 +9,19 @@
 */
 
 #include "rocketnet.h"
-#include "rocketnet_server_transport.h"
-#include "rocketnet_platform.h"
 #include <stdio.h>
 #include <signal.h>
+
+
+// the demo's own sleep; the library surface stays minimal
+
+#ifdef _WIN32
+#include <windows.h>
+static void demo_sleep_ms( int ms ) { Sleep( ms ); }
+#else
+#include <time.h>
+static void demo_sleep_ms( int ms ) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = ( ms % 1000 ) * 1000000L; nanosleep( &ts, NULL ); }
+#endif
 
 static volatile int quit;
 
@@ -25,7 +34,7 @@ int main( int argc, char ** argv )
 {
     signal( SIGINT, interrupt_handler );
 
-    if ( !rocketnet_init() )
+    if ( !rocketnet_init( NULL ) )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;
@@ -33,7 +42,7 @@ int main( int argc, char ** argv )
 
     const char * public_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, 256 );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, 256 );
     if ( !server )
     {
         rocketnet_term();
@@ -55,14 +64,14 @@ int main( int argc, char ** argv )
 
         // echo every payload back to its sender
 
-        rocketnet_server_transport_payloads_t * payloads = rocketnet_server_transport_payloads( server );
+        struct rocketnet_server_transport_payloads_t * payloads = rocketnet_server_transport_payloads( server );
         for ( int i = 0; i < payloads->num_payloads; i++ )
         {
             rocketnet_server_transport_send_packet( server, payloads->client_index[i],
                                                     payloads->payload_data[i], payloads->payload_bytes[i] );
         }
 
-        rocketnet_platform_sleep( 0.01 );
+        demo_sleep_ms( 10 );
     }
 
     printf( "\nserver stopping\n" );

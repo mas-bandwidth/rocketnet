@@ -27,8 +27,6 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_network_simulator.h"
-#include "rocketnet_client_transport.h"
-#include "rocketnet_server_transport.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
 

@@ -236,7 +236,11 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 
 // -----------------------------------------
 
+#ifdef __cplusplus
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context = NULL );
+#else
+ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context );
+#endif
 
 ROCKETNET_EXPORT_FUNC void rocketnet_term();
 
@@ -317,6 +321,8 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_protocol_version();
 
 // -----------------------------------------
 
+#ifdef __cplusplus
+
 inline void rocketnet_endian_fix( uint16_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -348,9 +354,95 @@ inline void rocketnet_endian_fix( uint64_t * value )
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
+#endif // #ifdef __cplusplus
+
 // -----------------------------------------
 
 ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size );
+
+// -----------------------------------------
+//                                  client
+// -----------------------------------------
+
+#define ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED         -7
+#define ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN         -6
+#define ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT          -5
+#define ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
+#define ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT  -3
+#define ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT      -2
+#define ROCKETNET_CLIENT_STATE_CONNECTION_DENIED             -1
+#define ROCKETNET_CLIENT_STATE_DISCONNECTED                   0
+#define ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE              1
+#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST     2
+#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE    3
+#define ROCKETNET_CLIENT_STATE_CONNECTED                      4
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_client_state_name( int state );
+
+struct rocketnet_client_transport_t;
+struct rocketnet_counters_t;
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const char * connect_address_string );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_client_transport_t * client_transport );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_client_transport_t * client_transport );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_client_index( struct rocketnet_client_transport_t * client_transport );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_disconnect( struct rocketnet_client_transport_t * client_transport );
+
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct rocketnet_client_transport_t * client_transport );
+
+// -----------------------------------------
+//                                  server
+// -----------------------------------------
+
+#define ROCKETNET_SERVER_TRANSPORT_RUNNING                    0
+#define ROCKETNET_SERVER_TRANSPORT_STOPPING                   1
+#define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
+
+struct rocketnet_server_transport_t;
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, int max_clients );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport );
+
+struct rocketnet_server_transport_payloads_t                                    // delivered by the last update, valid until the next
+{
+    int num_payloads;
+    int client_index[256];
+    uint8_t * payload_data[256];
+    int payload_bytes[256];
+};
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_payloads_t * rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * server_transport );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_is_client_connected( struct rocketnet_server_transport_t * server_transport, int client_index );
+
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
+
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
+
+// -----------------------------------------
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 
 // -----------------------------------------
 
