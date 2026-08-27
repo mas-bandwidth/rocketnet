@@ -3050,6 +3050,76 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_client_payload_before_first_keep_alive()
+{
+    // a payload racing ahead of the first keep-alive is delivered, not
+    // dropped: the session keys are born at the challenge, so nothing about
+    // payload bytes needs the client index -- the reason this protocol has
+    // no keep-alive prefixing for unconfirmed clients
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xBEF0ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    // drive to sending connection response, complete the server side, but
+    // swallow the first keep-alive: the client holds session keys and no
+    // index
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    for ( double time = 100.0; time < 102.0 && client.state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE; time += 0.05 )
+    {
+        rocketnet_client_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes == 0 )
+            continue;
+        rocketnet_server_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                         ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                         payload, &payload_bytes, &payload_client_index );
+        if ( response_bytes > 0 )
+            rocketnet_client_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+    }
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    rocketnet_client_update( &client, 102.1, packet, &packet_bytes );
+    rocketnet_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    rocketnet_check( rocketnet_server_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 102.1, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    // the first keep-alive is dropped here, deliberately
+
+    // the server sends a payload to the still-unconfirmed client: delivered
+    const uint8_t early_data[5] = { 0xE, 0xA, 0x12, 0x1, 0x9 };
+    int bytes = rocketnet_server_write_payload( &test.server, 0, early_data, sizeof(early_data), 102.2, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    rocketnet_check( rocketnet_client_process_packet( &client, packet, bytes, 102.2, payload, &payload_bytes ) );
+    rocketnet_check( payload_bytes == (int) sizeof(early_data) );
+    rocketnet_check( memcmp( payload, early_data, sizeof(early_data) ) == 0 );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    // and the periodic keep-alive still carries the index and connects it
+    bytes = rocketnet_server_write_keep_alive( &test.server, 0, 102.3, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_check( rocketnet_client_process_packet( &client, packet, bytes, 102.3, payload, &payload_bytes ) );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( client.client_index == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_client_keep_alive_suppression()
 {
     // the client's ordinary traffic is its keep-alive, exactly as on the
@@ -4517,6 +4587,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_encryption_map_iterator );
         RUN_TEST( test_server_update_sweep );
         RUN_TEST( test_server_keep_alive_pacing );
+        RUN_TEST( test_client_payload_before_first_keep_alive );
         RUN_TEST( test_client_keep_alive_suppression );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );

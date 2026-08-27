@@ -612,18 +612,11 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED,
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN };
 
-    // payloads are for an established connection; one arriving in sending
-    // connection response means the first keep-alive is still in flight, and
-    // the periodic keep-alives repair that -- refuse it as wrong state
-    // without touching the replay window
-
-    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
-    {
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED]++;
-        rocketnet_spam( "client ignored payload. wrong state" );
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE]++;
-        return 0;
-    }
+    // payloads are accepted from sending connection response on, exactly
+    // like every session type: the keys that open them are born at the
+    // challenge, and nothing about delivering bytes needs the client index.
+    // this is why the protocol has no keep-alive prefixing for unconfirmed
+    // clients -- there is no window in which a payload cannot be understood.
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     uint64_t sequence = 0;
