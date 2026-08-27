@@ -3,7 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet_client_transport.h"
+#include "rocketnet.h"
+#include "rocketnet_client_protocol.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"

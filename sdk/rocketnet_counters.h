@@ -148,6 +148,6 @@ struct rocketnet_counters_t
     uint64_t values[ROCKETNET_NUM_COUNTERS];
 };
 
-const char * rocketnet_counter_name( int counter );
+#include "rocketnet.h"                  // rocketnet_counter_name lives in the forest header
 
 #endif // #ifndef ROCKETNET_COUNTERS_H

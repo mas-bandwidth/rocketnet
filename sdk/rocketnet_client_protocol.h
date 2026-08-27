@@ -9,6 +9,7 @@
 #define ROCKETNET_CLIENT_PROTOCOL_H
 
 #include <stdint.h>
+#include "rocketnet.h"
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_keys.h"
@@ -22,21 +23,6 @@
 // recovery is a fresh connect with a fresh token -- the ordinary path, run
 // every time. The state is readable from outside at any time and is the
 // primary means of diagnosing a connection that is not progressing.
-
-#define ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED        -7
-#define ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN        -6
-#define ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT         -5
-#define ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
-#define ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT -3
-#define ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT     -2
-#define ROCKETNET_CLIENT_STATE_CONNECTION_DENIED            -1
-#define ROCKETNET_CLIENT_STATE_DISCONNECTED                 0
-#define ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE            1
-#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST   2
-#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE  3
-#define ROCKETNET_CLIENT_STATE_CONNECTED                    4
-
-const char * rocketnet_client_state_name( int state );
 
 #define ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS             10
 
