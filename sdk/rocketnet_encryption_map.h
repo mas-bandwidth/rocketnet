@@ -50,6 +50,7 @@ struct rocketnet_encryption_mapping_t
     int client_index;                       // -1 until a slot is assigned
     double handshake_deadline;              // absolute, never refreshed
     double last_receive_time;               // refreshed by every opened packet
+    double last_send_time;                  // refreshed by every send; keep-alives are suppressed by traffic
     uint64_t send_sequence_handshake;       // next handshake-phase sequence to send
     uint64_t send_sequence_session;         // next session-phase sequence to send
     struct rocketnet_replay_protection_t replay_handshake;
@@ -84,14 +85,11 @@ struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct r
 
 void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );
 
-// Walks every live mapping and removes the expired: an unestablished mapping
-// past its handshake deadline, or an established one idle past the token's
-// timeout. Counts each into the counters. Run once per server update, not
-// per packet.
+// Iterates the live mappings: start with iterator = -1, call until it
+// returns 0; each call yields the next live index. Removing the yielded
+// index during iteration is safe -- that is what the server's sweep does.
 
-void rocketnet_encryption_map_sweep( struct rocketnet_encryption_map_t * map,
-                                     double current_time,
-                                     struct rocketnet_counters_t * counters );
+int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map, int * iterator );
 
 int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map_t * map );
 

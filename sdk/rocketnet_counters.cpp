@@ -75,6 +75,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MAPPING_TABLE_FULL:                                    return "MAPPING_TABLE_FULL";
         case ROCKETNET_COUNTER_CLIENT_CONNECTED:                                      return "CLIENT_CONNECTED";
         case ROCKETNET_COUNTER_CLIENT_DISCONNECTED:                                   return "CLIENT_DISCONNECTED";
+        case ROCKETNET_COUNTER_CLIENT_TIMED_OUT:                              return "CLIENT_TIMED_OUT";
         case ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED:                        return "CLIENT_COOKIE_RECEIVED";
         case ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE:                      return "CLIENT_COOKIE_WRONG_STATE";
         case ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH:                    return "CLIENT_COOKIE_SALT_MISMATCH";

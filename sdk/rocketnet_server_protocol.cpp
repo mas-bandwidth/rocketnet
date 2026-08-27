@@ -432,6 +432,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         mapping->token_expire_timestamp = token_expire_timestamp;
         mapping->timeout_seconds = timeout_seconds;
         mapping->last_receive_time = current_time;
+        mapping->last_send_time = current_time;
 
         sodium_memzero( &keys, sizeof(keys) );
 
@@ -544,6 +545,8 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     mapping->client_index = client_index;
     mapping->established = 1;
+
+    mapping->last_send_time = current_time;
 
     rocketnet_debug( "client %d connected", client_index );
     counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
@@ -828,6 +831,45 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
                                                    out_payload, out_payload_bytes, out_payload_client_index );
 }
 
+void rocketnet_server_update( struct rocketnet_server_protocol_t * server,
+                              double current_time )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( server->encryption_map );
+    rocketnet_assert( server->client_slots );
+    rocketnet_assert( server->counters );
+
+    uint64_t * counters = server->counters->values;
+
+    int iterator = -1;
+    while ( rocketnet_encryption_map_next( server->encryption_map, &iterator ) )
+    {
+        const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, iterator );
+
+        if ( !mapping->established )
+        {
+            if ( current_time >= mapping->handshake_deadline )
+            {
+                rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
+                rocketnet_encryption_map_remove( server->encryption_map, iterator );
+                counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
+            }
+            continue;
+        }
+
+        if ( mapping->timeout_seconds > 0 && current_time >= mapping->last_receive_time + mapping->timeout_seconds )
+        {
+            int client_index = mapping->client_index;
+            rocketnet_debug( "client %d timed out", client_index );
+            if ( client_index != -1 )
+                rocketnet_client_slots_release( server->client_slots, client_index );
+            rocketnet_encryption_map_remove( server->encryption_map, iterator );
+            counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
+            counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
+        }
+    }
+}
+
 static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mapping( struct rocketnet_server_protocol_t * server,
                                                                                    int client_index )
 {
@@ -843,6 +885,7 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
 
 int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * server,
                                        int client_index,
+                                       double current_time,
                                        uint8_t * out_packet )
 {
     rocketnet_assert( server );
@@ -851,6 +894,8 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
     if ( !mapping )
         return 0;
+
+    mapping->last_send_time = current_time;
 
     uint8_t keep_alive_data[8];
     uint8_t * p = keep_alive_data;
@@ -870,10 +915,30 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     return bytes;
 }
 
+int rocketnet_server_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
+                                              int client_index,
+                                              double current_time,
+                                              uint8_t * out_packet )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( out_packet );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
+    if ( current_time - mapping->last_send_time < 1.0 / send_rate )
+        return 0;
+
+    return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
+}
+
 int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
                                     int client_index,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
+                                    double current_time,
                                     uint8_t * out_packet )
 {
     rocketnet_assert( server );
@@ -886,6 +951,8 @@ int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
     if ( !mapping )
         return 0;
+
+    mapping->last_send_time = current_time;
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
                                                server->title_tag, mapping->send_sequence_session,

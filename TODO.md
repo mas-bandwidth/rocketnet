@@ -117,6 +117,12 @@ land. The milestone view is issue #28; this file is the live ordering.
   a full server denies cleanly; all five timeout pairings fire to their
   exact states; the wrong-salt cookie injection refused with nothing
   stored. 69 tests green.
+- Server pacing and the sweep at the server level: rocketnet_server_update
+  owns the sweep (the map's sweep could not release slots — a dangling-slot
+  bug waiting; replaced by a map iterator, the decision made where the slots
+  live, CLIENT_TIMED_OUT counted); keep-alives paced per client and
+  suppressed by ordinary traffic — every send stamps the mapping, if_due
+  emits only when idle; time passed in everywhere, nothing reads a clock.
 
 ## TODO
 

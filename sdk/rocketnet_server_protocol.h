@@ -32,6 +32,7 @@
 struct rocketnet_server_protocol_t
 {
     uint64_t protocol_id;
+    double send_rate;                                       // keep-alives per second per client, default style: 10
     uint8_t title_tag[ROCKETNET_TITLE_TAG_BYTES];
 
     uint8_t backend_public_key[ROCKETNET_KEY_BYTES];
@@ -96,14 +97,35 @@ int rocketnet_server_process_packet( struct rocketnet_server_protocol_t * server
                                      int * out_payload_bytes,
                                      int * out_payload_client_index );
 
+// The server's per-frame update: the sweep. Call once per frame with the
+// mocked or real clocks -- nothing in here reads a clock. An unestablished
+// mapping past its handshake deadline is removed; an established one idle
+// past its timeout releases its slot -- the client timed out -- and its
+// mapping with it. The sweep lives here rather than in the map because the
+// decision touches the slots.
+
+void rocketnet_server_update( struct rocketnet_server_protocol_t * server,
+                              double current_time );
+
 // Builds a keep-alive for a connected client at the mapping's next session
-// sequence. The caller paces these at the send rate per client -- a rate in
-// time, never per update -- and they are what repair a lost first keep-alive.
-// Returns the wire size, or 0 for a client index that is not connected.
+// sequence, and stamps the send. Returns the wire size, or 0 for a client
+// index that is not connected.
 
 int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * server,
                                        int client_index,
+                                       double current_time,
                                        uint8_t * out_packet );
+
+// The paced form: builds the keep-alive only when the send-rate interval has
+// elapsed since anything was last sent to this client -- keep-alives are
+// suppressed by ordinary traffic, per the standard, and appear only when a
+// connection is otherwise idle. The caller loops the client indices each
+// frame. Returns 0 when not connected or not due.
+
+int rocketnet_server_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
+                                              int client_index,
+                                              double current_time,
+                                              uint8_t * out_packet );
 
 // Builds a payload packet for a connected client. Returns the wire size, or
 // 0 when the client is not connected or the payload does not fit.
@@ -112,6 +134,7 @@ int rocketnet_server_write_payload( struct rocketnet_server_protocol_t * server,
                                     int client_index,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
+                                    double current_time,
                                     uint8_t * out_packet );
 
 #endif // #ifndef ROCKETNET_SERVER_PROTOCOL_H

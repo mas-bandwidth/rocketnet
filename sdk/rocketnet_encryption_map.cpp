@@ -188,38 +188,20 @@ void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, i
     map->num_mappings--;
 }
 
-void rocketnet_encryption_map_sweep( struct rocketnet_encryption_map_t * map,
-                                     double current_time,
-                                     struct rocketnet_counters_t * counters )
+int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map, int * iterator )
 {
     rocketnet_assert( map );
-    rocketnet_assert( counters );
+    rocketnet_assert( iterator );
 
-    for ( int i = 0; i < map->capacity; i++ )
+    for ( int i = *iterator + 1; i < map->capacity; i++ )
     {
-        if ( !map->live[i] )
-            continue;
-
-        const struct rocketnet_encryption_mapping_t * mapping = &map->mapping[i];
-
-        if ( !mapping->established )
+        if ( map->live[i] )
         {
-            if ( current_time >= mapping->handshake_deadline )
-            {
-                rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
-                rocketnet_encryption_map_remove( map, i );
-                counters->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
-            }
-            continue;
-        }
-
-        if ( mapping->timeout_seconds > 0 && current_time >= mapping->last_receive_time + mapping->timeout_seconds )
-        {
-            rocketnet_debug( "server removed encryption mapping. idle timeout" );
-            rocketnet_encryption_map_remove( map, i );
-            counters->values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
+            *iterator = i;
+            return 1;
         }
     }
+    return 0;
 }
 
 int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map_t * map )

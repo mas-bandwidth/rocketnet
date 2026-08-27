@@ -1538,67 +1538,45 @@ void rocketnet_test_encryption_map()
     rocketnet_encryption_map_destroy( map );
 }
 
-void rocketnet_test_encryption_map_deadlines()
+void rocketnet_test_encryption_map_iterator()
 {
-    struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 8 );
     rocketnet_check( map );
 
-    struct rocketnet_address_t stalled_address, connecting_address, established_address, idle_address;
-    rocketnet_check( rocketnet_address_parse( &stalled_address, "10.0.0.1:30000" ) );
-    rocketnet_check( rocketnet_address_parse( &connecting_address, "10.0.0.2:30000" ) );
-    rocketnet_check( rocketnet_address_parse( &established_address, "10.0.0.3:30000" ) );
-    rocketnet_check( rocketnet_address_parse( &idle_address, "10.0.0.4:30000" ) );
+    // empty iterates nothing
+    int iterator = -1;
+    rocketnet_check( !rocketnet_encryption_map_next( map, &iterator ) );
 
-    // a stalled handshake dies at its deadline no matter what; a connecting
-    // one inside its deadline survives
-    int stalled = rocketnet_encryption_map_add( map, &stalled_address, 105.0 );
-    int connecting = rocketnet_encryption_map_add( map, &connecting_address, 120.0 );
+    struct rocketnet_address_t a, b, c;
+    rocketnet_check( rocketnet_address_parse( &a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &b, "10.0.0.2:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &c, "10.0.0.3:30000" ) );
+    int index_a = rocketnet_encryption_map_add( map, &a, 100.0 );
+    int index_b = rocketnet_encryption_map_add( map, &b, 100.0 );
+    int index_c = rocketnet_encryption_map_add( map, &c, 100.0 );
 
-    // an established mapping ignores the handshake deadline entirely and is
-    // governed by its idle timeout alone
-    int established = rocketnet_encryption_map_add( map, &established_address, 105.0 );
-    struct rocketnet_encryption_mapping_t * established_mapping = rocketnet_encryption_map_entry( map, established );
-    established_mapping->established = 1;
-    established_mapping->timeout_seconds = 10;
-    established_mapping->last_receive_time = 109.0;
+    // every live index yields exactly once
+    int seen[8] = { 0 };
+    iterator = -1;
+    int count = 0;
+    while ( rocketnet_encryption_map_next( map, &iterator ) )
+    {
+        seen[iterator]++;
+        count++;
+    }
+    rocketnet_check( count == 3 );
+    rocketnet_check( seen[index_a] == 1 && seen[index_b] == 1 && seen[index_c] == 1 );
 
-    int idle = rocketnet_encryption_map_add( map, &idle_address, 105.0 );
-    struct rocketnet_encryption_mapping_t * idle_mapping = rocketnet_encryption_map_entry( map, idle );
-    idle_mapping->established = 1;
-    idle_mapping->timeout_seconds = 10;
-    idle_mapping->last_receive_time = 90.0;
-
-    (void) stalled;
-    (void) connecting;
-
-    rocketnet_encryption_map_sweep( map, 110.0, &counters );
-
-    rocketnet_check( rocketnet_encryption_map_find( map, &stalled_address ) == -1 );        // deadline passed
-    rocketnet_check( rocketnet_encryption_map_find( map, &connecting_address ) != -1 );     // inside deadline
-    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) != -1 );    // established: deadline ignored
-    rocketnet_check( rocketnet_encryption_map_find( map, &idle_address ) == -1 );           // idle past timeout
-
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
-
-    // traffic refreshes the idle deadline and the connection lives on
-    established_mapping = rocketnet_encryption_map_entry( map, rocketnet_encryption_map_find( map, &established_address ) );
-    established_mapping->last_receive_time = 118.0;
-    rocketnet_encryption_map_sweep( map, 125.0, &counters );
-    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) != -1 );
-    rocketnet_encryption_map_sweep( map, 130.0, &counters );
-    rocketnet_check( rocketnet_encryption_map_find( map, &established_address ) == -1 );
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 2 );
-
-    // the connecting mapping eventually dies at its own deadline: connect or
-    // be discarded, and no amount of nothing extends it
-    rocketnet_check( counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 2 );
+    // removing the yielded index during iteration is safe -- the sweep's
+    // whole pattern
+    iterator = -1;
+    while ( rocketnet_encryption_map_next( map, &iterator ) )
+        rocketnet_encryption_map_remove( map, iterator );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 0 );
 
     rocketnet_encryption_map_destroy( map );
 }
+
 
 // --- the request path ladder ---
 
@@ -2968,7 +2946,7 @@ static int rocketnet_test_pump( struct rocketnet_test_server_t * test,
             {
                 if ( !rocketnet_client_slots_connected( test->server.client_slots, i ) )
                     continue;
-                int bytes = rocketnet_server_write_keep_alive( &test->server, i, response );
+                int bytes = rocketnet_server_write_keep_alive( &test->server, i, time, response );
                 if ( bytes > 0 )
                 {
                     if ( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET == drop_once_packet_type && !dropped )
@@ -2986,6 +2964,89 @@ static int rocketnet_test_pump( struct rocketnet_test_server_t * test,
     }
 
     return client->state;
+}
+
+void rocketnet_test_server_update_sweep()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // a stalled handshake: request through challenge, then nothing. it dies
+    // at the handshake deadline no matter what keeps arriving -- the
+    // deadline is never refreshed.
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x51A11ULL, &client_keys );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    rocketnet_server_update( &test.server, 104.9 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    rocketnet_server_update( &test.server, 105.0 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
+
+    // a connected client that goes silent: the slot releases with the
+    // mapping, together, at the idle timeout
+    rocketnet_test_handshake_to_challenge( &test, 0x51A22ULL, &client_keys );
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    rocketnet_server_update( &test.server, 109.9 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+    rocketnet_server_update( &test.server, 110.1 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+
+void rocketnet_test_server_keep_alive_pacing()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+    test.server.send_rate = 10.0;
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x9ACEULL, &client_keys );
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    // the first keep-alive at the response stamped the send at 100.0, so
+    // nothing is due until the interval elapses -- keep-alives appear only
+    // when the connection is otherwise idle
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, 0, 100.05, packet ) == 0 );
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, 0, 100.11, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+
+    // a payload send suppresses the next keep-alive: ordinary traffic is
+    // the keep-alive
+    const uint8_t data[4] = { 1, 2, 3, 4 };
+    rocketnet_check( rocketnet_server_write_payload( &test.server, 0, data, 4, 100.15, packet ) > 0 );
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, 0, 100.22, packet ) == 0 );
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, 0, 100.26, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+
+    // a disconnected index degrades to zero, never an assert
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, 3, 200.0, packet ) == 0 );
+    rocketnet_check( rocketnet_server_write_keep_alive_if_due( &test.server, -1, 200.0, packet ) == 0 );
+
+    rocketnet_test_server_teardown( &test );
 }
 
 void rocketnet_test_client_connect_validations()
@@ -3067,7 +3128,7 @@ void rocketnet_test_client_server_connect()
     rocketnet_check( payload_client_index == 0 );
 
     const uint8_t to_client[3] = { 9, 8, 7 };
-    bytes = rocketnet_server_write_payload( &test.server, 0, to_client, sizeof(to_client), packet );
+    bytes = rocketnet_server_write_payload( &test.server, 0, to_client, sizeof(to_client), 200.0, packet );
     rocketnet_check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + (int) sizeof(to_client) );
     rocketnet_check( rocketnet_client_process_packet( &client, packet, bytes, 200.0, payload, &payload_bytes ) );
     rocketnet_check( payload_bytes == (int) sizeof(to_client) );
@@ -3950,7 +4011,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_used_token_history );
         RUN_TEST( test_admitted_token_set );
         RUN_TEST( test_encryption_map );
-        RUN_TEST( test_encryption_map_deadlines );
+        RUN_TEST( test_encryption_map_iterator );
+        RUN_TEST( test_server_update_sweep );
+        RUN_TEST( test_server_keep_alive_pacing );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );
         RUN_TEST( test_request_path_cookie_gate );
