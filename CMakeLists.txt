@@ -101,6 +101,26 @@ add_dependencies(test rocketnet)
 target_link_libraries(test rocketnet)
 
 
+# soak
+
+project(soak)
+enable_language(C)
+add_executable(soak soak.c)
+target_include_directories(soak PRIVATE sdk)
+add_dependencies(soak rocketnet)
+target_link_libraries(soak rocketnet)
+
+
+# soak_sim
+
+project(soak_sim)
+enable_language(CXX)
+add_executable(soak_sim soak_sim.cpp)
+target_include_directories(soak_sim PRIVATE sdk)
+add_dependencies(soak_sim rocketnet)
+target_link_libraries(soak_sim rocketnet)
+
+
 # keygen
 
 project(keygen)
