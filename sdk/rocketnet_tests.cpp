@@ -3050,6 +3050,40 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_client_keep_alive_suppression()
+{
+    // the client's ordinary traffic is its keep-alive, exactly as on the
+    // server: a payload stamps the send, and the scheduled keep-alive stays
+    // suppressed until the connection is otherwise idle
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x50FFAULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    double time = client.last_send_time;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+
+    // a payload at time t suppresses the keep-alive until t + interval
+    const uint8_t data[4] = { 1, 2, 3, 4 };
+    rocketnet_check( rocketnet_client_write_payload( &client, data, 4, time + 0.05, packet ) > 0 );
+    rocketnet_client_update( &client, time + 0.11, packet, &packet_bytes );
+    rocketnet_check( packet_bytes == 0 );
+    rocketnet_client_update( &client, time + 0.16, packet, &packet_bytes );
+    rocketnet_check( packet_bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_client_connect_validations()
 {
     struct rocketnet_counters_t counters;
@@ -3118,7 +3152,7 @@ void rocketnet_test_client_server_connect()
     int payload_client_index = -1;
 
     const uint8_t to_server[7] = { 1, 2, 3, 4, 5, 6, 7 };
-    int bytes = rocketnet_client_write_payload( &client, to_server, sizeof(to_server), packet );
+    int bytes = rocketnet_client_write_payload( &client, to_server, sizeof(to_server), 200.0, packet );
     rocketnet_check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + (int) sizeof(to_server) );
     rocketnet_check( rocketnet_server_process_packet( &test.server, &test.client_address, packet, bytes,
                                                       ROCKETNET_TEST_CREATE_TS, 200.0,
@@ -3695,7 +3729,7 @@ void rocketnet_test_swarm()
                 continue;
             uint8_t game_data[32];
             memset( game_data, (uint8_t) i, sizeof(game_data) );
-            int bytes = rocketnet_client_write_payload( &clients[i], game_data, sizeof(game_data), packet );
+            int bytes = rocketnet_client_write_payload( &clients[i], game_data, sizeof(game_data), time, packet );
             rocketnet_check( bytes > 0 );
             int result = rocketnet_server_process_packet( &test.server, &addresses[i], packet, bytes,
                                                           ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
@@ -4483,6 +4517,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_encryption_map_iterator );
         RUN_TEST( test_server_update_sweep );
         RUN_TEST( test_server_keep_alive_pacing );
+        RUN_TEST( test_client_keep_alive_suppression );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );
         RUN_TEST( test_request_path_cookie_gate );

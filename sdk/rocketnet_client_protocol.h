@@ -127,12 +127,15 @@ int rocketnet_client_process_packet( struct rocketnet_client_protocol_t * client
                                      uint8_t * out_payload,
                                      int * out_payload_bytes );
 
-// Builds a payload packet for the server. Valid only while connected;
-// returns the wire size, or 0 when not connected or the payload does not fit.
+// Builds a payload packet for the server, and stamps the send -- ordinary
+// traffic suppresses the keep-alive, on the client exactly as on the server.
+// Valid only while connected; returns the wire size, or 0 when not connected
+// or the payload does not fit.
 
 int rocketnet_client_write_payload( struct rocketnet_client_protocol_t * client,
                                     const uint8_t * payload_data,
                                     int payload_bytes,
+                                    double current_time,
                                     uint8_t * out_packet );
 
 // The deliberate disconnect: fills the redundant burst -- ten sealed
