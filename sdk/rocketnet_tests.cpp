@@ -26,6 +26,7 @@
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_network_simulator.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
 
@@ -3372,6 +3373,474 @@ void rocketnet_test_client_cookie_injection()
     rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
 }
 
+void rocketnet_test_network_simulator()
+{
+    struct rocketnet_address_t address_a, address_b;
+    rocketnet_check( rocketnet_address_parse( &address_a, "10.0.0.1:30000" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "10.0.0.2:30000" ) );
+
+    const uint8_t packet[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    struct rocketnet_address_t from;
+
+    // a perfect wire delivers immediately, to the right address only
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 12345 );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_a, 100.0, &from, received ) == 0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.0, &from, received ) == (int) sizeof(packet) );
+    rocketnet_check( memcmp( received, packet, sizeof(packet) ) == 0 );
+    rocketnet_check( rocketnet_address_equal( &from, &address_a ) );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.0, &from, received ) == 0 );
+
+    // latency holds a packet until its time
+    rocketnet_network_simulator_config( simulator, 0.05, 0.0, 0.0f, 0.0f );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.04, &from, received ) == 0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.05, &from, received ) == (int) sizeof(packet) );
+
+    // loss loses about its share, and the same seed loses exactly the same
+    // packets: a failing run replays
+    int delivered_first = 0;
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 25.0f, 0.0f );
+    for ( int i = 0; i < 200; i++ )
+    {
+        rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 200.0 );
+        if ( rocketnet_network_simulator_receive( simulator, &address_b, 200.0, &from, received ) > 0 )
+            delivered_first++;
+    }
+    rocketnet_check( delivered_first > 100 && delivered_first < 190 );
+    rocketnet_network_simulator_destroy( simulator );
+
+    simulator = rocketnet_network_simulator_create( NULL, 64, 12345 );
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.0, &from, received ) == (int) sizeof(packet) );
+    rocketnet_network_simulator_config( simulator, 0.05, 0.0, 0.0f, 0.0f );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 100.0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 100.05, &from, received ) == (int) sizeof(packet) );
+    int delivered_second = 0;
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 25.0f, 0.0f );
+    for ( int i = 0; i < 200; i++ )
+    {
+        rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 200.0 );
+        if ( rocketnet_network_simulator_receive( simulator, &address_b, 200.0, &from, received ) > 0 )
+            delivered_second++;
+    }
+    rocketnet_check( delivered_second == delivered_first );
+
+    // duplicates arrive as extra copies
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 100.0f );
+    rocketnet_network_simulator_send( simulator, &address_a, &address_b, packet, sizeof(packet), 300.0 );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 300.0, &from, received ) == (int) sizeof(packet) );
+    rocketnet_check( rocketnet_network_simulator_receive( simulator, &address_b, 300.0, &from, received ) == (int) sizeof(packet) );
+
+    rocketnet_network_simulator_destroy( simulator );
+}
+
+void rocketnet_test_client_server_lossy_wire()
+{
+    // the stochastic proof beside the deterministic loss walk: a wire with
+    // real latency, jitter, loss and duplicates, at a fixed seed, and the
+    // connection still completes and carries traffic. duplicates double as
+    // the replay-protection soak: every duplicated session packet must be
+    // refused exactly once and change nothing.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 256, 0xBADC0FFEE0DDF00DULL );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.03, 0.02, 5.0f, 5.0f );
+
+    struct rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x105511ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    struct rocketnet_address_t from;
+
+    int client_received_payloads = 0;
+
+    for ( double time = 100.0; time < 115.0; time += 0.01 )
+    {
+        rocketnet_client_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes > 0 )
+            rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, packet, packet_bytes, time );
+
+        // everything due at the server this tick
+        int bytes;
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        {
+            rocketnet_server_process_packet( &test.server, &from, packet, bytes,
+                                             ROCKETNET_TEST_CREATE_TS, time,
+                                             response, &response_bytes,
+                                             payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+        }
+
+        // the server's pacing: sweep, keep-alives when idle, and once
+        // connected a payload stream toward the client
+        rocketnet_server_update( &test.server, time );
+        for ( int i = 0; i < 4; i++ )
+        {
+            int keep_alive_bytes = rocketnet_server_write_keep_alive_if_due( &test.server, i, time, response );
+            if ( keep_alive_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, response, keep_alive_bytes, time );
+        }
+        if ( rocketnet_client_slots_connected( test.server.client_slots, 0 ) && client_received_payloads < 20 )
+        {
+            const uint8_t stream_byte[1] = { 0x77 };
+            int stream_bytes = rocketnet_server_write_payload( &test.server, 0, stream_byte, 1, time, response );
+            if ( stream_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, response, stream_bytes, time );
+        }
+
+        // everything due at the client this tick
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
+        {
+            if ( rocketnet_client_process_packet( &client, packet, bytes, time, payload, &payload_bytes ) && payload_bytes > 0 )
+                client_received_payloads++;
+        }
+    }
+
+    rocketnet_check( client.state == ROCKETNET_CLIENT_STATE_CONNECTED );
+    rocketnet_check( client_received_payloads >= 10 );
+
+    // the duplicates the wire injected were each refused exactly once at the
+    // replay window, and nothing downstream of them moved
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED] +
+                     client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED] > 0 );
+
+    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_swarm()
+{
+    // ALWAYS BE LOADED: a thousand real clients against one server, in
+    // memory on a direct wire, with churn -- most connect and stay, some
+    // connect and leave, some abandon mid-handshake so the deadline reclaim
+    // runs under load, and a garbage generator keeps the reject paths hot
+    // the whole time. The counters must account for every packet exactly,
+    // and the reasons that must never fire must be exactly zero at the end.
+
+    const int num_clients = 1000;
+    const int num_garbage_senders = 50;
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+    rocketnet_client_slots_destroy( test.server.client_slots );
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    rocketnet_used_token_history_destroy( test.server.used_token_history );
+    rocketnet_admitted_token_set_destroy( test.server.admitted_token_set );
+    test.server.client_slots = rocketnet_client_slots_create( NULL, num_clients );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, num_clients * 2 );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, num_clients * 8 );
+    test.server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, num_clients * 2 );
+    rocketnet_check( test.server.client_slots && test.server.encryption_map && test.server.used_token_history && test.server.admitted_token_set );
+
+    struct rocketnet_client_protocol_t * clients = (struct rocketnet_client_protocol_t*)
+        rocketnet_malloc( NULL, sizeof(struct rocketnet_client_protocol_t) * (size_t) num_clients );
+    struct rocketnet_address_t * addresses = (struct rocketnet_address_t*)
+        rocketnet_malloc( NULL, sizeof(struct rocketnet_address_t) * (size_t) num_clients );
+    rocketnet_check( clients && addresses );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+
+    // roles by index: 8 of every 10 stay, the 9th connects then leaves, the
+    // 10th abandons the handshake once it holds a challenge
+    #define ROCKETNET_SWARM_STAYS( i )      ( ( (i) % 10 ) < 8 )
+    #define ROCKETNET_SWARM_LEAVES( i )     ( ( (i) % 10 ) == 8 )
+    #define ROCKETNET_SWARM_ABANDONS( i )   ( ( (i) % 10 ) == 9 )
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        char address_string[64];
+        snprintf( address_string, sizeof(address_string), "10.1.%d.%d:56789", i / 250, 1 + ( i % 250 ) );
+        rocketnet_check( rocketnet_address_parse( &addresses[i], address_string ) );
+        rocketnet_client_protocol_init( &clients[i], &client_counters );
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_test_mint_token( token_data, 0x50000000ULL + (uint64_t) i, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_check( rocketnet_client_connect( &clients[i], token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    }
+
+    struct rocketnet_address_t garbage_addresses[num_garbage_senders];
+    for ( int i = 0; i < num_garbage_senders; i++ )
+    {
+        char address_string[64];
+        snprintf( address_string, sizeof(address_string), "10.9.9.%d:1000", 1 + i );
+        rocketnet_check( rocketnet_address_parse( &garbage_addresses[i], address_string ) );
+    }
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
+
+    uint64_t garbage_rng = 0x6A6B6A6BULL;
+    #define ROCKETNET_SWARM_RANDOM() ( garbage_rng ^= garbage_rng << 13, garbage_rng ^= garbage_rng >> 7, garbage_rng ^= garbage_rng << 17, garbage_rng )
+
+    // --- the connect phase, with garbage interleaved ---
+
+    double connect_start_wall = rocketnet_platform_time();
+
+    double time = 100.0;
+    for ( int tick = 0; tick < 120; tick++, time += 0.05 )
+    {
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            if ( ROCKETNET_SWARM_ABANDONS( i ) && clients[i].state >= ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+                continue;                                   // walked away mid-handshake
+            if ( clients[i].state == ROCKETNET_CLIENT_STATE_CONNECTED )
+                continue;
+            rocketnet_client_update( &clients[i], time, packet, &packet_bytes );
+            if ( packet_bytes == 0 )
+                continue;
+            rocketnet_server_process_packet( &test.server, &addresses[i], packet, packet_bytes,
+                                             ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                             payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_client_process_packet( &clients[i], response, response_bytes, time, payload, &payload_bytes );
+        }
+
+        // the garbage generator: junk shapes at the reject rungs, constantly
+        for ( int g = 0; g < num_garbage_senders; g++ )
+        {
+            if ( ( ROCKETNET_SWARM_RANDOM() & 3 ) != 0 )
+                continue;
+            int variant = (int) ( ROCKETNET_SWARM_RANDOM() % 4 );
+            int garbage_bytes = 0;
+            if ( variant == 0 )
+            {
+                for ( int b = 0; b < 64; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
+                garbage_bytes = 64;                          // random tag: prefilter kills it
+            }
+            else if ( variant == 1 )
+            {
+                uint8_t * p = packet;
+                rocketnet_write_prefilter_header( &p, (uint8_t) ( 8 + ( ROCKETNET_SWARM_RANDOM() % 248 ) ), tag );
+                garbage_bytes = 32;                          // reserved type
+            }
+            else if ( variant == 2 )
+            {
+                uint8_t * p = packet;
+                rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag );
+                for ( int b = 4; b < 64; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
+                garbage_bytes = 64;                          // sealed junk, no mapping
+            }
+            else
+            {
+                uint8_t * p = packet;
+                rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, tag );
+                for ( int b = 4; b < ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES; b++ ) packet[b] = (uint8_t) ROCKETNET_SWARM_RANDOM();
+                garbage_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;    // junk request: dies at the version
+            }
+            rocketnet_server_process_packet( &test.server, &garbage_addresses[g], packet, garbage_bytes,
+                                             ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                             payload, &payload_bytes, &payload_client_index );
+        }
+
+        rocketnet_server_update( &test.server, time );
+    }
+
+    double connect_wall_ms = ( rocketnet_platform_time() - connect_start_wall ) * 1000.0;
+
+    int expected_connected = 0;
+    for ( int i = 0; i < num_clients; i++ )
+        if ( !ROCKETNET_SWARM_ABANDONS( i ) )
+        {
+            rocketnet_check( clients[i].state == ROCKETNET_CLIENT_STATE_CONNECTED );
+            expected_connected++;
+        }
+    rocketnet_check( expected_connected == 900 );
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 900 );
+
+    printf( "        swarm baseline: 900 handshakes in %.1f ms (%.0f handshakes/sec)\n",
+            connect_wall_ms, 900.0 / ( connect_wall_ms / 1000.0 ) );
+
+    // --- the payload burst: the stay clients each send three ---
+
+    double payload_start_wall = rocketnet_platform_time();
+    int payloads_processed = 0;
+
+    for ( int round = 0; round < 3; round++ )
+    {
+        time += 0.05;
+        for ( int i = 0; i < num_clients; i++ )
+        {
+            if ( !ROCKETNET_SWARM_STAYS( i ) )
+                continue;
+            uint8_t game_data[32];
+            memset( game_data, (uint8_t) i, sizeof(game_data) );
+            int bytes = rocketnet_client_write_payload( &clients[i], game_data, sizeof(game_data), packet );
+            rocketnet_check( bytes > 0 );
+            int result = rocketnet_server_process_packet( &test.server, &addresses[i], packet, bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                          payload, &payload_bytes, &payload_client_index );
+            rocketnet_check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+            rocketnet_check( payload_bytes == 32 );
+            payloads_processed++;
+        }
+    }
+
+    double payload_wall_ms = ( rocketnet_platform_time() - payload_start_wall ) * 1000.0;
+    printf( "        swarm baseline: %d payloads through the server in %.1f ms (%.0f packets/sec)\n",
+            payloads_processed, payload_wall_ms, (double) payloads_processed / ( payload_wall_ms / 1000.0 ) );
+
+    // --- the leavers disconnect; the abandoners' mappings die at the deadline ---
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        if ( !ROCKETNET_SWARM_LEAVES( i ) )
+            continue;
+        uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
+        int burst_count = 0;
+        rocketnet_client_disconnect( &clients[i], burst, &burst_count );
+        rocketnet_check( burst_count == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+        rocketnet_server_process_packet( &test.server, &addresses[i], burst, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
+                                         ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                         payload, &payload_bytes, &payload_client_index );
+    }
+
+    for ( ; time < 112.0; time += 0.05 )
+        rocketnet_server_update( &test.server, time );
+
+    rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 800 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 800 );
+
+    const uint64_t * counters = test.counters.values;
+
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 900 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 100 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 100 );
+
+    // received == sum of outcomes, for every packet family the server saw --
+    // the accounting invariant from the standard, asserted over the whole
+    // storm, so no packet was ever half-counted or silently dropped
+
+    {
+        uint64_t request_outcomes =
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
+        rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == request_outcomes );
+    }
+
+    {
+        uint64_t response_outcomes =
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] +
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] +
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] == response_outcomes );
+    }
+
+    {
+        uint64_t keep_alive_outcomes =
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == keep_alive_outcomes );
+
+        uint64_t payload_outcomes =
+            counters[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] == payload_outcomes );
+
+        uint64_t disconnect_outcomes =
+            counters[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == disconnect_outcomes );
+    }
+
+    // the storm did its work: every garbage shape landed where it should
+    rocketnet_check( counters[ROCKETNET_COUNTER_PREFILTER_DROPPED] > 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RESERVED_TYPE] > 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] > 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] > 0 );
+
+    // and the reasons that must never fire, did not, once, in the whole storm
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 0 );
+
+    #undef ROCKETNET_SWARM_STAYS
+    #undef ROCKETNET_SWARM_LEAVES
+    #undef ROCKETNET_SWARM_ABANDONS
+    #undef ROCKETNET_SWARM_RANDOM
+
+    rocketnet_free( NULL, clients );
+    rocketnet_free( NULL, addresses );
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_platform_socket()
 {
     // non-blocking socket (ipv4)
@@ -4029,6 +4498,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_denied_when_server_full );
         RUN_TEST( test_client_timeout_paths );
         RUN_TEST( test_client_cookie_injection );
+        RUN_TEST( test_network_simulator );
+        RUN_TEST( test_client_server_lossy_wire );
+        RUN_TEST( test_swarm );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );
         RUN_TEST( test_request_path_config_branches );
