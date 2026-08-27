@@ -10,7 +10,7 @@
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
-#include "rocketnet_packet_filter.h"
+#include "rocketnet_wire.h"
 #include "rocketnet_hash.h"
 
 #include <ifaddrs.h>
@@ -42,7 +42,6 @@
 struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
-    uint8_t packet_type;
     size_t packet_bytes;
 };
 
@@ -166,6 +165,7 @@ struct rocketnet_server_socket_t
     bool attached_skb;
     int config_map_fd;
     int socket_map_fd;
+    int stats_map_fd;
 
     std::atomic<uint64_t> packet_id;
 
@@ -356,7 +356,7 @@ static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t
     socket->num_free_receive_frames++;
 }
 
-void xdp_thread_function( void * data );
+static void rocketnet_server_socket_xdp_thread_function( void * data );
 
 // Removes the private build directory created by mkdtemp. The path is always
 // one this process made, never a glob and never the caller's CWD, so an
@@ -382,10 +382,11 @@ static void rocketnet_server_socket_remove_workdir( const char * workdir )
     }
 }
 
-rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, int num_queues, int num_os_cpus )
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * title_tag, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
+    rocketnet_assert( title_tag );
     
     const char * num_queues_env = getenv( "ROCKETNET_SERVER_NUM_QUEUES" );
     if ( num_queues_env )
@@ -581,6 +582,14 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
             pclose( file );
         }
+
+        {
+            const char * command = "rm -f /sys/fs/bpf/server_xdp_stats_map";
+            FILE * file = popen( command, "r" );
+            char buffer[1024];
+            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+            pclose( file );
+        }
     }
 
     // Build the server_xdp program in a PRIVATE directory.
@@ -717,10 +726,39 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
+    server_socket->stats_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_stats_map" );
+    if ( server_socket->stats_map_fd <= 0 )
+    {
+        rocketnet_error( "server could not get stats map: %s", strerror(errno) );
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
     // save the server public address and port in network order (big endian)
 
     server_socket->server_address_big_endian = public_address_ipv4;
     server_socket->server_port_big_endian = rocketnet_platform_htons( public_address.port );
+
+    // configure the kernel prefilter: the destination it accepts and the
+    // per-title tag. until this write the program passes everything through
+    // untouched, so a server that fails before this point never black-holed
+    // the box's other traffic.
+
+    {
+        struct rocketnet_server_xdp_config_t config;
+        memset( &config, 0, sizeof(config) );
+        config.public_address = server_socket->server_address_big_endian;
+        config.public_port = server_socket->server_port_big_endian;
+        memcpy( config.title_tag, title_tag, ROCKETNET_TITLE_TAG_BYTES );
+
+        __u32 key = 0;
+        if ( bpf_map_update_elem( server_socket->config_map_fd, &key, &config, BPF_ANY ) != 0 )
+        {
+            rocketnet_error( "server could not write config map: %s", strerror(errno) );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+    }
 
     // initialize server xdp sockets (one socket per-NIC queue)
 
@@ -880,7 +918,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         rocketnet_info( "starting xdp thread for socket queue %d", socket->queue );
 
-        socket->xdp_thread = rocketnet_platform_thread_create( NULL, xdp_thread_function, socket );
+        socket->xdp_thread = rocketnet_platform_thread_create( NULL, rocketnet_server_socket_xdp_thread_function, socket );
         if ( !socket->xdp_thread )
         {
             rocketnet_error( "server could not create xdp thread %d", queue );
@@ -989,7 +1027,7 @@ uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
     return server_socket->server_id;
 }
 
-static uint16_t ipv4_checksum( const void * data, size_t header_length )
+static uint16_t rocketnet_server_socket_ipv4_checksum( const void * data, size_t header_length )
 {
     unsigned long sum = 0;
     const uint16_t * p = (const uint16_t*) data;
@@ -1009,7 +1047,7 @@ static uint16_t ipv4_checksum( const void * data, size_t header_length )
     return ~sum;
 }
 
-int generate_packet_header( void * data, uint8_t * server_ethernet_address, uint8_t * gateway_ethernet_address, uint32_t server_address_big_endian, uint32_t client_address_big_endian, uint16_t server_port_big_endian, uint16_t client_port_big_endian, int payload_bytes )
+static int rocketnet_server_socket_generate_packet_header( void * data, uint8_t * server_ethernet_address, uint8_t * gateway_ethernet_address, uint32_t server_address_big_endian, uint32_t client_address_big_endian, uint16_t server_port_big_endian, uint16_t client_port_big_endian, int payload_bytes )
 {
     struct ethhdr * eth = (ethhdr*) data;
     struct iphdr  * ip  = (iphdr*) ( (uint8_t*)data + sizeof( struct ethhdr ) );
@@ -1037,7 +1075,7 @@ int generate_packet_header( void * data, uint8_t * server_ethernet_address, uint
 
     // calculate ip checksum
 
-    ip->check    = ipv4_checksum( ip, sizeof( struct iphdr ) );
+    ip->check    = rocketnet_server_socket_ipv4_checksum( ip, sizeof( struct iphdr ) );
 
     // generate udp header
 
@@ -1049,7 +1087,7 @@ int generate_packet_header( void * data, uint8_t * server_ethernet_address, uint
     return sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes; 
 }
 
-uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to, uint8_t packet_type )
+uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to )
 {
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
@@ -1063,15 +1101,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
         return NULL;
     }
 
-    uint8_t * packet_data = send_buffer->packet_data[packet_index];
-
-    packet_data += ROCKETNET_HEADER_BYTES;
-
     send_buffer->packet_info[packet_index].to = *to;
-    send_buffer->packet_info[packet_index].packet_type = packet_type;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 
-    return packet_data;
+    return send_buffer->packet_data[packet_index];
 }
 
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
@@ -1084,14 +1117,15 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
 
     const int queue = *packet_id % server_socket->num_queues;
 
-    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, ROCKETNET_PACKET_DIRECT );
+    return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to );
 }
 
 void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
     rocketnet_assert( server_socket );
-    rocketnet_assert( packet_bytes >= 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_MTU );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_bytes > 0 );
+    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
 
     const int queue = packet_id % server_socket->num_queues;
 
@@ -1103,35 +1137,14 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
 
-    rocketnet_assert( packet_index >= 0 );  
-    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );  
+    rocketnet_assert( packet_index >= 0 );
+    rocketnet_assert( packet_index < ROCKETNET_XDP_SEND_QUEUE_SIZE );
 
-    rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_MTU );
+    // the packet is complete wire bytes as the protocol wrote them; nothing
+    // is prepended here -- the xdp thread adds the ethernet, ip and udp
+    // headers when it copies the packet into its umem frame
 
-    send_buffer->packet_info[packet_index].packet_bytes = packet_bytes + ROCKETNET_HEADER_BYTES;
-
-    // write the packet header
-
-    packet_data -= ROCKETNET_HEADER_BYTES;
-
-    packet_data[0] = send_buffer->packet_info[packet_index].packet_type;
-
-    uint8_t to_address_data[32];
-    rocketnet_address_data( &send_buffer->packet_info[packet_index].to, to_address_data );
-
-    uint8_t from_address_data[32];
-    rocketnet_address_data( &server_socket->public_address, from_address_data );
-
-    uint8_t * a = packet_data + 1;
-    uint8_t * b = packet_data + 3;
-
-    uint8_t magic[8];
-    memset( magic, 0, sizeof(magic) );
-
-    rocketnet_generate_pittle( a, from_address_data, to_address_data, packet_bytes );
-    rocketnet_generate_chonkle( b, magic, from_address_data, to_address_data, packet_bytes );
+    send_buffer->packet_info[packet_index].packet_bytes = packet_bytes;
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
@@ -1182,18 +1195,11 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
     }
 }
 
-void rocketnet_server_socket_process_packet_internal( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
+void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
 {
-    const uint8_t packet_type = packet_data[0];
+    (void) eth;
 
-    // ...
-
-    (void) packet_type;
-}
-
-void rocketnet_server_socket_process_direct_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
-{   
-    if ( packet_bytes < ROCKETNET_HEADER_BYTES )
+    if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
         return;
 
     // Bound by the ARRAY, not by the queue depth. These are different numbers:
@@ -1212,10 +1218,8 @@ void rocketnet_server_socket_process_direct_packet( rocketnet_server_socket_t * 
 
     const int index = server_socket->process_packets.num_packets++;
 
-    packet_data += ROCKETNET_HEADER_BYTES;
-    packet_bytes -= ROCKETNET_HEADER_BYTES;
-
-    rocketnet_assert( packet_bytes >= 0 );
+    // the packet is complete wire bytes as they left the client; the
+    // protocol's own reading order takes it from here
 
     server_socket->process_packets.from[index] = *from;
     server_socket->process_packets.packet_data[index] = packet_data;
@@ -1247,6 +1251,34 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 {
     rocketnet_assert( server_socket );
     return server_socket->num_queues;
+}
+
+void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( counters );
+
+    memset( counters, 0, ROCKETNET_SERVER_XDP_NUM_COUNTERS * sizeof(uint64_t) );
+
+    // the stats map is per-CPU: one value struct per possible CPU, summed here
+
+    const int num_cpus = libbpf_num_possible_cpus();
+    if ( num_cpus <= 0 )
+        return;
+
+    struct rocketnet_server_xdp_stats_t * values = (struct rocketnet_server_xdp_stats_t*) alloca( num_cpus * sizeof(struct rocketnet_server_xdp_stats_t) );
+
+    __u32 key = 0;
+    if ( bpf_map_lookup_elem( server_socket->stats_map_fd, &key, values ) != 0 )
+        return;
+
+    for ( int cpu = 0; cpu < num_cpus; cpu++ )
+    {
+        for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        {
+            counters[i] += values[cpu].counters[i];
+        }
+    }
 }
 
 void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
@@ -1281,18 +1313,9 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
                 uint8_t * packet_data = receive_buffer->packet_data[i];
                 const int packet_bytes = receive_buffer->packet_bytes[i];
 
-                rocketnet_assert( packet_bytes >= 18 );
+                rocketnet_assert( packet_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
 
-                const uint8_t packet_type = packet_data[0];
-
-                if ( packet_type == ROCKETNET_PACKET_DIRECT )
-                { 
-                    rocketnet_server_socket_process_direct_packet( server_socket, eth, &from, packet_data, packet_bytes );
-                }
-                else
-                {
-                    rocketnet_server_socket_process_packet_internal( server_socket, eth, &from, packet_data, packet_bytes );
-                }
+                rocketnet_server_socket_process_staged_packet( server_socket, eth, &from, packet_data, packet_bytes );
             }
 
             receive_buffer->num_packets = 0;
@@ -1300,7 +1323,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     }        
 }
 
-void xdp_thread_function( void * data )
+static void rocketnet_server_socket_xdp_thread_function( void * data )
 {
     rocketnet_server_xdp_socket_t * socket = (rocketnet_server_xdp_socket_t*) data;
 
@@ -1409,7 +1432,7 @@ void xdp_thread_function( void * data )
 
                 const int packet_bytes = desc->len;
 
-                if ( packet_bytes >= header_bytes + ROCKETNET_HEADER_BYTES )
+                if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
                     const int index = receive_buffer->num_packets;
 
@@ -1538,7 +1561,7 @@ void xdp_thread_function( void * data )
                     uint16_t to_port_big_endian = rocketnet_platform_htons( send_buffer->packet_info[i].to.port );
 
                     batch_frames[num_batch_packets] = frame;
-                    batch_packet_bytes[num_batch_packets] = generate_packet_header( packet_data, socket->server_ethernet_address, socket->gateway_ethernet_address, socket->server_address_big_endian, to_address_big_endian, socket->server_port_big_endian, to_port_big_endian, payload_bytes );
+                    batch_packet_bytes[num_batch_packets] = rocketnet_server_socket_generate_packet_header( packet_data, socket->server_ethernet_address, socket->gateway_ethernet_address, socket->server_address_big_endian, to_address_big_endian, socket->server_port_big_endian, to_port_big_endian, payload_bytes );
                     num_batch_packets++;
                 }
 

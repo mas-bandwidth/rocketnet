@@ -14,34 +14,11 @@
 // the standard's own build order: the prefilter header, then packet layouts,
 // sealing, and the reading order.
 
-// packet types
+// The packet types, the prefilter header, the receive ceiling and the wire
+// size table live in rocketnet_wire.h, shared with the server_xdp kernel
+// program so the two filters can never drift apart.
 
-#define ROCKETNET_CONNECTION_REQUEST_PACKET     0
-#define ROCKETNET_CONNECTION_DENIED_PACKET      1
-#define ROCKETNET_CONNECTION_CHALLENGE_PACKET   2
-#define ROCKETNET_CONNECTION_RESPONSE_PACKET    3
-#define ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET  4
-#define ROCKETNET_CONNECTION_PAYLOAD_PACKET     5
-#define ROCKETNET_CONNECTION_DISCONNECT_PACKET  6
-#define ROCKETNET_CONNECTION_COOKIE_PACKET      7
-
-// types 8 through 255 are reserved and ignored by a conforming receiver
-
-// the prefilter header: 4 bytes on the front of every packet. the first byte
-// is the packet type and carries the type and nothing else; the other three
-// are the per-title tag, an arbitrary constant agreed by value.
-
-#define ROCKETNET_PREFILTER_BYTES               4
-#define ROCKETNET_TITLE_TAG_BYTES               3
-
-// the published test title tag, embedded so development works out of the box.
-// production titles get their own tag from the per-title generator.
-
-#define ROCKETNET_TEST_TITLE_TAG                { 0xb7, 0x59, 0x01 }
-
-// the receive ceiling: fixed for every receiver, whatever its send budget
-
-#define ROCKETNET_RECEIVE_CEILING               1400
+#include "rocketnet_wire.h"
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * title_tag );
 
@@ -52,18 +29,6 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
 // are later steps of the reading order.
 
 int rocketnet_prefilter_check( const uint8_t * packet_data, int packet_bytes, const uint8_t * title_tag );
-
-// Wire sizes, from the standard's packet size table. Every type has a fixed
-// total size except the payload, which has a range.
-
-#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES     708
-#define ROCKETNET_CONNECTION_DENIED_WIRE_BYTES      32
-#define ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES   64
-#define ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES    48
-#define ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES  32
-#define ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES 25
-#define ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES  24
-#define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES      36
 
 #define ROCKETNET_SEQUENCE_BYTES                    4
 #define ROCKETNET_SESSION_NONCE_BYTES               8
