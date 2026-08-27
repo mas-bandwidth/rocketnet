@@ -3860,8 +3860,6 @@ void rocketnet_test_swarm()
 
     // --- the connect phase, with garbage interleaved ---
 
-    double connect_start_wall = rocketnet_platform_time();
-
     double time = 100.0;
     for ( int tick = 0; tick < 120; tick++, time += 0.05 )
     {
@@ -3921,8 +3919,6 @@ void rocketnet_test_swarm()
         rocketnet_server_protocol_update( &test.server, time );
     }
 
-    double connect_wall_ms = ( rocketnet_platform_time() - connect_start_wall ) * 1000.0;
-
     int expected_connected = 0;
     for ( int i = 0; i < num_clients; i++ )
         if ( !ROCKETNET_SWARM_ABANDONS( i ) )
@@ -3933,13 +3929,7 @@ void rocketnet_test_swarm()
     rocketnet_check( expected_connected == 900 );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 900 );
 
-    printf( "        swarm baseline: 900 handshakes in %.1f ms (%.0f handshakes/sec)\n",
-            connect_wall_ms, 900.0 / ( connect_wall_ms / 1000.0 ) );
-
     // --- the payload burst: the stay clients each send three ---
-
-    double payload_start_wall = rocketnet_platform_time();
-    int payloads_processed = 0;
 
     for ( int round = 0; round < 3; round++ )
     {
@@ -3957,13 +3947,8 @@ void rocketnet_test_swarm()
                                                           payload, &payload_bytes, &payload_client_index );
             rocketnet_check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
             rocketnet_check( payload_bytes == 32 );
-            payloads_processed++;
         }
     }
-
-    double payload_wall_ms = ( rocketnet_platform_time() - payload_start_wall ) * 1000.0;
-    printf( "        swarm baseline: %d payloads through the server in %.1f ms (%.0f packets/sec)\n",
-            payloads_processed, payload_wall_ms, (double) payloads_processed / ( payload_wall_ms / 1000.0 ) );
 
     // --- the leavers disconnect; the abandoners' mappings die at the deadline ---
 
