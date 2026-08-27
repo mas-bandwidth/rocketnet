@@ -68,6 +68,29 @@ else()
 endif()
 
 
+# rocketnet shared -- the same sources built as a shared library, for language
+# bindings that load librocketnet at runtime (the C# binding in csharp/).
+# ROCKETNET_SHARED + ROCKETNET_EXPORT select the header's export machinery on
+# the build side; consumers define only ROCKETNET_SHARED. The add_dependencies
+# on the static target orders the generated rocketnet_server_xdp.h without
+# attaching the custom command to two targets.
+
+add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
+add_dependencies(rocketnet_shared rocketnet)
+set_target_properties(rocketnet_shared PROPERTIES OUTPUT_NAME rocketnet)
+target_compile_definitions(rocketnet_shared PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
+target_include_directories(rocketnet_shared PUBLIC ${SODIUM_INCLUDE_DIRS})
+target_link_directories(rocketnet_shared PUBLIC ${SODIUM_LIBRARY_DIRS})
+target_link_libraries(rocketnet_shared ${SODIUM_LIBRARIES})
+if (APPLE)
+    target_link_libraries(rocketnet_shared Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
+elseif (LINUX)
+    target_link_libraries(rocketnet_shared Threads::Threads bpf xdp)
+else()
+    target_link_libraries(rocketnet_shared Threads::Threads)
+endif()
+
+
 # client
 
 project(client)
