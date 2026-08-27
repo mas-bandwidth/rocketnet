@@ -22,8 +22,11 @@
 #include <stdint.h>
 #include <time.h>
 #include <errno.h>
+
+#if !defined(_WIN32)
 #include <pthread.h>
 #include <unistd.h>
+#endif
 
 #define FRAME_RATE_HZ           60.0
 #define WARMUP_FRAMES           120
