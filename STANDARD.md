@@ -1875,11 +1875,16 @@ client on that slot — a keep-alive or a payload. The flag exists because the
 server has not yet observed that the client received its keep-alive, so it does
 not yet know the client considers itself connected.
 
-**While a client is unconfirmed, the server prefixes every payload packet it
-sends to that client with a keep-alive packet.** The keep-alive carries the
-client index and the slot count, which is how the client learns its own index,
-so a client that lost the first keep-alive would otherwise receive payloads it
-cannot interpret. Once confirmed, the server sends payloads alone.
+**There is no keep-alive prefixing for unconfirmed clients, and the
+subtraction is deliberate.** netcode prefixed every payload to an unconfirmed
+client with a keep-alive because its client could not interpret payloads
+before learning its index. Here the session keys derive at the challenge,
+independent of the index, so **a client accepts payload packets from _sending
+connection response_ on, exactly like every session type** -- there is no
+window in which a payload cannot be understood, and nothing to prefix. The
+keep-alive still carries the client index and the slot count, and receiving
+the first one is still what moves the client to _connected_; payloads simply
+do not wait for it.
 
 **Keep-alive generation.** The server sends a keep-alive to every connected
 client whenever the send rate interval has elapsed since it last sent that
