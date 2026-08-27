@@ -38,6 +38,16 @@ int main( int argc, char ** argv )
         return 1;
     }
 
+    // pace the loop at 60 frames per second, pegged to real time
+
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
+    if ( !frame_sync )
+    {
+        rocketnet_server_transport_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
+
     int last_num_connected = 0;
 
     while ( !quit )
@@ -60,10 +70,11 @@ int main( int argc, char ** argv )
                                                     payloads->payload_data[i], payloads->payload_bytes[i] );
         }
 
-        rocketnet_sleep( 0.01 );
+        rocketnet_frame_sync_wait( frame_sync );
     }
 
     printf( "\nserver stopping\n" );
+    rocketnet_frame_sync_destroy( frame_sync );
     rocketnet_server_transport_stop( server );
     while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED )
         rocketnet_server_transport_update( server );

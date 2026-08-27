@@ -29,6 +29,7 @@
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
+#include "rocketnet_frame_sync.h"
 
 #include <sodium.h>
 
@@ -4799,6 +4800,145 @@ static void context_check_free( void * context, void * p )
     rocketnet_default_free_function( context, p );;
 }
 
+void rocketnet_test_frame_sync_advance()
+{
+    const uint64_t period = 16666666;
+
+    uint64_t deadline = 100 * period;
+    uint64_t error = 12345;
+
+    // on time: no error, one period forward
+
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 100 * period, &error ) == 0 );
+    rocketnet_check( error == 0 );
+    rocketnet_check( deadline == 101 * period );
+
+    // an early wake counts as on time
+
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 101 * period - 1000, &error ) == 0 );
+    rocketnet_check( error == 0 );
+    rocketnet_check( deadline == 102 * period );
+
+    // late inside the period: reported, not a drop
+
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 102 * period + period / 2, &error ) == 0 );
+    rocketnet_check( error == period / 2 );
+    rocketnet_check( deadline == 103 * period );
+
+    // late exactly one period: the boundary is strict, still not a drop
+
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 103 * period + period, &error ) == 0 );
+    rocketnet_check( error == period );
+    rocketnet_check( deadline == 104 * period );
+
+    // just past one period: one drop, and the deadline resynchronizes ahead
+    // of the wake instead of chasing the backlog
+
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, 104 * period + period + 1, &error ) == 1 );
+    rocketnet_check( error == period + 1 );
+    rocketnet_check( deadline == 106 * period );
+    rocketnet_check( deadline > 104 * period + period + 1 );
+
+    // three and a half periods late: three drops, resynchronized within one
+    // period ahead of the wake
+
+    const uint64_t base = deadline;
+    const uint64_t woke = base + 3 * period + period / 2;
+    rocketnet_check( rocketnet_frame_sync_advance( &deadline, period, woke, &error ) == 3 );
+    rocketnet_check( error == 3 * period + period / 2 );
+    rocketnet_check( deadline == base + 4 * period );
+    rocketnet_check( deadline > woke );
+    rocketnet_check( deadline - woke <= period );
+}
+
+void rocketnet_test_frame_sync_guard()
+{
+    const uint64_t cap = 16666666 / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR;
+
+    // converges toward a steady oversleep
+
+    double ewma = (double) ROCKETNET_FRAME_SYNC_GUARD_EWMA_START_NS;
+    for ( int i = 0; i < 200; i++ )
+    {
+        rocketnet_frame_sync_adapt_guard( &ewma, 500000, cap );
+    }
+    rocketnet_check( ewma > 450000.0 );
+    rocketnet_check( ewma < 550000.0 );
+
+    // the applied guard carries the margin over the estimate
+
+    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == (uint64_t) ewma + ROCKETNET_FRAME_SYNC_GUARD_MARGIN_NS );
+
+    // a runaway oversleep cannot push the guard past the cap: the measured
+    // unprivileged death spiral (guard chased to 37ms, thousands of drops),
+    // refused by construction
+
+    for ( int i = 0; i < 200; i++ )
+    {
+        rocketnet_frame_sync_adapt_guard( &ewma, 100000000, cap );
+    }
+    rocketnet_check( ewma <= (double) cap );
+    rocketnet_check( rocketnet_frame_sync_guard_ns( ewma, cap ) == cap );
+
+    // and because the cap binds the estimate too, recovery is immediate once
+    // the oversleeps return to sane
+
+    for ( int i = 0; i < 200; i++ )
+    {
+        rocketnet_frame_sync_adapt_guard( &ewma, 100000, cap );
+    }
+    rocketnet_check( ewma < 200000.0 );
+}
+
+void rocketnet_test_frame_sync_lifecycle()
+{
+    rocketnet_check( rocketnet_frame_sync_create( NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_frame_sync_create( NULL, -60.0 ) == NULL );
+    rocketnet_check( rocketnet_frame_sync_create( NULL, 1000000.0 ) == NULL );
+
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
+    rocketnet_check( frame_sync );
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 0 );
+    rocketnet_check( stats.dropped_frames == 0 );
+    rocketnet_check( stats.priority_held == 0 );                    // taken at the first wait, not before
+    rocketnet_check( stats.spinning == 0 );
+    rocketnet_check( stats.wakeup_error_seconds == 0.0 );
+    rocketnet_check( stats.guard_seconds > 0.0 );
+    rocketnet_check( stats.guard_seconds <= ( 1.0 / 60.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
+
+    rocketnet_frame_sync_destroy( frame_sync );
+}
+
+void rocketnet_test_frame_sync_wait()
+{
+    // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
+    // the assertion is pacing and accounting, never precision -- precision
+    // was the issue #56 measurement campaign's job, and CI runners are noisy.
+
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 250.0 );
+    rocketnet_check( frame_sync );
+
+    const double start = rocketnet_platform_time();
+    for ( int i = 0; i < 25; i++ )
+    {
+        rocketnet_frame_sync_wait( frame_sync );
+    }
+    const double elapsed = rocketnet_platform_time() - start;
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 25 );
+    rocketnet_check( elapsed > 0.06 );                              // it actually paced: a free run finishes in microseconds
+    rocketnet_check( elapsed < 5.0 );                               // and it did not wedge
+    rocketnet_check( !stats.spinning || stats.priority_held );      // never an unprivileged spin
+    rocketnet_check( stats.guard_seconds <= ( 1.0 / 250.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
+
+    rocketnet_frame_sync_destroy( frame_sync );
+}
+
 #define RUN_TEST( test_function )                                           \
     do                                                                      \
     {                                                                       \
@@ -4893,5 +5033,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_packet_loss_tracker );
         RUN_TEST( test_out_of_order_tracker );
         RUN_TEST( test_jitter_tracker );
+        RUN_TEST( test_frame_sync_advance );
+        RUN_TEST( test_frame_sync_guard );
+        RUN_TEST( test_frame_sync_lifecycle );
+        RUN_TEST( test_frame_sync_wait );
     }
 }

@@ -121,16 +121,6 @@ add_dependencies(soak_sim rocketnet)
 target_link_libraries(soak_sim rocketnet)
 
 
-# frame_sync_prototype (linux measurement harness, issue #56)
-
-project(frame_sync_prototype)
-enable_language(C)
-add_executable(frame_sync_prototype frame_sync_prototype.c)
-if (LINUX)
-    target_link_libraries(frame_sync_prototype pthread)
-endif()
-
-
 # keygen
 
 project(keygen)

@@ -447,6 +447,40 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rock
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
 // -----------------------------------------
+//                              frame sync
+// -----------------------------------------
+
+// Pegs a headless server loop to real time: an absolute deadline per frame,
+// the platform sleep that honors it, thread priority so the wakeups are
+// sharp, and a capped adaptive spin guard for the last microseconds.
+// Optional -- examples may still just sleep. Create at a frame rate, then
+// call wait once per loop iteration; it returns at the frame boundary.
+// Dropped frames are detected, counted and resynchronized, never chased.
+// Priority is taken on the waiting thread at the first wait; where the
+// platform refuses it the primitive degrades to plain absolute sleep --
+// never an unprivileged spin -- and the stats say so.
+
+struct rocketnet_frame_sync_t;
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync );
+
+struct rocketnet_frame_sync_stats_t
+{
+    uint64_t frame;                                 // frames completed
+    uint64_t dropped_frames;                        // frames lost to overruns, total
+    int priority_held;                              // platform thread priority obtained
+    int spinning;                                   // spin guard active (requires priority)
+    double guard_seconds;                           // the current adaptive guard
+    double wakeup_error_seconds;                    // the last wake's lateness past its deadline
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
+
+// -----------------------------------------
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 

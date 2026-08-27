@@ -148,6 +148,20 @@ land. The milestone view is issue #28; this file is the live ordering.
   live code path), scaffolding scan clean, client keep-alive suppression
   completed and proven.
 
+- The server loop as API, a netcode regret repaired: rocketnet_frame_sync in
+  the library to the settled four-platform design from #56 -- an absolute
+  deadline per frame, the platform sleep that honors it (clock_nanosleep
+  ABSTIME / mach_wait_until / high resolution waitable timer), priority
+  taken on the waiting thread at the first wait (SCHED_FIFO 80 / time
+  constraint policy / TIME_CRITICAL), and the capped adaptive spin guard.
+  The measured unprivileged-spin death spiral is refused by construction:
+  no priority means plain absolute sleep, the cap binds the guard estimate
+  itself, and overrun frames never feed the adaptation. Dropped frames
+  detected, counted and resynchronized, never chased; stats expose frame,
+  drops, priority, guard and wakeup error. Composable with any loop; the
+  transports stay loop-agnostic. server.c runs it at 60Hz out of the box.
+  The prototype and its windows dispatch workflow contracted with the
+  landing, their findings recorded in #56.
 - Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
@@ -185,18 +199,6 @@ land. The milestone view is issue #28; this file is the live ordering.
   Compile-time transport selection stays for now; runtime configuration
   with preference ordering is a named follow-on.
 - The socket-level swarm with Go orchestration, against real transports.
-- The server loop as API (with Glenn; a netcode regret repaired): bring the
-  space game server's smart update into the library as an optional,
-  slightly opinionated primitive so any language gets a correct headless
-  loop for free. Sketch: rocketnet_frame_sync_t -- create at a frame rate,
-  wait() sleeps then spinlocks to the exact frame end, detects and reports
-  dropped frames -- composable with any loop rather than owning one, the
-  transports stay loop-agnostic, and the examples may still just sleep.
-  Investigate the design space first against the space server's loop as
-  reference: sleep+spin hybrids, OS timer granularity (timeBeginPeriod,
-  timerfd, kqueue timers), and what pegging to real time costs on each
-  platform. Tricky to get right, which is exactly why it is worth
-  offering.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.
