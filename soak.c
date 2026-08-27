@@ -115,13 +115,15 @@ int main( int argc, char ** argv )
             rocketnet_server_send_packet( server, 0, payload, payload_size );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
-            struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
-            for ( int i = 0; i < payloads->num_payloads; i++ )
+            const int num_payloads = rocketnet_server_num_payloads( server );
+            for ( int i = 0; i < num_payloads; i++ )
             {
-                if ( verify_payload( payloads->payload_data[i], payloads->payload_bytes[i] ) )
+                int payload_client_index, payload_bytes;
+                uint8_t * payload = rocketnet_server_payload( server, i, &payload_client_index, &payload_bytes );
+                if ( verify_payload( payload, payload_bytes ) )
                     payloads_verified++;
                 else
-                    { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payloads->payload_bytes[i] ); failures++; }
+                    { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payload_bytes ); failures++; }
             }
 
             uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES];

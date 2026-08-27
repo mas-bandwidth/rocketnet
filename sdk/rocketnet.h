@@ -473,23 +473,21 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_state( struct rocketnet_server_t * se
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time );
 
-// The most payloads one update can deliver. Sized to what the receive path can
-// actually hand over in a single drain -- ROCKETNET_RECEIVE_PACKETS_PER_CLIENT
-// times the client ceiling -- so a burst is never silently discarded after its
-// sequence has already been consumed. Identical on every build, so a binding in
-// another language sees one shape.
+// The payloads delivered by the last update, valid until the next update.
+// Iterated by index so the storage behind them stays the library's own --
+// its layout and its capacity are not part of this surface.
+//
+//     int num_payloads = rocketnet_server_num_payloads( server );
+//     for ( int i = 0; i < num_payloads; i++ )
+//     {
+//         int client_index, payload_bytes;
+//         uint8_t * payload = rocketnet_server_payload( server, i, &client_index, &payload_bytes );
+//         ...
+//     }
 
-#define ROCKETNET_MAX_PAYLOADS_PER_UPDATE                      ( 16 * ROCKETNET_MAX_CLIENTS )
+ROCKETNET_EXPORT_FUNC int rocketnet_server_num_payloads( struct rocketnet_server_t * server_transport );
 
-struct rocketnet_server_payloads_t                                    // delivered by the last update, valid until the next
-{
-    int num_payloads;
-    int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-};
-
-ROCKETNET_EXPORT_FUNC struct rocketnet_server_payloads_t * rocketnet_server_payloads( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport, int payload_index, int * client_index, int * payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 

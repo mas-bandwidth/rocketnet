@@ -74,11 +74,12 @@ int main( int argc, char ** argv )
 
         // echo every payload back to its sender
 
-        struct rocketnet_server_payloads_t * payloads = rocketnet_server_payloads( server );
-        for ( int i = 0; i < payloads->num_payloads; i++ )
+        const int num_payloads = rocketnet_server_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
         {
-            rocketnet_server_send_packet( server, payloads->client_index[i],
-                                                    payloads->payload_data[i], payloads->payload_bytes[i] );
+            int client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_payload( server, i, &client_index, &payload_bytes );
+            rocketnet_server_send_packet( server, client_index, payload, payload_bytes );
         }
 
         rocketnet_frame_sync_wait( frame_sync );
