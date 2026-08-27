@@ -4146,6 +4146,28 @@ void rocketnet_test_server_disconnect_client()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_transport_payload_capacity()
+{
+    // The capacity invariant that was violated, stated where it will be
+    // checked. The XDP receive path drains up to
+    // RECEIVE_PACKETS_PER_CLIENT * MAX_CLIENTS packets in one update and
+    // processes every one of them -- opening the AEAD and CONSUMING the
+    // sequence. If the payload arrays were smaller than that, the excess
+    // decrypted payloads were written to a scratch buffer and discarded,
+    // with their sequences already spent, so a retransmit would be refused
+    // as a replay. Silent, uncounted, unrecoverable, and only on the
+    // production transport. The arrays must cover a full drain.
+
+    rocketnet_check( ROCKETNET_MAX_PAYLOADS_PER_UPDATE >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS );
+
+    // and the storage behind them must cover a full-size payload for every
+    // one of those slots, or the same loss returns as an overrun instead
+
+    rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES == ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES );
+    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_MAX_PAYLOAD_BYTES
+                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_MAX_PAYLOAD_BYTES );
+}
+
 void rocketnet_test_transport_udp_loopback()
 {
     // the first packets on a real socket: the whole connect over UDP through
@@ -5050,6 +5072,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_server_lossy_wire );
         RUN_TEST( test_swarm );
         RUN_TEST( test_payload_size_sweep );
+        RUN_TEST( test_transport_payload_capacity );
         RUN_TEST( test_transport_udp_loopback );
         RUN_TEST( test_request_path_ordering );
         RUN_TEST( test_request_path_uncovered_rungs );

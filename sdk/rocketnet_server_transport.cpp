@@ -59,7 +59,7 @@ struct rocketnet_server_t
 #endif // #if !ROCKETNET_SERVER_XDP
 
     struct rocketnet_server_payloads_t payloads;
-    uint8_t payload_storage[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
 
 // The send frame seam both backends serve: reserve hands back a frame to
@@ -330,8 +330,8 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport )
 
     for ( int i = 0; i < received->num_packets; i++ )
     {
-        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_FRAME_SIZE : NULL;
+        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
@@ -377,8 +377,8 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport )
         if ( packet_bytes == 0 )
             break;
 
-        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_FRAME_SIZE : NULL;
+        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
