@@ -292,6 +292,25 @@ land. The milestone view is issue #28; this file is the live ordering.
   secret would make a secured-LOOKING path work out of the box, which is
   worse than not having the feature; and standalone IP pinning is out for
   good, because identity beats it on the merits without NAT's problems.
+- Replay protection in the kernel, and the buffer size question (Glenn,
+  2026-08-27: "replay protection would need to be in XDP program to be
+  rad" and "I like doing it with 16 entries. That's nicer"). This needs no
+  backend and no magic -- a BPF map keyed by source address holding the
+  high-water sequence, checked in the kernel so a replayed packet never
+  costs a ring slot. THE SAFETY CONDITION IS THE DESIGN: the kernel drops
+  but never advances. Only userspace, after the AEAD opens, writes the
+  high-water back, so a forger who wins the filter's odds cannot poison a
+  session by setting the mark to 2^32. Read-only in the kernel, the filter
+  can lag a beat behind truth and can never be corrupted by it.
+  ONE TENSION TO PUT TO GLENN RATHER THAN SETTLE ALONE: he prefers 16
+  entries on memory grounds, which is right for a per-connection kernel
+  map at a thousand clients (128 KB against 8 MB), but STANDARD.md's
+  replay window sizing rule says never smaller than 256 and at least one
+  second of the maximum receive rate -- sized for loss-burst recovery, not
+  reordering. Both can be true if the kernel map and the userspace window
+  are sized separately, which is probably the answer, but the standard
+  currently states one rule for both and should not be quietly narrowed.
+  His own next_replay_protection_t is the reference implementation.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the Studio, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.
