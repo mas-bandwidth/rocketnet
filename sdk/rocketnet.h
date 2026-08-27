@@ -381,6 +381,8 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 #define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE    3
 #define ROCKETNET_CLIENT_STATE_CONNECTED                      4
 
+#define ROCKETNET_MAX_PAYLOAD_BYTES                        1376
+
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_state_name( int state );
 
 struct rocketnet_client_transport_t;

@@ -998,6 +998,10 @@ void rocketnet_test_connect_token_refusals()
 
 void rocketnet_test_prefilter()
 {
+    // the surface payload constant is the ceiling less the overhead, and the
+    // two homes of that number must never drift
+    rocketnet_check( ROCKETNET_MAX_PAYLOAD_BYTES == ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES );
+
     const uint8_t tag[ROCKETNET_TITLE_TAG_BYTES] = ROCKETNET_TEST_TITLE_TAG;
 
     // the embedded test title tag is the published one from the standard

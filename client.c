@@ -11,7 +11,6 @@
 #include "rocketnet.h"
 #include <stdio.h>
 #include <signal.h>
-#include <string.h>
 
 static volatile int quit;
 
@@ -62,7 +61,7 @@ int main( int argc, char ** argv )
             rocketnet_client_transport_send_packet( client, payload, sizeof(payload) );
             payloads_sent++;
 
-            uint8_t received[1400];
+            uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES];
             int received_bytes;
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
             {
