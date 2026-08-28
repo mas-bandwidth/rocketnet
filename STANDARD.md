@@ -3305,6 +3305,10 @@ secrets; the shared secret is checked equal from both sides before use.
     plaintext (15 bytes): the fresh ack block, then the keep-alive fields:
     00 00 00 00 00 00 00 03 00 00 00 e8 03 00 00
 
+    sealed (31 bytes):
+    d2 48 d8 10 b0 69 78 85 27 a0 51 d0 6e bc ea da
+    25 a6 66 38 35 c4 71 ac 21 66 38 3b a8 42 1c
+
     == connection payload (type 5, session c2s, seq 3) ==
     associated data (21 bytes):
     93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
@@ -3312,6 +3316,10 @@ secrets; the shared secret is checked equal from both sides before use.
 
     plaintext (12 bytes): the fresh ack block, then the payload bytes:
     00 00 00 00 00 00 00 68 65 6c 6c 6f
+
+    sealed (28 bytes):
+    e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 af 0d f9 49
+    ae 6d 5e bc aa df f1 94 89 74 4c b4
 
     == connection disconnect (type 6, session c2s, seq 4) ==
     associated data (21 bytes):
@@ -3321,6 +3329,10 @@ secrets; the shared secret is checked equal from both sides before use.
     plaintext (7 bytes): the fresh ack block alone:
     00 00 00 00 00 00 00
 
+    sealed (23 bytes):
+    e4 db 4c 3d 2d 40 30 39 31 ba 13 55 32 5b fd 8f
+    2f 3a 2b 31 75 bd a2
+
     == connection ack (type 8, session c2s, seq 5) ==
     associated data (21 bytes):
     93 1a 7c 4e 88 77 66 55 44 33 22 11 08 53 41 4c
@@ -3328,6 +3340,10 @@ secrets; the shared secret is checked equal from both sides before use.
 
     plaintext (11 bytes): ack block, one loss event (below):
     e8 03 00 00 01 0a 00 01 00 5a 00
+
+    sealed (27 bytes):
+    cb ac a3 98 67 d9 e7 2a 0e 3f b6 04 85 51 28 e1
+    5b d4 b1 18 bd d5 96 38 f7 9a e2
 
     == connection payload fragment (type 9, session c2s, seq 6) ==
     associated data (21 bytes):
@@ -3339,15 +3355,15 @@ secrets; the shared secret is checked equal from both sides before use.
     00 00 00 00 00 00 00 01 00 00 00 00 01 68 65 6c
     6c 6f
 
-**The sealed outputs for the five session vectors above are PENDING: they
-freeze against the reference implementation of this wire revision, and the
-plaintexts and associated data stated here are their complete inputs, so the
-outputs are deterministic and the freeze is a computation, not a decision.**
-Until they are printed here, this appendix proves session sealing for neither
-side — an implementation verifies the handshake vectors, the token, and the
-keyless encodings below, and session sealing awaits the freeze. The sealed
-outputs that stood here before this revision were computed without the ack
-block and do not verify against it. *(The fragmented payload for the type 9 vector is
+    sealed (34 bytes):
+    4d 11 93 54 55 cd 7b df e3 97 35 05 ee 20 42 14
+    33 37 a0 b1 eb a2 ce d3 53 f8 dd b3 78 a4 e5 ed
+    ff 7f
+
+The sealed outputs for the five session vectors above are frozen against the
+reference implementation of this wire revision; the plaintexts and associated
+data stated here are their complete inputs, so each output is checkable by
+recomputation. *(The fragmented payload for the type 9 vector is
 the 10 bytes `68 65 6c 6c 6f 77 6f 72 6c 64`, split as 5 + 5 at a fragment
 stride of 5 for the vector's purposes; stride in production derives from the
 budget per _Fragmentation_.)*

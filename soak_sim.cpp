@@ -219,13 +219,14 @@ int main( int argc, char ** argv )
 
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - connected_since[c] > 20.0 + 3.0 * c )
         {
-            uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
+            uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
             int burst_count = 0;
-            rocketnet_client_protocol_disconnect( &client, burst, &burst_count );
+            int burst_bytes = 0;
+            rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes );
             for ( int i = 0; i < burst_count; i++ )
                 rocketnet_network_simulator_send( simulator, &client_address[c], &server_address,
-                                                  burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
-                                                  ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES, time );
+                                                  burst + i * ROCKETNET_SEND_BUDGET,
+                                                  burst_bytes, time );
         }
 
         // client drives, wire carries, server answers, wire carries back

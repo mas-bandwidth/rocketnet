@@ -381,7 +381,17 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE    3
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED                      4
 
-#define ROCKETNET_MAX_PAYLOAD_BYTES                        1400
+// The send-side payload capacity. The 1232-byte default budget less the
+// 26-byte fixed overhead and the 7-byte minimum ack block allows 1199; the
+// capacity is the largest multiple of eight inside that, keeping the
+// documented guarantee that any word-based serializer can root at the
+// payload pointer directly. The receive side is not configurable and
+// accepts payloads up to 1393 bytes -- the 1426-byte receive ceiling less
+// the same overhead -- whatever this end's own budget, so receive buffers
+// size by the receive constant.
+
+#define ROCKETNET_MAX_PAYLOAD_BYTES                        1192
+#define ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES                1393
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_state_name( int state );
 
@@ -457,11 +467,12 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_trans
 // loss as a percentage, and the last second's packet rates and bandwidth
 // both ways. The rates come from a ring of per-frame buckets filled as the
 // existing send and receive walks run and summed over the trailing second,
-// so the cost per update is flat and no walk is added for them. rtt is
-// measured from the handshake's round trips -- the exchanges the server
-// answers immediately -- and holds from there; jitter is inter-arrival
-// jitter over the session sequence; packet loss is receive-side, from gaps
-// in the session sequence. These numbers feed time synchronization.
+// so the cost per update is flat and no walk is added for them. rtt seeds
+// from the handshake's round trips and is continuously refreshed by the
+// acks -- the first block acknowledging each sent sequence yields a
+// sample; jitter is inter-arrival jitter over the session sequence; packet
+// loss is receive-side, from gaps in the session sequence. These numbers
+// feed time synchronization.
 
 struct rocketnet_client_transport_stats_t
 {
@@ -475,6 +486,15 @@ struct rocketnet_client_transport_stats_t
 };
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_stats( struct rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats );
+
+// The client's delivery notification batch: the packet ids newly
+// acknowledged by the last update, valid until the next update. The packet
+// id is the one handed out in rocketnet_packet_context_t at start_packet.
+// Overflow past the batch's capacity is deferred to a later update rather
+// than lost -- ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL counts each
+// deferral.
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids );
 
 // -----------------------------------------
 //                                  server
@@ -623,6 +643,37 @@ struct rocketnet_server_transport_stats_t
 };
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_transport_stats_t * stats );
+
+// Per-client connection quality, per slot: rtt and jitter in milliseconds,
+// packet loss as the percentage of this end's sent packets never
+// acknowledged, and the trailing bandwidth sent, received and acknowledged.
+// Fed by the ack blocks every session packet carries; recomputed round-robin,
+// a sixth of the slots per update, every slot covered, so the per-update
+// cost is flat at any client count.
+
+struct rocketnet_server_transport_client_stats_t
+{
+    float rtt;                                      // round trip time (milliseconds)
+    float jitter;                                   // deviation of rtt samples above the minimum (milliseconds)
+    float packet_loss;                              // percent of sent packets never acknowledged
+    float bandwidth_sent_kbps;
+    float bandwidth_received_kbps;
+    float bandwidth_acked_kbps;
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_server_transport_client_stats_t * stats );
+
+// The delivery notification primitive: the batch of packet ids newly
+// acknowledged by the last update, as parallel arrays with the client index
+// of each, valid until the next update. The packet id is the one handed out
+// in rocketnet_packet_context_t at start_packet -- the join key back to
+// whatever the game sent. The transport tells; it never resends. Keep-alive,
+// disconnect and standalone-ack sequences have no packet id and never
+// appear here. When more packets are acknowledged in one update than the
+// batch holds, the overflow is deferred to a later update rather than lost
+// -- ROCKETNET_COUNTER_ACKED_BATCH_FULL counts each deferral.
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids );
 
 // -----------------------------------------
 //                              frame sync

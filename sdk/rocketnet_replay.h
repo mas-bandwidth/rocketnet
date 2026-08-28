@@ -19,6 +19,16 @@
 // after it has actually opened -- marking on receipt would let a forgery
 // with a guessed sequence block the real packet.
 
+// The window depth, the one home: replay protection maintains it and the
+// ack block builder enumerates it -- the same received state, per the
+// standard, so the two can never disagree.
+
+#define ROCKETNET_REPLAY_WINDOW_BITS 256
+
+static_assert( ROCKETNET_REPLAY_WINDOW_BITS ==
+               64 * (int) ( sizeof( ((struct rocketnet_replay_protection_t*) 0)->window ) / sizeof(uint64_t) ),
+               "the window constant must match the replay struct's storage" );
+
 // returns 1 when this sequence has already been received, or is too old to
 // tell -- either way the packet is refused
 

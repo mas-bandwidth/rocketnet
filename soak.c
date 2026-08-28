@@ -127,7 +127,7 @@ int main( int argc, char ** argv )
                     { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payload_bytes ); failures++; }
             }
 
-            uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES];
+            uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
             int received_bytes;
             while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
             {

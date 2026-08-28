@@ -253,11 +253,11 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 // ----------------------------------------------------------------
 
 // The fill-phase atomics: the send path lets any number of game threads
-// acquire and seal packets between update and the flush, and these two are
-// the only shared-word operations that phase needs -- a sequence taken with
-// an add, and a timestamp published with a store. Relaxed ordering is
-// correct for both: each value is meaningful alone and nothing is ordered
-// behind it.
+// acquire and seal packets between update and the flush, and these are the
+// only shared-word operations that phase needs -- a sequence taken with an
+// add, a timestamp or counter published with a store, and a high-water mark
+// folded with a max. Relaxed ordering is correct for all of them: each
+// value is meaningful alone and nothing is ordered behind it.
 
 #include <string.h>
 
@@ -270,18 +270,38 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
     }
 
-    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+    inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
     {
-        long long bits;
-        memcpy( &bits, &store, 8 );
     #if defined(_M_IX86)
         // 32-bit x86 has no _InterlockedExchange64; emulate with a CAS loop
         long long expected = *(volatile long long *) value;
-        while ( _InterlockedCompareExchange64( (volatile long long *) value, bits, expected ) != expected )
+        while ( _InterlockedCompareExchange64( (volatile long long *) value, (long long) store, expected ) != expected )
             expected = *(volatile long long *) value;
     #else // #if defined(_M_IX86)
-        _InterlockedExchange64( (volatile long long *) value, bits );
+        _InterlockedExchange64( (volatile long long *) value, (long long) store );
     #endif // #if defined(_M_IX86)
+    }
+
+    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+    {
+        uint64_t bits;
+        memcpy( &bits, &store, 8 );
+        rocketnet_platform_atomic_store_u64( (volatile uint64_t *) value, bits );
+    }
+
+    // folds value = max(value, candidate) with a compare-exchange loop, so
+    // concurrent folds from any number of threads leave the largest
+
+    inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+    {
+        long long observed = *(volatile long long *) value;
+        while ( (uint64_t) observed < candidate )
+        {
+            long long previous = _InterlockedCompareExchange64( (volatile long long *) value, (long long) candidate, observed );
+            if ( previous == observed )
+                break;
+            observed = previous;
+        }
     }
 
 #else // #if defined(_MSC_VER)
@@ -291,11 +311,30 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
         return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
     }
 
+    inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
+    {
+        __atomic_store_n( value, store, __ATOMIC_RELAXED );
+    }
+
     inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
     {
         uint64_t bits;
         memcpy( &bits, &store, 8 );
         __atomic_store_n( (volatile uint64_t *) value, bits, __ATOMIC_RELAXED );
+    }
+
+    // folds value = max(value, candidate) with a compare-exchange loop, so
+    // concurrent folds from any number of threads leave the largest
+
+    inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+    {
+        uint64_t observed = __atomic_load_n( value, __ATOMIC_RELAXED );
+        while ( observed < candidate &&
+                !__atomic_compare_exchange_n( value, &observed, candidate, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
+        {
+            // observed reloads on failure; the loop exits once it is at
+            // least the candidate
+        }
     }
 
 #endif // #if defined(_MSC_VER)

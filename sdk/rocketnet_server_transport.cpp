@@ -128,6 +128,13 @@ struct rocketnet_server_transport_t
     double time;                                        // the game's clock, last seen
     uint64_t frame;                                     // advanced once per update; indexes the stats ring
 
+    // the packet id counter behind the acquire/commit surface on the
+    // portable driver: unique and monotonic, the join key the acked-packet
+    // batch surfaces. the xdp driver's own packet id is already a global
+    // monotonic fetch_add and is used directly.
+
+    volatile uint64_t next_packet_id;
+
     struct rocketnet_server_transport_stats_t server_stats;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
@@ -148,7 +155,7 @@ struct rocketnet_server_transport_t
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
-    uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
+    uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
 // The send frame seam both drivers serve: reserve hands back a frame to
@@ -388,13 +395,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * 8 );
     protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * 2 );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
+    protocol->acks = rocketnet_server_acks_create( context, max_clients );
     protocol->counters = &server_transport->counters;
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks )
     {
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
+
+    server_transport->next_packet_id = 1;
 
     return server_transport;
 }
@@ -411,6 +421,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_admitted_token_set_destroy( server_transport->protocol.admitted_token_set );
     if ( server_transport->protocol.client_slots )
         rocketnet_client_slots_destroy( server_transport->protocol.client_slots );
+    if ( server_transport->protocol.acks )
+        rocketnet_server_acks_destroy( server_transport->protocol.acks );
 
 #if ROCKETNET_SERVER_XDP
 
@@ -520,6 +532,11 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     server_transport->payloads.num_payloads = 0;
 
+    // the acked-packet batch drains per update: what the blocks processed
+    // below acknowledge lands here, valid until the next update
+
+    server_transport->protocol.acks->num_acked = 0;
+
     // receive and process, responses sealed straight into send frames
 
 #if ROCKETNET_SERVER_XDP
@@ -536,7 +553,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
@@ -591,7 +608,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
-            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
 
         uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
@@ -630,13 +647,21 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
 #endif // #if ROCKETNET_SERVER_XDP
 
-    // the sweep, and the paced keep-alives into send frames
+    // the sweep, then per client: the paced keep-alive or -- when the ack
+    // debt has reached the threshold with no other block going out -- the
+    // standalone ack, into send frames. a sixth of the slots also recompute
+    // their published statistics, every slot covered over six updates.
 
     rocketnet_server_protocol_update( &server_transport->protocol, current_time );
+
+    struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
     for ( int i = 0; i < max_clients; i++ )
     {
+        if ( ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) ) == ( acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) )
+            rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
+
         if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
             continue;
         int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
@@ -645,12 +670,16 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
             break;
-        int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
-        if ( keep_alive_bytes > 0 )
-            rocketnet_server_commit_send_frame( server_transport, &frame, keep_alive_bytes );
+        int send_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
+        if ( send_bytes == 0 )
+            send_bytes = rocketnet_server_protocol_write_ack_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
+        if ( send_bytes > 0 )
+            rocketnet_server_commit_send_frame( server_transport, &frame, send_bytes );
         else
             rocketnet_server_abort_send_frame( server_transport, &frame );
     }
+
+    acks->update_count++;
 
     // flush. the portable response ring sends inline here; the XDP socket is
     // flushed by rocketnet_server_transport_send_packets -- its buffer flip retargets
@@ -777,7 +806,12 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     ring->info[slot].wire_bytes = 0;
 
     frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
-    context->packet_id = slot;
+
+    // the packet id is the join key the acked batch surfaces: unique and
+    // monotonic, never a ring slot. the slot is recovered from the frame
+    // pointer wherever it is needed.
+
+    context->packet_id = rocketnet_platform_atomic_add_u64( &server_transport->next_packet_id, 1 );
 
 #endif // #if ROCKETNET_SERVER_XDP
 
@@ -803,7 +837,8 @@ void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_
 #if ROCKETNET_SERVER_XDP
     rocketnet_server_socket_abort_packet( server_transport->xdp_socket, context->packet_id, context->frame );
 #else // #if ROCKETNET_SERVER_XDP
-    server_transport->payload_ring.info[context->packet_id].wire_bytes = 0;
+    const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
+    server_transport->payload_ring.info[slot].wire_bytes = 0;
 #endif // #if ROCKETNET_SERVER_XDP
 
     context->frame = NULL;
@@ -824,7 +859,8 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
     }
 
     int wire_bytes = rocketnet_server_protocol_seal_payload_frame( &server_transport->protocol, context->client_index,
-                                                                   context->sequence, context->frame + ROCKETNET_FRAME_WIRE_OFFSET,
+                                                                   context->sequence, context->packet_id,
+                                                                   context->frame + ROCKETNET_FRAME_WIRE_OFFSET,
                                                                    payload_bytes, server_transport->time );
     if ( wire_bytes == 0 )
     {
@@ -837,7 +873,8 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
 #else // #if ROCKETNET_SERVER_XDP
-    server_transport->payload_ring.info[context->packet_id].wire_bytes = wire_bytes;
+    const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
+    server_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
 #endif // #if ROCKETNET_SERVER_XDP
 
     context->frame = NULL;
@@ -936,9 +973,10 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
     int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, client_index );
     rocketnet_address_t client_address = *rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
 
-    uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
+    uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
-    rocketnet_server_protocol_disconnect_client( &server_transport->protocol, client_index, burst, &burst_count );
+    int burst_bytes = 0;
+    rocketnet_server_protocol_disconnect_client( &server_transport->protocol, client_index, burst, &burst_count, &burst_bytes );
 
     for ( int i = 0; i < burst_count; i++ )
     {
@@ -946,8 +984,8 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &client_address, &frame );
         if ( !frame_data )
             break;
-        memcpy( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, burst + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
-        rocketnet_server_commit_send_frame( server_transport, &frame, ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
+        memcpy( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
+        rocketnet_server_commit_send_frame( server_transport, &frame, burst_bytes );
     }
 }
 
@@ -984,4 +1022,40 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
     stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = server_transport->server_stats.bandwidth_received_kbps;
+}
+
+int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( client_index );
+    rocketnet_assert( packet_ids );
+
+    struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
+
+    *client_index = acks->acked_client_index;
+    *packet_ids = acks->acked_packet_ids;
+
+    return acks->num_acked;
+}
+
+void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_server_transport_client_stats_t * stats )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( stats );
+
+    memset( stats, 0, sizeof(struct rocketnet_server_transport_client_stats_t) );
+
+    struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
+
+    if ( client_index < 0 || client_index >= acks->max_clients )
+        return;
+
+    const struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[client_index];
+
+    stats->rtt = endpoint->rtt;
+    stats->jitter = endpoint->jitter;
+    stats->packet_loss = endpoint->packet_loss;
+    stats->bandwidth_sent_kbps = endpoint->bandwidth_sent_kbps;
+    stats->bandwidth_received_kbps = endpoint->bandwidth_received_kbps;
+    stats->bandwidth_acked_kbps = endpoint->bandwidth_acked_kbps;
 }
