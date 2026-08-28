@@ -100,9 +100,14 @@ struct rocketnet_received_packet_record_t
 
 struct rocketnet_ack_endpoint_t
 {
+    // highest_sequence folds under fill-phase threads with an atomic max;
+    // ack_debt increments on the update thread alone and resets from fill
+    // threads with an atomic store -- update and the fill phase never
+    // overlap, per the transports' threading contract
+
     uint64_t highest_sequence;                  // highest session sequence recorded as sent
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
-    volatile uint64_t ack_debt;                 // eliciting packets received since the last block sent
+    uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
     // published per-connection statistics, recomputed by update_stats --
     // amortized round-robin across slots on the server, every update on the
@@ -140,9 +145,11 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // within the window, a named sequence that was never sent counts on the
 // unknown_sequence side counter and is otherwise ignored. Newly-acknowledged
 // packets are marked, sampled for rtt (the first block that acknowledges a
-// sequence yields the sample), and their packet ids appended to the batch --
-// a full batch counts on batch_full and drops the id, never the ack mark.
-// Returns the number of newly-acknowledged packets.
+// sequence yields the sample), and their packet ids appended to the batch.
+// A packet id that cannot fit the batch is deferred, never dropped: the
+// record stays unacknowledged, counted on batch_full, and a later block --
+// every block restates the recent interval -- surfaces it into a drained
+// batch. Returns the number of newly-acknowledged packets.
 
 int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
                                           const struct rocketnet_ack_block_t * block,

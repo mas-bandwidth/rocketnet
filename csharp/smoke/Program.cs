@@ -310,7 +310,7 @@ static class Smoke
             Fail( "counter name mapping (signature)" );
         if ( RocketNet.CounterName( RocketNet.Counter.AckUnknownSequence ) != "ACK_UNKNOWN_SEQUENCE" )
             Fail( "counter name mapping (ack side counter)" );
-        if ( RocketNet.CounterName( RocketNet.Counter.ClientAckedBatchFull ) != "CLIENT_ACKED_BATCH_FULL" )
+        if ( RocketNet.CounterName( RocketNet.Counter.ClientAckWrongOpenedSize ) != "CLIENT_ACK_WRONG_OPENED_SIZE" )
             Fail( "counter name mapping (last counter)" );
         Ok( $"counters: {serverCounters[(int) RocketNet.Counter.PayloadDelivered]} payloads delivered at the server" );
 

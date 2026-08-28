@@ -4061,32 +4061,57 @@ void rocketnet_test_swarm()
     }
 
     {
+        // RECEIVED == the sum of outcomes, every session type, every
+        // outcome the type can produce -- ACK_UNKNOWN_SEQUENCE and
+        // ACKED_BATCH_FULL are side counters outside the invariant
+
         uint64_t keep_alive_outcomes =
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK] +
+            counters[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE] +
             counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED];
         rocketnet_check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == keep_alive_outcomes );
 
         uint64_t payload_outcomes =
+            counters[ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE] +
             counters[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] +
             counters[ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE] +
             counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] +
             counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] +
             counters[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK] +
+            counters[ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE] +
             counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
         rocketnet_check( counters[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] == payload_outcomes );
 
         uint64_t disconnect_outcomes =
+            counters[ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE] +
             counters[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] +
             counters[ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE] +
             counters[ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED] +
             counters[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] +
             counters[ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK] +
+            counters[ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE] +
             counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
         rocketnet_check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == disconnect_outcomes );
+
+        uint64_t ack_outcomes =
+            counters[ROCKETNET_COUNTER_ACK_WRONG_SIZE] +
+            counters[ROCKETNET_COUNTER_ACK_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_ACK_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_ACK_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK] +
+            counters[ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE] +
+            counters[ROCKETNET_COUNTER_ACK_ACCEPTED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_ACK_RECEIVED] == ack_outcomes );
     }
 
     // the storm did its work: every garbage shape landed where it should
@@ -6004,6 +6029,18 @@ void rocketnet_test_ack_block_validity()
         rocketnet_check( rocketnet_ack_block_read( &decoded, data, 11, 100 ) == 0 );
     }
 
+    // NEGATIVE: and one past the bound exactly refuses -- 10 + 5 + 86 ==
+    // largest + 1, the walk's lowest sequence would be zero
+    {
+        uint8_t * p = data;
+        rocketnet_write_uint32( &p, 100 );
+        rocketnet_write_uint8( &p, 1 );
+        rocketnet_write_uint16( &p, 10 );
+        rocketnet_write_uint16( &p, 5 );
+        rocketnet_write_uint16( &p, 86 );
+        rocketnet_check( rocketnet_ack_block_read( &decoded, data, 11, 100 ) == 0 );
+    }
+
     // and the walk touching sequence one exactly is valid -- 10 + 5 + 85
     {
         uint8_t * p = data;
@@ -6204,7 +6241,9 @@ void rocketnet_test_ack_endpoint_processing()
     rocketnet_check( acked_count == 2 );
     rocketnet_check( unknown == 1 );
 
-    // a full batch drops the id and counts, never the ack mark
+    // a full batch defers, never loses: the overflow stays unacknowledged
+    // and counted, and the next block -- every block restates the recent
+    // interval -- surfaces it into a drained batch
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 1; s <= 8; s++ )
         rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 70.0 );
@@ -6213,9 +6252,16 @@ void rocketnet_test_ack_endpoint_processing()
     block.first_range_length = 8;
     acked_count = 0;
     batch_full = 0;
-    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 71.0, acked, 4, &acked_count, &unknown, &batch_full ) == 8 );
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 71.0, acked, 4, &acked_count, &unknown, &batch_full ) == 4 );
     rocketnet_check( acked_count == 4 );
     rocketnet_check( batch_full == 4 );
+    for ( uint64_t s = 8; s >= 5; s-- )
+        rocketnet_check( endpoint->sent[s % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );       // the walk is descending: newest four landed
+    for ( uint64_t s = 4; s >= 1; s-- )
+        rocketnet_check( !endpoint->sent[s % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );      // the overflow deferred, not lost
+    acked_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 72.0, acked, 4, &acked_count, &unknown, &batch_full ) == 4 );
+    rocketnet_check( acked_count == 4 );
     for ( uint64_t s = 1; s <= 8; s++ )
         rocketnet_check( endpoint->sent[s % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
 
@@ -6245,8 +6291,12 @@ void rocketnet_test_ack_endpoint_processing()
     memset( &block, 0, sizeof(block) );
     block.largest = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
     block.first_range_length = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4;       // the newer quarter of the older half
-    acked_count = 0;
-    rocketnet_ack_endpoint_process_block( endpoint, &block, 110.0, acked, 64, &acked_count, &unknown, &batch_full );
+    for ( int drain = 0; drain < 100; drain++ )
+    {
+        acked_count = 0;                    // each drained batch admits more; overflow defers to the next
+        if ( rocketnet_ack_endpoint_process_block( endpoint, &block, 110.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 )
+            break;
+    }
     rocketnet_ack_endpoint_update_stats( endpoint );
     rocketnet_check( endpoint->packet_loss > 40.0f );           // half the older half unacknowledged
     rocketnet_check( endpoint->packet_loss < 60.0f );
@@ -6641,6 +6691,52 @@ void rocketnet_test_ack_bad_block_refusals()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_RECEIVED] == 1 );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK] == 1 );
 
+    // NEGATIVE: a VALID block behind a wrong opened size is NOT applied --
+    // delivery information waits for both checks, so the named sequence
+    // stays unacknowledged, nothing surfaces, and the packet has no effect
+    // beyond its replay-window mark: the idle timeout is not refreshed
+    {
+        struct rocketnet_encryption_mapping_t * m =
+            rocketnet_encryption_map_entry( test.server.encryption_map,
+                                            rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) );
+        rocketnet_check( m );
+
+        uint64_t target_sequence = m->send_sequence_session;
+        rocketnet_check( rocketnet_server_write_keep_alive( &test.server, 0, 200.35, packet ) >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+        rocketnet_check( !test.server.acks->endpoints[0].sent[target_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
+
+        p = plaintext;
+        rocketnet_write_uint32( &p, (uint32_t) ( target_sequence & 0xFFFFFFFF ) );      // a valid block acking the keep-alive just sent
+        rocketnet_write_uint8( &p, 0 );
+        rocketnet_write_uint16( &p, 1 );
+        memset( p, 0x77, 9 );                                                           // nine bytes where the keep-alive fields want eight
+
+        double last_receive_before = m->last_receive_time;
+        int num_acked_before = test.server.acks->num_acked;
+
+        bytes = rocketnet_test_write_raw_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, client.send_sequence_session++,
+                                                         plaintext, 16, client.connection_salt, client.keys.session_client_to_server );
+        rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, 200.36, response, &response_bytes,
+                                                          payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
+        rocketnet_check( !test.server.acks->endpoints[0].sent[target_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
+        rocketnet_check( test.server.acks->num_acked == num_acked_before );
+        rocketnet_check( m->last_receive_time == last_receive_before );
+
+        // the same block behind the right size applies: the withholding was
+        // the size gate, not the block
+        uint8_t keep_alive_fields[8] = { 0 };
+        memcpy( plaintext + 7, keep_alive_fields, 8 );
+        bytes = rocketnet_test_write_raw_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, client.send_sequence_session++,
+                                                         plaintext, 15, client.connection_salt, client.keys.session_client_to_server );
+        rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, 200.37, response, &response_bytes,
+                                                          payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( test.server.acks->endpoints[0].sent[target_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
+        rocketnet_check( m->last_receive_time == 200.37 );
+    }
+
     // NEGATIVE: below the type's wire floor is WRONG_SIZE, never a later
     // refusal -- one byte under each session floor, with a real prefilter
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -6718,6 +6814,17 @@ void rocketnet_test_ack_bad_block_refusals()
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES - 1, 210.1, payload, &payload_bytes ) == 0 );
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE] == 1 );
+
+    // and the client's wrong opened size: a valid fresh block behind nine
+    // bytes where the keep-alive fields want eight
+    p = plaintext;
+    memset( p, 0, 7 );
+    memset( p + 7, 0x77, 9 );
+    bytes = rocketnet_test_write_raw_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, m->send_sequence_session++,
+                                                     plaintext, 16, client.connection_salt, m->keys.session_server_to_client );
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 210.2, payload, &payload_bytes ) == 0 );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] >= 1 );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -6868,6 +6975,93 @@ void rocketnet_test_ack_rtt_freshness()
                                                       ROCKETNET_TEST_CREATE_TS, 300.06, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     rocketnet_check( test.server.acks->endpoints[0].has_rtt_sample );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_ack_payload_seal_with_ranges()
+{
+    // The in-place payload seal's loss branch: when the block carries
+    // ranges it exceeds the 7-byte minimum the frame reserves, and the
+    // payload moves up inside the frame before sealing. A hole punched in
+    // the receive state forces exactly that, at full payload capacity, and
+    // the packet must still round-trip byte-exact with nothing written
+    // outside its wire region.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x5B1F7ULL );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_encryption_mapping_t * mapping =
+        rocketnet_encryption_map_entry( test.server.encryption_map,
+                                        rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) );
+    rocketnet_check( mapping );
+
+    // punch the hole: a keep-alive, a burned server sequence, a keep-alive
+    // -- the client's replay window now has a gap, so its next block
+    // carries one range and is 11 bytes, not the minimum 7
+
+    int ka_bytes = rocketnet_server_write_keep_alive( &test.server, 0, 200.0, packet );
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, ka_bytes, 200.0, payload, &payload_bytes ) );
+
+    uint64_t low_acked_sequence = mapping->send_sequence_session - 1;    // the keep-alive just opened
+
+    mapping->send_sequence_session++;                                    // the hole: burned, never sent
+
+    ka_bytes = rocketnet_server_write_keep_alive( &test.server, 0, 200.1, packet );
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, ka_bytes, 200.1, payload, &payload_bytes ) );
+
+    uint64_t high_acked_sequence = mapping->send_sequence_session - 1;
+    rocketnet_check( high_acked_sequence == low_acked_sequence + 2 );
+
+    // seal a full-capacity payload in place, in a sentinel-filled frame
+
+    uint8_t frame[2048];
+    memset( frame, 0xEE, sizeof(frame) );
+
+    uint8_t expected[ROCKETNET_MAX_PAYLOAD_BYTES];
+    rocketnet_test_generate_payload( expected, ROCKETNET_MAX_PAYLOAD_BYTES );
+    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, expected, ROCKETNET_MAX_PAYLOAD_BYTES );
+
+    uint64_t sequence = 0;
+    rocketnet_check( rocketnet_client_protocol_start_payload( &client, &sequence ) );
+
+    int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client, sequence, 777, frame, ROCKETNET_MAX_PAYLOAD_BYTES, 200.2 );
+
+    // the wire carries the fixed overhead, the 11-byte one-range block, and
+    // the full payload -- the loss branch moved the payload up four bytes
+
+    rocketnet_check( wire_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 + ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_check( wire_bytes <= ROCKETNET_SEND_BUDGET );
+
+    // nothing outside the wire region was touched
+
+    for ( int i = wire_bytes; i < (int) sizeof(frame); i++ )
+        rocketnet_check( frame[i] == 0xEE );
+
+    // the packet round-trips byte-exact, and its block applied: both
+    // keep-alives acknowledged, the burned sequence in the gap untouched
+
+    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, frame, wire_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, 200.3, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( payload_bytes == ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_check( memcmp( payload, expected, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
+
+    struct rocketnet_ack_endpoint_t * endpoint = &test.server.acks->endpoints[0];
+    rocketnet_check( endpoint->sent[low_acked_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
+    rocketnet_check( endpoint->sent[high_acked_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE] == 0 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -7145,6 +7339,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_ack_bad_block_refusals );
         RUN_TEST( test_ack_asymmetric_rate );
         RUN_TEST( test_ack_rtt_freshness );
+        RUN_TEST( test_ack_payload_seal_with_ranges );
         RUN_TEST( test_transport_acks_and_client_stats );
         RUN_TEST( test_frame_sync_wait );
     }

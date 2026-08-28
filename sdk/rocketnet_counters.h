@@ -154,7 +154,8 @@ enum
     // counter outside the RECEIVED == sum-of-outcomes invariant: the packet
     // that fires it still succeeds, and one block may fire it several
     // times. ACKED_BATCH_FULL is this implementation's own counter: a
-    // newly-acknowledged packet id that could not fit the per-update batch.
+    // packet id whose delivery notification was deferred to a later update
+    // because that update's batch was full -- deferred, never lost.
 
     ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE,
     ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK,
@@ -194,6 +195,20 @@ enum
 
     ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE,
     ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL,
+
+    // WRONG_OPENED_SIZE: the opened data, less the ack block, did not match
+    // the type -- its own reason, distinct from WRONG_SIZE (the wire floor)
+    // and DID_NOT_OPEN (the seal refused), per the one-counter-per-reason
+    // rule. Appended per the append-only index contract.
+
+    ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_OPENED_SIZE,
+    ROCKETNET_COUNTER_CLIENT_ACK_WRONG_OPENED_SIZE,
 
     ROCKETNET_NUM_COUNTERS
 };

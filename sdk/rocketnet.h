@@ -490,6 +490,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_stats( struct rocketnet_cl
 // The client's delivery notification batch: the packet ids newly
 // acknowledged by the last update, valid until the next update. The packet
 // id is the one handed out in rocketnet_packet_context_t at start_packet.
+// Overflow past the batch's capacity is deferred to a later update rather
+// than lost -- ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL counts each
+// deferral.
 
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids );
 
@@ -666,7 +669,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_client_stats( struct rocke
 // in rocketnet_packet_context_t at start_packet -- the join key back to
 // whatever the game sent. The transport tells; it never resends. Keep-alive,
 // disconnect and standalone-ack sequences have no packet id and never
-// appear here.
+// appear here. When more packets are acknowledged in one update than the
+// batch holds, the overflow is deferred to a later update rather than lost
+// -- ROCKETNET_COUNTER_ACKED_BATCH_FULL counts each deferral.
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids );
 

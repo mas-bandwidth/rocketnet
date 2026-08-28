@@ -5,6 +5,8 @@
 
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
+#include "rocketnet_replay.h"
+#include "rocketnet_platform.h"
 #include "rocketnet.h"
 
 #include <string.h>
@@ -34,14 +36,12 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 }
 
 // the replay window is the received state the block is built from: bits are
-// meaningful for sequences in (highest_opened - 256, highest_opened], and
+// meaningful for sequences in (highest_opened - window, highest_opened], and
 // the block is silent below that floor -- silence, not a loss claim
-
-#define ROCKETNET_ACK_REPLAY_WINDOW_BITS 256
 
 static int rocketnet_ack_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
-    int bit = (int) ( sequence % ROCKETNET_ACK_REPLAY_WINDOW_BITS );
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
     return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
 }
 
@@ -62,8 +62,8 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
         // speak for, never below one
 
         uint64_t floor_sequence = 1;
-        if ( block.largest >= ROCKETNET_ACK_REPLAY_WINDOW_BITS )
-            floor_sequence = block.largest - ROCKETNET_ACK_REPLAY_WINDOW_BITS + 1;
+        if ( block.largest >= ROCKETNET_REPLAY_WINDOW_BITS )
+            floor_sequence = block.largest - ROCKETNET_REPLAY_WINDOW_BITS + 1;
 
         int max_ranges = ( capacity - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 4;
         if ( max_ranges > ROCKETNET_ACK_BLOCK_MAX_RANGES )
@@ -237,12 +237,11 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     record->acked = 0;
     record->has_packet_id = (uint8_t) ( has_packet_id != 0 );
 
-    // fill-phase threads record concurrently under distinct sequences; the
-    // high-water fold tolerates the race because any interleaving leaves a
-    // sequence at least as high as every recorded one
+    // fill-phase threads record concurrently under distinct sequences, so
+    // the high-water fold is a compare-exchange max: whatever the
+    // interleaving, the mark ends at the largest recorded sequence
 
-    if ( sequence > endpoint->highest_sequence )
-        endpoint->highest_sequence = sequence;
+    rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
 }
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
@@ -308,26 +307,33 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
         }
         else if ( !record->acked )
         {
-            record->acked = 1;
-            newly_acked++;
+            // a packet id that cannot fit the batch is deferred, never
+            // dropped: the record stays unacknowledged, so a later block --
+            // every block restates the recent interval -- surfaces it into
+            // a drained batch. the counter records the deferral.
 
-            // the first block that acknowledges a sequence yields one rtt
-            // sample: the elapsed time between sending it and receiving
-            // the block
-
-            double sample = time - record->send_time;
-            if ( sample >= 0.0 )
+            if ( record->has_packet_id && *acked_count >= acked_capacity )
             {
-                endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] = (float) ( sample * 1000.0 );
-                endpoint->has_rtt_sample = 1;
+                ( *batch_full_counter )++;
             }
-
-            if ( record->has_packet_id )
+            else
             {
-                if ( *acked_count < acked_capacity )
+                record->acked = 1;
+                newly_acked++;
+
+                // the first block that acknowledges a sequence yields one
+                // rtt sample: the elapsed time between sending it and
+                // receiving the block
+
+                double sample = time - record->send_time;
+                if ( sample >= 0.0 )
+                {
+                    endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] = (float) ( sample * 1000.0 );
+                    endpoint->has_rtt_sample = 1;
+                }
+
+                if ( record->has_packet_id )
                     acked_packet_ids[(*acked_count)++] = record->packet_id;
-                else
-                    ( *batch_full_counter )++;
             }
         }
 

@@ -6,8 +6,6 @@
 #include "rocketnet_replay.h"
 #include "rocketnet.h"
 
-#define ROCKETNET_REPLAY_WINDOW_BITS 256
-
 static int rocketnet_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );

@@ -148,6 +148,14 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED:                            return "CLIENT_ACK_ACCEPTED";
         case ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE:                    return "CLIENT_ACK_UNKNOWN_SEQUENCE";
         case ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL:                        return "CLIENT_ACKED_BATCH_FULL";
+        case ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE:                   return "KEEP_ALIVE_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE:                      return "PAYLOAD_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE:                   return "DISCONNECT_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE:                          return "ACK_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE:            return "CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE:               return "CLIENT_PAYLOAD_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_OPENED_SIZE:            return "CLIENT_DISCONNECT_WRONG_OPENED_SIZE";
+        case ROCKETNET_COUNTER_CLIENT_ACK_WRONG_OPENED_SIZE:                   return "CLIENT_ACK_WRONG_OPENED_SIZE";
         default:
             rocketnet_assert( 0 );
             return "???";
