@@ -4997,9 +4997,11 @@ void rocketnet_test_transport_packet_loss_stats()
     uint8_t payload_data[64];
     memset( payload_data, 0xA5, sizeof(payload_data) );
 
-    // clean traffic: no gaps, so no loss
+    // clean traffic: no gaps, so no loss. 45 frames on purpose: enough session
+    // packets that the tracker's sweep crosses its safety margin, which is where
+    // a phantom loss from a mis-based sequence feed becomes visible.
 
-    for ( int i = 0; i < 30; i++ )
+    for ( int i = 0; i < 45; i++ )
     {
         game_time += 1.0 / 60.0;
         rocketnet_client_update( client, game_time );

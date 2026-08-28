@@ -296,7 +296,8 @@ public static unsafe class RocketNet
 
     /// <summary>rocketnet_client_stats_t. Read with <see cref="ClientGetStats"/>. rtt and
     /// jitter are milliseconds, packet loss is a percentage; the rates and bandwidth cover
-    /// the trailing second of updates. rtt is measured from the handshake's round trips.</summary>
+    /// the trailing second of updates. rtt is measured from the handshake's round trips
+    /// and holds from there, as the C header says.</summary>
     [StructLayout( LayoutKind.Sequential )]
     public struct ClientStats
     {

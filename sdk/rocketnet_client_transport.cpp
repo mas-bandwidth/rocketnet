@@ -282,8 +282,12 @@ static void rocketnet_client_process_packet( rocketnet_client_t * client_transpo
 
     if ( session_sequence != 0 )
     {
-        rocketnet_packet_loss_tracker_packet_received( &client_transport->packet_loss_tracker, session_sequence );
-        rocketnet_jitter_tracker_packet_received( &client_transport->jitter_tracker, session_sequence, receive_time );
+        // wire session sequences are 1-based (zero is rejected by the protocol); the
+        // trackers number from a 0-based feed, so the first wire sequence maps to 0 --
+        // feeding 1-based values leaves one internal slot permanently unreceived and
+        // publishes phantom loss on a clean connection.
+        rocketnet_packet_loss_tracker_packet_received( &client_transport->packet_loss_tracker, session_sequence - 1 );
+        rocketnet_jitter_tracker_packet_received( &client_transport->jitter_tracker, session_sequence - 1, receive_time );
 
         const int stats_index = (int) ( client_transport->frame % ROCKETNET_NUM_CLIENT_STATS_FRAMES );
         client_transport->stats_frames[stats_index].session_packets_received++;
