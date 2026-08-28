@@ -307,8 +307,8 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
     if ( same_payload && rocketnet_reassembly_bit( slot, fragment_index ) )
     {
-        rocketnet_spam( "reassembly refused fragment. fragment already received" );
-        counters[table->already_received]++;
+        rocketnet_spam( "reassembly refused fragment. duplicate fragment index" );
+        counters[table->duplicate_index]++;
         return 0;
     }
 

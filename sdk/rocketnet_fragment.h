@@ -97,7 +97,7 @@ struct rocketnet_reassembly_counters_t
     int count_mismatch;
     int size_mismatch;
     int payload_too_large;
-    int already_received;
+    int duplicate_index;
     int accepted;
     int reassembled;
     int abandoned;

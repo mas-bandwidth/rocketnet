@@ -363,7 +363,7 @@ int main( int argc, char ** argv )
         ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
         ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
         ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-        ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
+        ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
         ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL,
     };
     for ( int i = 0; i < (int) ( sizeof(must_stay_zero) / sizeof(must_stay_zero[0]) ); i++ )

@@ -4149,7 +4149,7 @@ void rocketnet_test_swarm()
             counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
             counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
             counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
             counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
             counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
             counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
@@ -4161,7 +4161,7 @@ void rocketnet_test_swarm()
             counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
             counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
             counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
             counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
         rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == fragment_outcomes );
 
@@ -7370,7 +7370,7 @@ static const struct rocketnet_reassembly_counters_t rocketnet_test_fragment_coun
     ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
     ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-    ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
+    ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
@@ -7583,7 +7583,7 @@ void rocketnet_test_fragment_reassembly_refusals()
     rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
     bytes = rocketnet_test_build_fragment( fragment, 9, 0, 3, 100, 100, 0 );
     rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
-    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] == 1 );
 
     // eviction under churn: id 9 occupies slot 1 incomplete; id 13 maps to
     // the same slot, evicts it, and the abandonment is counted -- the
@@ -7621,7 +7621,7 @@ void rocketnet_test_fragment_reassembly_refusals()
                               counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED];
+                              counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX];
     rocketnet_check( refusals == 12 );
 
     rocketnet_reassembly_set_destroy( set );
@@ -7830,7 +7830,7 @@ void rocketnet_test_fragment_client_to_server()
     const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
@@ -7842,7 +7842,7 @@ void rocketnet_test_fragment_client_to_server()
                               counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
     rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == outcomes );
 
@@ -7894,7 +7894,7 @@ void rocketnet_test_fragment_server_to_client()
     const uint64_t outcomes = counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_SEQUENCE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE] +
@@ -7905,7 +7905,7 @@ void rocketnet_test_fragment_server_to_client()
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_DUPLICATE_INDEX] +
                               counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED];
     rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == outcomes );
 
@@ -8019,7 +8019,7 @@ void rocketnet_test_fragment_receive_refusals()
     memset( (void*) p, 0x77, 1000 );                                    // stride-sized, so the size check passes
     bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext + 0, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1000, packet );
     rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] == 1 );
 
     // NEGATIVE: a stale payload id -- complete payload 5 into slot 1, then
     // start payload 9 in the same slot, and payload 5's ghost refuses...
@@ -8116,7 +8116,7 @@ void rocketnet_test_fragment_receive_refusals()
     const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
@@ -8128,7 +8128,7 @@ void rocketnet_test_fragment_receive_refusals()
                               counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
                               counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
     rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == outcomes );
 
