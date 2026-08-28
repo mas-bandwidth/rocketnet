@@ -7,7 +7,11 @@ over transport drivers, though a conforming implementation may name its pieces
 as it likes — so people can write their own implementations. It is the
 packet-level connection layer only; reliability, messages, flows and broadcast
 belong to a high-level tier above the transport, carried entirely in payload
-packets, and nothing in them is specified here.
+packets, and nothing in them is specified here. The transport's own two
+packet-level primitives are specified here: **delivery notification** — every
+session packet reports what arrived, and the transport informs, never
+retransmits (_Acks_) — and **fragmentation** of payloads larger than one
+packet (_Fragmentation_).
 
 The shape is a connect token minted by a game backend, an address-validated
 handshake, sealed packets, and per-client slots. Two properties run through
@@ -182,11 +186,14 @@ section, and this table exists so an implementer never hunts for a number.
 | Test title constant | `b7 59 01 00` at epoch 0 | _The Prefilter Header_ |
 | Filter epoch | 0 = unkeyed; 1-255 = magic generation, wrapping 255 to 1 | _The Prefilter Header_ |
 | Magic | 16 bytes, backend distributed, rotated | _The Prefilter Header_ |
-| Packet types | 0-7; 8-255 reserved, ignored | _Packets_ |
+| Packet types | 0-9; 10-255 reserved, ignored | _Packets_ |
 | Client states | -7 to 4 | _Client State Machine_ |
 | KDF context strings | `RKTNHNDC` `RKTNHNDS` `RKTNSESC` `RKTNSESS` | _Per-connection keys_ |
 | Associated data lengths | 21 bytes; 53 for types 2 and 3 | _Sealed packets_ |
-| Per-packet overhead | 26 bytes | _Packet sizes_ |
+| Per-packet overhead | 26 bytes on the wire; session types add a sealed ack block, 7 bytes minimum | _Packet sizes_ |
+| Ack block | 7 bytes minimum: largest received, range count, first range length | _Acks_ |
+| Fragment header | 6 bytes sealed: payload id, fragment index, fragment count − 1 | _Fragmentation_ |
+| Fragment count | 2 to 256 per fragmented payload | _Fragmentation_ |
 | Send budget | 1232 default, 1426 maximum | _Packet sizes_ |
 | Receive ceiling | 1426, fixed | _Packet sizes_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
@@ -269,7 +276,7 @@ session keys, carrying an identifier so the server need not trial-decrypt agains
 every connected client, and followed by the same cookie round trip to the new
 address that the connection made at connect time — which is the anti-redirection
 protection QUIC's path validation provides. Cost on ordinary packets: nothing.
-Cost when it fires: one round trip, rarely. **Packet types 8 through 255 are
+Cost when it fires: one round trip, rarely. **Packet types 10 through 255 are
 reserved and MUST be ignored by a conforming receiver**, so a later
 implementation adding migration degrades gracefully against an earlier one: the
 packet is ignored and the client reconnects, which is exactly today's behavior.
@@ -532,13 +539,17 @@ Every sealed packet spends, before the application's bytes:
                                    ----
                                      26
 
-So payload packets carry **1 to budget−26 bytes** of application data — 1 to
-1206 at the default budget.
+The wire overhead is a fixed 26 bytes, every packet, no variable cases. **The
+session types — keep-alive, payload, disconnect, ack and payload fragment —
+additionally open every sealed packet with an ack block**, specified in _Acks_,
+which is 7 bytes in the fully-received case and grows only with loss events.
 
-Per-packet overhead is a fixed 26 bytes, every packet, no variable cases.
+So payload packets carry **1 to budget−26−block bytes** of application data —
+1 to 1199 at the default budget and the minimum block.
 
-Every packet type has a fixed total size on the wire except the payload, which
-has a range. A receiver checks the size before any other per-type work:
+The handshake types have a fixed total size on the wire; the session types have
+a range, because the ack block and the payload vary. A receiver checks the size
+before any other per-type work:
 
 | Type | Packet | Wire size | Composition |
 |---|---|---|---|
@@ -546,15 +557,22 @@ has a range. A receiver checks the size before any other per-type work:
 | 1 | connection denied | 34 | 6 + 4 + 8 + 0 + 16 |
 | 2 | connection challenge | 66 | 6 + 4 + 8 + 32 + 16 |
 | 3 | connection response | 50 | 6 + 4 + 24 + 16 |
-| 4 | connection keep-alive | 34 | 6 + 4 + 8 + 16 |
-| 5 | connection payload | 27 to 1426 received; sender bounded by its budget | 6 + 4 + payload + 16 |
-| 6 | connection disconnect | 26 | 6 + 4 + 0 + 16 |
+| 4 | connection keep-alive | 41 to 1426 received; sender bounded by its budget | 6 + 4 + block + 8 + 16 |
+| 5 | connection payload | 34 to 1426 received; sender bounded by its budget | 6 + 4 + block + payload + 16 |
+| 6 | connection disconnect | 33 to 1426 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
 | 7 | connection cookie | 38 | 6 + 8 + 8 + 16 |
+| 8 | connection ack | 33 to 1426 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
+| 9 | connection payload fragment | 40 to 1426 received; sender bounded by its budget | 6 + 4 + block + 6 + fragment + 16 |
 
 The composition columns are prefilter header + sequence + data + AEAD tag for
 sealed types, with the additional 8 being the clear session nonce on types 1 and
 2; the request is prefilter header + its unsealed body; the cookie is prefilter
-header + its three unsealed fields.
+header + its three unsealed fields; _block_ is the sealed ack block, 7 bytes
+minimum. The session types share one receive ceiling — 1426 bytes, whatever
+the sender's budget — while each keeps its own hard minimum from this table;
+past the size check, the geometry inside the seal decides. One ceiling and a
+per-type floor is one comparison each, and the counters stay attributable:
+a packet below its type's floor is `WRONG_SIZE`, never a later refusal.
 
 The connect token is a fixed 768 bytes, inside a single 1500-byte MTU with room
 to spare, by design.
@@ -576,7 +594,7 @@ carried on the wire. The fixed packet sizes above do not change with it; only
 the payload range does. The 1232 default is the only value that is safe with no
 knowledge of the network; every raise is a statement about paths, and it is the
 deployment's to make. The 1426 maximum is itself such a statement, made on
-evidence: it carries a 1400-byte payload, and this protocol's ancestor shipped
+evidence: it carries a 1393-byte payload, and this protocol's ancestor shipped
 1468-byte frames to players on the open internet for years without incident.
 1426 leaves 46 bytes of headroom under the 1472 available on plain 1500-MTU
 ethernet.
@@ -1080,6 +1098,8 @@ RocketNet has the following packets:
 * _connection payload packet_ (5)
 * _connection disconnect packet_ (6)
 * _connection cookie packet_ (7)
+* _connection ack packet_ (8)
+* _connection payload fragment packet_ (9)
 
 Every packet begins with the 6-byte prefilter header, whose first byte is the
 packet type. The type byte carries the type and nothing else.
@@ -1167,10 +1187,22 @@ must guess an eight-byte random value it has never seen.
 
 ### Sealed packets
 
-Packet types 1 through 6 are sealed. Type 7, the connection cookie, is not. Prior to sealing, after the prefilter header:
+Packet types 1 through 6, 8 and 9 are sealed. Type 7, the connection cookie, is
+not. Prior to sealing, after the prefilter header:
 
     [sequence number] (4 bytes)
     [per-packet type data] (variable length according to packet type)
+
+**The session types — keep-alive (4), payload (5), disconnect (6), ack (8) and
+payload fragment (9) — share one sealed framing: the sealed plaintext begins
+with the ack block of _Acks_, and the per-packet type data follows it.** One
+framing for every session packet means the ack path is exercised by every
+session packet ever sent — there is no rare ack codepath — and a receiver
+validates one geometry, not five. The handshake types 1, 2 and 3 carry no ack
+block: their delivery is proven by the handshake's own progress, and their
+layouts do not move. Types 8 and 9 are session-phase packets: they seal under
+the session keys and spend the session sequence spaces, and are never valid
+under handshake keys.
 
 The per-packet type data:
 
@@ -1211,9 +1243,22 @@ _connection keep-alive_:
 
 _connection payload_:
 
-    [payload data] (1 to budget−26 bytes; 1206 at the default budget)
+    [payload data] (1 to budget−26−block bytes; 1199 at the default budget and
+                    the minimum block)
 
-_connection disconnect_: no data.
+_connection disconnect_: no data beyond the ack block.
+
+_connection ack_ (type 8): no data beyond the ack block — the block is the
+packet. Its wire size is bounded by the block's own caps: at the 255-range
+maximum the block is 1,027 bytes and the packet 1,053, inside the default
+budget with room to spare.
+
+_connection payload fragment_ (type 9), after the ack block:
+
+    [payload id] (uint32)               // increments per fragmented payload, per direction
+    [fragment index] (1 byte)
+    [fragment count − 1] (1 byte)
+    [fragment data] (1 to budget−26−block−6 bytes)
 
 The per-packet data is sealed with `crypto_aead_chacha20poly1305_ietf_encrypt`
 using the following associated data, which binds the connection's immutable
@@ -1227,7 +1272,7 @@ tag:
     [client ephemeral public key] (32 bytes)   // types 2 and 3 only
 
 The associated data is these fields packed with no padding: exactly **21 bytes**
-for types 1, 4, 5 and 6, and exactly **53 bytes** for types 2 and 3. It is
+for types 1, 4, 5, 6, 8 and 9, and exactly **53 bytes** for types 2 and 3. It is
 constructed by both ends and never travels on the wire.
 
 **The client's ephemeral public key is in the associated data of the connection
@@ -1236,7 +1281,7 @@ the connection denied packet, type 1, because its authenticity rests on the
 handshake key, which the ephemeral exchange does not feed — binding the
 ephemeral into its associated data would add nothing, where types 2 and 3
 bind it because they are the packets that carry out the exchange — and from
-the session types 4, 5 and 6 —
+the session types 4, 5, 6, 8 and 9 —
 so it costs nothing on any game packet. It is there because the client ephemeral
 travels in the clear, outside the signature, and without this binding an on-path
 attacker who alters it in flight achieves something worse than a dropped packet:
@@ -1263,7 +1308,7 @@ In this exact order:
 * If the packet is shorter than the 6-byte prefilter header, or longer than the
   1426-byte receive ceiling, ignore it.
 
-* If the type byte is greater than 7, ignore the packet. Types 8 through 255
+* If the type byte is greater than 9, ignore the packet. Types 10 through 255
   are reserved and MUST be ignored by a conforming receiver. **This check and
   the two filter checks below commute and may be performed in either order**:
   all three reject silently, so a packet failing more than one is rejected
@@ -1286,11 +1331,12 @@ In this exact order:
   ordinary compare is correct.
 
 * **If the packet's total size does not match its type — the exact wire size
-  from the _Packet sizes_ table, or 27 to 1426 bytes for a payload (the fixed
-  receive ceiling; the sender's budget is not a receive-side quantity) —
-  ignore it.** Every non-payload type has a single fixed size, so this is one
-  compare, and it runs before any per-type handling so that no later step can
-  read past the end of a short packet.
+  from the _Packet sizes_ table, or that table's range for a session type (the
+  fixed receive ceiling bounds the top; the sender's budget is not a
+  receive-side quantity) — ignore it.** Every handshake type has a single
+  fixed size and every session type a single range with a hard minimum, so
+  this is one compare either way, and it runs before any per-type handling so
+  that no later step can read past the end of a short packet.
 
 * The server ignores _connection denied_, _connection challenge_ and _connection
   cookie_ packets. The client ignores _connection request_ and _connection
@@ -1326,11 +1372,11 @@ In this exact order:
   never overwrite working keys. This is the only place keys are derived on
   receive; the per-type sections below the open assume they exist.
 
-* If the packet type is _connection keep-alive_, _connection payload_ or
-  _connection disconnect_, and it fails the replay-protection already-received
-  test, ignore it. **Replay protection applies to those three types only**; the
-  handshake types are protected by the handshake's own logic and by their
-  separate keys.
+* If the packet type is a session type — _connection keep-alive_, _connection
+  payload_, _connection disconnect_, _connection ack_ or _connection payload
+  fragment_ — and it fails the replay-protection already-received test, ignore
+  it. **Replay protection applies to those five types only**; the handshake
+  types are protected by the handshake's own logic and by their separate keys.
 
 * Compute the sealed length as the remaining bytes. If it is less than the
   16-byte tag, ignore the packet. *(Implementations must compute this without
@@ -1340,21 +1386,40 @@ In this exact order:
   (handshake or session), the associated data above, and the sequence-derived
   nonce, ignore the packet.
 
-* For those same three types, **mark this sequence as received in the replay
+* For those same five types, **mark this sequence as received in the replay
   window and then advance the most-recent sequence number.** Both steps are
   required: advancing the high-water mark without setting the window entry
   leaves a receiver that accepts duplicates arriving within the window.
 
-* If the opened data size does not match the expected size for the type, ignore
-  the packet:
+* **For the session types, validate and consume the ack block** at the front of
+  the opened data, per _Acks_: at least 7 bytes present, the declared geometry
+  contained in the opened size, ranges within the sequence space. A malformed
+  block refuses the whole packet — the type data behind it is never examined —
+  counting the packet type's `BAD_ACK_BLOCK` reason. The block's delivery
+  information is applied only after the size check below also passes, so no
+  malformed or mis-sized packet has any effect beyond its replay-window mark.
+  A packet that passes both and then refuses in its own type handling — a
+  fragment with a bad count, say — has still applied its valid,
+  authenticated ack block, deliberately: delivery information does not become
+  false because the bytes behind it were refused, and applying it is
+  idempotent.
+
+* If the opened data size, less the ack block on session types, does not match
+  the expected size for the type, ignore the packet:
   * 0 bytes — _connection denied_
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * 1 to 1400 bytes — _connection payload_ (1400 = the 1426 receive ceiling − 26)
+  * 1 to 1393 bytes — _connection payload_ (1393 = the 1426 receive ceiling −
+    26 − the 7-byte minimum block)
   * 0 bytes — _connection disconnect_
+  * 0 bytes — _connection ack_
+  * 7 to 1393 bytes — _connection payload fragment_ (the 6-byte fragment
+    header and at least one fragment byte, up to the same 1393 the payload
+    line derives)
 
-* Otherwise, process the packet.
+* Otherwise, process the packet — the ack block's delivery information first,
+  then the type data.
 
 ## Replay Protection
 
@@ -1364,8 +1429,9 @@ nonce, so any modification fails the tag.
 
 Discard anything older than the most recent sequence minus the replay buffer
 size; within the window accept a sequence only once; on a successful open mark
-it received and advance the most recent. Applied to _connection keep-alive_,
-_connection payload_ and _connection disconnect_ on both ends.
+it received and advance the most recent. Applied to the five session types —
+_connection keep-alive_, _connection payload_, _connection disconnect_,
+_connection ack_ and _connection payload fragment_ — on both ends.
 
 ### The AEAD integrity limit
 
@@ -1519,6 +1585,265 @@ it — the check still runs, but on the handful of packets that survived instead
 on the flood. That is where the win is, and it keeps one implementation of the
 logic rather than one per transport.
 
+## Acks
+
+**The transport tells a sender which of its packets arrived. It never resends
+anything.** That is the whole contract: a delivery notification primitive, and
+every policy about what loss *means* — resend, send newer state, give up —
+belongs to whatever rides above. One primitive under every policy is the
+flexibility this layer sells, and it is the oldest good idea in game
+networking's book.
+
+Every session packet a receiver opens is evidence, and every session packet a
+sender emits carries the current evidence back: **the sealed plaintext of every
+session type begins with an ack block.** The block rides inside the seal
+because a delivery report an attacker can forge is worse than none — spoofable
+acks are not acks — and because the seal is already there, so authenticity
+costs nothing.
+
+### The ack block
+
+    [largest received] (uint32)         // low 32 bits of the highest session sequence
+                                        // successfully opened from the peer; reconstructed
+                                        // zero = none yet (see Validity)
+    [range count] (1 byte)
+    [first range length] (uint16)       // received run ending at largest, inclusive
+    range count times:
+        [gap] (uint16)                  // sequences not received, below the previous range
+        [length] (uint16)               // sequences received, below the gap
+
+All integers little-endian, as everywhere in this protocol. The minimum block —
+everything received, nothing to report but the run — is **7 bytes**. Each loss
+event adds one 4-byte range entry. The geometry is fixed-width on purpose: the
+argument in _Sequence numbers_ against variable-length encodings applies with
+the same force here, and a u16 range reaches 65,535 sequences, so the width
+never becomes a cap on what a block can say.
+
+**The block describes exactly the interval it enumerates, and nothing below
+it.** Reading downward from _largest received_: the first range is a contiguous
+run of received sequences ending at _largest_ inclusive, so _first range
+length_ is at least 1 whenever _largest_ is nonzero; then each entry states a
+gap of missing sequences followed by a run of received ones. Below the last
+entry the block is silent — not received, not lost, simply unspoken. Silence
+rather than a completeness claim is what keeps the encoding honest forever on
+an unreliable wire: a sequence lost a minute ago leaves a permanent hole, and a
+block that had to describe all history would grow without bound, where one that
+describes the recent interval stays proportional to recent loss events.
+**When _largest received_ is zero — nothing opened yet — _first range length_
+MUST be zero, and MUST NOT be zero otherwise.** The all-zero 7-byte block is
+the valid statement of a fresh connection, by construction rather than by
+special case.
+
+_Largest received_ is the low 32 bits of the receiver's highest-opened 64-bit
+session sequence — the same high-water mark replay protection keeps, all five
+session types. The sender that reads it already tracks which of its own
+sequences are outstanding, so reconstruction is the wire sequence's rule
+exactly: `expected` is the sender's own highest sent session sequence, the
+candidate nearest to it wins, and of two equidistant candidates the larger is
+taken.
+
+**Validity.** A block is malformed, and refuses its whole packet as
+`BAD_ACK_BLOCK`, when any of the following holds — each stated so that two
+implementations reject the same bytes:
+
+* the declared geometry — 7 bytes plus 4 per range entry — exceeds the opened
+  size;
+* _first range length_ is zero while _largest received_ is nonzero, or nonzero
+  while _largest received_ is zero;
+* _first range length_ exceeds _largest received_;
+* any _gap_ or _length_ entry is zero;
+* the walk goes out of bounds: _first range length_ plus the sum of every
+  _gap_ and _length_ MUST NOT exceed _largest received_ — equivalently, the
+  lowest sequence the block describes may never fall below one. *(A block
+  describing everything down to sequence one exactly is valid: the
+  fully-received vector in Appendix A is that block. Implementations MUST
+  compute the walk without unsigned underflow: check each subtraction before
+  making it, the same rule as the sealed length.)*
+
+These rules close every degenerate encoding: a conforming block's ranges are
+strictly descending, non-empty, non-touching, and confined to sequences that
+can exist. **Validity is evaluated on the reconstructed 64-bit _largest
+received_, not the raw wire field** — the same discipline as the wire
+sequence, including the zero test: it is the reconstructed value that must be
+nonzero for _first range length_ to be nonzero, so a genuine sequence whose
+low 32 bits happen to be zero does not read as a fresh connection.
+
+**Build rule.** A sender fills the block from its current receive state:
+_largest received_, then ranges descending, newest first, as many as exist and
+fit. Two caps bound it: _range count_ is at most 255, and the block never takes
+space the packet does not have — in a payload or fragment packet the
+application's bytes come first and the block truncates to the remaining room,
+oldest entries dropped first. *(In a fragment packet the stride is chosen
+against the minimum block, so a current block with ranges always truncates
+there; the stride never shrinks to make room.)* Truncation loses only the oldest information, which the next
+block or a standalone ack restates. **The 7-byte minimum always fits: every
+session packet carries at least _largest received_ and its first range.**
+
+**What acks describe is the session sequence space, per direction.** Handshake
+sequences are never acked; a handshake proves its own delivery by progressing.
+
+### Elicitation
+
+**Blocks report opened packets; elicitation decides only when a block must be
+sent, and the two are deliberately not the same set.** A block's contents are
+built from every opened session sequence, all five types — one received state,
+the same one replay protection already maintains, with no second high-water
+mark and no holes manufactured by exemptions. Received session packets of
+types 4, 5, 6 and 9 **elicit** acknowledgment: they add to the ack debt that
+obliges a block to go out. **Type 8 does not elicit.** A standalone ack is
+opened, replay-marked and reported like any session packet, but receiving one
+never obliges an ack in return, because two quiet peers each obliged to
+acknowledge the other's acknowledgments would exchange them forever — the
+exemption is what makes the ack conversation terminate, and it costs nothing:
+the information in an ack block is restated by every later block, so the
+delivery of any one ack packet is never load-bearing, and a sender that sees
+its own type 8 sequence covered by a range simply has nothing to surface for
+it.
+
+### The standalone ack
+
+Acks normally ride the traffic a connection is already sending — a payload in
+either direction carries them, and an idle connection's keep-alives carry them
+at the send rate. What neither covers is the asymmetric case: a peer receiving
+sixty packets a second and sending ten has blocks in flight only ten times a
+second, and the delivery information ages accordingly. **The connection ack
+packet, type 8, exists for exactly that pressure**: an implementation SHOULD
+send one when its **ack debt** — eliciting packets received since it last sent
+any block — reaches a threshold, default 64, and MAY send one whenever
+freshness is worth a packet to it. A conforming implementation never *needs*
+type 8 for correctness; it needs it to keep notification latency flat when
+inbound outruns outbound, which is what removes the coupling between ack
+capacity and return-traffic cadence. **There is no structural
+packets-per-second cap anywhere in this design**: the block widens with loss,
+not with rate, and the standalone ack supplies return capacity whenever the
+traffic itself does not.
+
+### Processing
+
+A receiver of a block marks named sequences acknowledged in its own
+sent-packet bookkeeping, surfacing newly-acknowledged packets to the layer
+above. Bookkeeping is bounded: a sender MUST retain delivery state for at
+least one second of its own maximum send rate, sized the same way as the
+replay window and for the same reason. **The walk is bounded by the retained
+window, never by the block's claims**: processing MUST cost no more than one
+pass over the retained window's entries — a valid block can name up to
+sixteen million sequences in a kilobyte, and iterating what a peer asserts
+rather than what this end retains would hand a connected attacker CPU at that
+ratio. Everything a block names below the retained window is silently ignored
+without being visited; within the window, sequences named that were never
+sent — possible only through reconstruction against a hostile or
+badly-truncated block — are ignored; an implementation MUST NOT treat them as
+an error that affects the connection, and counts them as
+`ACK_UNKNOWN_SEQUENCE`.
+
+**Round trip time rides the acks.** The first block that acknowledges a
+sequence yields one RTT sample: the elapsed time between sending that sequence
+and receiving the block, measured at the sender. The sample overstates the
+true network time by the peer's aggregation delay — up to a send interval when
+acks ride keep-alives — which is the precedent this family has always shipped,
+and the standalone ack keeps the error small exactly where rates are high
+enough for it to matter. The block deliberately carries no delay-compensation
+field; if a future revision needs tighter RTT it adds one, and nothing in this
+encoding forecloses it.
+
+## Fragmentation
+
+**A payload larger than one packet's capacity is split into fragments, each
+riding an ordinary sealed session packet, and reassembled per connection on
+the far side.** Fragmentation is this layer's own self-contained mechanism: it
+consumes nothing from the ack system, keeps its own bookkeeping, and delivers
+to the application exactly what a payload packet delivers — bytes, once, or
+nothing. **Unreliable semantics stand: a lost fragment loses the whole
+payload**, the counters make it visible, and anything smarter is a policy for
+the tier above, built on the delivery notifications the transport already
+provides.
+
+The fragment header sits inside the seal, after the ack block, per _Sealed
+packets_: a uint32 payload id, a fragment index byte, and a fragment count − 1
+byte. The packet type is what distinguishes a fragment from an ordinary
+payload — type 9 against type 5 — and the type byte is bound into the AEAD's
+associated data, so nothing about discrimination rests on unsealed bytes. An
+unfragmented payload is byte-identical to what it was before this section
+existed: **the common path does not pay for the rare one.** A payload that
+fits one packet MUST be sent as type 5 — a fragment count of one is invalid.
+
+**Sending.** The sender assigns the payload the next **payload id** — a uint32
+counter per direction, starting at 1, incrementing per fragmented payload —
+and splits it into equal-size fragments, the last carrying the remainder. The
+fragment size is the sender's choice up to its payload capacity for a type 9
+packet (budget − 26 − block minimum − 6), and in practice is exactly that
+capacity, since fewer fragments is the whole game; each fragment goes out as
+its own sealed packet with its own sequence, and nothing is retained for
+resending: fire and forget, exactly as for any other packet.
+
+**Loss multiplies.** The probability a fragmented payload survives is the
+per-packet delivery rate to the power of the fragment count: at 1% loss, a
+two-fragment payload dies 2% of the time and a 256-fragment payload 92.4% of
+the time. The mechanism is priced for payloads of a few fragments carrying
+state that tolerates loss; a deployment moving large blocks that must arrive
+builds that above the transport, on the notifications.
+
+**Receiving.** Reassembly is per connection, keyed by payload id in a
+fixed-size sequence buffer of **reassembly slots**, the modulo-indexed
+structure this protocol already uses for replay state. The receiver's checks,
+in order, each with its own counter:
+
+* A payload id of zero refuses (`FRAGMENT_ZERO_PAYLOAD_ID`) — zero is what an
+  uninitialized sender produces, the same argument as sequence zero.
+* A payload id older than the id currently occupying its slot refuses as
+  stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
+  its bytes into the newer payload's slot is the aliasing this check exists
+  to prevent.
+* Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
+  of 1 refuses — `FRAGMENT_COUNT_INVALID`).
+* Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).
+* The first fragment of a payload id fixes its count; a later fragment naming
+  a different count for the same payload refuses that fragment and keeps the
+  slot as it was (`FRAGMENT_COUNT_MISMATCH`). A widened count after the fact
+  is the classic memory-trashing attack on reassembly, and the pin is the
+  answer.
+* Every fragment except the last must be the same size, and the first
+  non-final fragment to arrive fixes that stride; a later non-final fragment
+  of a different size refuses (`FRAGMENT_SIZE_MISMATCH`). The final fragment
+  must not exceed the stride once the stride is known. Fragment bytes land at
+  index × stride. **Only the final fragment can arrive before the stride is
+  known** — any non-final arrival fixes it — so each reassembly slot holds one
+  staging buffer of the maximum fragment size for exactly that case: a final
+  fragment arriving first is staged, checked against the stride when the first
+  non-final fragment fixes it (refusing the whole payload as
+  `FRAGMENT_SIZE_MISMATCH` if it exceeds it), and placed then. Reordering of
+  a two-fragment payload is an everyday event, not an edge.
+* The reconstructed payload — stride × (count − 1) plus the final fragment —
+  must not exceed the receiver's configured maximum payload size
+  (`FRAGMENT_PAYLOAD_TOO_LARGE`). The check runs the moment both the stride
+  and the count are known — usually the first non-final arrival — never
+  deferred to completion, so an over-large payload is refused before it
+  occupies a slot's arena rather than after filling it.
+* A fragment index already held for this payload id refuses as a duplicate
+  (`FRAGMENT_ALREADY_RECEIVED`); the sealed packet's replay protection already
+  refuses replayed *packets*, so this fires only on a sender defect.
+
+When every fragment of a payload id is present, the payload is delivered to
+the application in arrival position — fragmented payloads take their place in
+the arrival order at the moment they complete — and the slot is cleared
+(`FRAGMENT_PAYLOAD_REASSEMBLED`). A slot evicted to make room for a newer
+payload id while incomplete counts `FRAGMENT_PAYLOAD_ABANDONED`, which is the
+loss-visibility counter: it is how a deployment sees fragmented payloads dying
+to loss, and a soak asserts it stays zero on a clean link.
+
+**Storage is allocated once, at create, to the maximum.** A reassembly slot
+owns capacity for the configured maximum payload size plus its one staging
+buffer at the 1,387-byte maximum fragment size (1426 − 26 − 7 − 6), and the
+slot count is configuration; the arena is slots × (maximum payload + staging),
+allocated at create time and never grown, resized or shared. At the moment of delivery the reassembled
+payload is copied out once — the one copy fragmentation inherently costs —
+and wire-shaped packets everywhere else keep their zero-copy batch views. A
+receiver under fragment flood can therefore allocate nothing, fragment no
+heap, and lose nothing but the slots' bounded memory, which was spent at
+create. This is the answer to every resource-exhaustion attack reassembly
+invites, and it is the same answer this protocol gives everywhere: fixed
+tables, spent up front, no surprises at the 999th client.
+
 ## Timing
 
 Every rate in this protocol is fixed and measured in wall-clock time. None of
@@ -1534,6 +1859,7 @@ application update.
 | Cookie lifetime | 3 s | server: how long an issued cookie is accepted |
 | Cookie key rotation | 60 s | server: previous key accepted for one period |
 | Redundant disconnect packets | 10 | either end, on a deliberate disconnect |
+| Ack debt threshold | 64 packets | either end: standalone ack SHOULD be sent at this many eliciting packets received since the last block sent (_Acks_) |
 
 **The send rate is a rate in time, not a rate per update.** An implementation
 MUST NOT send a packet per application update. This protocol places no
@@ -1734,19 +2060,28 @@ connection either way: without the token keys, nothing it sends opens.
 * On a successful open, transition to _connection denied_ (-1), stop sending,
   and release all connection state.
 
-### Processing keep-alive, payload and disconnect packets
+### Processing session packets
 
-These open under the session keys, which exist from _sending connection
-response_ onward; in earlier states there are no keys for them and they are
-ignored at the key lookup.
+The session types open under the session keys, which exist from _sending
+connection response_ onward; in earlier states there are no keys for them and
+they are ignored at the key lookup. **Every opened session packet's ack block
+is applied per _Acks_, in every state that opens it**, and refreshes the
+last-received time.
 
 * A keep-alive in _sending connection response_ carries the client index and
   the slot count: store both, transition to _connected_. In _connected_ it
   refreshes the last-received time, as does any opened packet.
-* A payload is delivered to the application in _connected_ only. In _sending
-  connection response_ it is ignored: the client does not yet know its client
-  index, and the server prefixes every payload with a keep-alive while the
-  client is unconfirmed, so the transition arrives with the traffic.
+* A payload is delivered to the application from _sending connection response_
+  on, exactly as _Connected Clients_ specifies — the session keys derive at
+  the challenge, independent of the client index, so there is no state in
+  which an opened payload cannot be understood. *(This bullet once said
+  payloads are ignored until _connected_ because the server prefixes payloads
+  with keep-alives; the prefixing was removed by the ruling recorded in
+  _Connected Clients_, and this text now agrees with it.)*
+* A payload fragment is accepted in the same states as a payload and feeds
+  reassembly per _Fragmentation_; a completed payload is delivered exactly as
+  a payload packet is.
+* An ack packet has no effect beyond its block, in any state that opens it.
 * A disconnect in _sending connection response_ or _connected_ transitions to
   _disconnected_ (0) immediately, releasing all state. It is never answered;
   the sender's redundant copies are the whole delivery mechanism.
@@ -1761,7 +2096,11 @@ retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
 answering. A lost keep-alive: the next one is at most a send interval away, in
-both directions, forever. A lost denied: re-provoked by the next retransmitted
+both directions, forever. A lost ack: every later block restates the same
+receive state, so no single ack packet's delivery is ever load-bearing. A lost
+fragment: the payload it belonged to is lost, which is its specified semantics,
+and nothing waits for it — the abandoned counter records it and the connection
+moves on. A lost denied: re-provoked by the next retransmitted
 request or response, because the server holds no-slots state (none, or the
 mapping) that repeats it. A lost disconnect: nine more copies follow, and the
 timeout stands behind all ten. There is no packet whose loss leaves either end
@@ -2128,17 +2467,23 @@ only data already verified.
   this keep-alive is lost, the ones generated at the send rate repeat the
   answer.
 
-### Processing keep-alive, payload and disconnect packets at the server
+### Processing session packets at the server
 
 These arrive under the session keys through _Reading packets_. If the packet's
 mapping has no assigned slot, ignore it — session traffic before a slot exists
 is a lost-response race or an injection, and the retransmitted response repairs
-the former.
+the former. **Every opened session packet's ack block is applied per _Acks_,
+against that client's slot, and refreshes the slot's last-received time.**
 
 * A keep-alive refreshes the slot's last-received time, and confirms the client
   if it was unconfirmed.
 * A payload confirms an unconfirmed client, refreshes the last-received time,
   and is delivered to the application.
+* A payload fragment does everything a payload does, with delivery routed
+  through reassembly per _Fragmentation_ — a completed payload is delivered
+  exactly as a payload packet is, attributed to its client slot.
+* An ack packet confirms an unconfirmed client and refreshes the last-received
+  time; it has no effect beyond its block.
 * A disconnect resets the slot and destroys the mapping immediately, per _Slot
   reset_. It is never answered; the sender's redundant copies are the whole
   delivery mechanism, exactly as on the client.
@@ -2155,7 +2500,8 @@ no copy to fall out of sync.
 
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
 becomes confirmed the first time the server receives any sealed packet from that
-client on that slot — a keep-alive or a payload. The flag exists because the
+client on that slot — a keep-alive, a payload, a fragment or an ack. The flag
+exists because the
 server has not yet observed that the client received its keep-alive, so it does
 not yet know the client considers itself connected.
 
@@ -2323,13 +2669,25 @@ number of cookie packets sent. Their separation is diagnostic —
 and it means something entirely different from `NO_COOKIE` climbing.
 
 The same treatment applies to connection responses and to each sealed packet
-type, and to the lifecycle events that no packet triggers:
+type — the session types adding `BAD_ACK_BLOCK` as an outcome, and
+`ACK_UNKNOWN_SEQUENCE` as a **side counter outside the `RECEIVED == Σ
+outcomes` invariant**, per _Acks_: the packet that fires it still succeeds,
+and one block may fire it several times — and the payload fragment its
+refusal reasons from
+_Fragmentation_ (`FRAGMENT_ZERO_PAYLOAD_ID`, `FRAGMENT_COUNT_INVALID`,
+`FRAGMENT_INDEX_OUT_OF_RANGE`, `FRAGMENT_COUNT_MISMATCH`,
+`FRAGMENT_SIZE_MISMATCH`, `FRAGMENT_PAYLOAD_TOO_LARGE`,
+`FRAGMENT_ALREADY_RECEIVED`, `FRAGMENT_STALE`) — and to the lifecycle events
+that no packet triggers:
 
 * `MAPPING_CREATED`, `MAPPING_IDLE_TIMEOUT`, `MAPPING_TABLE_FULL`
 * **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED`** — a handshake started and never
   finished
 * `CLIENT_CONNECTED`, `CLIENT_DISCONNECTED`, `CLIENT_TIMED_OUT`
 * `INTEGRITY_LIMIT_REACHED`
+* `FRAGMENT_PAYLOAD_REASSEMBLED`, `FRAGMENT_PAYLOAD_ABANDONED` — per
+  _Fragmentation_; abandoned is the loss-visibility counter, and a soak
+  asserts it stays zero on a clean link
 
 **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled
 handshake described above**, and it is the counter to watch. A deployment under
@@ -2543,9 +2901,15 @@ the keep-alive it provokes, and a connected client would be a small reflector.
 | connection request | 710 | connection challenge, fresh or resent | 66 | ok |
 | connection request | 710 | connection denied | 34 | ok |
 | connection challenge | 66 | connection response | 50 | ok |
-| connection response | 50 | connection keep-alive | 34 | ok |
+| connection response | 50 | connection keep-alive | 41, fresh block | ok |
 | connection response | 50 | connection denied | 34 | ok |
 | connection cookie | 38 | *nothing* | — | see _Connection cookie packet_ |
+
+*The keep-alive row is its fresh-block minimum, which is what a first keep-alive
+carries. A keep-alive's ack block grows only because the peer's own session
+packets — each at least 33 bytes — added ranges to report, so a larger
+keep-alive is always answered traffic, never amplification: the invariant holds
+per provoking packet, not merely at connect.*
 
 Two rules keep the table true rather than merely accurate today. **Padding used
 to satisfy it MUST be required on read**, checked for both length and content,
@@ -2591,6 +2955,11 @@ state. Clients the matchmaker never authorized, by a signature they cannot
 produce. Zombie clients that never answer, which never reach a slot.
 Amplification, structurally, since no response may exceed the packet that
 provoked it. Tampering with any packet or any token field, by construction.
+Forged delivery reports, because ack blocks live inside the seal — an off-path
+attacker cannot tell a sender its packets arrived when they did not. And
+reassembly resource exhaustion, because fragment storage is a fixed arena spent
+at create: a fragment flood can waste slots, never memory the deployment did
+not already budget.
 
 **This layer cannot handle, and does not pretend to:** a volumetric flood large
 enough to fill the link. Nothing a server does with a packet matters once the
@@ -2933,26 +3302,82 @@ secrets; the shared secret is checked equal from both sides before use.
     93 1a 7c 4e 88 77 66 55 44 33 22 11 04 53 41 4c
     54 30 30 30 31
 
-    sealed (24 bytes):
-    d1 48 d8 10 58 6a 78 86 ae 2e 0e 01 46 a4 5a ba
-    a0 a0 1d da bd 24 f1 65
+    plaintext (15 bytes): the fresh ack block, then the keep-alive fields:
+    00 00 00 00 00 00 00 03 00 00 00 e8 03 00 00
 
     == connection payload (type 5, session c2s, seq 3) ==
     associated data (21 bytes):
     93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
     54 30 30 30 31
 
-    sealed (21 bytes):
-    8b 83 8d c7 a7 34 bc e2 37 04 65 48 35 a2 13 cf
-    c2 f6 5a 12 11
+    plaintext (12 bytes): the fresh ack block, then the payload bytes:
+    00 00 00 00 00 00 00 68 65 6c 6c 6f
 
     == connection disconnect (type 6, session c2s, seq 4) ==
     associated data (21 bytes):
     93 1a 7c 4e 88 77 66 55 44 33 22 11 06 53 41 4c
     54 30 30 30 31
 
-    sealed (16 bytes):
-    9a b0 80 30 1b 70 95 59 85 f3 97 88 87 d9 13 f5
+    plaintext (7 bytes): the fresh ack block alone:
+    00 00 00 00 00 00 00
+
+    == connection ack (type 8, session c2s, seq 5) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 08 53 41 4c
+    54 30 30 30 31
+
+    plaintext (11 bytes): ack block, one loss event (below):
+    e8 03 00 00 01 0a 00 01 00 5a 00
+
+    == connection payload fragment (type 9, session c2s, seq 6) ==
+    associated data (21 bytes):
+    93 1a 7c 4e 88 77 66 55 44 33 22 11 09 53 41 4c
+    54 30 30 30 31
+
+    plaintext (18 bytes): fresh ack block, fragment header (payload id 1,
+    fragment 0 of 2), then the first five bytes of the fragmented payload:
+    00 00 00 00 00 00 00 01 00 00 00 00 01 68 65 6c
+    6c 6f
+
+**The sealed outputs for the five session vectors above are PENDING: they
+freeze against the reference implementation of this wire revision, and the
+plaintexts and associated data stated here are their complete inputs, so the
+outputs are deterministic and the freeze is a computation, not a decision.**
+Until they are printed here, this appendix proves session sealing for neither
+side — an implementation verifies the handshake vectors, the token, and the
+keyless encodings below, and session sealing awaits the freeze. The sealed
+outputs that stood here before this revision were computed without the ack
+block and do not verify against it. *(The fragmented payload for the type 9 vector is
+the 10 bytes `68 65 6c 6c 6f 77 6f 72 6c 64`, split as 5 + 5 at a fragment
+stride of 5 for the vector's purposes; stride in production derives from the
+budget per _Fragmentation_.)*
+
+**Ack block encodings.** Frozen now; they involve no key. Each is checkable by
+eye against _Acks_:
+
+    == fresh connection, nothing received ==
+    largest 0, no ranges:
+    00 00 00 00 00 00 00
+
+    == fully received through 1000 ==
+    largest 1000, count 0, first range length 1000:
+    e8 03 00 00 00 e8 03
+
+    == one loss event ==
+    received 991..1000, lost 990, received 900..989 —
+    largest 1000, count 1, first length 10, gap 1, length 90:
+    e8 03 00 00 01 0a 00 01 00 5a 00
+
+    == two loss events, exercising the u32 field ==
+    received 69901..70000, lost 69898..69900, received 69398..69897,
+    lost 68398..69397, received 66398..68397 —
+    largest 70000, count 2, first length 100, then (gap 3, length 500),
+    (gap 1000, length 2000):
+    70 11 01 00 02 64 00 03 00 f4 01 e8 03 d0 07
+
+    == fragment header, alone ==
+    payload id 7, fragment index 2, fragment count 3:
+    07 00 00 00 02 02
 
     token identifier (16 bytes):
     f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
