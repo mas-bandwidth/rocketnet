@@ -8,6 +8,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
+#include "rocketnet_fragment.h"
 #include "rocketnet.h"
 
 #include <sodium.h>
@@ -1038,7 +1039,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     if ( server->acks && client_index >= 0 )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, current_time );
+        rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, 0, current_time );
         endpoint->ack_debt = 0;
     }
 
@@ -1194,7 +1195,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        rocketnet_ack_endpoint_record_sent( endpoint, sequence, wire_bytes, packet_id, 1, current_time );
+        rocketnet_ack_endpoint_record_sent( endpoint, sequence, wire_bytes, packet_id, 1, 0, current_time );
         rocketnet_platform_atomic_store_u64( &endpoint->ack_debt, 0 );      // fill-phase threads reset concurrently
     }
 
@@ -1243,13 +1244,177 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, current_time );
+        rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, 0, current_time );
         endpoint->ack_debt = 0;
     }
 
     rocketnet_spam( "server sent payload to client %d (%d bytes)", client_index, payload_bytes );
 
     return bytes;
+}
+
+int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t * server,
+                                              int client_index,
+                                              struct rocketnet_address_t * out_address )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( out_address );
+
+    if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
+        return 0;
+
+    int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+    if ( mapping_index < 0 )
+    {
+        server->counters->values[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING]++;
+        return 0;
+    }
+
+    *out_address = *rocketnet_encryption_map_address( server->encryption_map, mapping_index );
+
+    return 1;
+}
+
+// The fragmented send path, the client protocol's mirror against the
+// client's mapping. The payload id and the sequence block are each one
+// atomic add, so any number of fill threads split payloads concurrently.
+
+uint32_t rocketnet_server_protocol_next_fragment_payload_id( struct rocketnet_server_protocol_t * server, int client_index )
+{
+    rocketnet_assert( server );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    // the counter is 64-bit so the fold to the wire's u32 can skip zero
+    // forever -- zero is what an uninitialized sender produces
+
+    uint64_t raw = rocketnet_platform_atomic_add_u64( &mapping->send_fragment_payload_id, 1 );
+    return (uint32_t) ( 1 + ( raw - 1 ) % 0xFFFFFFFFULL );
+}
+
+int rocketnet_server_protocol_start_fragments( struct rocketnet_server_protocol_t * server, int client_index, int fragment_count, uint64_t * base_sequence )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( base_sequence );
+    rocketnet_assert( fragment_count >= 1 );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    *base_sequence = rocketnet_platform_atomic_add_u64( &mapping->send_sequence_session, (uint64_t) fragment_count );
+
+    return 1;
+}
+
+int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t * server,
+                                             int client_index,
+                                             uint64_t sequence,
+                                             uint32_t payload_id,
+                                             int fragment_index,
+                                             int fragment_count,
+                                             const uint8_t * fragment_data,
+                                             int fragment_bytes,
+                                             uint64_t aggregate_id,
+                                             double current_time,
+                                             uint8_t * out_packet )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( fragment_data );
+    rocketnet_assert( out_packet );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_server_connected_mapping( server, client_index );
+    if ( !mapping )
+        return 0;
+
+    if ( payload_id == 0 ||
+         fragment_count < 2 || fragment_count > ROCKETNET_MAX_FRAGMENTS ||
+         fragment_index < 0 || fragment_index >= fragment_count ||
+         fragment_bytes < 1 || fragment_bytes > ROCKETNET_MAX_FRAGMENT_BYTES )
+        return 0;
+
+    // the fragment bytes come first: the stride is chosen against the
+    // minimum block, so a current block with ranges truncates to the
+    // remaining room. the 7-byte minimum always fits.
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
+
+    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes;
+    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
+
+    rocketnet_write_fragment_header( plaintext + block_bytes, payload_id, fragment_index, fragment_count );
+    memcpy( plaintext + block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES, fragment_data, (size_t) fragment_bytes );
+
+    int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                                               server->filter_value, sequence,
+                                               NULL, plaintext, block_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
+                                               server->protocol_id, mapping->connection_salt,
+                                               NULL, mapping->keys.session_server_to_client );
+    if ( bytes == 0 )
+        return 0;
+
+    rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
+
+    rocketnet_platform_atomic_store_double( &mapping->last_send_time, current_time );
+
+    if ( server->acks )
+    {
+        struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
+        rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, aggregate_id, current_time );
+        rocketnet_platform_atomic_store_u64( &endpoint->ack_debt, 0 );      // fill-phase threads reset concurrently
+    }
+
+    return bytes;
+}
+
+int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
+                                               int client_index,
+                                               const uint8_t * payload_data,
+                                               int payload_bytes,
+                                               double current_time,
+                                               uint8_t * out_packets,
+                                               int * out_packet_bytes,
+                                               int max_packets )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( payload_data );
+    rocketnet_assert( out_packets );
+    rocketnet_assert( out_packet_bytes );
+
+    int fragment_count, fragment_stride;
+    if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &fragment_stride ) )
+        return 0;
+
+    if ( fragment_count > max_packets )
+        return 0;
+
+    uint32_t payload_id = rocketnet_server_protocol_next_fragment_payload_id( server, client_index );
+    if ( payload_id == 0 )
+        return 0;
+
+    uint64_t base_sequence;
+    if ( !rocketnet_server_protocol_start_fragments( server, client_index, fragment_count, &base_sequence ) )
+        return 0;
+
+    for ( int i = 0; i < fragment_count; i++ )
+    {
+        const int fragment_bytes = i < fragment_count - 1 ? fragment_stride : payload_bytes - fragment_stride * ( fragment_count - 1 );
+        int wire_bytes = rocketnet_server_protocol_seal_fragment( server, client_index, base_sequence + (uint64_t) i, payload_id,
+                                                                  i, fragment_count,
+                                                                  payload_data + i * fragment_stride, fragment_bytes,
+                                                                  0, current_time,
+                                                                  out_packets + i * ROCKETNET_SEND_BUDGET );
+        rocketnet_assert( wire_bytes > 0 );         // connected, and every argument in range by the plan
+        out_packet_bytes[i] = wire_bytes;
+    }
+
+    rocketnet_spam( "server sent fragmented payload %u to client %d (%d bytes in %d fragments)", payload_id, client_index, payload_bytes, fragment_count );
+
+    return fragment_count;
 }
 
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,

@@ -63,6 +63,7 @@ struct rocketnet_client_protocol_t
     // sending sequences per phase, and receive replay per phase
     uint64_t send_sequence_handshake;
     uint64_t send_sequence_session;
+    uint64_t next_fragment_payload_id;                      // per _Fragmentation_: from 1, per fragmented payload sent
     struct rocketnet_replay_protection_t replay_handshake;      // challenge and denied ride here
     struct rocketnet_replay_protection_t replay_session;
 
@@ -162,6 +163,51 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
                                     int payload_bytes,
                                     double current_time,
                                     uint8_t * out_packet );
+
+// The fragmented send path, per _Fragmentation_. The payload id counter is
+// this attempt's, per direction, starting at one; a sequence block is
+// reserved with one atomic add so fill threads split concurrently; and
+// each fragment is sealed as an ordinary type 9 session packet whose sent
+// record names the payload's aggregate -- the payload's one packet id
+// surfaces when every fragment's wire packet is acknowledged.
+
+uint32_t rocketnet_client_protocol_next_fragment_payload_id( struct rocketnet_client_protocol_t * client );
+
+int rocketnet_client_protocol_start_fragments( struct rocketnet_client_protocol_t * client, int fragment_count, uint64_t * base_sequence );
+
+// Seals one fragment packet: the ack block, the fragment header, then the
+// fragment bytes, at this sequence under the session keys. The block
+// truncates to the budget's remaining room -- the stride is chosen against
+// the minimum block and never shrinks to make room. aggregate_id is the
+// payload's sender-internal aggregate, or zero when no packet id rides
+// this payload. Returns the wire size, or 0 when not connected or the
+// fragment is out of range.
+
+int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t * client,
+                                             uint64_t sequence,
+                                             uint32_t payload_id,
+                                             int fragment_index,
+                                             int fragment_count,
+                                             const uint8_t * fragment_data,
+                                             int fragment_bytes,
+                                             uint64_t aggregate_id,
+                                             double current_time,
+                                             uint8_t * out_packet );
+
+// The whole split in one call, for callers that drive the protocol
+// directly: plans the fragments, assigns the payload id, reserves the
+// sequences and seals every fragment packet at ROCKETNET_SEND_BUDGET
+// stride in out_packets, each wire size in out_packet_bytes. Returns the
+// fragment count, or 0 when the payload does not need fragmenting, does
+// not fit the fragment cap or max_packets, or the connection is not up.
+
+int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_t * client,
+                                               const uint8_t * payload_data,
+                                               int payload_bytes,
+                                               double current_time,
+                                               uint8_t * out_packets,
+                                               int * out_packet_bytes,
+                                               int max_packets );
 
 // The deliberate disconnect: fills the redundant burst -- ten sealed
 // disconnect packets at consecutive session sequences, each opening with

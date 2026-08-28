@@ -6176,7 +6176,7 @@ void rocketnet_test_ack_endpoint_processing()
 
     // ten sent packets, ids 100..109, sequences 1..10
     for ( uint64_t s = 1; s <= 10; s++ )
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, 99 + s, 1, 10.0 + (double) s );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, 99 + s, 1, 0, 10.0 + (double) s );
 
     // a block acknowledging 1..10 marks all ten, surfaces all ten ids, and
     // yields an rtt sample per sequence
@@ -6213,7 +6213,7 @@ void rocketnet_test_ack_endpoint_processing()
     // iterating what the peer asserts
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 20000000; s <= 20000009; s++ )
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 50.0 );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, 50.0 );
     memset( &block, 0, sizeof(block) );
     block.largest = 17000000;                   // room for the full 255-range walk above sequence one
     block.first_range_length = 65535;
@@ -6231,8 +6231,8 @@ void rocketnet_test_ack_endpoint_processing()
     // a burned sequence -- consumed by an aborted send, never on the wire --
     // named inside the window counts unknown without disturbing neighbors
     rocketnet_ack_endpoint_reset( endpoint );
-    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 500, 1, 60.0 );
-    rocketnet_ack_endpoint_record_sent( endpoint, 3, 100, 501, 1, 60.0 );    // sequence 2 burned
+    rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 500, 1, 0, 60.0 );
+    rocketnet_ack_endpoint_record_sent( endpoint, 3, 100, 501, 1, 0, 60.0 );    // sequence 2 burned
     memset( &block, 0, sizeof(block) );
     block.largest = 3;
     block.first_range_length = 3;
@@ -6247,7 +6247,7 @@ void rocketnet_test_ack_endpoint_processing()
     // interval -- surfaces it into a drained batch
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 1; s <= 8; s++ )
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 70.0 );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, 70.0 );
     memset( &block, 0, sizeof(block) );
     block.largest = 8;
     block.first_range_length = 8;
@@ -6269,7 +6269,7 @@ void rocketnet_test_ack_endpoint_processing()
     // ranges with gaps mark exactly the described sequences
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 1; s <= 20; s++ )
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 80.0 );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, 80.0 );
     memset( &block, 0, sizeof(block) );
     block.largest = 20;
     block.first_range_length = 5;           // 16..20
@@ -6288,7 +6288,7 @@ void rocketnet_test_ack_endpoint_processing()
     // acked bandwidth counting only acknowledged bytes
     rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t s = 1; s <= (uint64_t) ROCKETNET_SENT_PACKET_BUFFER_SIZE; s++ )
-        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 100.0 + (double) s * 0.001 );
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, s, 1, 0, 100.0 + (double) s * 0.001 );
     memset( &block, 0, sizeof(block) );
     block.largest = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
     block.first_range_length = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4;       // the newer quarter of the older half
@@ -7626,6 +7626,118 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+void rocketnet_test_fragment_vector()
+{
+    // the frozen type 9 vector from Appendix A, reproduced by the real
+    // fragment writer: session c2s keys at sequence 6, a fresh ack block,
+    // payload id 1, fragment 0 of 2, the first five bytes of the
+    // fragmented payload -- byte for byte, framing included
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    static struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &counters );
+
+    client.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+    client.signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    memcpy( client.connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
+    memcpy( client.keys.session_client_to_server, rocketnet_test_session_c2s_key, 32 );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int bytes = rocketnet_client_protocol_seal_fragment( &client, 6, 1, 0, 2, (const uint8_t*) "hello", 5, 0, 100.0, packet );
+    rocketnet_check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + 18 );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_check( packet[0] == ROCKETNET_CONNECTION_FRAGMENT_PACKET );
+    rocketnet_check( packet[1] == ROCKETNET_FILTER_EPOCH_UNKEYED );
+    rocketnet_check( memcmp( packet + 2, tag, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+    rocketnet_check( packet[6] == 6 && packet[7] == 0 && packet[8] == 0 && packet[9] == 0 );
+    rocketnet_check( memcmp( packet + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES, rocketnet_test_fragment_sealed, 34 ) == 0 );
+
+    // and it opens back to the frozen plaintext
+    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                                                     6, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                     NULL, rocketnet_test_session_c2s_key );
+    rocketnet_check( opened_bytes == 18 );
+    rocketnet_check( memcmp( opened, rocketnet_test_fragment_plaintext, 18 ) == 0 );
+
+    // the sent record carries no packet id of its own -- a fragment's id
+    // lives in its aggregate
+    rocketnet_check( client.ack.sent[6 % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence == 6 );
+    rocketnet_check( client.ack.sent[6 % ROCKETNET_SENT_PACKET_BUFFER_SIZE].has_packet_id == 0 );
+}
+
+void rocketnet_test_fragment_packet_id_aggregation()
+{
+    // one application packet id per fragmented payload, surfaced only when
+    // every fragment's wire packet is acknowledged -- sender-internal
+    // aggregation, nothing on the wire
+
+    static struct rocketnet_ack_endpoint_t endpoint;
+    rocketnet_ack_endpoint_reset( &endpoint );
+
+    uint64_t acked_ids[16];
+    int acked_count = 0;
+    uint64_t unknown_sequence = 0;
+    uint64_t batch_full = 0;
+
+    // a three-fragment payload under packet id 777 at sequences 1..3, and
+    // an ordinary payload under packet id 42 at sequence 4
+    uint64_t aggregate = rocketnet_ack_endpoint_open_aggregate( &endpoint, 777, 3 );
+    rocketnet_check( aggregate != 0 );
+    for ( uint64_t s = 1; s <= 3; s++ )
+        rocketnet_ack_endpoint_record_sent( &endpoint, s, 100, 0, 0, aggregate, 10.0 );
+    rocketnet_ack_endpoint_record_sent( &endpoint, 4, 100, 42, 1, 0, 10.0 );
+
+    // a block acking two of the three fragments surfaces nothing
+    struct rocketnet_ack_block_t block;
+    block.largest = 2;
+    block.first_range_length = 2;
+    block.num_ranges = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 10.1, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 2 );
+    rocketnet_check( acked_count == 0 );
+
+    // the block that completes the payload surfaces its one id, alongside
+    // the ordinary packet's own
+    block.largest = 4;
+    block.first_range_length = 4;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 10.2, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 2 );
+    rocketnet_check( acked_count == 2 );
+    rocketnet_check( acked_ids[0] == 42 );              // the walk runs newest first
+    rocketnet_check( acked_ids[1] == 777 );
+
+    // restating the same block surfaces nothing again: records ack once
+    acked_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 10.3, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 0 );
+    rocketnet_check( acked_count == 0 );
+
+    // NEGATIVE: a payload with a fragment never acknowledged never
+    // surfaces its id -- sequences 5 and 6, only 6 ever covered
+    aggregate = rocketnet_ack_endpoint_open_aggregate( &endpoint, 888, 2 );
+    rocketnet_ack_endpoint_record_sent( &endpoint, 5, 100, 0, 0, aggregate, 11.0 );
+    rocketnet_ack_endpoint_record_sent( &endpoint, 6, 100, 0, 0, aggregate, 11.0 );
+    block.largest = 6;
+    block.first_range_length = 1;                       // 6 alone; 5 stays unspoken
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 11.1, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 1 );
+    rocketnet_check( acked_count == 0 );
+
+    // a full batch defers a fragment's acknowledgment rather than losing
+    // the completion: the record stays unacknowledged and a later block
+    // surfaces the id into a drained batch
+    block.largest = 6;
+    block.first_range_length = 2;                       // covers 5 and 6
+    acked_count = 16;                                   // no room at all
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 11.2, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 0 );
+    rocketnet_check( batch_full == 1 );
+    acked_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( &endpoint, &block, 11.3, acked_ids, 16, &acked_count, &unknown_sequence, &batch_full ) == 1 );
+    rocketnet_check( acked_count == 1 );
+    rocketnet_check( acked_ids[0] == 888 );
+
+    rocketnet_check( unknown_sequence == 0 );
+}
+
 void rocketnet_test_send_arena()
 {
     struct rocketnet_send_arena_t * arena = rocketnet_send_arena_create( NULL, 4, 1024 );
@@ -7776,6 +7888,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_fragment_reassembly );
         RUN_TEST( test_fragment_reassembly_refusals );
         RUN_TEST( test_fragment_delivery_batch );
+        RUN_TEST( test_fragment_vector );
+        RUN_TEST( test_fragment_packet_id_aggregation );
         RUN_TEST( test_send_arena );
         RUN_TEST( test_frame_sync_wait );
     }

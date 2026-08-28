@@ -83,11 +83,33 @@ struct rocketnet_sent_packet_record_t
 {
     uint64_t sequence;
     uint64_t packet_id;
+    uint64_t aggregate_id;                  // nonzero: a fragment of an aggregated payload
     double send_time;
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
     uint8_t pad[2];
+};
+
+// A fragmented payload carries ONE application packet id, surfaced
+// acknowledged only when every fragment's wire packet is acknowledged --
+// sender-internal aggregation, nothing on the wire. An aggregate is opened
+// per fragmented payload; each fragment's sent record names it, and the
+// block processing decrements the outstanding count as fragments
+// acknowledge, surfacing the payload's packet id at zero. The ring is
+// sized to the sent window's worst case -- every packet a two-fragment
+// payload -- so an aggregate can never be recycled while a live member
+// record still names it; the monotonic id makes any recycling visible and
+// inert rather than a misfire.
+
+#define ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE      ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
+
+struct rocketnet_packet_aggregate_t
+{
+    uint64_t id;                            // monotonic, 0 = empty
+    uint64_t packet_id;
+    uint32_t remaining;
+    uint32_t pad;
 };
 
 struct rocketnet_received_packet_record_t
@@ -120,8 +142,11 @@ struct rocketnet_ack_endpoint_t
     float bandwidth_acked_kbps;
     int has_rtt_sample;                         // any first-ack sample has landed
 
+    volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
+
     struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];
+    struct rocketnet_packet_aggregate_t aggregates[ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     float rtt_history[ROCKETNET_RTT_HISTORY_SIZE];      // milliseconds; negative = empty
 };
 
@@ -129,12 +154,23 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
 // records one sent session packet. packet_id is surfaced on ack only when
 // has_packet_id is nonzero -- keep-alive, disconnect and standalone ack
-// sequences have none and surface nothing. safe from fill-phase threads:
-// distinct sequences land in distinct ring entries.
+// sequences have none and surface nothing. aggregate_id names the
+// fragmented payload the packet belongs to, or zero; a fragment record
+// carries no packet id of its own. safe from fill-phase threads: distinct
+// sequences land in distinct ring entries.
 
 void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
-                                         uint64_t packet_id, int has_packet_id, double time );
+                                         uint64_t packet_id, int has_packet_id,
+                                         uint64_t aggregate_id, double time );
+
+// opens one aggregate for a fragmented payload: fragment_count wire
+// packets stand between the payload's packet id and its acknowledgment.
+// returns the aggregate id the fragments' sent records carry. safe from
+// fill-phase threads: one atomic add claims the id and its ring slot.
+
+uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
+                                                uint64_t packet_id, int fragment_count );
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time );
