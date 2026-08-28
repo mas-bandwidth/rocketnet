@@ -117,7 +117,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   a full server denies cleanly; all five timeout pairings fire to their
   exact states; the wrong-salt cookie injection refused with nothing
   stored. 69 tests green.
-- Server pacing and the sweep at the server level: rocketnet_server_update
+- Server pacing and the sweep at the server level: rocketnet_server_transport_update
   owns the sweep (the map's sweep could not release slots — a dangling-slot
   bug waiting; replaced by a map iterator, the decision made where the slots
   live, CLIENT_TIMED_OUT counted); keep-alives paced per client and
@@ -172,7 +172,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   The AF_XDP socket de-flowed: no pittle/chonkle, no app header, frames
   are complete wire bytes; config map actually populated (it never was);
   create-failure destroy crash fixed. The server transport gained the
-  compile-time XDP backend behind a reserve/commit/abort frame seam, the
+  compile-time XDP driver behind a reserve/commit/abort frame seam, the
   portable path unchanged. Contracted: the old packet filter and its
   tests, rocketnet_packets.h, the flow-era portable server socket. PROVEN
   LIVE on the space box, veth pair in a netns, real NIC untouched: full
@@ -196,17 +196,20 @@ land. The milestone view is issue #28; this file is the live ordering.
   SIGTERM before its buffered stdout flushed, so the redirect count is
   the payload evidence rather than the client's own line; kill it with
   SIGINT, which it handles.
-- The public surface is rocketnet_server_* and rocketnet_client_*, ruled:
-  the transport word is internal, so the forest header now reads
-  rocketnet_server_create/update/payloads/send_packet/is_client_connected/
-  disconnect_client and the client equivalents, netcode voice exactly. The
-  protocol layer's functions moved to the rocketnet_server_protocol_* and
-  rocketnet_client_protocol_* namespace to vacate the public names.
-- rocketnet_server_disconnect_client, netcode parity: the deliberate
+- The public surface is rocketnet_server_transport_* and
+  rocketnet_client_transport_*, ruled on #77: the combined objects ARE the
+  transport tier and say so explicitly, so the forest header reads
+  rocketnet_server_transport_create/update/payloads/send_packet/is_client_connected/
+  disconnect_client and the client equivalents. The plain client/server
+  names are vacated for a future high-level tier. The protocol layer's
+  functions live in the rocketnet_server_protocol_* and
+  rocketnet_client_protocol_* namespace; the socket implementations below
+  the transport tier are its drivers.
+- rocketnet_server_transport_disconnect_client, netcode parity: the deliberate
   server-side disconnect of one connected client. The protocol writes the
   same redundant ten-packet sealed burst the client sends, then releases
   the slot and destroys the mapping immediately; the transport stages the
-  burst through the frame seam on either backend. Proven in test with a
+  burst through the frame seam on either driver. Proven in test with a
   negative control on the release, and the reasons live above the library.
 - The v2 prefilter header, designed in now so the future hooks without a
   wire break: 6 bytes -- packet type, filter epoch, and a 4-byte filter
@@ -252,8 +255,8 @@ land. The milestone view is issue #28; this file is the live ordering.
   transport selection by preference possible later. The protocol core
   below stays as it is.
 - The public surface above it all, ruled: the root header Dean sees is
-  netcode-style pure C -- rocketnet_client_t with functions,
-  rocketnet_server_t with functions, maybe the address type, nothing
+  netcode-style pure C -- rocketnet_client_transport_t with functions,
+  rocketnet_server_transport_t with functions, maybe the address type, nothing
   else. Real non-mangled symbols, so C# lands on P/Invoke and every other
   language binds the same way; whether the inside shims to C++ is an
   implementation privilege, not a surface concern. The Dean Surface (#22)
@@ -276,7 +279,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   shared token steals the sharer's own place and the incentive does the
   enforcement. That needs the backend to track the connected set across
   servers live, and to kick the old player when the same user hash pops on
-  elsewhere -- which is exactly what rocketnet_server_disconnect_client
+  elsewhere -- which is exactly what rocketnet_server_transport_disconnect_client
   exists to serve. The reference implementation already runs as space
   game's backend.go, so the epic is an EXTRACTION, not a design: proven in
   the game, generalized into the library as an OPTIONAL layer, wanted for

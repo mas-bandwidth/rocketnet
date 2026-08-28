@@ -12,22 +12,22 @@
 #include <sodium.h>
 #include <string.h>
 
-const char * rocketnet_client_state_name( int state )
+const char * rocketnet_client_transport_state_name( int state )
 {
     switch ( state )
     {
-        case ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED:          return "connect token expired";
-        case ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN:          return "invalid connect token";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT:           return "connection timed out";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT:  return "connection response timed out";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT:   return "connection request timed out";
-        case ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT:       return "cookie request timed out";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_DENIED:              return "connection denied";
-        case ROCKETNET_CLIENT_STATE_DISCONNECTED:                   return "disconnected";
-        case ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE:              return "requesting cookie";
-        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST:     return "sending connection request";
-        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE:    return "sending connection response";
-        case ROCKETNET_CLIENT_STATE_CONNECTED:                      return "connected";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED:          return "connect token expired";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN:          return "invalid connect token";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT:           return "connection timed out";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT:  return "connection response timed out";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT:   return "connection request timed out";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT:       return "cookie request timed out";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED:              return "connection denied";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED:                   return "disconnected";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE:              return "requesting cookie";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST:     return "sending connection request";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE:    return "sending connection response";
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED:                      return "connected";
         default:
             rocketnet_assert( 0 );
             return "???";
@@ -38,7 +38,7 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
 {
     if ( client->state == state )
         return;
-    rocketnet_info( "client changed state from '%s' to '%s'", rocketnet_client_state_name( client->state ), rocketnet_client_state_name( state ) );
+    rocketnet_info( "client changed state from '%s' to '%s'", rocketnet_client_transport_state_name( client->state ), rocketnet_client_transport_state_name( state ) );
     client->state = state;
 }
 
@@ -51,7 +51,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     memcpy( client->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = 10.0;
     client->counters = counters;
-    client->state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+    client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->client_index = -1;
     client->state_first_send_time = -1.0;
 }
@@ -98,7 +98,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     client->send_rate = send_rate;
     client->counters = counters;
     client->client_index = -1;
-    client->state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+    client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->state_first_send_time = -1.0;
 
     rocketnet_read_connect_token( &client->token, connect_token );
@@ -112,14 +112,14 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
          client->signed_fields.version != ROCKETNET_VERSION )
     {
         rocketnet_debug( "client connect failed. invalid connect token" );
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN );
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
         return 0;
     }
 
     if ( client->signed_fields.expire_timestamp <= current_timestamp )
     {
         rocketnet_debug( "client connect failed. connect token expired" );
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
         return 0;
     }
 
@@ -157,7 +157,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     client->total_deadline_seconds = client->signed_fields.expire_timestamp - client->signed_fields.create_timestamp;
     client->timeout_seconds = client->signed_fields.timeout_seconds;
 
-    rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE );
+    rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
 
     return 1;
 }
@@ -168,14 +168,14 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {
-    if ( client->state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+    if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
-    if ( client->state < ROCKETNET_CLIENT_STATE_CONNECTED &&
+    if ( client->state < ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
          current_time - client->attempt_start_time >= (double) client->total_deadline_seconds )
     {
         rocketnet_debug( "client connect failed. connect token expired during handshake" );
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED );
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
         return;
     }
 
@@ -183,7 +183,7 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
          current_time - client->last_receive_time >= (double) client->timeout_seconds )
     {
         int timed_out_state = -( client->state + 1 );
-        rocketnet_debug( "client timed out in state '%s'", rocketnet_client_state_name( client->state ) );
+        rocketnet_debug( "client timed out in state '%s'", rocketnet_client_transport_state_name( client->state ) );
         rocketnet_client_set_state( client, timed_out_state );
     }
 }
@@ -201,7 +201,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 
     rocketnet_client_check_deadlines( client, current_time );
 
-    if ( client->state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+    if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
     // one sending rule: the scheduled rate, nothing sent because a packet
@@ -217,8 +217,8 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 
     switch ( client->state )
     {
-        case ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE:
-        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST:
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE:
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST:
         {
             rocketnet_write_connection_request_packet( out_packet, client->filter_value,
                                                        client->has_cookie ? client->return_cookie : NULL,
@@ -231,7 +231,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
             break;
         }
 
-        case ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE:
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE:
         {
             // the stored response, byte-identical every retransmission
             memcpy( out_packet, client->stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
@@ -240,7 +240,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
             break;
         }
 
-        case ROCKETNET_CLIENT_STATE_CONNECTED:
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED:
         {
             uint8_t keep_alive_data[8];
             uint8_t * p = keep_alive_data;
@@ -272,8 +272,8 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED]++;
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE &&
-         client->state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE &&
+         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
     {
         rocketnet_spam( "client ignored cookie. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE]++;
@@ -309,10 +309,10 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     counters[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED]++;
     rocketnet_debug( "client stored cookie" );
 
-    if ( client->state == ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE )
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE )
     {
         rocketnet_client_rtt_sample( client, current_time );
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
     }
 
     return 1;
@@ -331,7 +331,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     // longer sends requests, so a genuine retransmitted challenge has no
     // question left to answer
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
     {
         rocketnet_spam( "client ignored challenge. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_STATE]++;
@@ -429,7 +429,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_ACCEPTED]++;
     rocketnet_client_rtt_sample( client, current_time );
-    rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
     return 1;
 }
@@ -445,8 +445,8 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED]++;
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST &&
-         client->state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST &&
+         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         rocketnet_spam( "client ignored denied. wrong state" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE]++;
@@ -478,7 +478,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     uint8_t nonce_out[ROCKETNET_SESSION_NONCE_BYTES];
     int opened_bytes;
 
-    if ( client->state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
@@ -510,7 +510,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     counters[ROCKETNET_COUNTER_CLIENT_DENIED_ACCEPTED]++;
     rocketnet_debug( "client connection denied by server" );
-    rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_CONNECTION_DENIED );
+    rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
 
     return 1;
 }
@@ -543,8 +543,8 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     // session traffic exists only from sending connection response on: the
     // keys that open it are born at the challenge
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE &&
-         client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
+         client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         rocketnet_spam( "client ignored session packet. wrong state" );
         counters[type_counters->wrong_state]++;
@@ -587,7 +587,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     // the first session packet accepted before the connection is confirmed
     // answers the connection response: the third handshake round trip
 
-    if ( !client->rtt_session_sampled && client->state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+    if ( !client->rtt_session_sampled && client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         rocketnet_client_rtt_sample( client, current_time );
         client->rtt_session_sampled = 1;
@@ -631,11 +631,11 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
     // the first keep-alive is how the client learns it is connected, and
     // which slot it holds
 
-    if ( client->state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         client->client_index = client_index;
         client->max_clients = max_clients;
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_CONNECTED );
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     }
 
     return 1;
@@ -710,7 +710,7 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED]++;
     rocketnet_debug( "client disconnected by server" );
-    rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 
     return 1;
 }
@@ -790,7 +790,7 @@ int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t 
     rocketnet_assert( client );
     rocketnet_assert( sequence );
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
     *sequence = rocketnet_platform_atomic_add_u64( &client->send_sequence_session, 1 );
@@ -807,7 +807,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     rocketnet_assert( client );
     rocketnet_assert( wire_start );
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->filter_value, sequence,
@@ -832,7 +832,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     rocketnet_assert( payload_data );
     rocketnet_assert( out_packet );
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_CONNECTED )
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
     client->last_send_time = current_time;
@@ -867,8 +867,8 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
     // before the session keys exist there is nothing to seal: the state
     // simply resets, and the server's half-open mapping dies at its deadline
 
-    if ( client->state == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE ||
-         client->state == ROCKETNET_CLIENT_STATE_CONNECTED )
+    if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE ||
+         client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         for ( int i = 0; i < ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS; i++ )
         {
@@ -886,8 +886,8 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         rocketnet_debug( "client sent %d redundant disconnect packets", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     }
 
-    if ( client->state != ROCKETNET_CLIENT_STATE_DISCONNECTED )
-        rocketnet_client_set_state( client, ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 
     sodium_memzero( &client->keys, sizeof(client->keys) );
     sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );

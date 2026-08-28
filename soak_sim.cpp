@@ -119,7 +119,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < SOAK_NUM_CLIENTS; i++ )
     {
         rocketnet_client_protocol_init( &clients[i], &client_counters );
-        last_state[i] = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+        last_state[i] = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
         last_state_change_time[i] = 100.0;
         connected_since[i] = 0.0;
     }
@@ -156,14 +156,14 @@ int main( int argc, char ** argv )
         // a fresh attempt whenever the machine is at rest or terminal --
         // recovery is the ordinary path, run constantly
 
-        if ( client.state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        if ( client.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         {
-            if ( client.state < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            if ( client.state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             {
                 // under light loss every attempt must complete: a terminal
                 // is a client that failed to connect or got stuck -- found it
                 printf( "CLIENT %d FAILED: reached '%s' under light loss -- the state machine did not tolerate a drop\n",
-                        c, rocketnet_client_state_name( client.state ) );
+                        c, rocketnet_client_transport_state_name( client.state ) );
                 terminals++;
                 failures++;
             }
@@ -198,7 +198,7 @@ int main( int argc, char ** argv )
 
         if ( client.state != last_state[c] )
         {
-            if ( client.state == ROCKETNET_CLIENT_STATE_CONNECTED )
+            if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 connects++;
                 connected_since[c] = time;
@@ -206,9 +206,9 @@ int main( int argc, char ** argv )
             last_state[c] = client.state;
             last_state_change_time[c] = time;
         }
-        else if ( client.state != ROCKETNET_CLIENT_STATE_CONNECTED && time - last_state_change_time[c] > 60.0 )
+        else if ( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - last_state_change_time[c] > 60.0 )
         {
-            printf( "HANG: client %d wedged in '%s' for 60 sim seconds\n", c, rocketnet_client_state_name( client.state ) );
+            printf( "HANG: client %d wedged in '%s' for 60 sim seconds\n", c, rocketnet_client_transport_state_name( client.state ) );
             hangs++;
             quit = 1;
             break;
@@ -217,7 +217,7 @@ int main( int argc, char ** argv )
         // a connected client cycles off on its own staggered period, through
         // the burst, so disconnect and reconnect stay routine
 
-        if ( client.state == ROCKETNET_CLIENT_STATE_CONNECTED && time - connected_since[c] > 20.0 + 3.0 * c )
+        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - connected_since[c] > 20.0 + 3.0 * c )
         {
             uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES];
             int burst_count = 0;
@@ -234,7 +234,7 @@ int main( int argc, char ** argv )
         if ( packet_bytes > 0 )
             rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
 
-        if ( client.state == ROCKETNET_CLIENT_STATE_CONNECTED )
+        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
