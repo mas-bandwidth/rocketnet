@@ -1685,8 +1685,10 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
+    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384 );
     server->counters = &test->counters;
-    rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots && server->acks );
+    rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots && server->acks && server->reassembly );
+    rocketnet_reassembly_set_begin_update( server->reassembly );
 
     rocketnet_check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
 }
@@ -1698,6 +1700,7 @@ static void rocketnet_test_server_teardown( struct rocketnet_test_server_t * tes
     rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
+    rocketnet_reassembly_set_destroy( test->server.reassembly );
 }
 
 // builds a valid request around a freshly minted token. the caller mutates
@@ -3841,12 +3844,15 @@ void rocketnet_test_swarm()
     rocketnet_used_token_history_destroy( test.server.used_token_history );
     rocketnet_admitted_token_set_destroy( test.server.admitted_token_set );
     rocketnet_server_acks_destroy( test.server.acks );
+    rocketnet_reassembly_set_destroy( test.server.reassembly );
     test.server.client_slots = rocketnet_client_slots_create( NULL, num_clients );
     test.server.encryption_map = rocketnet_encryption_map_create( NULL, num_clients * 2 );
     test.server.used_token_history = rocketnet_used_token_history_create( NULL, num_clients * 8 );
     test.server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, num_clients * 2 );
     test.server.acks = rocketnet_server_acks_create( NULL, num_clients );
-    rocketnet_check( test.server.client_slots && test.server.encryption_map && test.server.used_token_history && test.server.admitted_token_set && test.server.acks );
+    test.server.reassembly = rocketnet_reassembly_set_create( NULL, num_clients, 4, 16384 );
+    rocketnet_check( test.server.client_slots && test.server.encryption_map && test.server.used_token_history && test.server.admitted_token_set && test.server.acks && test.server.reassembly );
+    rocketnet_reassembly_set_begin_update( test.server.reassembly );
 
     struct rocketnet_client_protocol_t * clients = (struct rocketnet_client_protocol_t*)
         rocketnet_malloc( NULL, sizeof(struct rocketnet_client_protocol_t) * (size_t) num_clients );
@@ -3983,6 +3989,31 @@ void rocketnet_test_swarm()
                                                           payload, &payload_bytes, &payload_client_index );
             rocketnet_check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
             rocketnet_check( payload_bytes == 32 );
+
+            // every hundredth stay client also sends a fragmented payload,
+            // so reassembly runs under the same storm: three type 9
+            // packets per payload, reassembled byte-exact on the third
+
+            if ( ( i % 100 ) == 0 )
+            {
+                static uint8_t fragmented_payload[3000];
+                for ( int b = 0; b < 3000; b++ )
+                    fragmented_payload[b] = (uint8_t) ( i + b );
+                static uint8_t fragment_packets[3 * ROCKETNET_SEND_BUDGET];
+                int fragment_packet_bytes[3];
+                rocketnet_check( rocketnet_client_protocol_write_fragments( &clients[i], fragmented_payload, 3000, time,
+                                                                            fragment_packets, fragment_packet_bytes, 3 ) == 3 );
+                for ( int f = 0; f < 3; f++ )
+                {
+                    result = rocketnet_server_protocol_process_packet( &test.server, &addresses[i], fragment_packets + f * ROCKETNET_SEND_BUDGET,
+                                                              fragment_packet_bytes[f],
+                                                              ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                              payload, &payload_bytes, &payload_client_index );
+                    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+                }
+                rocketnet_check( test.server.reassembly->completed_bytes == 3000 );
+                rocketnet_check( memcmp( test.server.reassembly->completed_payload, fragmented_payload, 3000 ) == 0 );
+            }
         }
     }
 
@@ -4113,6 +4144,33 @@ void rocketnet_test_swarm()
             counters[ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE] +
             counters[ROCKETNET_COUNTER_ACK_ACCEPTED];
         rocketnet_check( counters[ROCKETNET_COUNTER_ACK_RECEIVED] == ack_outcomes );
+
+        uint64_t fragment_outcomes =
+            counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+            counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == fragment_outcomes );
+
+        // every fragmented payload sent arrived whole on the direct wire:
+        // 10 fragmenting clients, three rounds -- and nothing was ever
+        // abandoned or dropped at a full batch
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 30 );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
     }
 
     // the storm did its work: every garbage shape landed where it should
@@ -5414,6 +5472,8 @@ void rocketnet_test_wire_server_packet_valid()
     rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_RECEIVE_CEILING ) );
     rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES ) );
     rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_RECEIVE_CEILING ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES ) );
+    rocketnet_check( ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_RECEIVE_CEILING ) );
 
     // and refuses one byte off the fixed sizes in either direction, below
     // every session floor, and above the shared ceiling
@@ -5430,6 +5490,8 @@ void rocketnet_test_wire_server_packet_valid()
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_RECEIVE_CEILING + 1 ) );
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES - 1 ) );
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_RECEIVE_CEILING + 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES - 1 ) );
+    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_RECEIVE_CEILING + 1 ) );
 
     // the server-to-client types never pass, including at their own sizes,
     // and neither does the fragment until #76 lands its receive path
@@ -5437,10 +5499,9 @@ void rocketnet_test_wire_server_packet_valid()
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES ) );
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) );
     rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_COOKIE_PACKET, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES ) );
-    rocketnet_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_CONNECTION_FRAGMENT_PACKET, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES ) );
 
     // exhaustive: over every type and every size to the ceiling, exactly the
-    // two fixed sizes and the four session ranges are accepted, nothing else
+    // two fixed sizes and the five session ranges are accepted, nothing else
 
     int accepted = 0;
     for ( int type = 0; type < 256; type++ )
@@ -5454,7 +5515,8 @@ void rocketnet_test_wire_server_packet_valid()
     const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 )
                            + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 )
                            + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 )
-                           + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 );
+                           + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 )
+                           + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES + 1 );
     rocketnet_check( accepted == expected );
 }
 
@@ -6764,16 +6826,17 @@ void rocketnet_test_ack_bad_block_refusals()
         rocketnet_check( test.counters.values[floors[i].wrong_size_counter] == 1 );
     }
 
-    // NEGATIVE: type 9 has no receive path until #76 and drops with the
-    // reserved types
+    // NEGATIVE: a forged type 9 enters the fragment ladder with the other
+    // session types and refuses on its own reasons -- an all-zero body dies
+    // at the zero sequence -- never the reserved drop
     memset( packet, 0, sizeof(packet) );
     p = packet;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_FRAGMENT_PACKET, tag );
-    uint64_t reserved_before = test.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE];
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES,
                                                       ROCKETNET_TEST_CREATE_TS, 200.5, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == reserved_before + 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] == 1 );
 
     // the ACK_UNKNOWN_SEQUENCE side counter: a keep-alive whose valid block
     // acknowledges sequences this server never sent is still accepted --
@@ -7626,6 +7689,523 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+// a connected protocol pair on mocked time: the three-round-trip handshake
+// from the rtt test, plus a client-side reassembly set, so the fragment
+// tests start from a live session in a few lines
+
+struct rocketnet_test_fragment_pair_t
+{
+    struct rocketnet_test_server_t test;
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    double time;
+};
+
+static void rocketnet_test_fragment_pair_setup( struct rocketnet_test_fragment_pair_t * pair )
+{
+    rocketnet_test_server_setup( &pair->test );
+
+    memset( &pair->client_counters, 0, sizeof(pair->client_counters) );
+    rocketnet_client_protocol_init( &pair->client, &pair->client_counters );
+    pair->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384 );
+    rocketnet_check( pair->client.reassembly );
+    rocketnet_reassembly_set_begin_update( pair->client.reassembly );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xF4A6ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &pair->client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    double times[3] = { 100.0, 100.2, 100.4 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_client_protocol_update( &pair->client, times[i], packet, &packet_bytes );
+        rocketnet_check( packet_bytes > 0 );
+        rocketnet_check( rocketnet_server_protocol_process_packet( &pair->test.server, &pair->test.client_address, packet, packet_bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, times[i],
+                                                          response, &response_bytes,
+                                                          payload, &payload_bytes, &payload_client_index ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( rocketnet_client_protocol_process_packet( &pair->client, response, response_bytes, times[i] + 0.05, payload, &payload_bytes ) );
+    }
+    rocketnet_check( pair->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( pair->client.client_index == 0 );
+
+    pair->time = 101.0;
+}
+
+static void rocketnet_test_fragment_pair_teardown( struct rocketnet_test_fragment_pair_t * pair )
+{
+    rocketnet_reassembly_set_destroy( pair->client.reassembly );
+    rocketnet_test_server_teardown( &pair->test );
+}
+
+// hands one packet to the server, expecting it through the ladder
+
+static int rocketnet_test_fragment_deliver_to_server( struct rocketnet_test_fragment_pair_t * pair,
+                                                      const uint8_t * packet, int packet_bytes )
+{
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    pair->time += 0.001;
+    return rocketnet_server_protocol_process_packet( &pair->test.server, &pair->test.client_address, packet, packet_bytes,
+                                            ROCKETNET_TEST_CREATE_TS, pair->time,
+                                            response, &response_bytes,
+                                            payload, &payload_bytes, &payload_client_index );
+}
+
+void rocketnet_test_fragment_client_to_server()
+{
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    const uint64_t * counters = pair.test.counters.values;
+    struct rocketnet_reassembly_set_t * reassembly = pair.test.server.reassembly;
+
+    // a 5000-byte payload splits, crosses as ordinary sealed type 9
+    // session packets, and reassembles byte-exact -- in order first
+    static uint8_t payload_data[16384];
+    for ( int i = 0; i < (int) sizeof(payload_data); i++ )
+        payload_data[i] = (uint8_t) ( 0xA0 + i );
+
+    static uint8_t packets[ROCKETNET_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
+    int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
+
+    int count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 5000, pair.time,
+                                                           packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( count == 5 );                          // ceil(5000 / 1193)
+
+    for ( int i = 0; i < count; i++ )
+    {
+        int result = rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] );
+        rocketnet_check( result == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        if ( i < count - 1 )
+            rocketnet_check( reassembly->completed_bytes == 0 );
+    }
+    rocketnet_check( reassembly->completed_bytes == 5000 );
+    rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 5000 ) == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == 5 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 5 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
+
+    // the same payload again, delivered in reverse -- the final fragment
+    // first, staged until the stride pins -- and payload ids increment
+    count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 5000, pair.time,
+                                                       packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( count == 5 );
+    for ( int i = count - 1; i >= 0; i-- )
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( reassembly->completed_bytes == 5000 );
+    rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 5000 ) == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 2 );
+
+    // the largest configured payload crosses whole
+    count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 16384, pair.time,
+                                                       packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( count == 14 );                         // ceil(16384 / 1193)
+    for ( int i = 0; i < count; i++ )
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( reassembly->completed_bytes == 16384 );
+    rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 16384 ) == 0 );
+
+    // fragments elicit: every one of those packets armed the ack debt
+    rocketnet_check( pair.test.server.acks->endpoints[0].ack_debt == 24 );
+
+    // and each carried a fresh valid ack block that applied -- the
+    // client's sends are covered by the server's replay state, so a
+    // keep-alive built now reports them back (the block machinery is
+    // proven in the ack tests; here it must simply have engaged)
+    rocketnet_check( pair.test.server.acks->endpoints[0].highest_received_sequence >= 24 );
+
+    // received == sum of outcomes for the fragment family, the server side
+    const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == outcomes );
+
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
+void rocketnet_test_fragment_server_to_client()
+{
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    const uint64_t * counters = pair.client_counters.values;
+
+    static uint8_t payload_data[8000];
+    for ( int i = 0; i < (int) sizeof(payload_data); i++ )
+        payload_data[i] = (uint8_t) ( 0x35 + i );
+
+    static uint8_t packets[ROCKETNET_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
+    int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
+
+    const uint64_t debt_before = pair.client.ack.ack_debt;
+
+    int count = rocketnet_server_protocol_write_fragments( &pair.test.server, 0, payload_data, 8000, pair.time,
+                                                           packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( count == 7 );                          // ceil(8000 / 1193)
+
+    uint8_t out_payload[ROCKETNET_RECEIVE_CEILING];
+    int out_payload_bytes = 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        pair.time += 0.001;
+        rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i],
+                                                          pair.time, out_payload, &out_payload_bytes ) );
+        rocketnet_check( out_payload_bytes == 0 );          // fragments deliver through reassembly, never the payload path
+    }
+    rocketnet_check( pair.client.reassembly->completed_bytes == 8000 );
+    rocketnet_check( memcmp( pair.client.reassembly->completed_payload, payload_data, 8000 ) == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == 7 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED] == 7 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    // fragments elicit on the client exactly as on the server
+    rocketnet_check( pair.client.ack.ack_debt == debt_before + 7 );
+
+    // received == sum of outcomes for the client's fragment family
+    const uint64_t outcomes = counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_SEQUENCE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED];
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == outcomes );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
+// builds a sealed type 9 with an arbitrary plaintext under the client's
+// live session keys, for the crafted-refusal negatives below
+
+static int rocketnet_test_seal_raw_fragment( struct rocketnet_test_fragment_pair_t * pair,
+                                             const uint8_t * plaintext, int plaintext_bytes,
+                                             uint8_t * out_packet )
+{
+    uint64_t sequence;
+    rocketnet_check( rocketnet_client_protocol_start_fragments( &pair->client, 1, &sequence ) );
+    int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                                               pair->client.filter_value, sequence,
+                                               NULL, plaintext, plaintext_bytes,
+                                               pair->client.signed_fields.protocol_id, pair->client.connection_salt,
+                                               NULL, pair->client.keys.session_client_to_server );
+    rocketnet_check( bytes > 0 );
+    return bytes;
+}
+
+void rocketnet_test_fragment_receive_refusals()
+{
+    // every fragment refusal as a crafted wire packet through the server's
+    // whole reading order: the arrival counter and the reason counter move
+    // together, so rejected always means rejected here
+
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    const uint64_t * counters = pair.test.counters.values;
+
+    static uint8_t plaintext[2048];
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int bytes;
+
+    // the fresh 7-byte block heads every crafted plaintext
+    #define ROCKETNET_TEST_FRESH_BLOCK() memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES )
+
+    struct
+    {
+        uint32_t payload_id;
+        int fragment_index;
+        int fragment_count_minus_one;
+        int reason_counter;
+    } refusals[4] = {
+        { 0, 0, 1, ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID },        // zero payload id
+        { 1, 0, 0, ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID },          // count of one
+        { 1, 3, 2, ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE },     // index 3 of count 3
+        { 1, 200, 100, ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE }, // index past a smaller count
+    };
+
+    for ( int i = 0; i < 4; i++ )
+    {
+        ROCKETNET_TEST_FRESH_BLOCK();
+        uint8_t * p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+        rocketnet_write_uint32( &p, refusals[i].payload_id );
+        rocketnet_write_uint8( &p, (uint8_t) refusals[i].fragment_index );
+        rocketnet_write_uint8( &p, (uint8_t) refusals[i].fragment_count_minus_one );
+        rocketnet_write_uint8( &p, 0xEE );                              // one fragment byte
+        bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1, packet );
+
+        uint64_t received_before = counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED];
+        uint64_t reason_before = counters[refusals[i].reason_counter];
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == received_before + 1 );
+        rocketnet_check( counters[refusals[i].reason_counter] == reason_before + 1 );
+    }
+
+    // NEGATIVE: the count-widening attack over the wire -- pin payload id
+    // 2's count at 3 with a real fragment, then name count 4 for it
+    static uint8_t packets[ROCKETNET_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
+    int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
+    static uint8_t payload_data[3000];
+    memset( payload_data, 0x77, sizeof(payload_data) );
+    rocketnet_check( rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 3000, pair.time,
+                                                                packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets, packet_bytes[0] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+
+    ROCKETNET_TEST_FRESH_BLOCK();
+    uint8_t * p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 1 );                                    // write_fragments assigned payload id 1
+    rocketnet_write_uint8( &p, 1 );
+    rocketnet_write_uint8( &p, 3 );                                     // count 4 against the pinned 3
+    rocketnet_write_uint8( &p, 0xEE );
+    bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1, packet );
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] == 1 );
+
+    // NEGATIVE: a non-final fragment off the pinned stride
+    ROCKETNET_TEST_FRESH_BLOCK();
+    p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 1 );
+    rocketnet_write_uint8( &p, 1 );
+    rocketnet_write_uint8( &p, 2 );                                     // the right count, wrong size
+    rocketnet_write_uint8( &p, 0xEE );                                  // 1 byte against the 1000-byte stride
+    bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1, packet );
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 1 );
+
+    // NEGATIVE: a duplicate fragment index -- the replay window never saw
+    // this packet, so the refusal is reassembly's own
+    ROCKETNET_TEST_FRESH_BLOCK();
+    p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 1 );
+    rocketnet_write_uint8( &p, 0 );                                     // index 0 again
+    rocketnet_write_uint8( &p, 2 );
+    memset( (void*) p, 0x77, 1000 );                                    // stride-sized, so the size check passes
+    bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext + 0, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1000, packet );
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] == 1 );
+
+    // NEGATIVE: a stale payload id -- complete payload 5 into slot 1, then
+    // start payload 9 in the same slot, and payload 5's ghost refuses...
+    // ids 2 through 4 first, so 5 lands where the arithmetic says
+    for ( uint32_t spin = 2; spin <= 4; spin++ )
+    {
+        rocketnet_check( rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 3000, pair.time,
+                                                                    packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );
+    }
+    rocketnet_check( rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 3000, pair.time,
+                                                                packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );   // payload id 5
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets, packet_bytes[0] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 1 );     // id 1's incomplete slot evicted
+
+    for ( uint32_t spin = 6; spin <= 8; spin++ )
+    {
+        rocketnet_check( rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 3000, pair.time,
+                                                                    packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );
+    }
+    rocketnet_check( rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 3000, pair.time,
+                                                                packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );   // payload id 9, slot 1 again
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets, packet_bytes[0] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 2 );     // and id 5's in turn
+
+    ROCKETNET_TEST_FRESH_BLOCK();
+    p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 5 );                                    // older than the occupying 9
+    rocketnet_write_uint8( &p, 1 );
+    rocketnet_write_uint8( &p, 2 );
+    rocketnet_write_uint8( &p, 0xEE );
+    bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1, packet );
+    rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 1 );
+
+    // NEGATIVE: a payload too large for the configured maximum, refused
+    // the moment stride and count are known -- a full-stride non-final
+    // fragment claiming 256 fragments overruns the 16384-byte maximum
+    {
+        static uint8_t big_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
+        memset( big_plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
+        p = big_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+        rocketnet_write_uint32( &p, 100 );
+        rocketnet_write_uint8( &p, 0 );
+        rocketnet_write_uint8( &p, 255 );                               // count 256
+        memset( (void*) p, 0x55, ROCKETNET_MAX_FRAGMENT_BYTES );
+        bytes = rocketnet_test_seal_raw_fragment( &pair, big_plaintext, (int) sizeof(big_plaintext), packet );
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] == 1 );
+    }
+
+    // NEGATIVE: an opened size below the fragment header floor with the
+    // wire size above the type's floor -- a widened valid block over a
+    // headerless body -- is WRONG_OPENED_SIZE, its own reason
+    {
+        // give the server sends for the block to describe: five keep-alives
+        uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
+        for ( int i = 0; i < 5; i++ )
+            rocketnet_check( rocketnet_server_write_keep_alive( &pair.test.server, 0, pair.time, keep_alive ) > 0 );
+
+        // largest 5, one range: run 2 at the top, gap 1, run 2 below
+        p = plaintext;
+        rocketnet_write_uint32( &p, 5 );
+        rocketnet_write_uint8( &p, 1 );
+        rocketnet_write_uint16( &p, 2 );
+        rocketnet_write_uint16( &p, 1 );
+        rocketnet_write_uint16( &p, 2 );
+        rocketnet_write_uint8( &p, 0xEE );                              // 6 bytes behind an 11-byte block: under the 7-byte floor
+        rocketnet_write_uint8( &p, 0xEE );
+        rocketnet_write_uint8( &p, 0xEE );
+        rocketnet_write_uint8( &p, 0xEE );
+        rocketnet_write_uint8( &p, 0xEE );
+        rocketnet_write_uint8( &p, 0xEE );
+        bytes = rocketnet_test_seal_raw_fragment( &pair, plaintext, 17, packet );
+        rocketnet_check( bytes >= ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES );
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] == 1 );
+    }
+
+    // NEGATIVE: below the type's wire floor is WRONG_SIZE, never a later
+    // refusal -- a truncated buffer with the right prefix
+    {
+        uint8_t runt[ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES - 1];
+        memset( runt, 0, sizeof(runt) );
+        uint8_t * rp = runt;
+        const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+        rocketnet_write_prefilter_header( &rp, ROCKETNET_CONNECTION_FRAGMENT_PACKET, test_filter );
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, runt, (int) sizeof(runt) ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] == 1 );
+    }
+
+    #undef ROCKETNET_TEST_FRESH_BLOCK
+
+    // the family's arrival invariant held through every crafted refusal
+    const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == outcomes );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
+void rocketnet_test_fragment_punched_loss()
+{
+    // the specified semantics of loss: a payload with a punched-out
+    // fragment is never delivered, its abandonment is counted when a newer
+    // payload evicts its slot, and the connection is entirely unaffected
+
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    const uint64_t * counters = pair.test.counters.values;
+    struct rocketnet_reassembly_set_t * reassembly = pair.test.server.reassembly;
+
+    static uint8_t payload_data[6000];
+    for ( int i = 0; i < (int) sizeof(payload_data); i++ )
+        payload_data[i] = (uint8_t) ( 0x11 + i );
+
+    static uint8_t packets[ROCKETNET_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
+    int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
+
+    // payload id 1: six fragments, the middle one punched out of the wire
+    int count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 6000, pair.time,
+                                                           packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( count == 6 );
+    for ( int i = 0; i < count; i++ )
+    {
+        if ( i == 3 )
+            continue;                                       // the punch
+        rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    }
+    rocketnet_check( reassembly->completed_bytes == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 0 );
+
+    // the connection is unaffected: an ordinary payload flows around the
+    // dead reassembly
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int bytes = rocketnet_client_protocol_write_payload( &pair.client, (const uint8_t*) "alive", 5, pair.time, packet );
+    rocketnet_check( bytes > 0 );
+    {
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
+        int delivered_bytes = 0;
+        int delivered_client_index = -1;
+        pair.time += 0.001;
+        rocketnet_check( rocketnet_server_protocol_process_packet( &pair.test.server, &pair.test.client_address, packet, bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, pair.time,
+                                                          response, &response_bytes,
+                                                          delivered, &delivered_bytes, &delivered_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( delivered_bytes == 5 );
+        rocketnet_check( memcmp( delivered, "alive", 5 ) == 0 );
+    }
+
+    // four more fragmented payloads wrap the slot ring: payload id 5 lands
+    // on the dead payload's slot, evicts it, and ABANDONED fires -- the
+    // loss-visibility counter -- while every later payload delivers whole
+    for ( uint32_t payload_id = 2; payload_id <= 5; payload_id++ )
+    {
+        count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 6000, pair.time,
+                                                           packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
+        rocketnet_check( count == 6 );
+        for ( int i = 0; i < count; i++ )
+            rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( reassembly->completed_bytes == 6000 );
+        rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 6000 ) == 0 );
+    }
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 4 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 1 );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
 void rocketnet_test_fragment_vector()
 {
     // the frozen type 9 vector from Appendix A, reproduced by the real
@@ -7890,6 +8470,10 @@ void rocketnet_run_tests()
         RUN_TEST( test_fragment_delivery_batch );
         RUN_TEST( test_fragment_vector );
         RUN_TEST( test_fragment_packet_id_aggregation );
+        RUN_TEST( test_fragment_client_to_server );
+        RUN_TEST( test_fragment_server_to_client );
+        RUN_TEST( test_fragment_receive_refusals );
+        RUN_TEST( test_fragment_punched_loss );
         RUN_TEST( test_send_arena );
         RUN_TEST( test_frame_sync_wait );
     }

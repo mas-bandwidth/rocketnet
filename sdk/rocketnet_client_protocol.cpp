@@ -95,11 +95,15 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
     memcpy( filter_value, client->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     double send_rate = client->send_rate;
+    struct rocketnet_reassembly_set_t * reassembly = client->reassembly;
 
     memset( client, 0, sizeof(*client) );
     memcpy( client->filter_value, filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     client->send_rate = send_rate;
     client->counters = counters;
+    client->reassembly = reassembly;
+    if ( client->reassembly )
+        rocketnet_reassembly_set_reset_connection( client->reassembly, 0 );
     client->client_index = -1;
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->state_first_send_time = -1.0;
@@ -599,10 +603,11 @@ struct rocketnet_client_session_counters_t
 
 // Opens one session packet through the reading order and consumes the ack
 // block at the front of the sealed data. expected_type_data_bytes is the
-// exact size the type data must be, or -1 for the payload's 1-and-up
-// range. On success the type data's offset into opened lands in
-// out_type_data_offset and its length is returned; -1 means refused, the
-// reason counted.
+// exact size the type data must be when non-negative; a negative value
+// names a minimum instead -- -1 for the payload's 1-and-up range, -7 for
+// the fragment's header-plus-a-byte floor. On success the type data's
+// offset into opened lands in out_type_data_offset and its length is
+// returned; -1 means refused, the reason counted.
 
 static int rocketnet_client_open_session_packet( struct rocketnet_client_protocol_t * client,
                                                  uint8_t packet_type,
@@ -691,7 +696,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     // the opened size, less the block, must match the type
 
     int type_data_bytes = opened_bytes - block_bytes;
-    if ( expected_type_data_bytes >= 0 ? type_data_bytes != expected_type_data_bytes : type_data_bytes < 1 )
+    if ( expected_type_data_bytes >= 0 ? type_data_bytes != expected_type_data_bytes : type_data_bytes < -expected_type_data_bytes )
     {
         rocketnet_spam( "client ignored session packet. wrong opened size" );
         counters[type_counters->wrong_opened_size]++;
@@ -844,6 +849,62 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     return 1;
 }
 
+static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t * client,
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              double current_time )
+{
+    static const struct rocketnet_client_session_counters_t type_counters = {
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_FRAGMENT_PACKET_ALREADY_RECEIVED,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE };
+
+    // a fragment is accepted in the same states as a payload and feeds
+    // reassembly; the shared machinery already applied its ack block and
+    // added it to the ack debt -- fragments elicit
+
+    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+    int type_data_offset = 0;
+    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                                                                &type_counters,
+                                                                ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES,
+                                                                -( ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ),
+                                                                packet_data, packet_bytes,
+                                                                current_time, opened, &type_data_offset );
+    if ( type_data_bytes < 0 )
+        return 0;
+
+    if ( !client->reassembly )
+    {
+        // reassembly is created wherever fragments are processed; a client
+        // built without it cannot reassemble, and the accepted count keeps
+        // the arrival invariant honest in release
+        rocketnet_assert( 0 );
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED]++;
+        return 1;
+    }
+
+    static const struct rocketnet_reassembly_counters_t fragment_counters = {
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED,
+        ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL };
+
+    return rocketnet_reassembly_process_fragment( client->reassembly, 0,
+                                                  opened + type_data_offset, type_data_bytes,
+                                                  client->counters->values, &fragment_counters );
+}
+
 static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol_t * client,
                                                 const uint8_t * packet_data,
                                                 int packet_bytes,
@@ -891,6 +952,12 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 
     client->received_session_sequence = 0;
 
+    if ( client->reassembly )
+    {
+        client->reassembly->completed_payload = NULL;
+        client->reassembly->completed_bytes = 0;
+    }
+
     counters[ROCKETNET_COUNTER_PACKETS_RECEIVED]++;
 
     int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, client->filter_value );
@@ -901,11 +968,10 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
         return 0;
     }
 
-    // type 9, the payload fragment, is a real type in the standard whose
-    // receive path lands with #76; until then it drops here with the
-    // reserved types 10 through 255
+    // types 10 through 255 are reserved and ignored by a conforming
+    // receiver
 
-    if ( packet_type > ROCKETNET_CONNECTION_ACK_PACKET )
+    if ( packet_type > ROCKETNET_CONNECTION_FRAGMENT_PACKET )
     {
         rocketnet_spam( "client dropped packet. reserved type" );
         counters[ROCKETNET_COUNTER_RESERVED_TYPE]++;
@@ -939,6 +1005,8 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
             return rocketnet_client_process_disconnect( client, packet_data, packet_bytes, current_time );
         case ROCKETNET_CONNECTION_ACK_PACKET:
             return rocketnet_client_process_ack( client, packet_data, packet_bytes, current_time );
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:
+            return rocketnet_client_process_fragment( client, packet_data, packet_bytes, current_time );
     }
 
     return 0;

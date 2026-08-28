@@ -27,11 +27,9 @@
 #define ROCKETNET_CONNECTION_DISCONNECT_PACKET  6
 #define ROCKETNET_CONNECTION_COOKIE_PACKET      7
 #define ROCKETNET_CONNECTION_ACK_PACKET         8
-#define ROCKETNET_CONNECTION_FRAGMENT_PACKET    9   // payload fragment: wire type reserved here; the mechanism lands with issue #76
+#define ROCKETNET_CONNECTION_FRAGMENT_PACKET    9   // payload fragment, per the standard's _Fragmentation_
 
-// types 10 through 255 are reserved and ignored by a conforming receiver.
-// type 9 is a real type in the standard but has no receive path until #76
-// lands fragmentation, so a receiver here drops it with the reserved types.
+// types 10 through 255 are reserved and ignored by a conforming receiver
 
 // the prefilter header: 6 bytes on the front of every packet -- the packet
 // type, the filter epoch, and a 4-byte filter value whose meaning the epoch
@@ -87,16 +85,15 @@
 #define ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES  33  // 6 + 4 + 7 + 0 + 16
 #define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES          38
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
-#define ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES    40  // 6 + 4 + 7 + 6 + 1 + 16; the receive path is #76's
+#define ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES    40  // 6 + 4 + 7 + 6 + 1 + 16
 
 // The server-inbound rule, usable from BPF and from tests alike: the types
 // a server ever receives, each at its exact wire size (the session types at
 // their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
-// fragment receive lands with #76, and everything from 10 up is reserved --
-// a conforming server refuses them all, so the kernel filter drops them
-// before they cost a ring slot. This mirrors the refusal ladder in
-// rocketnet_server_protocol.cpp; the equivalence test in
-// rocketnet_tests.cpp holds the two together.
+// and everything from 10 up is reserved -- a conforming server refuses them
+// all, so the kernel filter drops them before they cost a ring slot. This
+// mirrors the refusal ladder in rocketnet_server_protocol.cpp; the
+// equivalence test in rocketnet_tests.cpp holds the two together.
 
 #define ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes )                                                 \
     ( ( (packet_type) == ROCKETNET_CONNECTION_REQUEST_PACKET     && (packet_bytes) == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES     ) || \
@@ -108,6 +105,8 @@
       ( (packet_type) == ROCKETNET_CONNECTION_DISCONNECT_PACKET  && (packet_bytes) >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES \
                                                                  && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
       ( (packet_type) == ROCKETNET_CONNECTION_ACK_PACKET         && (packet_bytes) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES        \
+                                                                 && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
+      ( (packet_type) == ROCKETNET_CONNECTION_FRAGMENT_PACKET    && (packet_bytes) >= ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES   \
                                                                  && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) )
 
 // the smallest packet a server can ever accept, for the cheap early bound

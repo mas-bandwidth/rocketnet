@@ -553,6 +553,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     if ( server->acks )
         rocketnet_server_acks_reset_slot( server->acks, client_index );
 
+    if ( server->reassembly )
+        rocketnet_reassembly_set_reset_connection( server->reassembly, client_index );
+
     rocketnet_debug( "client %d connected", client_index );
     counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED]++;
     counters[ROCKETNET_COUNTER_CLIENT_CONNECTED]++;
@@ -605,7 +608,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 {
     uint64_t * counters = server->counters->values;
 
-    static const struct rocketnet_sealed_type_counters_t table[5] = {
+    static const struct rocketnet_sealed_type_counters_t table[6] = {
         { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, -1, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, -1, -1, -1 },
@@ -625,8 +628,14 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
           ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE, ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED,
           ROCKETNET_COUNTER_ACK_DID_NOT_OPEN, ROCKETNET_COUNTER_ACK_NOT_CONNECTED, ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE },
+        { ROCKETNET_COUNTER_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE, ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING,
+          ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE, ROCKETNET_COUNTER_FRAGMENT_PACKET_ALREADY_RECEIVED,
+          ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN, ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK,
+          ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE },
     };
-    const int table_index = packet_type == ROCKETNET_CONNECTION_ACK_PACKET ? 4 : packet_type - ROCKETNET_CONNECTION_RESPONSE_PACKET;
+    const int table_index = packet_type == ROCKETNET_CONNECTION_ACK_PACKET ? 4 :
+                            packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET ? 5 :
+                            packet_type - ROCKETNET_CONNECTION_RESPONSE_PACKET;
     const struct rocketnet_sealed_type_counters_t * type_counters = &table[table_index];
 
     counters[type_counters->received]++;
@@ -643,6 +652,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    min_wire_bytes = ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;    break;
         case ROCKETNET_CONNECTION_DISCONNECT_PACKET: min_wire_bytes = ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES; break;
         case ROCKETNET_CONNECTION_ACK_PACKET:        min_wire_bytes = ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;        break;
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   min_wire_bytes = ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;   break;
         default: break;
     }
 
@@ -775,7 +785,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
          ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && type_data_bytes < 1 ) ||
          ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) )
+         ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) ||
+         ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET && type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ) )
     {
         rocketnet_spam( "server ignored sealed packet. wrong opened size" );
         counters[type_counters->wrong_opened_size]++;
@@ -837,6 +848,50 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
 
+    if ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+    {
+        // fragmentation's own self-contained bookkeeping, per the
+        // standard: the ack block above applied like any session packet's
+        // -- delivery information does not become false because the bytes
+        // behind it are refused -- and the fragment's checks run here,
+        // each refusal on its named counter. a completed payload sits in
+        // the reassembly's delivered arena, reported through the
+        // completed fields in arrival position, attributed to its slot.
+
+        if ( !server->reassembly )
+        {
+            // reassembly is created wherever fragments are processed; a
+            // server built without it cannot reassemble, and the accepted
+            // count keeps the arrival invariant honest in release
+            rocketnet_assert( 0 );
+            counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]++;
+            return ROCKETNET_SERVER_PROCESS_ACCEPTED;
+        }
+
+        static const struct rocketnet_reassembly_counters_t fragment_counters = {
+            ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
+            ROCKETNET_COUNTER_FRAGMENT_STALE,
+            ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
+            ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
+            ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
+            ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
+            ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
+            ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
+            ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
+            ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
+            ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
+            ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+
+        int accepted = rocketnet_reassembly_process_fragment( server->reassembly, client_index,
+                                                              type_data, type_data_bytes,
+                                                              counters, &fragment_counters );
+
+        if ( server->reassembly->completed_bytes > 0 )
+            *out_payload_client_index = client_index;
+
+        return accepted ? ROCKETNET_SERVER_PROCESS_ACCEPTED : ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     // the disconnect: release the slot and destroy the mapping immediately,
     // never answered -- the sender's redundant copies are the delivery
     // mechanism
@@ -879,6 +934,12 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     *out_payload_bytes = 0;
     *out_payload_client_index = -1;
 
+    if ( server->reassembly )
+    {
+        server->reassembly->completed_payload = NULL;
+        server->reassembly->completed_bytes = 0;
+    }
+
     int packet_type = rocketnet_prefilter_check( packet_data, packet_bytes, server->filter_value );
     if ( packet_type < 0 )
     {
@@ -887,11 +948,10 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // type 9, the payload fragment, is a real type in the standard whose
-    // receive path lands with #76; until then it drops here with the
-    // reserved types 10 through 255
+    // types 10 through 255 are reserved and ignored by a conforming
+    // receiver
 
-    if ( packet_type > ROCKETNET_CONNECTION_ACK_PACKET )
+    if ( packet_type > ROCKETNET_CONNECTION_FRAGMENT_PACKET )
     {
         rocketnet_spam( "server dropped packet. reserved type" );
         counters[ROCKETNET_COUNTER_RESERVED_TYPE]++;

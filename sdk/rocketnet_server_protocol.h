@@ -23,6 +23,8 @@
 // the cheap ones. The library does not own sockets yet, so processing returns
 // what to send and the caller sends it.
 
+struct rocketnet_reassembly_set_t;
+
 #define ROCKETNET_SERVER_PROCESS_IGNORED            0
 #define ROCKETNET_SERVER_PROCESS_SEND_COOKIE        1
 #define ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE     2
@@ -57,6 +59,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_admitted_token_set_t * admitted_token_set;
     struct rocketnet_client_slots_t * client_slots;
     struct rocketnet_server_acks_t * acks;
+    struct rocketnet_reassembly_set_t * reassembly;         // per-client fragment reassembly, one connection per slot
     struct rocketnet_counters_t * counters;
 };
 

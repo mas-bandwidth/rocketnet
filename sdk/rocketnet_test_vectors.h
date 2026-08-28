@@ -462,7 +462,7 @@ static const uint8_t rocketnet_test_ack_block_two_losses[15] =
 };
 
 // the fragment header encoding, alone: payload id 7, fragment index 2,
-// fragment count 3. the receive path is #76's; the layout is pinned here.
+// fragment count 3
 
 static const uint8_t rocketnet_test_fragment_header[6] =
 {

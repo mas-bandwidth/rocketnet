@@ -27,6 +27,8 @@
 
 #define ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS             10
 
+struct rocketnet_reassembly_set_t;
+
 struct rocketnet_client_protocol_t
 {
     // configuration, set before connect
@@ -97,6 +99,15 @@ struct rocketnet_client_protocol_t
     struct rocketnet_ack_endpoint_t ack;
     int num_acked;
     uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+
+    // Fragment reassembly, per _Fragmentation_: one connection's slots,
+    // owned by whoever built this protocol object -- the transport creates
+    // it from its config -- and carried across connect, which resets its
+    // state. A completed payload is reported through the set's completed
+    // fields, in arrival position, at the process_packet call that
+    // completed it.
+
+    struct rocketnet_reassembly_set_t * reassembly;
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
