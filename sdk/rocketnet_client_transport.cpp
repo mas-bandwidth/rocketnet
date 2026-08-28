@@ -645,9 +645,12 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
 // wire frame, cheaper than fragmenting -- and a genuinely large one splits
-// into type 9 fragments, every wire frame reserved before anything seals
-// so the payload goes out whole or not at all. Returns the total wire
-// bytes staged.
+// into type 9 fragments. Every wire frame is reserved before anything
+// seals, so a reservation shortfall drops the payload whole; a seal
+// refusal mid-split -- possible only through a fill-contract violation,
+// since connections are stable during a fill -- withdraws every reserved
+// frame, the committed prefix included. Returns the total wire bytes
+// staged.
 
 static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
@@ -732,6 +735,8 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
                                                                   ring->data + slots[i] * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET );
         if ( wire_bytes == 0 )
         {
+            for ( int j = 0; j < fragment_count; j++ )
+                ring->info[slots[j]].wire_bytes = 0;
             context->frame = NULL;
             return 0;
         }
@@ -810,20 +815,42 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     rocketnet_send_arena_reset( client_transport->send_arena );
 }
 
-int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * client_transport, uint8_t * packet_data )
+int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity )
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
+    rocketnet_assert( packet_capacity > 0 );
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
-    if ( received->receive_index >= received->num_packets )
-        return 0;
+    // a payload larger than the caller's buffer is refused whole and
+    // counted, never truncated, and the cursor moves on to the next
+    // payload that fits -- a caller sizing by the configured maximum
+    // payload never refuses anything
 
-    const int index = received->receive_index++;
-    memcpy( packet_data, received->packet_data[index], (size_t) received->packet_bytes[index] );
+    while ( received->receive_index < received->num_packets )
+    {
+        const int index = received->receive_index++;
 
-    return received->packet_bytes[index];
+        if ( received->packet_bytes[index] > packet_capacity )
+        {
+            rocketnet_spam( "client receive cursor refused payload. %d bytes into a %d-byte buffer", received->packet_bytes[index], packet_capacity );
+            client_transport->counters.values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
+            continue;
+        }
+
+        memcpy( packet_data, received->packet_data[index], (size_t) received->packet_bytes[index] );
+
+        return received->packet_bytes[index];
+    }
+
+    return 0;
+}
+
+int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return client_transport->max_payload_bytes;
 }
 
 // the batch the copying cursor above walks, exposed whole: by count and

@@ -129,7 +129,7 @@ int main( int argc, char ** argv )
 
             uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
             {
                 if ( verify_payload( received, received_bytes ) )
                     payloads_verified++;

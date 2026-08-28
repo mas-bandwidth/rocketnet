@@ -274,6 +274,12 @@ enum
 
     ROCKETNET_COUNTER_SEND_ARENA_FULL,
 
+    // the copying receive cursor was handed a buffer smaller than a
+    // delivered payload: the payload is refused whole, never truncated.
+    // stays zero for every caller sizing by the configured maximum.
+
+    ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL,
+
     ROCKETNET_NUM_COUNTERS
 };
 

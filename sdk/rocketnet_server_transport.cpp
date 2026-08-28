@@ -1067,9 +1067,14 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
 // wire frame, cheaper than fragmenting -- and a genuinely large one splits
-// into type 9 fragments, every wire frame reserved before anything seals
-// so the payload goes out whole or not at all. Returns the total wire
-// bytes staged.
+// into type 9 fragments. Every wire frame is reserved before anything
+// seals, so a reservation shortfall drops the payload whole; a seal
+// refusal mid-split -- possible only through a fill-contract violation,
+// since connections are stable during a fill -- withdraws every reserved
+// frame on the portable driver, while frames already committed to the xdp
+// socket stay committed there, a partial payload the semantics already
+// price as fragments lost on the wire. Returns the total wire bytes
+// staged.
 
 static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
@@ -1158,8 +1163,13 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
                                                                   frames[i].data + ROCKETNET_FRAME_WIRE_OFFSET );
         if ( wire_bytes == 0 )
         {
+#if ROCKETNET_SERVER_XDP
             for ( int j = i; j < fragment_count; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
+#else // #if ROCKETNET_SERVER_XDP
+            for ( int j = 0; j < fragment_count; j++ )
+                rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
+#endif // #if ROCKETNET_SERVER_XDP
             context->frame = NULL;
             return 0;
         }
@@ -1354,6 +1364,12 @@ void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * ser
     stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = server_transport->server_stats.bandwidth_received_kbps;
+}
+
+int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->max_payload_bytes;
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )

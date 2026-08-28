@@ -1793,10 +1793,13 @@ in order, each with its own counter:
 * A payload id older than the id currently occupying its slot refuses as
   stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
   its bytes into the newer payload's slot is the aliasing this check exists
-  to prevent. Older is a plain comparison of the 32-bit values — payload ids
-  are not reconstructed, and a connection that sends 2^32 fragmented payloads
-  wraps the ordering, which is accepted: nothing opens wrongly, at worst a
-  payload dies at the boundary.
+  to prevent. Older is serial-number arithmetic on the 32-bit values — the
+  same wrapping family as the wire sequence — so no id can poison a slot: a
+  plain comparison would let one defective near-maximum id refuse every later
+  id as stale forever, where under the wrapping comparison a later id is
+  newer, displaces the occupant (counted abandoned), and the slot recovers as
+  ids advance. At worst payloads die at the wrap boundary; nothing opens
+  wrongly.
 * Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
   of 1 refuses — `FRAGMENT_COUNT_INVALID`).
 * Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).

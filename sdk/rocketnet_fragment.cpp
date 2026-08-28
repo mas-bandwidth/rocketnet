@@ -93,6 +93,16 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
 
     set->slots = (struct rocketnet_reassembly_slot_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
     set->arena = (uint8_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
+
+    // The delivered mirror is this implementation's own addition beyond
+    // the standard's arena arithmetic, and nearly matches the arena's
+    // footprint: one payload of delivery room per reassembly slot, so any
+    // legitimate completion pattern one update can produce has a home and
+    // BATCH_FULL genuinely stays zero. Sized smaller it becomes a tunable
+    // with an overflow mode under legitimate load; sized here it is
+    // allocate-max-needed, and a deployment budgets connections x slots x
+    // (2 x max payload + staging) total for reassembly.
+
     set->delivered = (uint8_t*) rocketnet_malloc( context, (size_t) set->delivered_capacity * (size_t) max_payload_bytes );
 
     if ( !set->slots || !set->arena || !set->delivered )
@@ -197,9 +207,13 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
     // a payload id older than the slot's occupant was already superseded;
     // accepting its bytes into the newer payload is the aliasing this
-    // check exists to prevent
+    // check exists to prevent. older is serial-number arithmetic on the
+    // 32-bit values, the wire sequence's wrapping family: a plain compare
+    // would let one defective near-maximum id poison its slot for the
+    // connection's life, where under wrap every later id is newer, the
+    // occupant is displaced (counted abandoned) and the slot recovers.
 
-    if ( slot->payload_id != 0 && payload_id < slot->payload_id )
+    if ( slot->payload_id != 0 && (int32_t) ( payload_id - slot->payload_id ) < 0 )
     {
         rocketnet_spam( "reassembly refused fragment. stale payload id" );
         counters[table->stale]++;

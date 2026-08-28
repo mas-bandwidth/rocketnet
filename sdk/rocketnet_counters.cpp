@@ -198,6 +198,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED:              return "CLIENT_FRAGMENT_PAYLOAD_ABANDONED";
         case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL:             return "CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL";
         case ROCKETNET_COUNTER_SEND_ARENA_FULL:                                return "SEND_ARENA_FULL";
+        case ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL:                       return "RECEIVE_CURSOR_TOO_SMALL";
         default:
             rocketnet_assert( 0 );
             return "???";

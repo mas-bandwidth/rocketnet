@@ -129,7 +129,7 @@ public static unsafe class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 188;
+    public const int NumCounters = 189;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -325,6 +325,7 @@ public static unsafe class RocketNet
         ClientFragmentPayloadAbandoned,
         ClientFragmentPayloadBatchFull,
         SendArenaFull,
+        ReceiveCursorTooSmall,
     }
 #pragma warning restore 1591
 
@@ -608,19 +609,29 @@ public static unsafe class RocketNet
             ClientTransportSendPacket( client, p, payload.Length );
     }
 
-    /// <summary>The copying receive cursor: copies the next received payload into the buffer
-    /// (at least <see cref="MaxReceivePayloadBytes"/>) and returns its size, or zero when drained.</summary>
+    /// <summary>The copying receive cursor: copies the next received payload that fits the
+    /// buffer and returns its size, or zero when drained. A payload larger than the buffer --
+    /// possible only for reassembled fragmented payloads -- is refused whole and counted on
+    /// <see cref="Counter.ReceiveCursorTooSmall"/>, never truncated. Size the buffer by
+    /// <see cref="ClientTransportMaxPayloadBytes"/> to never refuse.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_receive_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportReceivePacket( IntPtr client, byte* packetData );
+    public static extern int ClientTransportReceivePacket( IntPtr client, byte* packetData, int packetCapacity );
 
-    /// <summary>The copying receive cursor over a span.</summary>
+    /// <summary>The copying receive cursor over a span: requires the configured maximum
+    /// payload so nothing is ever refused through this wrapper.</summary>
     public static int ClientTransportReceivePacket( IntPtr client, Span<byte> buffer )
     {
-        if ( buffer.Length < MaxReceivePayloadBytes )
-            throw new ArgumentException( "buffer must hold MaxReceivePayloadBytes", nameof(buffer) );
+        if ( buffer.Length < ClientTransportMaxPayloadBytes( client ) )
+            throw new ArgumentException( "buffer must hold ClientTransportMaxPayloadBytes(client)", nameof(buffer) );
         fixed ( byte* p = buffer )
-            return ClientTransportReceivePacket( client, p );
+            return ClientTransportReceivePacket( client, p, buffer.Length );
     }
+
+    /// <summary>The configured maximum payload this client sends (fragmenting transparently)
+    /// and reassembles -- the config's MaxPayloadBytes after defaulting. Size receive
+    /// buffers by this.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_max_payload_bytes", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int ClientTransportMaxPayloadBytes( IntPtr client );
 
     /// <summary>Number of payloads delivered by the last update. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_num_payloads", CallingConvention = CallingConvention.Cdecl )]
@@ -650,11 +661,12 @@ public static unsafe class RocketNet
         return new ClientTransportPayloadBatch( count, data, bytes );
     }
 
-    /// <summary>Acquires a packet to fill with the requested capacity; see the send family
-    /// contract on <see cref="ServerTransportStartPacket"/>. A request above
-    /// <see cref="MaxPayloadBytes"/> routes to the arena and fragments at finish.
-    /// Returns the frame, or IntPtr.Zero when no packet is available (ring or arena full,
-    /// not connected, request out of range).</summary>
+    /// <summary>Acquires a packet to fill, declaring the capacity the caller needs; see the
+    /// send family contract on <see cref="ServerTransportStartPacket"/>. A request above
+    /// <see cref="MaxPayloadBytes"/> routes to the arena and fragments at finish. The
+    /// context's PayloadCapacity reports the frame's real capacity -- the wire capacity or
+    /// the configured maximum, never the request itself. Returns the frame, or IntPtr.Zero
+    /// when no packet is available (ring or arena full, not connected, request out of range).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ClientTransportStartPacket( IntPtr client, int requestBytes, ref PacketContext context );
 
@@ -789,10 +801,12 @@ public static unsafe class RocketNet
     // Update: packets are never sent without it. Calling it again in the same frame is a
     // no-op. The fields of the context are read-only to the caller.
 
-    /// <summary>Acquires a packet to fill for one client with the requested capacity; the
-    /// threading contract is in the comment above. A request above <see cref="MaxPayloadBytes"/>
-    /// routes to the arena and fragments at finish -- the context's one PacketId surfaces
-    /// acknowledged when every fragment's wire packet is acknowledged. Returns the frame, or
+    /// <summary>Acquires a packet to fill for one client, declaring the capacity the caller
+    /// needs; the threading contract is in the comment above. A request above
+    /// <see cref="MaxPayloadBytes"/> routes to the arena and fragments at finish -- the
+    /// context's one PacketId surfaces acknowledged when every fragment's wire packet is
+    /// acknowledged, and its PayloadCapacity reports the frame's real capacity (the wire
+    /// capacity or the configured maximum), never the request itself. Returns the frame, or
     /// IntPtr.Zero when no packet is available.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ServerTransportStartPacket( IntPtr server, int clientIndex, int requestBytes, ref PacketContext context );
@@ -845,6 +859,12 @@ public static unsafe class RocketNet
     /// <summary>The server's counters block; read it with <see cref="CountersSpan"/>.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_counters", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ServerTransportCounters( IntPtr server );
+
+    /// <summary>The configured maximum payload this server sends (fragmenting transparently)
+    /// and reassembles per client -- the config's MaxPayloadBytes after defaulting. Size the
+    /// buffers payloads are copied into by this.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_max_payload_bytes", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int ServerTransportMaxPayloadBytes( IntPtr server );
 
     /// <summary>Reads the server's whole-socket rate stats (rocketnet_server_transport_stats).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_stats", CallingConvention = CallingConvention.Cdecl )]

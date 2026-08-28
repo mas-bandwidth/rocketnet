@@ -447,12 +447,22 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_c
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
 
-// the copying cursor: pops the next delivered payload into packet_data,
-// which must hold the configured maximum payload size -- reassembled
-// fragmented payloads arrive through the same cursor -- returning its
-// length, or zero when the update's batch is drained
+// The copying cursor: pops the next delivered payload into packet_data,
+// returning its length, or zero when the update's batch is drained.
+// packet_capacity is the caller's buffer size: a payload larger than it --
+// possible only for reassembled fragmented payloads, which reach the
+// configured maximum -- is refused whole and counted on
+// RECEIVE_CURSOR_TOO_SMALL, never truncated, and the cursor moves on to
+// the next payload that fits. Size the buffer by
+// rocketnet_client_transport_max_payload_bytes to never refuse.
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity );
+
+// the configured maximum payload this transport sends and reassembles --
+// the config's max_payload_bytes after defaulting -- so a caller can size
+// its receive buffers without carrying the config around
+
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_max_payload_bytes( struct rocketnet_client_transport_t * client_transport );
 
 // the batch behind the copying cursor above: by count and index, and as
 // parallel arrays in one call. valid until the next update. reassembled
@@ -551,8 +561,12 @@ struct rocketnet_server_transport_config_t
 
     // the fragmentation shape: the largest payload this server sends and
     // reassembles, and the per-client reassembly slot count. zero means
-    // the defaults; the reassembly arena is max_clients x slots x
-    // (max payload + staging), allocated once at create.
+    // the defaults. budget arithmetic, all spent once at create: the
+    // reassembly arena is max_clients x slots x (max payload + 1387
+    // staging) per the standard, plus this implementation's delivered
+    // mirror of slots x max payload per client -- the per-update home of
+    // completed payloads, which is what lets a reassembly slot clear and
+    // reuse immediately while the delivered bytes stay valid.
     int max_payload_bytes;
     int num_reassembly_slots;
 };
@@ -622,6 +636,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // acked batch when every fragment's wire packet is acknowledged. A lost
 // fragment loses the whole payload -- the transport never resends.
 //
+// The context's payload_capacity reports the frame's real capacity -- the
+// wire capacity on the wire route, the configured maximum on the arena
+// route -- never the request itself: a caller may write up to it, and
+// finish_packet routes on what was actually written.
+//
 // Threading contract: update and send_packets run on the main thread, and
 // so do disconnect, disconnect_client and stop -- never while a fill is
 // open. start_packet, finish_packet and abort_packet may run on any number
@@ -672,6 +691,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_is_client_connected( struct
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
+
+// the configured maximum payload this transport sends and reassembles --
+// the config's max_payload_bytes after defaulting -- so a caller can size
+// the buffers it copies payloads into
+
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transport_t * server_transport );
 
 // The server's whole-socket rates: packets and bandwidth per second, both
 // directions, over the trailing second. Accumulation rides the walks the

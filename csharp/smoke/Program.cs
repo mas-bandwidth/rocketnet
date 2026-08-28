@@ -324,6 +324,9 @@ static class Smoke
         }
         if ( !gotFragmented || !fragmentedAcked )
             Fail( $"fragmented payload did not cross (received {gotFragmented}, acked {fragmentedAcked})" );
+        if ( RocketNet.ClientTransportMaxPayloadBytes( client ) != RocketNet.DefaultMaxPayloadBytes ||
+             RocketNet.ServerTransportMaxPayloadBytes( server ) != RocketNet.DefaultMaxPayloadBytes )
+            Fail( "configured maximum payload getters" );
         ReadOnlySpan<ulong> fragmentCounters = RocketNet.CountersSpan( RocketNet.ServerTransportCounters( server ) );
         if ( fragmentCounters[(int) RocketNet.Counter.FragmentPayloadReassembled] != 1 )
             Fail( "fragment payload reassembled counter" );
@@ -361,7 +364,7 @@ static class Smoke
             Fail( "counter name mapping (ack tail)" );
         if ( RocketNet.CounterName( RocketNet.Counter.FragmentPayloadReassembled ) != "FRAGMENT_PAYLOAD_REASSEMBLED" )
             Fail( "counter name mapping (fragment family)" );
-        if ( RocketNet.CounterName( RocketNet.Counter.SendArenaFull ) != "SEND_ARENA_FULL" )
+        if ( RocketNet.CounterName( RocketNet.Counter.ReceiveCursorTooSmall ) != "RECEIVE_CURSOR_TOO_SMALL" )
             Fail( "counter name mapping (last counter)" );
         Ok( $"counters: {serverCounters[(int) RocketNet.Counter.PayloadDelivered]} payloads delivered at the server" );
 
