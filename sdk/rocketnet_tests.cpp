@@ -29,6 +29,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_frame_sync.h"
+#include "rocketnet_fragment.h"
 
 #include <sodium.h>
 
@@ -7224,6 +7225,435 @@ void rocketnet_test_transport_acks_and_client_stats()
     rocketnet_server_transport_destroy( server );
 }
 
+// -----------------------------------------
+//                           fragmentation
+// -----------------------------------------
+
+void rocketnet_test_fragment_header_codec()
+{
+    // the frozen header vector from Appendix A: payload id 7, fragment
+    // index 2, fragment count 3
+    uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
+    rocketnet_write_fragment_header( header, 7, 2, 3 );
+    rocketnet_check( memcmp( header, rocketnet_test_fragment_header, ROCKETNET_FRAGMENT_HEADER_BYTES ) == 0 );
+
+    uint32_t payload_id;
+    int fragment_index;
+    int fragment_count;
+    rocketnet_read_fragment_header( header, &payload_id, &fragment_index, &fragment_count );
+    rocketnet_check( payload_id == 7 );
+    rocketnet_check( fragment_index == 2 );
+    rocketnet_check( fragment_count == 3 );
+
+    // the type 9 sealed vector's header: payload id 1, fragment 0 of 2
+    const uint8_t expected_first[ROCKETNET_FRAGMENT_HEADER_BYTES] = { 0x01, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    rocketnet_write_fragment_header( header, 1, 0, 2 );
+    rocketnet_check( memcmp( header, expected_first, ROCKETNET_FRAGMENT_HEADER_BYTES ) == 0 );
+
+    // round trips at the field extremes
+    rocketnet_write_fragment_header( header, 0xFFFFFFFF, 255, 256 );
+    rocketnet_read_fragment_header( header, &payload_id, &fragment_index, &fragment_count );
+    rocketnet_check( payload_id == 0xFFFFFFFF );
+    rocketnet_check( fragment_index == 255 );
+    rocketnet_check( fragment_count == 256 );
+}
+
+void rocketnet_test_fragment_plan()
+{
+    // NEGATIVE: a payload that fits one packet is never fragmented, and a
+    // payload over the 256-fragment maximum is refused
+    int count, stride;
+    rocketnet_check( !rocketnet_fragment_plan( 0, &count, &stride ) );
+    rocketnet_check( !rocketnet_fragment_plan( 1, &count, &stride ) );
+    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES, &count, &stride ) );
+    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, &count, &stride ) );
+
+    // one byte over a single packet splits into two near-halves, never a
+    // full fragment and an empty remainder
+    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_PAYLOAD_BYTES + 1, &count, &stride ) );
+    rocketnet_check( count == 2 );
+    rocketnet_check( stride == ( ROCKETNET_MAX_PAYLOAD_BYTES + 2 ) / 2 );
+
+    // exactly two full strides is two full fragments
+    rocketnet_check( rocketnet_fragment_plan( 2 * ROCKETNET_MAX_FRAGMENT_BYTES, &count, &stride ) );
+    rocketnet_check( count == 2 );
+    rocketnet_check( stride == ROCKETNET_MAX_FRAGMENT_BYTES );
+
+    // the maximum is 256 full fragments exactly
+    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, &count, &stride ) );
+    rocketnet_check( count == ROCKETNET_MAX_FRAGMENTS );
+    rocketnet_check( stride == ROCKETNET_MAX_FRAGMENT_BYTES );
+
+    // the whole range: every plan reconstructs its payload exactly, inside
+    // every cap, with a non-empty remainder
+    for ( int payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES + 1; payload_bytes <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES; payload_bytes++ )
+    {
+        rocketnet_check( rocketnet_fragment_plan( payload_bytes, &count, &stride ) );
+        rocketnet_check( count >= 2 && count <= ROCKETNET_MAX_FRAGMENTS );
+        rocketnet_check( stride >= 1 && stride <= ROCKETNET_MAX_FRAGMENT_BYTES );
+        const int last = payload_bytes - stride * ( count - 1 );
+        rocketnet_check( last >= 1 && last <= stride );
+    }
+}
+
+// the engine-level counter table is the server's family; the client's
+// mirrors it through the protocol tests
+
+static const struct rocketnet_reassembly_counters_t rocketnet_test_fragment_counters = {
+    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
+    ROCKETNET_COUNTER_FRAGMENT_STALE,
+    ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
+    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
+    ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
+    ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
+    ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
+    ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+
+// builds one fragment's type data -- header plus patterned bytes read from
+// the position the fragment claims, so a reassembled payload is verifiable
+// wherever its fragments came from
+
+static int rocketnet_test_build_fragment( uint8_t * type_data, uint32_t payload_id,
+                                          int fragment_index, int fragment_count,
+                                          int fragment_bytes, int stride, uint8_t pattern )
+{
+    rocketnet_write_fragment_header( type_data, payload_id, fragment_index, fragment_count );
+    for ( int i = 0; i < fragment_bytes; i++ )
+        type_data[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + stride * fragment_index + i );
+    return ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes;
+}
+
+static void rocketnet_test_check_reassembled( const uint8_t * payload, int payload_bytes, uint8_t pattern )
+{
+    for ( int i = 0; i < payload_bytes; i++ )
+        rocketnet_check( payload[i] == (uint8_t) ( pattern + i ) );
+}
+
+void rocketnet_test_fragment_reassembly()
+{
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
+
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 2, 4, 8192 );
+    rocketnet_check( set );
+    rocketnet_check( set->slot_arena_bytes == 8192 + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES );
+
+    rocketnet_reassembly_set_begin_update( set );
+
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
+
+    // a three-fragment payload arriving in order completes on its final
+    // fragment and delivers exactly its bytes
+    {
+        int bytes = rocketnet_test_build_fragment( fragment, 1, 0, 3, 100, 100, 0x10 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 0 );
+        bytes = rocketnet_test_build_fragment( fragment, 1, 1, 3, 100, 100, 0x10 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 0 );
+        bytes = rocketnet_test_build_fragment( fragment, 1, 2, 3, 50, 100, 0x10 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 250 );
+        rocketnet_test_check_reassembled( set->completed_payload, 250, 0x10 );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 3 );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
+    }
+
+    // the final fragment arriving first is staged, checked against the
+    // stride when the first non-final fragment fixes it, and placed then --
+    // reordering of a two-fragment payload is an everyday event
+    {
+        int bytes = rocketnet_test_build_fragment( fragment, 2, 1, 2, 40, 100, 0x20 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 0 );
+        bytes = rocketnet_test_build_fragment( fragment, 2, 0, 2, 100, 100, 0x20 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 140 );
+        rocketnet_test_check_reassembled( set->completed_payload, 140, 0x20 );
+    }
+
+    // out of order generally: a four-fragment payload arriving 3, 1, 0, 2
+    {
+        const int order[4] = { 3, 1, 0, 2 };
+        for ( int i = 0; i < 4; i++ )
+        {
+            const int index = order[i];
+            const int size = index == 3 ? 25 : 200;
+            int bytes = rocketnet_test_build_fragment( fragment, 3, index, 4, size, 200, 0x30 );
+            rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+            rocketnet_check( set->completed_bytes == ( i == 3 ? 625 : 0 ) );
+        }
+        rocketnet_test_check_reassembled( set->completed_payload, 625, 0x30 );
+    }
+
+    // the same payload id on another connection is independent state
+    {
+        int bytes = rocketnet_test_build_fragment( fragment, 1, 0, 2, 60, 60, 0x40 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 1, fragment, bytes, counters, table ) );
+        bytes = rocketnet_test_build_fragment( fragment, 1, 1, 2, 30, 60, 0x40 );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 1, fragment, bytes, counters, table ) );
+        rocketnet_check( set->completed_bytes == 90 );
+        rocketnet_test_check_reassembled( set->completed_payload, 90, 0x40 );
+    }
+
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 4 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
+void rocketnet_test_fragment_reassembly_refusals()
+{
+    // every refusal reason from the standard, in its check order, each
+    // firing its own counter and leaving the accepted count unmoved
+
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
+
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192 );
+    rocketnet_check( set );
+    rocketnet_reassembly_set_begin_update( set );
+
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
+    int bytes;
+
+    // NEGATIVE: a payload id of zero is what an uninitialized sender produces
+    bytes = rocketnet_test_build_fragment( fragment, 1, 0, 2, 10, 10, 0 );
+    fragment[0] = 0; fragment[1] = 0; fragment[2] = 0; fragment[3] = 0;
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] == 1 );
+
+    // NEGATIVE: a payload id older than the slot's occupant is stale --
+    // occupy slot 2 with id 6, then offer id 2, which maps to the same slot
+    bytes = rocketnet_test_build_fragment( fragment, 6, 0, 3, 100, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 2, 0, 3, 100, 100, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 1 );
+
+    // NEGATIVE: a fragment count of one is invalid -- a payload that fits
+    // one packet must be type 5
+    bytes = rocketnet_test_build_fragment( fragment, 3, 0, 2, 10, 10, 0 );
+    fragment[5] = 0;                                        // count - 1 = 0
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] == 1 );
+
+    // NEGATIVE: the fragment index must be less than the count
+    bytes = rocketnet_test_build_fragment( fragment, 3, 0, 3, 10, 10, 0 );
+    fragment[4] = 3;                                        // index 3 of count 3
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] == 1 );
+
+    // NEGATIVE: the count-widening attack -- the first fragment pinned id
+    // 6's count at 3, and a later fragment naming 4 refuses while the slot
+    // keeps its state
+    bytes = rocketnet_test_build_fragment( fragment, 6, 1, 4, 100, 100, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] == 1 );
+
+    // NEGATIVE: a non-final fragment of a different size than the pinned
+    // stride refuses, and the slot keeps its state
+    bytes = rocketnet_test_build_fragment( fragment, 6, 1, 3, 99, 100, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 1 );
+
+    // NEGATIVE: the final fragment must not exceed the stride once the
+    // stride is known
+    bytes = rocketnet_test_build_fragment( fragment, 6, 2, 3, 101, 100, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 2 );
+
+    // ...and id 6 still completes: the refusals above left its slot intact
+    bytes = rocketnet_test_build_fragment( fragment, 6, 1, 3, 100, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 6, 2, 3, 50, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 250 );
+
+    // NEGATIVE: a staged final that exceeds the stride refuses the whole
+    // payload when the first non-final fragment fixes it, and the slot
+    // clears -- a fresh payload can claim it immediately
+    bytes = rocketnet_test_build_fragment( fragment, 4, 1, 2, 120, 100, 0 );        // final first, 120 bytes
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 4, 0, 2, 100, 100, 0 );        // the stride pins at 100
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 3 );
+    bytes = rocketnet_test_build_fragment( fragment, 4, 0, 2, 100, 100, 0x50 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 4, 1, 2, 100, 100, 0x50 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 200 );
+
+    // NEGATIVE: the reconstructed payload must not exceed the configured
+    // maximum, refused the moment the stride and the count are known --
+    // the first non-final arrival -- before it occupies a slot's arena
+    bytes = rocketnet_test_build_fragment( fragment, 5, 0, 8, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] == 1 );
+
+    // NEGATIVE: too large discovered by the final's real size -- the
+    // non-final arrivals fit under the maximum with a one-byte final, and
+    // the final that arrives pushes past it, refusing and clearing
+    {
+        const int stride = 1300;                            // 6 x 1300 + 1 = 7801 <= 8192
+        for ( int i = 0; i < 6; i++ )
+        {
+            bytes = rocketnet_test_build_fragment( fragment, 8, i, 7, stride, stride, 0 );
+            rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        }
+        bytes = rocketnet_test_build_fragment( fragment, 8, 6, 7, 500, stride, 0 );  // 7800 + 500 > 8192
+        rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] == 2 );
+    }
+
+    // NEGATIVE: a fragment index already held refuses as a duplicate --
+    // the replay window refuses replayed packets, so this is a sender defect
+    bytes = rocketnet_test_build_fragment( fragment, 9, 0, 3, 100, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 9, 0, 3, 100, 100, 0 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] == 1 );
+
+    // eviction under churn: id 9 occupies slot 1 incomplete; id 13 maps to
+    // the same slot, evicts it, and the abandonment is counted -- the
+    // loss-visibility counter
+    bytes = rocketnet_test_build_fragment( fragment, 13, 0, 2, 100, 100, 0x60 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 1 );
+    bytes = rocketnet_test_build_fragment( fragment, 13, 1, 2, 100, 100, 0x60 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 200 );
+    rocketnet_test_check_reassembled( set->completed_payload, 200, 0x60 );
+
+    // a newer payload id whose first fragment refuses does NOT evict: the
+    // incomplete occupant survives an invalid claim
+    bytes = rocketnet_test_build_fragment( fragment, 10, 0, 3, 100, 100, 0x70 );     // id 10 occupies slot 2 (over id 6, complete and cleared)
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    const uint64_t abandoned_before = counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED];
+    bytes = rocketnet_test_build_fragment( fragment, 14, 0, 2, 10, 10, 0 );
+    fragment[5] = 0;                                        // count 1: refused before any eviction
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == abandoned_before );
+    bytes = rocketnet_test_build_fragment( fragment, 10, 1, 3, 100, 100, 0x70 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 10, 2, 3, 10, 100, 0x70 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 210 );
+    rocketnet_test_check_reassembled( set->completed_payload, 210, 0x70 );
+
+    // received == accepted + the sum of every refusal, the engine's own
+    // accounting invariant over everything this test threw at it
+    const uint64_t refusals = counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
+                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED];
+    rocketnet_check( refusals == 12 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
+void rocketnet_test_fragment_delivery_batch()
+{
+    // the delivered arena is per update: begin_update reclaims it, and a
+    // completion past its capacity is counted rather than silently lost
+
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
+
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 2, 4096 );
+    rocketnet_check( set );
+    rocketnet_check( set->delivered_capacity == 2 );
+
+    rocketnet_reassembly_set_begin_update( set );
+
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
+
+    // three completions in one update: the first two deliver, the third is
+    // reassembled but dropped on the full batch, and both facts are counted
+    for ( uint32_t payload_id = 1; payload_id <= 3; payload_id++ )
+    {
+        int bytes = rocketnet_test_build_fragment( fragment, payload_id, 0, 2, 100, 100, (uint8_t) payload_id );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        bytes = rocketnet_test_build_fragment( fragment, payload_id, 1, 2, 50, 100, (uint8_t) payload_id );
+        rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+        if ( payload_id <= 2 )
+        {
+            rocketnet_check( set->completed_bytes == 150 );
+            rocketnet_test_check_reassembled( set->completed_payload, 150, (uint8_t) payload_id );
+        }
+        else
+        {
+            rocketnet_check( set->completed_bytes == 0 );
+        }
+    }
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 3 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 1 );
+
+    // the next update's window is fresh
+    rocketnet_reassembly_set_begin_update( set );
+    rocketnet_check( set->num_delivered == 0 );
+    int bytes = rocketnet_test_build_fragment( fragment, 4, 0, 2, 100, 100, 0x44 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 4, 1, 2, 50, 100, 0x44 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 150 );
+    rocketnet_test_check_reassembled( set->completed_payload, 150, 0x44 );
+
+    // a reset connection forgets its slots: the incomplete payload below
+    // vanishes without an abandonment -- reset is a lifecycle event, not loss
+    bytes = rocketnet_test_build_fragment( fragment, 5, 0, 2, 100, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_reassembly_set_reset_connection( set, 0 );
+    bytes = rocketnet_test_build_fragment( fragment, 5, 1, 2, 100, 100, 0 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 0 );           // the final restarts the payload; nothing completes
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
+void rocketnet_test_send_arena()
+{
+    struct rocketnet_send_arena_t * arena = rocketnet_send_arena_create( NULL, 4, 1024 );
+    rocketnet_check( arena );
+
+    // slots come back distinct until exhaustion, and every one is owned
+    uint8_t * slots[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        slots[i] = rocketnet_send_arena_acquire( arena );
+        rocketnet_check( slots[i] );
+        rocketnet_check( rocketnet_send_arena_owns( arena, slots[i] ) );
+        for ( int j = 0; j < i; j++ )
+            rocketnet_check( slots[i] != slots[j] );
+    }
+    rocketnet_check( rocketnet_send_arena_acquire( arena ) == NULL );
+
+    // a frame outside the arena is not owned -- how finish and abort route
+    uint8_t elsewhere[16];
+    rocketnet_check( !rocketnet_send_arena_owns( arena, elsewhere ) );
+
+    // the flush releases every slot
+    rocketnet_send_arena_reset( arena );
+    rocketnet_check( rocketnet_send_arena_acquire( arena ) == slots[0] );
+
+    rocketnet_send_arena_destroy( arena );
+}
+
 #define RUN_TEST( test_function )                                           \
     do                                                                      \
     {                                                                       \
@@ -7341,6 +7771,12 @@ void rocketnet_run_tests()
         RUN_TEST( test_ack_rtt_freshness );
         RUN_TEST( test_ack_payload_seal_with_ranges );
         RUN_TEST( test_transport_acks_and_client_stats );
+        RUN_TEST( test_fragment_header_codec );
+        RUN_TEST( test_fragment_plan );
+        RUN_TEST( test_fragment_reassembly );
+        RUN_TEST( test_fragment_reassembly_refusals );
+        RUN_TEST( test_fragment_delivery_batch );
+        RUN_TEST( test_send_arena );
         RUN_TEST( test_frame_sync_wait );
     }
 }
