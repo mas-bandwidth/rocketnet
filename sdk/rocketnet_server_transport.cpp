@@ -16,7 +16,7 @@
 
 // The transport driver is selected at compile time for now: the portable
 // UDP socket by default, the AF_XDP server socket with
-// -DROCKETNET_SERVER_TRANSPORT_XDP=1 on linux. Runtime selection with
+// -DROCKETNET_SERVER_XDP=1 on linux. Runtime selection with
 // preference ordering is a named follow-on.
 
 #if !defined( ROCKETNET_SERVER_XDP )
