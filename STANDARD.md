@@ -1604,7 +1604,8 @@ costs nothing.
 ### The ack block
 
     [largest received] (uint32)         // low 32 bits of the highest session sequence
-                                        // successfully opened from the peer; 0 = none yet
+                                        // successfully opened from the peer; reconstructed
+                                        // zero = none yet (see Validity)
     [range count] (1 byte)
     [first range length] (uint16)       // received run ending at largest, inclusive
     range count times:
@@ -2668,8 +2669,11 @@ number of cookie packets sent. Their separation is diagnostic —
 and it means something entirely different from `NO_COOKIE` climbing.
 
 The same treatment applies to connection responses and to each sealed packet
-type — the session types adding `BAD_ACK_BLOCK` and `ACK_UNKNOWN_SEQUENCE` as
-outcomes per _Acks_, and the payload fragment its refusal reasons from
+type — the session types adding `BAD_ACK_BLOCK` as an outcome, and
+`ACK_UNKNOWN_SEQUENCE` as a **side counter outside the `RECEIVED == Σ
+outcomes` invariant**, per _Acks_: the packet that fires it still succeeds,
+and one block may fire it several times — and the payload fragment its
+refusal reasons from
 _Fragmentation_ (`FRAGMENT_ZERO_PAYLOAD_ID`, `FRAGMENT_COUNT_INVALID`,
 `FRAGMENT_INDEX_OUT_OF_RANGE`, `FRAGMENT_COUNT_MISMATCH`,
 `FRAGMENT_SIZE_MISMATCH`, `FRAGMENT_PAYLOAD_TOO_LARGE`,
