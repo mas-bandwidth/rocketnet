@@ -10,6 +10,7 @@
 */
 
 #include "rocketnet.h"
+#include <assert.h>
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -98,6 +99,7 @@ int main( int argc, char ** argv )
             client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
             if ( !client )
                 break;
+            assert( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
             reconnect_time = rocketnet_time();
             connects++;
         }
@@ -127,9 +129,14 @@ int main( int argc, char ** argv )
                     { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payload_bytes ); failures++; }
             }
 
-            uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+            // sized by the default configured maximum -- the clients here
+            // run the default config, asserted right after create; a custom
+            // config would size this by
+            // rocketnet_client_transport_max_payload_bytes instead
+
+            static uint8_t received[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
             {
                 if ( verify_payload( received, received_bytes ) )
                     payloads_verified++;

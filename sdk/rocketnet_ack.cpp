@@ -224,14 +224,17 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 
 void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
-                                         uint64_t packet_id, int has_packet_id, double time )
+                                         uint64_t packet_id, int has_packet_id,
+                                         uint64_t aggregate_id, double time )
 {
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
+    rocketnet_assert( !( has_packet_id && aggregate_id != 0 ) );        // a fragment's packet id lives in its aggregate
 
     struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     record->sequence = sequence;
     record->packet_id = packet_id;
+    record->aggregate_id = aggregate_id;
     record->send_time = time;
     record->wire_bytes = (uint32_t) wire_bytes;
     record->acked = 0;
@@ -242,6 +245,26 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     // interleaving, the mark ends at the largest recorded sequence
 
     rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
+}
+
+uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
+                                                uint64_t packet_id, int fragment_count )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( fragment_count >= 2 );
+
+    // the id is claimed with one atomic add, so fill threads open
+    // aggregates concurrently; ids ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE
+    // apart cannot coexist in one fill phase, so the slot write is sole
+
+    uint64_t id = rocketnet_platform_atomic_add_u64( &endpoint->num_aggregates, 1 ) + 1;
+
+    struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
+    aggregate->id = id;
+    aggregate->packet_id = packet_id;
+    aggregate->remaining = (uint32_t) fragment_count;
+
+    return id;
 }
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
@@ -310,9 +333,12 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             // a packet id that cannot fit the batch is deferred, never
             // dropped: the record stays unacknowledged, so a later block --
             // every block restates the recent interval -- surfaces it into
-            // a drained batch. the counter records the deferral.
+            // a drained batch. the counter records the deferral. a
+            // fragment record defers on the same condition, because its
+            // acknowledgment may complete its aggregate and surface the
+            // payload's packet id.
 
-            if ( record->has_packet_id && *acked_count >= acked_capacity )
+            if ( ( record->has_packet_id || record->aggregate_id != 0 ) && *acked_count >= acked_capacity )
             {
                 ( *batch_full_counter )++;
             }
@@ -333,7 +359,24 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                 }
 
                 if ( record->has_packet_id )
+                {
                     acked_packet_ids[(*acked_count)++] = record->packet_id;
+                }
+                else if ( record->aggregate_id != 0 )
+                {
+                    // one fragment of an aggregated payload: the payload's
+                    // packet id surfaces only when every fragment's wire
+                    // packet is acknowledged. a recycled aggregate slot no
+                    // longer names this id and the ack is simply absorbed.
+
+                    struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
+                    if ( aggregate->id == record->aggregate_id && aggregate->remaining > 0 )
+                    {
+                        aggregate->remaining--;
+                        if ( aggregate->remaining == 0 )
+                            acked_packet_ids[(*acked_count)++] = aggregate->packet_id;
+                    }
+                }
             }
         }
 

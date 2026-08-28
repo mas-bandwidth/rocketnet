@@ -6,8 +6,11 @@
     simulator at heavy loss, latency, jitter and duplication, under mocked
     time stepped fast -- hours of simulated network abuse per minute of wall
     clock. Its job is smoking out crashes and state machine hangs: every
-    payload is pattern verified, and a watchdog treats a machine that
-    neither progresses nor terminally fails as a wedge and fails loudly.
+    payload is pattern verified -- fragmented payloads included, reassembled
+    under the same abuse, where a lost fragment abandons its payload by
+    design and any other fragment refusal fails the run -- and a watchdog
+    treats a machine that neither progresses nor terminally fails as a
+    wedge and fails loudly.
 
     ./bin/soak_sim            runs forever
     ./bin/soak_sim 200000     bounded iterations
@@ -19,6 +22,7 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_network_simulator.h"
+#include "rocketnet_fragment.h"
 #include "rocketnet_test_vectors.h"
 
 #include <stdio.h>
@@ -85,6 +89,7 @@ int main( int argc, char ** argv )
     server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
+    server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
     server.counters = &server_counters;
 
     #define SOAK_NUM_CLIENTS 8
@@ -131,9 +136,12 @@ int main( int argc, char ** argv )
     uint64_t connects = 0;
     uint64_t terminals = 0;
     uint64_t payloads_verified = 0;
+    uint64_t fragmented_sent = 0;
+    uint64_t fragmented_verified = 0;
     uint64_t failures = 0;
     uint64_t hangs = 0;
     int payload_size = 1;
+    int fragmented_payload_size = ROCKETNET_MAX_PAYLOAD_BYTES + 1;
     uint64_t client_id = 1;
 
 
@@ -243,12 +251,38 @@ int main( int argc, char ** argv )
             if ( bytes > 0 )
                 rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, bytes, time );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
+
+            // an occasional fragmented payload, staggered per client, so
+            // reassembly soaks under the same hostile wire: at this loss a
+            // multi-fragment payload sometimes dies, which is its specified
+            // semantics -- the abandoned counter records it, and nothing
+            // else in the fragment family may ever fire
+
+            if ( ( ( iteration + (uint64_t) c * 29 ) % 233 ) == 0 )
+            {
+                static uint8_t fragmented_payload[16384];
+                generate_payload( fragmented_payload, fragmented_payload_size );
+                static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
+                int fragment_packet_bytes[16];
+                int fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
+                                                                                time, fragment_packets, fragment_packet_bytes, 16 );
+                if ( fragment_count > 0 )
+                {
+                    for ( int i = 0; i < fragment_count; i++ )
+                        rocketnet_network_simulator_send( simulator, &client_address[c], &server_address,
+                                                          fragment_packets + i * ROCKETNET_SEND_BUDGET,
+                                                          fragment_packet_bytes[i], time );
+                    fragmented_sent++;
+                }
+                fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PAYLOAD_BYTES + 1;
+            }
         }
 
         }   // for each client
 
         struct rocketnet_address_t from;
         int bytes;
+        rocketnet_reassembly_set_begin_update( server.reassembly );
         while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
         {
             uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -266,6 +300,13 @@ int main( int argc, char ** argv )
                     payloads_verified++;
                 else
                     { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", delivered_bytes ); failures++; }
+            }
+            if ( server.reassembly->completed_bytes > 0 )
+            {
+                if ( verify_payload( server.reassembly->completed_payload, server.reassembly->completed_bytes ) )
+                    fragmented_verified++;
+                else
+                    { printf( "FRAGMENTED PAYLOAD VERIFY FAILED at server (%d bytes)\n", server.reassembly->completed_bytes ); failures++; }
             }
         }
 
@@ -300,22 +341,55 @@ int main( int argc, char ** argv )
 
         if ( ( iteration % 100000 ) == 0 )
         {
-            printf( "soak_sim: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu failures\n",
+            printf( "soak_sim: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu/%llu fragmented verified (%llu abandoned), %llu failures\n",
                     (unsigned long long) iteration, time - 100.0, (unsigned long long) attempts,
                     (unsigned long long) connects, (unsigned long long) terminals,
-                    (unsigned long long) payloads_verified, (unsigned long long) failures );
+                    (unsigned long long) payloads_verified,
+                    (unsigned long long) fragmented_verified, (unsigned long long) fragmented_sent,
+                    (unsigned long long) server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED],
+                    (unsigned long long) failures );
         }
     }
 
-    printf( "\nsoak_sim finished: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu failures, %llu hangs\n",
+    // The counter discipline at exit: this wire injects loss, so abandoned
+    // payloads are the specified semantics and may be nonzero -- every
+    // other fragment refusal means a defect in the sender or the
+    // reassembly, and must be exactly zero however long the soak ran.
+
+    const int must_stay_zero[] = {
+        ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
+        ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
+        ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
+        ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
+        ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
+        ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
+        ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
+        ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL,
+    };
+    for ( int i = 0; i < (int) ( sizeof(must_stay_zero) / sizeof(must_stay_zero[0]) ); i++ )
+    {
+        if ( server_counters.values[must_stay_zero[i]] != 0 )
+        {
+            printf( "MUST-STAY-ZERO COUNTER FIRED: %s = %llu\n",
+                    rocketnet_counter_name( must_stay_zero[i] ),
+                    (unsigned long long) server_counters.values[must_stay_zero[i]] );
+            failures++;
+        }
+    }
+
+    printf( "\nsoak_sim finished: %llu iterations, %.0f sim seconds, %llu attempts, %llu connects, %llu terminals, %llu payloads verified, %llu/%llu fragmented verified (%llu abandoned), %llu failures, %llu hangs\n",
             (unsigned long long) iteration, time - 100.0, (unsigned long long) attempts,
             (unsigned long long) connects, (unsigned long long) terminals,
-            (unsigned long long) payloads_verified, (unsigned long long) failures, (unsigned long long) hangs );
+            (unsigned long long) payloads_verified,
+            (unsigned long long) fragmented_verified, (unsigned long long) fragmented_sent,
+            (unsigned long long) server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED],
+            (unsigned long long) failures, (unsigned long long) hangs );
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
+    rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );
 
     rocketnet_term();

@@ -19,7 +19,9 @@ Build the native library, then run the smoke test, from the repo root:
 
 The smoke test is the binding's proof: loopback connect over the portable
 backend, byte-exact payload exchange both directions through the
-acquire/commit path and the convenience sends, a deliberate server-side
+acquire/commit path and the convenience sends, a fragmented payload --
+requested above the wire's capacity at StartPacket -- crossing whole with
+its one packet id acknowledged, a deliberate server-side
 disconnect observed by the client, and the negative controls — a corrupted
 connect token refused at create, an oversize finish dropped, and a corrupted
 sealed block refused by the server's signature check. CI runs it on ubuntu

@@ -61,6 +61,17 @@ int main( int argc, char ** argv )
     uint64_t payloads_sent = 0;
     uint64_t payloads_received = 0;
 
+    // the receive buffer sizes by the transport's configured maximum, so
+    // reassembled fragmented payloads always fit the cursor
+
+    uint8_t * received = (uint8_t*) malloc( rocketnet_client_transport_max_payload_bytes( client ) );
+    if ( !received )
+    {
+        rocketnet_client_transport_destroy( client );
+        rocketnet_term();
+        return 1;
+    }
+
     while ( !quit )
     {
         rocketnet_client_transport_update( client, rocketnet_time() );
@@ -80,9 +91,8 @@ int main( int argc, char ** argv )
             rocketnet_client_transport_send_packet( client, payload, sizeof(payload) );
             payloads_sent++;
 
-            uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, rocketnet_client_transport_max_payload_bytes( client ) ) ) > 0 )
             {
                 payloads_received++;
                 if ( ( payloads_received % 100 ) == 0 )
@@ -97,6 +107,8 @@ int main( int argc, char ** argv )
     printf( "\nclient disconnecting\n" );
     rocketnet_client_transport_disconnect( client );
     rocketnet_sleep( 0.1 );
+    free( received );
+
     rocketnet_client_transport_destroy( client );
 
     rocketnet_term();

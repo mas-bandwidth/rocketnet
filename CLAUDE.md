@@ -50,11 +50,15 @@ whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives —
 and, on the connection protocol, the general acks: every session packet's
 sealed plaintext opens with an ack block, and the transport surfaces the
 acknowledged packet ids per update. Delivery notification is the primitive;
-the transport informs and never resends.
+the transport informs and never resends. Fragmentation and reassembly are the
+transport's own self-contained mechanism: a payload requested above the
+wire's capacity at start_packet splits into type 9 fragments at finish and
+reassembles per connection on the far side, unreliable semantics standing —
+a lost fragment loses the whole payload, counted, never resent.
 
 **Leaves to the caller:** serialization and bit packing (absolutely — this is
 the design), reliability policy on top of the notifications, sequencing,
-fragmentation (#76), payload encryption above the seal, DNS, and on the
+payload encryption above the seal, DNS, and on the
 direct path all connection semantics.
 `rocketnet_server_socket_t` has no client table; `ROCKETNET_MAX_CLIENTS` is only an
 array-sizing constant.

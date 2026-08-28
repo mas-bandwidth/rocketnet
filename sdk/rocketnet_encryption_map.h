@@ -53,6 +53,7 @@ struct rocketnet_encryption_mapping_t
     double last_send_time;                  // refreshed by every send; keep-alives are suppressed by traffic
     uint64_t send_sequence_handshake;       // next handshake-phase sequence to send
     uint64_t send_sequence_session;         // next session-phase sequence to send
+    uint64_t send_fragment_payload_id;      // next fragmented payload id to send, per _Fragmentation_
     struct rocketnet_replay_protection_t replay_handshake;
     struct rocketnet_replay_protection_t replay_session;
 };

@@ -133,6 +133,7 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     mapping->handshake_deadline = handshake_deadline;
     mapping->send_sequence_handshake = 1;
     mapping->send_sequence_session = 1;
+    mapping->send_fragment_payload_id = 1;
 
     int bucket = rocketnet_encryption_map_bucket( map, address );
     map->next[index] = map->bucket_head[bucket];

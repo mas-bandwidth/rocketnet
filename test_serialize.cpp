@@ -60,7 +60,7 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        check( rocketnet::client_start_packet( client, stream, context ) );
+        check( rocketnet::client_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, stream, context ) );
 
         check( stream.SerializeBits( 0xdecafbad, 32 ) );
         check( stream.SerializeInteger( -17, -100, 100 ) );
@@ -106,7 +106,7 @@ int main()
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
-        check( rocketnet::server_start_packet( server, 0, stream, context ) );
+        check( rocketnet::server_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, stream, context ) );
         check( stream.SerializeBits( 0xabad1dea, 32 ) );
         rocketnet::server_finish_packet( server, stream, context );
         rocketnet_server_transport_send_packets( server );

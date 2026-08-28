@@ -1793,7 +1793,13 @@ in order, each with its own counter:
 * A payload id older than the id currently occupying its slot refuses as
   stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
   its bytes into the newer payload's slot is the aliasing this check exists
-  to prevent.
+  to prevent. Older is serial-number arithmetic on the 32-bit values, so no
+  id can poison a slot: a
+  plain comparison would let one defective near-maximum id refuse every later
+  id as stale forever, where under the wrapping comparison a later id is
+  newer, displaces the occupant (counted abandoned), and the slot recovers as
+  ids advance. At worst payloads die at the wrap boundary; nothing opens
+  wrongly.
 * Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
   of 1 refuses — `FRAGMENT_COUNT_INVALID`).
 * Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).
@@ -1818,15 +1824,30 @@ in order, each with its own counter:
   (`FRAGMENT_PAYLOAD_TOO_LARGE`). The check runs the moment both the stride
   and the count are known — usually the first non-final arrival — never
   deferred to completion, so an over-large payload is refused before it
-  occupies a slot's arena rather than after filling it.
+  occupies a slot's arena rather than after filling it. When the final
+  fragment has not yet arrived, its contribution is counted as its one-byte
+  minimum, and the check re-runs with the real final size on the final's
+  arrival. A payload that cannot fit even at that minimum clears its slot
+  immediately — waiting would only convert this refusal into an abandonment
+  later.
 * A fragment index already held for this payload id refuses as a duplicate
-  (`FRAGMENT_ALREADY_RECEIVED`); the sealed packet's replay protection already
-  refuses replayed *packets*, so this fires only on a sender defect.
+  (`FRAGMENT_DUPLICATE_INDEX`); the sealed packet's replay protection already
+  refuses replayed *packets*, so this fires only on a sender defect. *(An
+  earlier draft named this reason `FRAGMENT_ALREADY_RECEIVED`, which collides
+  with the name the cross-product rule itself assigns to the type's replay
+  outcome; the rename resolves the collision the rule created, and
+  `FRAGMENT_ALREADY_RECEIVED` is the replay outcome, as for every session
+  type.)*
 
 When every fragment of a payload id is present, the payload is delivered to
 the application in arrival position — fragmented payloads take their place in
 the arrival order at the moment they complete — and the slot is cleared
-(`FRAGMENT_PAYLOAD_REASSEMBLED`). A slot evicted to make room for a newer
+(`FRAGMENT_PAYLOAD_REASSEMBLED`). Because the slot clears, a late duplicate
+fragment of a delivered payload id from a defective sender restarts a ghost
+reassembly that is eventually abandoned — accepted behavior: replay
+protection already refuses the wire-replay case, and this layer does not
+remember completed ids to police senders that resend against its contract. A
+slot evicted to make room for a newer
 payload id while incomplete counts `FRAGMENT_PAYLOAD_ABANDONED`, which is the
 loss-visibility counter: it is how a deployment sees fragmented payloads dying
 to loss, and a soak asserts it stays zero on a clean link.
@@ -2677,7 +2698,9 @@ refusal reasons from
 _Fragmentation_ (`FRAGMENT_ZERO_PAYLOAD_ID`, `FRAGMENT_COUNT_INVALID`,
 `FRAGMENT_INDEX_OUT_OF_RANGE`, `FRAGMENT_COUNT_MISMATCH`,
 `FRAGMENT_SIZE_MISMATCH`, `FRAGMENT_PAYLOAD_TOO_LARGE`,
-`FRAGMENT_ALREADY_RECEIVED`, `FRAGMENT_STALE`) — and to the lifecycle events
+`FRAGMENT_DUPLICATE_INDEX`, `FRAGMENT_STALE`) — the type's replay outcome is
+`FRAGMENT_ALREADY_RECEIVED`, the cross-product name, which is why the
+duplicate-index refusal carries its own — and to the lifecycle events
 that no packet triggers:
 
 * `MAPPING_CREATED`, `MAPPING_IDLE_TIMEOUT`, `MAPPING_TABLE_FULL`
