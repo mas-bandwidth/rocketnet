@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_protocol.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
@@ -70,6 +71,16 @@ static int rocketnet_packet_type_has_session_nonce( uint8_t packet_type )
     return packet_type == ROCKETNET_CONNECTION_DENIED_PACKET || packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET;
 }
 
+// the sealed types: 1 through 6, 8 and 9. type 0 (request) and type 7
+// (cookie) are the two unsealed packets.
+
+static int rocketnet_packet_type_is_sealed( uint8_t packet_type )
+{
+    return ( packet_type >= ROCKETNET_CONNECTION_DENIED_PACKET && packet_type <= ROCKETNET_CONNECTION_DISCONNECT_PACKET ) ||
+           packet_type == ROCKETNET_CONNECTION_ACK_PACKET ||
+           packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+}
+
 static int rocketnet_packet_type_has_ephemeral_in_ad( uint8_t packet_type )
 {
     return packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET || packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET;
@@ -105,14 +116,20 @@ static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
 }
 
 // The in-place twin of rocketnet_write_sealed_packet for the payload type
-// only: the payload is ALREADY at wire_start + 10, written there by the
-// game through the acquire/commit surface, and is sealed where it lies --
-// the header lands in front of it and the tag behind it, no staging copy.
-// libsodium's chacha20poly1305_ietf encrypt is documented safe in place.
+// only: the payload is ALREADY at wire_start + 10 + the 7-byte minimum ack
+// block, written there by the game through the acquire/commit surface, and
+// with the minimum block -- everything received, the common case on a
+// clean link -- it is sealed where it lies: the header and block land in
+// front of it and the tag behind it, no staging copy. A block carrying
+// loss ranges moves the payload up by the extra bytes first, bounded by
+// the send budget. libsodium's chacha20poly1305_ietf encrypt is documented
+// safe in place.
 
 int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
                                              const uint8_t * filter_value,
                                              uint64_t sequence,
+                                             const uint8_t * ack_block,
+                                             int ack_block_bytes,
                                              int payload_bytes,
                                              uint64_t protocol_id,
                                              const uint8_t * connection_salt,
@@ -120,20 +137,32 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
 {
     rocketnet_assert( wire_start );
     rocketnet_assert( filter_value );
+    rocketnet_assert( ack_block );
     rocketnet_assert( connection_salt );
     rocketnet_assert( key );
 
     if ( sequence == 0 )
         return 0;
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES )
+    if ( ack_block_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || ack_block_bytes > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        return 0;
+
+    if ( payload_bytes < 1 ||
+         ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes > ROCKETNET_SEND_BUDGET )
         return 0;
 
     uint8_t * p = wire_start;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, filter_value );
     rocketnet_write_uint32( &p, (uint32_t) ( sequence & 0xFFFFFFFF ) );
 
-    rocketnet_assert( p == wire_start + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET );
+    uint8_t * payload = wire_start + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET;
+
+    if ( ack_block_bytes > ROCKETNET_ACK_BLOCK_MIN_BYTES )
+    {
+        memmove( payload + ( ack_block_bytes - ROCKETNET_ACK_BLOCK_MIN_BYTES ), payload, (size_t) payload_bytes );
+    }
+
+    memcpy( p, ack_block, (size_t) ack_block_bytes );
 
     uint8_t associated_data[ROCKETNET_AD_WITH_EPHEMERAL_BYTES];
     int associated_data_bytes = rocketnet_write_packet_associated_data( associated_data, protocol_id, ROCKETNET_CONNECTION_PAYLOAD_PACKET, connection_salt, NULL );
@@ -142,7 +171,8 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
     rocketnet_sequence_nonce( nonce, sequence );
 
     unsigned long long sealed_bytes = 0;
-    if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p, (unsigned long long) payload_bytes,
+    if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p,
+                                                    (unsigned long long) ( ack_block_bytes + payload_bytes ),
                                                     associated_data, (unsigned long long) associated_data_bytes,
                                                     NULL, nonce, key ) != 0 )
         return 0;
@@ -167,7 +197,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
     rocketnet_assert( connection_salt );
     rocketnet_assert( key );
 
-    if ( packet_type < ROCKETNET_CONNECTION_DENIED_PACKET || packet_type > ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    if ( !rocketnet_packet_type_is_sealed( packet_type ) )
         return 0;
 
     if ( sequence == 0 )
@@ -222,7 +252,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
     rocketnet_assert( connection_salt );
     rocketnet_assert( key );
 
-    if ( packet_type < ROCKETNET_CONNECTION_DENIED_PACKET || packet_type > ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    if ( !rocketnet_packet_type_is_sealed( packet_type ) )
         return -1;
 
     if ( sequence == 0 )
@@ -308,23 +338,21 @@ void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
     rocketnet_assert( p - packet_data == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
 }
 
-uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened )
+uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
 {
     // candidates share the wire value in their low 32 bits. take the one
-    // nearest to expected = highest opened + 1; on an exact tie, the larger.
-
-    uint64_t expected = highest_opened + 1;
+    // nearest to expected; on an exact tie, the larger.
 
     uint64_t base = expected & 0xFFFFFFFF00000000ULL;
 
-    uint64_t candidate = base | wire_sequence;
+    uint64_t candidate = base | wire_value;
 
     uint64_t best = candidate;
     uint64_t best_distance = candidate > expected ? candidate - expected : expected - candidate;
 
     if ( base >= 0x100000000ULL )
     {
-        uint64_t below = ( base - 0x100000000ULL ) | wire_sequence;
+        uint64_t below = ( base - 0x100000000ULL ) | wire_value;
         uint64_t distance = below > expected ? below - expected : expected - below;
         if ( distance < best_distance || ( distance == best_distance && below > best ) )
         {
@@ -334,7 +362,7 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
     }
 
     {
-        uint64_t above = ( base + 0x100000000ULL ) | wire_sequence;
+        uint64_t above = ( base + 0x100000000ULL ) | wire_value;
         uint64_t distance = above > expected ? above - expected : expected - above;
         if ( distance < best_distance || ( distance == best_distance && above > best ) )
         {
@@ -344,6 +372,11 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
     }
 
     return best;
+}
+
+uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened )
+{
+    return rocketnet_reconstruct_near( wire_sequence, highest_opened + 1 );
 }
 
 int rocketnet_write_address_bytes( uint8_t * output, const struct rocketnet_address_t * address )

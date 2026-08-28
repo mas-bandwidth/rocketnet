@@ -74,9 +74,18 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
 // client_ephemeral_public_key is required for types 2 and 3 and must be NULL
 // otherwise.
 
+// The payload seal in place: the payload sits at wire_start + 10 + the
+// 7-byte minimum ack block, and the block (built by the caller from its
+// receive state, truncated to the budget's room) lands in front of it --
+// exactly there when it is the minimum, moving the payload up by the extra
+// bytes otherwise. The frame layout in rocketnet_constants.h reserves the
+// room.
+
 int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
                                              const uint8_t * filter_value,
                                              uint64_t sequence,
+                                             const uint8_t * ack_block,
+                                             int ack_block_bytes,
                                              int payload_bytes,
                                              uint64_t protocol_id,
                                              const uint8_t * connection_salt,
@@ -135,6 +144,11 @@ void rocketnet_write_connection_cookie_packet( uint8_t * packet_data,
 // this is for determinism between implementations.
 
 uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened );
+
+// the nearest-candidate rule alone, for the ack block's largest received,
+// whose expected value is the sender's own highest sent sequence directly
+
+uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected );
 
 // The cookie: address validation before any asymmetric work. The MAC is a
 // 16-byte keyed generichash over the exact input encoding from the standard:

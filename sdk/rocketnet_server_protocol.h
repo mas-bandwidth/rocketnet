@@ -15,6 +15,7 @@
 #include "rocketnet_token_tables.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_client_slots.h"
+#include "rocketnet_ack.h"
 
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
@@ -55,6 +56,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_used_token_history_t * used_token_history;
     struct rocketnet_admitted_token_set_t * admitted_token_set;
     struct rocketnet_client_slots_t * client_slots;
+    struct rocketnet_server_acks_t * acks;
     struct rocketnet_counters_t * counters;
 };
 
@@ -108,13 +110,27 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
                               double current_time );
 
 // Builds a keep-alive for a connected client at the mapping's next session
-// sequence, and stamps the send. Returns the wire size, or 0 for a client
-// index that is not connected.
+// sequence, and stamps the send. The sealed plaintext opens with the ack
+// block built from this connection's receive state, so the wire size
+// varies: 41 bytes with the minimum block, growing with loss events, never
+// past the send budget. Returns the wire size, or 0 for a client index
+// that is not connected.
 
 int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * server,
                                        int client_index,
                                        double current_time,
                                        uint8_t * out_packet );
+
+// The standalone ack, type 8: built when the client's ack debt -- eliciting
+// packets received since the last block this end sent -- has reached the
+// threshold. Sending any block resets the debt, so the connection's own
+// traffic normally keeps this at zero; it fires when inbound outruns
+// outbound. Returns the wire size, or 0 when not due or not connected.
+
+int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol_t * server,
+                                                int client_index,
+                                                double current_time,
+                                                uint8_t * out_packet );
 
 // The paced form: builds the keep-alive only when the send-rate interval has
 // elapsed since anything was last sent to this client -- keep-alives are
@@ -131,15 +147,18 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
 
 // The deliberate server-side disconnect of one connected client: fills the
 // redundant burst -- ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS sealed
-// disconnect packets at consecutive session sequences -- into out_packets,
-// sets out_packet_count, then releases the slot and destroys the mapping
-// immediately. The reasons live above the library: the game decides why.
-// Does nothing (count zero) when the client is not connected.
+// disconnect packets at consecutive session sequences, each opening with
+// the same ack block, at ROCKETNET_SEND_BUDGET stride in out_packets --
+// sets out_packet_count and the shared per-packet wire size, then releases
+// the slot and destroys the mapping immediately. The reasons live above
+// the library: the game decides why. Does nothing (count zero) when the
+// client is not connected.
 
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
                                          int client_index,
                                          uint8_t * out_packets,
-                                         int * out_packet_count );
+                                         int * out_packet_count,
+                                         int * out_packet_bytes );
 
 // Builds a payload packet for a connected client. Returns the wire size, or
 // 0 when the client is not connected or the payload does not fit.
@@ -149,9 +168,15 @@ int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t 
                                              struct rocketnet_address_t * to,
                                              uint64_t * sequence );
 
+// seals the frame's payload in place, opening the sealed plaintext with the
+// ack block, records the sent packet in the delivery bookkeeping under
+// packet_id -- the join key surfaced when the packet is acknowledged -- and
+// stamps the send.
+
 int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protocol_t * server,
                                                   int client_index,
                                                   uint64_t sequence,
+                                                  uint64_t packet_id,
                                                   uint8_t * wire_start,
                                                   int payload_bytes,
                                                   double current_time );

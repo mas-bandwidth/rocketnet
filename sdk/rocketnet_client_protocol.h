@@ -16,6 +16,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_ack.h"
 
 // The client state machine, per STANDARD.md: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
@@ -84,6 +85,17 @@ struct rocketnet_client_protocol_t
     double rtt_estimate;                                    // seconds; 0 until the first sample
     int rtt_session_sampled;                                // the session round trip is sampled once
     uint64_t received_session_sequence;
+
+    // The general acks: this end's delivery bookkeeping and the per-update
+    // batch of newly-acknowledged packet ids the transport surfaces. Every
+    // session packet sent carries a block built from replay_session; every
+    // session packet received applies its block here. The rtt estimate
+    // above seeds from the handshake and the endpoint's first-ack samples
+    // refresh it continuously from there.
+
+    struct rocketnet_ack_endpoint_t ack;
+    int num_acked;
+    uint64_t acked_packet_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
@@ -133,8 +145,13 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 
 int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence );
 
+// seals the frame's payload in place, opening the sealed plaintext with the
+// ack block, and records the sent packet in the delivery bookkeeping under
+// packet_id -- the join key surfaced when the packet is acknowledged
+
 int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
                                                   uint64_t sequence,
+                                                  uint64_t packet_id,
                                                   uint8_t * wire_start,
                                                   int payload_bytes,
                                                   double current_time );
@@ -146,14 +163,16 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
                                     uint8_t * out_packet );
 
 // The deliberate disconnect: fills the redundant burst -- ten sealed
-// disconnect packets at consecutive session sequences -- into out_packets
-// (ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * disconnect wire bytes), sets
-// out_packet_count, and enters _disconnected_ immediately without waiting
-// for anything. Before the session keys exist there is nothing to seal, so
-// the burst is empty and the state simply resets.
+// disconnect packets at consecutive session sequences, each opening with
+// the same ack block, at ROCKETNET_SEND_BUDGET stride in out_packets --
+// sets out_packet_count and the shared per-packet wire size, and enters
+// _disconnected_ immediately without waiting for anything. Before the
+// session keys exist there is nothing to seal, so the burst is empty and
+// the state simply resets.
 
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
-                                  int * out_packet_count );
+                                  int * out_packet_count,
+                                  int * out_packet_bytes );
 
 #endif // #ifndef ROCKETNET_CLIENT_PROTOCOL_H

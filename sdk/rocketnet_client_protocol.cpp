@@ -54,6 +54,7 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->client_index = -1;
     client->state_first_send_time = -1.0;
+    rocketnet_ack_endpoint_reset( &client->ack );
 }
 
 // one rtt sample: first send in the current state to the first packet that
@@ -100,6 +101,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     client->client_index = -1;
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->state_first_send_time = -1.0;
+    rocketnet_ack_endpoint_reset( &client->ack );
 
     rocketnet_read_connect_token( &client->token, connect_token );
     rocketnet_read_signed_connect_data( &client->signed_fields, client->token.signed_connect_data );
@@ -188,6 +190,47 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
     }
 }
 
+// Builds one sealed session packet: the sealed plaintext opens with the ack
+// block built from this connection's receive state, and the per-packet type
+// data follows it. Every session send passes through here or through the
+// payload's in-place twin, so sending any packet sends a block, and sending
+// a block resets the ack debt. The sent packet is recorded in the delivery
+// bookkeeping -- these sequences carry no packet id and surface nothing.
+
+static int rocketnet_client_write_session_packet( struct rocketnet_client_protocol_t * client,
+                                                  uint8_t packet_type,
+                                                  const uint8_t * type_data,
+                                                  int type_data_bytes,
+                                                  double current_time,
+                                                  uint8_t * out_packet )
+{
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
+    rocketnet_assert( type_data_bytes <= 8 );
+
+    int block_bytes = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &client->replay_session );
+    if ( type_data_bytes > 0 )
+        memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
+
+    uint64_t sequence = client->send_sequence_session;
+
+    int bytes = rocketnet_write_sealed_packet( out_packet, packet_type,
+                                               client->filter_value, sequence,
+                                               NULL, plaintext, block_bytes + type_data_bytes,
+                                               client->signed_fields.protocol_id, client->connection_salt,
+                                               NULL, client->keys.session_client_to_server );
+    if ( bytes == 0 )
+        return 0;
+
+    rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
+
+    client->send_sequence_session++;
+
+    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, current_time );
+    client->ack.ack_debt = 0;
+
+    return bytes;
+}
+
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                               double current_time,
                               uint8_t * out_packet,
@@ -205,10 +248,28 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         return;
 
     // one sending rule: the scheduled rate, nothing sent because a packet
-    // arrived, no immediate-send case for any transition
+    // arrived, no immediate-send case for any transition. the standalone
+    // ack alone rides outside the rate: when the ack debt reaches the
+    // threshold between scheduled sends, a type 8 goes out now -- that is
+    // what keeps notification latency flat when inbound outruns outbound,
+    // and it never ping-pongs because a received type 8 adds no debt.
 
     if ( current_time - client->last_send_time < 1.0 / client->send_rate )
+    {
+        if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
+        {
+            int bytes = rocketnet_client_write_session_packet( client, ROCKETNET_CONNECTION_ACK_PACKET,
+                                                               NULL, 0, current_time, out_packet );
+            if ( bytes > 0 )
+            {
+                client->last_send_time = current_time;
+                *out_packet_bytes = bytes;
+                rocketnet_spam( "client sent standalone ack" );
+            }
+        }
         return;
+    }
 
     client->last_send_time = current_time;
 
@@ -246,13 +307,9 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
             uint8_t * p = keep_alive_data;
             rocketnet_write_uint32( &p, (uint32_t) client->client_index );
             rocketnet_write_uint32( &p, (uint32_t) client->max_clients );
-            int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                       client->filter_value, client->send_sequence_session,
-                                                       NULL, keep_alive_data, 8,
-                                                       client->signed_fields.protocol_id, client->connection_salt,
-                                                       NULL, client->keys.session_client_to_server );
-            rocketnet_assert( bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_WIRE_BYTES );
-            client->send_sequence_session++;
+            int bytes = rocketnet_client_write_session_packet( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                                               keep_alive_data, 8, current_time, out_packet );
+            rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
             *out_packet_bytes = bytes;
             rocketnet_spam( "client sent keep alive" );
             break;
@@ -515,30 +572,51 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     return 1;
 }
 
-// the session types share one shape: state gate, sequence, replay check,
-// open, replay advance -- then their own action
+// the session types share one shape: size floor, state gate, sequence,
+// replay check, open, replay advance, ack block -- then their own action
 
 struct rocketnet_client_session_counters_t
 {
     int received;
     int wrong_state;
+    int wrong_size;
     int zero_sequence;
     int already_received;
     int did_not_open;
+    int bad_ack_block;
 };
+
+// Opens one session packet through the reading order and consumes the ack
+// block at the front of the sealed data. expected_type_data_bytes is the
+// exact size the type data must be, or -1 for the payload's 1-and-up
+// range. On success the type data's offset into opened lands in
+// out_type_data_offset and its length is returned; -1 means refused, the
+// reason counted.
 
 static int rocketnet_client_open_session_packet( struct rocketnet_client_protocol_t * client,
                                                  uint8_t packet_type,
                                                  const struct rocketnet_client_session_counters_t * type_counters,
+                                                 int min_wire_bytes,
+                                                 int expected_type_data_bytes,
                                                  const uint8_t * packet_data,
                                                  int packet_bytes,
                                                  double current_time,
                                                  uint8_t * opened,
-                                                 uint64_t * out_sequence )
+                                                 int * out_type_data_offset )
 {
     uint64_t * counters = client->counters->values;
 
     counters[type_counters->received]++;
+
+    // the size table's per-type floor, before any other per-type work: a
+    // packet below it is WRONG_SIZE, never a later refusal
+
+    if ( packet_bytes < min_wire_bytes )
+    {
+        rocketnet_spam( "client ignored session packet. below the type's wire floor" );
+        counters[type_counters->wrong_size]++;
+        return -1;
+    }
 
     // session traffic exists only from sending connection response on: the
     // keys that open it are born at the challenge
@@ -578,9 +656,12 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
         return -1;
     }
 
+    // mark received and advance the high-water mark first, per the reading
+    // order: no malformed or mis-sized packet has any effect beyond its
+    // replay-window mark
+
     rocketnet_replay_advance( &client->replay_session, sequence );
     client->last_receive_time = current_time;
-    *out_sequence = sequence;
 
     client->received_session_sequence = sequence;
 
@@ -593,7 +674,47 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
         client->rtt_session_sampled = 1;
     }
 
-    return opened_bytes;
+    // the ack block at the front of the opened data, validated on the
+    // reconstructed 64-bit largest against this end's own highest sent
+    // session sequence: a malformed block refuses the whole packet, and
+    // the type data behind it is never examined
+
+    struct rocketnet_ack_block_t block;
+    int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
+    if ( block_bytes == 0 )
+    {
+        rocketnet_spam( "client ignored session packet. bad ack block" );
+        counters[type_counters->bad_ack_block]++;
+        return -1;
+    }
+
+    // the opened size, less the block, must match the type
+
+    int type_data_bytes = opened_bytes - block_bytes;
+    if ( expected_type_data_bytes >= 0 ? type_data_bytes != expected_type_data_bytes : type_data_bytes < 1 )
+    {
+        rocketnet_spam( "client ignored session packet. wrong opened size" );
+        counters[type_counters->did_not_open]++;
+        return -1;
+    }
+
+    // both checks passed: the block's authenticated delivery information
+    // applies now, and eliciting types add to the ack debt. type 8 never
+    // elicits: that exemption is what makes the ack conversation terminate.
+
+    rocketnet_ack_endpoint_record_received( &client->ack, sequence, packet_bytes, current_time );
+
+    rocketnet_ack_endpoint_process_block( &client->ack, &block, current_time,
+                                          client->acked_packet_ids, ROCKETNET_SENT_PACKET_BUFFER_SIZE, &client->num_acked,
+                                          &counters[ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE],
+                                          &counters[ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL] );
+
+    if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET )
+        client->ack.ack_debt++;
+
+    *out_type_data_offset = block_bytes;
+
+    return type_data_bytes;
 }
 
 static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol_t * client,
@@ -603,25 +724,21 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
 {
     static const struct rocketnet_client_session_counters_t type_counters = {
         ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE,
+        ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE,
         ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED,
-        ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN };
+        ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK };
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    uint64_t sequence = 0;
-    int opened_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                             &type_counters, packet_data, packet_bytes,
-                                                             current_time, opened, &sequence );
-    if ( opened_bytes < 0 )
+    int type_data_offset = 0;
+    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                                                &type_counters,
+                                                                ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 8,
+                                                                packet_data, packet_bytes,
+                                                                current_time, opened, &type_data_offset );
+    if ( type_data_bytes < 0 )
         return 0;
 
-    if ( opened_bytes != 8 )
-    {
-        rocketnet_spam( "client ignored keep alive. wrong size" );
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN]++;
-        return 0;
-    }
-
-    const uint8_t * p = opened;
+    const uint8_t * p = opened + type_data_offset;
     int client_index = (int) rocketnet_read_uint32( &p );
     int max_clients = (int) rocketnet_read_uint32( &p );
 
@@ -650,8 +767,9 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
 {
     static const struct rocketnet_client_session_counters_t type_counters = {
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE,
+        ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_SIZE,
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED,
-        ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN };
+        ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_PAYLOAD_BAD_ACK_BLOCK };
 
     // payloads are accepted from sending connection response on, exactly
     // like every session type: the keys that open them are born at the
@@ -660,25 +778,50 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
     // clients -- there is no window in which a payload cannot be understood.
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    uint64_t sequence = 0;
-    int opened_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                             &type_counters, packet_data, packet_bytes,
-                                                             current_time, opened, &sequence );
-    if ( opened_bytes < 0 )
+    int type_data_offset = 0;
+    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                                &type_counters,
+                                                                ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES, -1,
+                                                                packet_data, packet_bytes,
+                                                                current_time, opened, &type_data_offset );
+    if ( type_data_bytes < 0 )
         return 0;
 
-    if ( opened_bytes < 1 )
-    {
-        rocketnet_spam( "client ignored payload. empty" );
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN]++;
-        return 0;
-    }
-
-    memcpy( out_payload, opened, (size_t) opened_bytes );
-    *out_payload_bytes = opened_bytes;
+    memcpy( out_payload, opened + type_data_offset, (size_t) type_data_bytes );
+    *out_payload_bytes = type_data_bytes;
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED]++;
-    rocketnet_spam( "client received payload (%d bytes)", opened_bytes );
+    rocketnet_spam( "client received payload (%d bytes)", type_data_bytes );
+
+    return 1;
+}
+
+static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * client,
+                                         const uint8_t * packet_data,
+                                         int packet_bytes,
+                                         double current_time )
+{
+    static const struct rocketnet_client_session_counters_t type_counters = {
+        ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED, ROCKETNET_COUNTER_CLIENT_ACK_WRONG_STATE,
+        ROCKETNET_COUNTER_CLIENT_ACK_WRONG_SIZE,
+        ROCKETNET_COUNTER_CLIENT_ACK_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED,
+        ROCKETNET_COUNTER_CLIENT_ACK_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_ACK_BAD_ACK_BLOCK };
+
+    // the standalone ack: the block is the packet. opened, replay-marked
+    // and reported like any session packet, and never eliciting one back.
+
+    uint8_t opened[ROCKETNET_RECEIVE_CEILING];
+    int type_data_offset = 0;
+    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_ACK_PACKET,
+                                                                &type_counters,
+                                                                ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES, 0,
+                                                                packet_data, packet_bytes,
+                                                                current_time, opened, &type_data_offset );
+    if ( type_data_bytes < 0 )
+        return 0;
+
+    client->counters->values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED]++;
+    rocketnet_spam( "client received standalone ack" );
 
     return 1;
 }
@@ -690,23 +833,19 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
 {
     static const struct rocketnet_client_session_counters_t type_counters = {
         ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_STATE,
+        ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_SIZE,
         ROCKETNET_COUNTER_CLIENT_DISCONNECT_ZERO_SEQUENCE, ROCKETNET_COUNTER_CLIENT_DISCONNECT_ALREADY_RECEIVED,
-        ROCKETNET_COUNTER_CLIENT_DISCONNECT_DID_NOT_OPEN };
+        ROCKETNET_COUNTER_CLIENT_DISCONNECT_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_DISCONNECT_BAD_ACK_BLOCK };
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    uint64_t sequence = 0;
-    int opened_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-                                                             &type_counters, packet_data, packet_bytes,
-                                                             current_time, opened, &sequence );
-    if ( opened_bytes < 0 )
+    int type_data_offset = 0;
+    int type_data_bytes = rocketnet_client_open_session_packet( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+                                                                &type_counters,
+                                                                ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES, 0,
+                                                                packet_data, packet_bytes,
+                                                                current_time, opened, &type_data_offset );
+    if ( type_data_bytes < 0 )
         return 0;
-
-    if ( opened_bytes != 0 )
-    {
-        rocketnet_spam( "client ignored disconnect. wrong size" );
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_DID_NOT_OPEN]++;
-        return 0;
-    }
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED]++;
     rocketnet_debug( "client disconnected by server" );
@@ -743,7 +882,11 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
         return 0;
     }
 
-    if ( packet_type > ROCKETNET_CONNECTION_COOKIE_PACKET )
+    // type 9, the payload fragment, is a real type in the standard whose
+    // receive path lands with #76; until then it drops here with the
+    // reserved types 10 through 255
+
+    if ( packet_type > ROCKETNET_CONNECTION_ACK_PACKET )
     {
         rocketnet_spam( "client dropped packet. reserved type" );
         counters[ROCKETNET_COUNTER_RESERVED_TYPE]++;
@@ -775,6 +918,8 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
             return rocketnet_client_process_payload( client, packet_data, packet_bytes, current_time, out_payload, out_payload_bytes );
         case ROCKETNET_CONNECTION_DISCONNECT_PACKET:
             return rocketnet_client_process_disconnect( client, packet_data, packet_bytes, current_time );
+        case ROCKETNET_CONNECTION_ACK_PACKET:
+            return rocketnet_client_process_ack( client, packet_data, packet_bytes, current_time );
     }
 
     return 0;
@@ -800,6 +945,7 @@ int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t 
 
 int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
                                                   uint64_t sequence,
+                                                  uint64_t packet_id,
                                                   uint8_t * wire_start,
                                                   int payload_bytes,
                                                   double current_time )
@@ -810,7 +956,21 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
 
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+        return 0;
+
+    // the application's bytes come first: the block truncates to the
+    // budget's remaining room, oldest entries dropped first. the 7-byte
+    // minimum always fits.
+
+    uint8_t ack_block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
+    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &client->replay_session );
+
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->filter_value, sequence,
+                                                              ack_block, ack_block_bytes,
                                                               payload_bytes, client->signed_fields.protocol_id,
                                                               client->connection_salt,
                                                               client->keys.session_client_to_server );
@@ -818,6 +978,9 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
         return 0;
 
     rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
+
+    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, wire_bytes, packet_id, 1, current_time );
+    client->ack.ack_debt = 0;
 
     return wire_bytes;
 }
@@ -837,18 +1000,32 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
     client->last_send_time = current_time;
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
         return 0;
 
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+
+    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
+    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->replay_session );
+    memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
+
+    uint64_t sequence = client->send_sequence_session;
+
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                               client->filter_value, client->send_sequence_session,
-                                               NULL, payload_data, payload_bytes,
+                                               client->filter_value, sequence,
+                                               NULL, plaintext, block_bytes + payload_bytes,
                                                client->signed_fields.protocol_id, client->connection_salt,
                                                NULL, client->keys.session_client_to_server );
     if ( bytes == 0 )
         return 0;
 
     client->send_sequence_session++;
+
+    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, current_time );
+    client->ack.ack_debt = 0;
+
     rocketnet_spam( "client sent payload (%d bytes)", payload_bytes );
 
     return bytes;
@@ -856,13 +1033,16 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
-                                  int * out_packet_count )
+                                  int * out_packet_count,
+                                  int * out_packet_bytes )
 {
     rocketnet_assert( client );
     rocketnet_assert( out_packets );
     rocketnet_assert( out_packet_count );
+    rocketnet_assert( out_packet_bytes );
 
     *out_packet_count = 0;
+    *out_packet_bytes = 0;
 
     // before the session keys exist there is nothing to seal: the state
     // simply resets, and the server's half-open mapping dies at its deadline
@@ -870,19 +1050,23 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE ||
          client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
+        // each packet of the burst opens with the same ack block -- the
+        // receive state does not move between them -- so the burst shares
+        // one wire size
+
+        int burst_bytes = 0;
+
         for ( int i = 0; i < ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS; i++ )
         {
-            int bytes = rocketnet_write_sealed_packet( out_packets + i * ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES,
-                                                       ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-                                                       client->filter_value, client->send_sequence_session,
-                                                       NULL, NULL, 0,
-                                                       client->signed_fields.protocol_id, client->connection_salt,
-                                                       NULL, client->keys.session_client_to_server );
-            rocketnet_assert( bytes == ROCKETNET_CONNECTION_DISCONNECT_WIRE_BYTES );
-            (void) bytes;
-            client->send_sequence_session++;
+            int bytes = rocketnet_client_write_session_packet( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+                                                               NULL, 0, client->last_send_time,
+                                                               out_packets + i * ROCKETNET_SEND_BUDGET );
+            rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
+            rocketnet_assert( i == 0 || bytes == burst_bytes );
+            burst_bytes = bytes;
         }
         *out_packet_count = ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS;
+        *out_packet_bytes = burst_bytes;
         rocketnet_debug( "client sent %d redundant disconnect packets", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     }
 
