@@ -215,6 +215,31 @@ static class Smoke
             Fail( $"client did not receive both payloads (acquire/commit {gotEcho}, convenience {gotDown})" );
         Ok( "server -> client: acquire/commit and convenience payloads byte-exact" );
 
+        // quality stats: the structs cross the interop boundary here, and the
+        // numbers must be plausible after live traffic — rtt sampled from the
+        // handshake, rates and bandwidth nonzero over the trailing second of
+        // the virtual clock, zero loss on a clean loopback
+
+        RocketNet.ClientGetStats( client, out RocketNet.ClientStats clientStats );
+        if ( clientStats.Rtt <= 0.0f || clientStats.Rtt >= 1000.0f )
+            Fail( $"client rtt implausible ({clientStats.Rtt} ms)" );
+        if ( clientStats.Jitter < 0.0f )
+            Fail( $"client jitter implausible ({clientStats.Jitter} ms)" );
+        if ( clientStats.PacketLoss != 0.0f )
+            Fail( $"client packet loss on a clean loopback ({clientStats.PacketLoss}%)" );
+        if ( clientStats.PacketsSentPerSecond <= 0 || clientStats.PacketsReceivedPerSecond <= 0 )
+            Fail( $"client packet rates implausible ({clientStats.PacketsSentPerSecond} sent, {clientStats.PacketsReceivedPerSecond} received)" );
+        if ( clientStats.BandwidthSentKbps <= 0 || clientStats.BandwidthReceivedKbps <= 0 )
+            Fail( $"client bandwidth implausible ({clientStats.BandwidthSentKbps} up, {clientStats.BandwidthReceivedKbps} down)" );
+
+        RocketNet.ServerGetStats( server, out RocketNet.ServerStats serverStats );
+        if ( serverStats.PacketsSentPerSecond == 0 || serverStats.PacketsReceivedPerSecond == 0 )
+            Fail( $"server packet rates implausible ({serverStats.PacketsSentPerSecond} sent, {serverStats.PacketsReceivedPerSecond} received)" );
+        if ( serverStats.BandwidthSentKbps <= 0.0f || serverStats.BandwidthReceivedKbps <= 0.0f )
+            Fail( $"server bandwidth implausible ({serverStats.BandwidthSentKbps} up, {serverStats.BandwidthReceivedKbps} down)" );
+        Ok( $"quality stats: client rtt {clientStats.Rtt:F1} ms, jitter {clientStats.Jitter:F2} ms, loss {clientStats.PacketLoss:F1}%, " +
+            $"client {clientStats.PacketsSentPerSecond}/{clientStats.PacketsReceivedPerSecond} pps, server {serverStats.PacketsSentPerSecond}/{serverStats.PacketsReceivedPerSecond} pps" );
+
         // counters: delivery counted, and the C# counter indices line up with the
         // C names at both ends of the enum
 

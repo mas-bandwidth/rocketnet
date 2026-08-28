@@ -294,6 +294,44 @@ public static unsafe class RocketNet
         public int ClientIndex;
     }
 
+    /// <summary>rocketnet_client_stats_t. Read with <see cref="ClientGetStats"/>. rtt and
+    /// jitter are milliseconds, packet loss is a percentage; the rates and bandwidth cover
+    /// the trailing second of updates. rtt is measured from the handshake's round trips
+    /// and holds from there, as the C header says.</summary>
+    [StructLayout( LayoutKind.Sequential )]
+    public struct ClientStats
+    {
+        /// <summary>Round trip time in milliseconds.</summary>
+        public float Rtt;
+        /// <summary>Inter-arrival jitter in milliseconds.</summary>
+        public float Jitter;
+        /// <summary>Packet loss percentage.</summary>
+        public float PacketLoss;
+        /// <summary>Packets sent over the last second.</summary>
+        public int PacketsSentPerSecond;
+        /// <summary>Packets received over the last second.</summary>
+        public int PacketsReceivedPerSecond;
+        /// <summary>Bandwidth sent over the last second, kilobits per second.</summary>
+        public int BandwidthSentKbps;
+        /// <summary>Bandwidth received over the last second, kilobits per second.</summary>
+        public int BandwidthReceivedKbps;
+    }
+
+    /// <summary>rocketnet_server_stats_t. Read with <see cref="ServerGetStats"/>. Whole-socket
+    /// packet rates and bandwidth both ways over the trailing second, at flat per-frame cost.</summary>
+    [StructLayout( LayoutKind.Sequential )]
+    public struct ServerStats
+    {
+        /// <summary>Packets sent over the last second.</summary>
+        public ulong PacketsSentPerSecond;
+        /// <summary>Packets received over the last second.</summary>
+        public ulong PacketsReceivedPerSecond;
+        /// <summary>Bandwidth sent over the last second, kilobits per second.</summary>
+        public float BandwidthSentKbps;
+        /// <summary>Bandwidth received over the last second, kilobits per second.</summary>
+        public float BandwidthReceivedKbps;
+    }
+
     /// <summary>rocketnet_frame_sync_stats_t. Read with <see cref="FrameSyncGetStats"/>.</summary>
     [StructLayout( LayoutKind.Sequential )]
     public struct FrameSyncStats
@@ -515,6 +553,10 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_counters", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ClientCounters( IntPtr client );
 
+    /// <summary>Reads the client's connection quality stats (rocketnet_client_stats).</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_client_stats", CallingConvention = CallingConvention.Cdecl )]
+    public static extern void ClientGetStats( IntPtr client, out ClientStats stats );
+
     [DllImport( Lib, EntryPoint = "rocketnet_client_state_name", CallingConvention = CallingConvention.Cdecl )]
     static extern IntPtr client_state_name( int state );
 
@@ -650,6 +692,10 @@ public static unsafe class RocketNet
     /// <summary>The server's counters block; read it with <see cref="CountersSpan"/>.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_counters", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ServerCounters( IntPtr server );
+
+    /// <summary>Reads the server's whole-socket rate stats (rocketnet_server_stats).</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_stats", CallingConvention = CallingConvention.Cdecl )]
+    public static extern void ServerGetStats( IntPtr server, out ServerStats stats );
 
     [DllImport( Lib, EntryPoint = "rocketnet_counter_name", CallingConvention = CallingConvention.Cdecl )]
     static extern IntPtr counter_name( int counter );

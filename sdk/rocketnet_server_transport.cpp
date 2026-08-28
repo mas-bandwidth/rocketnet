@@ -75,6 +75,24 @@ static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every s
 static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
 static_assert( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload pointer handed to the caller must be 16-aligned" );
 
+// the stats bucket ring, the space game's pattern: one bucket per frame,
+// accumulation riding the walks the transport already makes, published
+// per-second numbers summing only buckets younger than one second. the ring
+// is deep enough that a bucket outlives the second it contributes to at any
+// sane frame rate; a bucket with frame zero has never been written.
+
+#define ROCKETNET_NUM_SERVER_STATS_FRAMES 256
+
+struct alignas(64) rocketnet_server_stats_frame_t
+{
+    double time;
+    uint64_t frame;
+    uint64_t packets_sent;
+    uint64_t packets_received;
+    uint64_t bytes_sent;
+    uint64_t bytes_received;
+};
+
 // the payload batch from the last update -- capacity ROCKETNET_MAX_PAYLOADS_PER_UPDATE
 // covers a full drain. the public surface iterates by index and never sees this layout.
 
@@ -108,10 +126,22 @@ struct rocketnet_server_t
 #endif // #if !ROCKETNET_SERVER_XDP
 
     double time;                                        // the game's clock, last seen
+    uint64_t frame;                                     // advanced once per update; indexes the stats ring
+
+    struct rocketnet_server_stats_t server_stats;
+    struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
 #if ROCKETNET_SERVER_XDP
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
+
+    // payload sends on the xdp backend seal straight into the socket's own
+    // staging from any game thread, so there is no transport-side ring for
+    // the flush walk to read; each finish adds its packet here instead --
+    // the same relaxed atomic the path already pays for send_staged -- and
+    // send_packets folds the pair into the current bucket on the main thread.
+    volatile uint64_t stats_pending_packets_sent;
+    volatile uint64_t stats_pending_bytes_sent;
 #endif // #if ROCKETNET_SERVER_XDP
 
     struct rocketnet_server_payloads_t payloads;
@@ -175,6 +205,14 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_t * serv
     rocketnet_assert( frame->data );
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    // every commit through this seam -- responses, keep-alives, disconnect
+    // bursts -- runs on the main thread, so it lands in the current stats
+    // bucket directly
+
+    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+    server_transport->stats_frames[stats_index].packets_sent++;
+    server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
 #if ROCKETNET_SERVER_XDP
 
@@ -410,11 +448,62 @@ int rocketnet_server_state( struct rocketnet_server_t * server_transport )
     return server_transport->state;
 }
 
+// process the previous stats frames into published per-second numbers, then
+// open the next bucket. the sum walks the whole fixed ring every update --
+// constant shape, ALWAYS BE LOADED -- and only buckets younger than one
+// second contribute, so the published numbers are "per second" by window
+// rather than by division.
+
+static void rocketnet_server_update_stats( struct rocketnet_server_t * server_transport, double time )
+{
+    // process previous stats frames
+    {
+        uint64_t total_packets_sent = 0;
+        uint64_t total_packets_received = 0;
+        uint64_t total_bytes_sent = 0;
+        uint64_t total_bytes_received = 0;
+
+        for ( int i = 0; i < ROCKETNET_NUM_SERVER_STATS_FRAMES; i++ )
+        {
+            // IMPORTANT: only sum the last second worth of stats frames, we want "packets sent per-second, bandwidth sent per-second etc..."
+            if ( server_transport->stats_frames[i].frame == 0 || server_transport->stats_frames[i].time + 1.0 < time )
+                continue;
+
+            total_packets_sent += server_transport->stats_frames[i].packets_sent;
+            total_packets_received += server_transport->stats_frames[i].packets_received;
+            total_bytes_sent += server_transport->stats_frames[i].bytes_sent;
+            total_bytes_received += server_transport->stats_frames[i].bytes_received;
+        }
+
+        server_transport->server_stats.packets_sent_per_second = total_packets_sent;
+        server_transport->server_stats.packets_received_per_second = total_packets_received;
+
+        server_transport->server_stats.bandwidth_sent_kbps = (float) ( ( (double) total_bytes_sent * 8.0 ) / 1000.0 );
+        server_transport->server_stats.bandwidth_received_kbps = (float) ( ( (double) total_bytes_received * 8.0 ) / 1000.0 );
+    }
+
+    // setup next stats frame
+    {
+        server_transport->frame++;
+
+        const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+
+        server_transport->stats_frames[stats_index].time = time;
+        server_transport->stats_frames[stats_index].frame = server_transport->frame;
+        server_transport->stats_frames[stats_index].packets_sent = 0;
+        server_transport->stats_frames[stats_index].packets_received = 0;
+        server_transport->stats_frames[stats_index].bytes_sent = 0;
+        server_transport->stats_frames[stats_index].bytes_received = 0;
+    }
+}
+
 void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
 
     server_transport->time = time;
+
+    rocketnet_server_update_stats( server_transport, time );
 
     if ( server_transport->state == ROCKETNET_SERVER_STOPPING )
     {
@@ -439,8 +528,13 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 
     struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_socket_process_packets( server_transport->xdp_socket );
 
+    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+
     for ( int i = 0; i < received->num_packets; i++ )
     {
+        server_transport->stats_frames[stats_index].packets_received++;
+        server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
 
@@ -484,12 +578,17 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 
     uint8_t receive_frame[ROCKETNET_RECEIVE_CEILING];
 
+    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+
     for ( int i = 0; i < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS; i++ )
     {
         struct rocketnet_address_t from;
         int packet_bytes = rocketnet_platform_socket_receive_packet( server_transport->socket, &from, receive_frame, sizeof(receive_frame) );
         if ( packet_bytes == 0 )
             break;
+
+        server_transport->stats_frames[stats_index].packets_received++;
+        server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_PAYLOAD_BYTES : NULL;
@@ -735,6 +834,8 @@ int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport
 
 #if ROCKETNET_SERVER_XDP
     rocketnet_server_socket_finish_packet( server_transport->xdp_socket, context->packet_id, context->frame, wire_bytes );
+    rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
+    rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
 #else // #if ROCKETNET_SERVER_XDP
     server_transport->payload_ring.info[context->packet_id].wire_bytes = wire_bytes;
 #endif // #if ROCKETNET_SERVER_XDP
@@ -748,7 +849,18 @@ void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport
 {
     rocketnet_assert( server_transport );
 
+    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+
 #if ROCKETNET_SERVER_XDP
+
+    // fold the fill phase's payload sends into the current bucket. the fill
+    // is closed before this call by the threading contract, so the pending
+    // pair is quiescent and a plain read-and-clear is safe.
+
+    server_transport->stats_frames[stats_index].packets_sent += server_transport->stats_pending_packets_sent;
+    server_transport->stats_frames[stats_index].bytes_sent += server_transport->stats_pending_bytes_sent;
+    server_transport->stats_pending_packets_sent = 0;
+    server_transport->stats_pending_bytes_sent = 0;
 
     // flip only when something staged since the last flip: the flip is
     // destructive to run twice on one staging generation
@@ -771,6 +883,12 @@ void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport
     {
         if ( ring->info[i].wire_bytes > 0 )
         {
+            // the payload accumulation rides the flush walk: the ring already
+            // holds every committed packet's wire size, so this costs nothing
+
+            server_transport->stats_frames[stats_index].packets_sent++;
+            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
             rocketnet_platform_socket_send_packet( server_transport->socket, &ring->info[i].to,
                                                    ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
                                                    ring->info[i].wire_bytes );
@@ -855,4 +973,15 @@ const struct rocketnet_counters_t * rocketnet_server_counters( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     return &server_transport->counters;
+}
+
+void rocketnet_server_stats( struct rocketnet_server_t * server_transport, struct rocketnet_server_stats_t * stats )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( stats );
+    memset( stats, 0, sizeof(struct rocketnet_server_stats_t) );
+    stats->packets_sent_per_second = server_transport->server_stats.packets_sent_per_second;
+    stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
+    stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;
+    stats->bandwidth_received_kbps = server_transport->server_stats.bandwidth_received_kbps;
 }
