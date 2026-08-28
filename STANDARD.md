@@ -1394,8 +1394,13 @@ In this exact order:
   contained in the opened size, ranges within the sequence space. A malformed
   block refuses the whole packet — the type data behind it is never examined —
   counting the packet type's `BAD_ACK_BLOCK` reason. The block's delivery
-  information is applied only after the size check below also passes, so a
-  packet is either processed whole or ignored whole.
+  information is applied only after the size check below also passes, so no
+  malformed or mis-sized packet has any effect beyond its replay-window mark.
+  A packet that passes both and then refuses in its own type handling — a
+  fragment with a bad count, say — has still applied its valid,
+  authenticated ack block, deliberately: delivery information does not become
+  false because the bytes behind it were refused, and applying it is
+  idempotent.
 
 * If the opened data size, less the ack block on session types, does not match
   the expected size for the type, ignore the packet:
@@ -1407,8 +1412,9 @@ In this exact order:
     26 − the 7-byte minimum block)
   * 0 bytes — _connection disconnect_
   * 0 bytes — _connection ack_
-  * 7 to 1387 bytes — _connection payload fragment_ (the 6-byte fragment
-    header and at least one fragment byte)
+  * 7 to 1393 bytes — _connection payload fragment_ (the 6-byte fragment
+    header and at least one fragment byte, up to the same 1393 the payload
+    line derives)
 
 * Otherwise, process the packet — the ack block's delivery information first,
   then the type data.
@@ -1421,8 +1427,9 @@ nonce, so any modification fails the tag.
 
 Discard anything older than the most recent sequence minus the replay buffer
 size; within the window accept a sequence only once; on a successful open mark
-it received and advance the most recent. Applied to _connection keep-alive_,
-_connection payload_ and _connection disconnect_ on both ends.
+it received and advance the most recent. Applied to the five session types —
+_connection keep-alive_, _connection payload_, _connection disconnect_,
+_connection ack_ and _connection payload fragment_ — on both ends.
 
 ### The AEAD integrity limit
 
@@ -1625,9 +1632,32 @@ the valid statement of a fresh connection, by construction rather than by
 special case.
 
 _Largest received_ is the low 32 bits of the receiver's highest-opened 64-bit
-session sequence, and the sender that reads it already tracks which of its own
-sequences are outstanding, so reconstruction is the same nearest-candidate rule
-the wire sequence uses, anchored at the sender's highest sent sequence.
+session sequence — the same high-water mark replay protection keeps, all five
+session types. The sender that reads it already tracks which of its own
+sequences are outstanding, so reconstruction is the wire sequence's rule
+exactly: `expected` is the sender's own highest sent session sequence, the
+candidate nearest to it wins, and of two equidistant candidates the larger is
+taken.
+
+**Validity.** A block is malformed, and refuses its whole packet as
+`BAD_ACK_BLOCK`, when any of the following holds — each stated so that two
+implementations reject the same bytes:
+
+* the declared geometry — 7 bytes plus 4 per range entry — exceeds the opened
+  size;
+* _first range length_ is zero while _largest received_ is nonzero, or nonzero
+  while _largest received_ is zero;
+* _first range length_ exceeds _largest received_;
+* any _gap_ or _length_ entry is zero;
+* the walk goes out of bounds: starting from _largest received_ and consuming
+  _first range length_, then alternately each _gap_ and _length_, the running
+  position may never reach below sequence one. *(Implementations MUST compute
+  this without unsigned underflow: check each subtraction before making it,
+  the same rule as the sealed length.)*
+
+These rules close every degenerate encoding: a conforming block's ranges are
+strictly descending, non-empty, non-touching, and confined to sequences that
+can exist.
 
 **Build rule.** A sender fills the block from its current receive state:
 _largest received_, then ranges descending, newest first, as many as exist and
@@ -1643,14 +1673,21 @@ sequences are never acked; a handshake proves its own delivery by progressing.
 
 ### Elicitation
 
-Received session packets of types 4, 5, 6 and 9 **elicit** acknowledgment:
-their sequences enter the receive state the blocks report. **Type 8 does
-not elicit.** A standalone ack is recorded in the replay window like any
-session packet, but its sequence never appears in a block going the other way,
-because two quiet peers acking each other's acks would exchange them forever —
-the exemption is what makes the ack conversation terminate. Nothing is lost by
-it: the information in an ack block is restated by every later block, so the
-delivery of any one ack packet is never load-bearing.
+**Blocks report opened packets; elicitation decides only when a block must be
+sent, and the two are deliberately not the same set.** A block's contents are
+built from every opened session sequence, all five types — one received state,
+the same one replay protection already maintains, with no second high-water
+mark and no holes manufactured by exemptions. Received session packets of
+types 4, 5, 6 and 9 **elicit** acknowledgment: they add to the ack debt that
+obliges a block to go out. **Type 8 does not elicit.** A standalone ack is
+opened, replay-marked and reported like any session packet, but receiving one
+never obliges an ack in return, because two quiet peers each obliged to
+acknowledge the other's acknowledgments would exchange them forever — the
+exemption is what makes the ack conversation terminate, and it costs nothing:
+the information in an ack block is restated by every later block, so the
+delivery of any one ack packet is never load-bearing, and a sender that sees
+its own type 8 sequence covered by a range simply has nothing to surface for
+it.
 
 ### The standalone ack
 
@@ -1672,14 +1709,18 @@ traffic itself does not.
 
 ### Processing
 
-A receiver of a block walks its ranges and marks each named sequence
-acknowledged in its own sent-packet bookkeeping, surfacing newly-acknowledged
-packets to the layer above. Bookkeeping is bounded: a sender MUST retain
-delivery state for at least one second of its own maximum send rate, sized the
-same way as the replay window and for the same reason, and a block naming a
-sequence older than the retained window is applied where state remains and
-silently ignored where it has aged out. Sequences a block names that were
-never sent — possible only through reconstruction against a hostile or
+A receiver of a block marks named sequences acknowledged in its own
+sent-packet bookkeeping, surfacing newly-acknowledged packets to the layer
+above. Bookkeeping is bounded: a sender MUST retain delivery state for at
+least one second of its own maximum send rate, sized the same way as the
+replay window and for the same reason. **The walk is bounded by the retained
+window, never by the block's claims**: processing MUST cost no more than one
+pass over the retained window's entries — a valid block can name up to
+sixteen million sequences in a kilobyte, and iterating what a peer asserts
+rather than what this end retains would hand a connected attacker CPU at that
+ratio. Everything a block names below the retained window is silently ignored
+without being visited; within the window, sequences named that were never
+sent — possible only through reconstruction against a hostile or
 badly-truncated block — are ignored; an implementation MUST NOT treat them as
 an error that affects the connection, and counts them as
 `ACK_UNKNOWN_SEQUENCE`.
@@ -1747,7 +1788,14 @@ in order, each with its own counter:
 * Every fragment except the last must be the same size, and the first
   non-final fragment to arrive fixes that stride; a later non-final fragment
   of a different size refuses (`FRAGMENT_SIZE_MISMATCH`). The final fragment
-  must not exceed the stride. Fragment bytes land at index × stride.
+  must not exceed the stride once the stride is known. Fragment bytes land at
+  index × stride. **Only the final fragment can arrive before the stride is
+  known** — any non-final arrival fixes it — so each reassembly slot holds one
+  staging buffer of the maximum fragment size for exactly that case: a final
+  fragment arriving first is staged, checked against the stride when the first
+  non-final fragment fixes it (refusing the whole payload as
+  `FRAGMENT_SIZE_MISMATCH` if it exceeds it), and placed then. Reordering of
+  a two-fragment payload is an everyday event, not an edge.
 * The reconstructed payload — stride × (count − 1) plus the final fragment —
   must not exceed the receiver's configured maximum payload size
   (`FRAGMENT_PAYLOAD_TOO_LARGE`).
