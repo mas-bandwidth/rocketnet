@@ -200,7 +200,14 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     client_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
                                                                 ( client_transport->max_payload_bytes + 15 ) & ~15 );
-    client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, num_reassembly_slots, client_transport->max_payload_bytes );
+    // the delivered mirror sizes to the client's drain bound: one update
+    // drains at most ROCKETNET_NUM_CLIENT_PACKETS packets, and a payload
+    // takes at least two fragments, so half that is the most completions
+    // an update can produce -- about 8.4MB at the default maximum, spent
+    // so BATCH_FULL stays a true invariant under any legitimate burst
+
+    client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, num_reassembly_slots, client_transport->max_payload_bytes,
+                                                                    ROCKETNET_NUM_CLIENT_PACKETS / 2 );
     if ( !client_transport->send_arena || !client_transport->reassembly )
     {
         rocketnet_error( "client could not allocate fragmentation storage" );

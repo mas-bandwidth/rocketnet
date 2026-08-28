@@ -419,7 +419,9 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 // published development keys. The config carries what the token does not:
 // the per-title filter value, the fragmentation shape -- the largest
 // payload this client sends and reassembles, and the per-connection
-// reassembly slot count, zero meaning the defaults above -- and an
+// reassembly slot count, zero meaning the defaults above; the client's
+// delivered mirror sizes itself to the client's own drain bound, about
+// 8.4MB at the default maximum -- and an
 // optional state-change callback. NULL config is the development posture:
 // the published test filter, the defaults, no callback.
 
@@ -561,12 +563,14 @@ struct rocketnet_server_transport_config_t
 
     // the fragmentation shape: the largest payload this server sends and
     // reassembles, and the per-client reassembly slot count. zero means
-    // the defaults. budget arithmetic, all spent once at create: the
-    // reassembly arena is max_clients x slots x (max payload + 1387
-    // staging) per the standard, plus this implementation's delivered
-    // mirror of slots x max payload per client -- the per-update home of
-    // completed payloads, which is what lets a reassembly slot clear and
-    // reuse immediately while the delivered bytes stay valid.
+    // the defaults. budget arithmetic, all spent once at create,
+    // approximately -- slot records ride along: the reassembly arena is
+    // max_clients x slots x (max payload + 1387 staging) per the
+    // standard; this implementation's delivered mirror of slots x max
+    // payload per client -- the per-update home of completed payloads,
+    // sized to the receive drain's completion bound so a completed
+    // payload always has a home; and the ack endpoints' fragment
+    // aggregate rings, about 48KB per client slot.
     int max_payload_bytes;
     int num_reassembly_slots;
 };

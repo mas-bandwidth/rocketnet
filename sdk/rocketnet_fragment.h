@@ -109,8 +109,12 @@ struct rocketnet_reassembly_counters_t
 // destination of the one copy fragmentation inherently costs -- a completed
 // payload is copied out of its slot at the moment of completion, so the slot
 // is immediately reusable while the delivered bytes stay valid until the
-// next update. completed_payload and completed_bytes report the last
-// process call's completion, so a caller delivers in arrival position.
+// next update. delivered_capacity is the caller's statement of its receive
+// drain's completion bound -- a payload takes at least two fragments, so
+// one update completes at most half the packets it drains -- and at that
+// bound BATCH_FULL is a true invariant: zero under any legitimate load.
+// completed_payload and completed_bytes report the last process call's
+// completion, so a caller delivers in arrival position.
 
 struct rocketnet_reassembly_set_t
 {
@@ -128,7 +132,7 @@ struct rocketnet_reassembly_set_t
     int completed_bytes;
 };
 
-struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes );
+struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
 
 void rocketnet_reassembly_set_destroy( struct rocketnet_reassembly_set_t * set );
 

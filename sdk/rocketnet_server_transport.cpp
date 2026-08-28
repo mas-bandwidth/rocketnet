@@ -426,7 +426,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * 2 );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
-    protocol->reassembly = rocketnet_reassembly_set_create( context, max_clients, num_reassembly_slots, server_transport->max_payload_bytes );
+    // the delivered mirror sizes to the server's drain bound: the receive
+    // path drains at most RECEIVE_PACKETS_PER_CLIENT packets per client
+    // slot per update (the process arrays' sizing), and a payload takes at
+    // least two fragments, so completions cap at eight per client at the
+    // defaults -- exactly the default slot count. connections x slots IS
+    // the server's drain bound, which is why it is also its sizing.
+
+    protocol->reassembly = rocketnet_reassembly_set_create( context, max_clients, num_reassembly_slots, server_transport->max_payload_bytes,
+                                                            max_clients * num_reassembly_slots );
     protocol->counters = &server_transport->counters;
 
     // the arena's slot stride stays 16-aligned so every root handed to a

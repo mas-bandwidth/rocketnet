@@ -617,11 +617,25 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_receive_packet", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportReceivePacket( IntPtr client, byte* packetData, int packetCapacity );
 
+    // the guard's configured maximum, cached so the wrapper costs one
+    // P/Invoke per client rather than one per receive call. The pair is
+    // written without synchronization on purpose: a torn read across
+    // threads only mis-sizes the guard, and the native call is safe at
+    // any capacity -- an oversize payload is refused and counted there.
+
+    static IntPtr cachedMaxPayloadClient;
+    static int cachedMaxPayloadBytes;
+
     /// <summary>The copying receive cursor over a span: requires the configured maximum
     /// payload so nothing is ever refused through this wrapper.</summary>
     public static int ClientTransportReceivePacket( IntPtr client, Span<byte> buffer )
     {
-        if ( buffer.Length < ClientTransportMaxPayloadBytes( client ) )
+        if ( client != cachedMaxPayloadClient )
+        {
+            cachedMaxPayloadBytes = ClientTransportMaxPayloadBytes( client );
+            cachedMaxPayloadClient = client;
+        }
+        if ( buffer.Length < cachedMaxPayloadBytes )
             throw new ArgumentException( "buffer must hold ClientTransportMaxPayloadBytes(client)", nameof(buffer) );
         fixed ( byte* p = buffer )
             return ClientTransportReceivePacket( client, p, buffer.Length );

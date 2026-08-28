@@ -72,11 +72,12 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
-struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes )
+struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity )
 {
     rocketnet_assert( num_connections > 0 );
     rocketnet_assert( num_slots > 0 && num_slots <= ROCKETNET_MAX_FRAGMENTS );
     rocketnet_assert( max_payload_bytes >= ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_assert( delivered_capacity > 0 );
 
     struct rocketnet_reassembly_set_t * set = (struct rocketnet_reassembly_set_t*) rocketnet_malloc( context, sizeof(struct rocketnet_reassembly_set_t) );
     if ( !set )
@@ -89,19 +90,22 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
     set->num_slots = num_slots;
     set->max_payload_bytes = max_payload_bytes;
     set->slot_arena_bytes = (size_t) max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
-    set->delivered_capacity = num_connections * num_slots;
+    set->delivered_capacity = delivered_capacity;
 
     set->slots = (struct rocketnet_reassembly_slot_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
     set->arena = (uint8_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
 
     // The delivered mirror is this implementation's own addition beyond
-    // the standard's arena arithmetic, and nearly matches the arena's
-    // footprint: one payload of delivery room per reassembly slot, so any
-    // legitimate completion pattern one update can produce has a home and
-    // BATCH_FULL genuinely stays zero. Sized smaller it becomes a tunable
-    // with an overflow mode under legitimate load; sized here it is
-    // allocate-max-needed, and a deployment budgets connections x slots x
-    // (2 x max payload + staging) total for reassembly.
+    // the standard's arena arithmetic: the per-update home of completed
+    // payloads, which is what lets a reassembly slot clear and reuse
+    // immediately while the delivered bytes stay valid. The capacity is
+    // the caller's drain bound -- a payload takes at least two fragments,
+    // so one update completes at most half the packets its receive path
+    // drains -- which is what makes BATCH_FULL a true must-stay-zero
+    // invariant rather than an operating condition. The reassembly budget
+    // is approximately connections x slots x (max payload + staging) for
+    // the arena plus delivered_capacity x max payload for this mirror;
+    // slot records ride along.
 
     set->delivered = (uint8_t*) rocketnet_malloc( context, (size_t) set->delivered_capacity * (size_t) max_payload_bytes );
 
@@ -208,12 +212,14 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // a payload id older than the slot's occupant was already superseded;
     // accepting its bytes into the newer payload is the aliasing this
     // check exists to prevent. older is serial-number arithmetic on the
-    // 32-bit values, the wire sequence's wrapping family: a plain compare
-    // would let one defective near-maximum id poison its slot for the
-    // connection's life, where under wrap every later id is newer, the
-    // occupant is displaced (counted abandoned) and the slot recovers.
+    // 32-bit values, computed in unsigned arithmetic alone -- no
+    // implementation-defined narrowing -- so a plain compare's failure
+    // mode cannot happen: one defective near-maximum id would poison its
+    // slot for the connection's life, where under wrap every later id is
+    // newer, the occupant is displaced (counted abandoned) and the slot
+    // recovers.
 
-    if ( slot->payload_id != 0 && (int32_t) ( payload_id - slot->payload_id ) < 0 )
+    if ( slot->payload_id != 0 && payload_id - slot->payload_id > 0x80000000u )
     {
         rocketnet_spam( "reassembly refused fragment. stale payload id" );
         counters[table->stale]++;

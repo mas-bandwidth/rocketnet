@@ -1793,8 +1793,8 @@ in order, each with its own counter:
 * A payload id older than the id currently occupying its slot refuses as
   stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
   its bytes into the newer payload's slot is the aliasing this check exists
-  to prevent. Older is serial-number arithmetic on the 32-bit values — the
-  same wrapping family as the wire sequence — so no id can poison a slot: a
+  to prevent. Older is serial-number arithmetic on the 32-bit values, so no
+  id can poison a slot: a
   plain comparison would let one defective near-maximum id refuse every later
   id as stale forever, where under the wrapping comparison a later id is
   newer, displaces the occupant (counted abandoned), and the slot recovers as

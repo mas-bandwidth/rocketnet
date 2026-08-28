@@ -1685,7 +1685,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
-    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384 );
+    server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &test->counters;
     rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
@@ -3850,7 +3850,7 @@ void rocketnet_test_swarm()
     test.server.used_token_history = rocketnet_used_token_history_create( NULL, num_clients * 8 );
     test.server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, num_clients * 2 );
     test.server.acks = rocketnet_server_acks_create( NULL, num_clients );
-    test.server.reassembly = rocketnet_reassembly_set_create( NULL, num_clients, 4, 16384 );
+    test.server.reassembly = rocketnet_reassembly_set_create( NULL, num_clients, 4, 16384, num_clients * 4 );
     rocketnet_check( test.server.client_slots && test.server.encryption_map && test.server.used_token_history && test.server.admitted_token_set && test.server.acks && test.server.reassembly );
     rocketnet_reassembly_set_begin_update( test.server.reassembly );
 
@@ -7401,7 +7401,7 @@ void rocketnet_test_fragment_reassembly()
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
 
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 2, 4, 8192 );
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 2, 4, 8192, 2 * 4 );
     rocketnet_check( set );
     rocketnet_check( set->slot_arena_bytes == 8192 + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES );
 
@@ -7479,7 +7479,7 @@ void rocketnet_test_fragment_reassembly_refusals()
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
 
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192 );
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192, 4 );
     rocketnet_check( set );
     rocketnet_reassembly_set_begin_update( set );
 
@@ -7635,7 +7635,7 @@ void rocketnet_test_fragment_delivery_batch()
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
 
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 2, 4096 );
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 2, 4096, 2 );
     rocketnet_check( set );
     rocketnet_check( set->delivered_capacity == 2 );
 
@@ -7705,7 +7705,7 @@ static void rocketnet_test_fragment_pair_setup( struct rocketnet_test_fragment_p
 
     memset( &pair->client_counters, 0, sizeof(pair->client_counters) );
     rocketnet_client_protocol_init( &pair->client, &pair->client_counters );
-    pair->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384 );
+    pair->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
     rocketnet_check( pair->client.reassembly );
     rocketnet_reassembly_set_begin_update( pair->client.reassembly );
 
@@ -8383,7 +8383,7 @@ void rocketnet_test_fragment_payload_id_wrap()
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
 
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192 );
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192, 4 );
     rocketnet_check( set );
     rocketnet_reassembly_set_begin_update( set );
 
@@ -8422,7 +8422,7 @@ void rocketnet_test_fragment_too_large_clauses()
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
 
-    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192 );
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192, 4 );
     rocketnet_check( set );
     rocketnet_reassembly_set_begin_update( set );
 
@@ -8694,6 +8694,49 @@ void rocketnet_test_transport_fragmentation()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( client_counters->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == 1 );
+
+    // the reviewer's burst: twelve fragmented payloads in one fill phase --
+    // 36 wire packets, ordinary load -- can all complete in ONE client
+    // update, which is more completions than the client has reassembly
+    // slots. the delivered mirror sizes to the drain bound, so every one
+    // is delivered and BATCH_FULL stays exactly zero.
+    {
+        struct rocketnet_packet_context_t burst_context;
+        for ( int i = 0; i < 12; i++ )
+        {
+            frame = rocketnet_server_transport_start_packet( server, 0, 2500, &burst_context );
+            rocketnet_check( frame );
+            memcpy( frame, pattern, 2500 );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &burst_context, 2500 ) > 0 );
+        }
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_platform_sleep( 0.1 );                    // let the whole burst queue on the client's receive thread
+
+        int burst_received = 0;
+        start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 10.0 && burst_received < 12 )
+        {
+            rocketnet_client_transport_update( client, rocketnet_platform_time() );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_send_packets( server );
+
+            const int num_payloads = rocketnet_client_transport_num_payloads( client );
+            for ( int i = 0; i < num_payloads; i++ )
+            {
+                int payload_bytes;
+                uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
+                rocketnet_check( payload_bytes == 2500 );
+                rocketnet_check( memcmp( payload, pattern, 2500 ) == 0 );
+                burst_received++;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( burst_received == 12 );
+        rocketnet_check( client_counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
+        rocketnet_check( client_counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == 15 );    // 9000 + 4000 + 3000 + the twelve
+    }
 
     // NEGATIVE: the arena is a fixed fill-phase resource -- exhaustion
     // drops at start_packet on its own counter, and the flush reclaims it

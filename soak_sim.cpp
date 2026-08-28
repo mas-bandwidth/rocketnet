@@ -89,7 +89,7 @@ int main( int argc, char ** argv )
     server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
-    server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384 );
+    server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
     server.counters = &server_counters;
 
     #define SOAK_NUM_CLIENTS 8
