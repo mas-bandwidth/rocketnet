@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-// The transport backend is selected at compile time for now: the portable
+// The transport driver is selected at compile time for now: the portable
 // UDP socket by default, the AF_XDP server socket with
 // -DROCKETNET_SERVER_TRANSPORT_XDP=1 on linux. Runtime selection with
 // preference ordering is a named follow-on.
@@ -104,7 +104,7 @@ struct rocketnet_server_payloads_t
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
 
-struct rocketnet_server_t
+struct rocketnet_server_transport_t
 {
     void * context;
     int state;
@@ -128,14 +128,14 @@ struct rocketnet_server_t
     double time;                                        // the game's clock, last seen
     uint64_t frame;                                     // advanced once per update; indexes the stats ring
 
-    struct rocketnet_server_stats_t server_stats;
+    struct rocketnet_server_transport_stats_t server_stats;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
 #if ROCKETNET_SERVER_XDP
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
 
-    // payload sends on the xdp backend seal straight into the socket's own
+    // payload sends on the xdp driver seal straight into the socket's own
     // staging from any game thread, so there is no transport-side ring for
     // the flush walk to read; each finish adds its packet here instead --
     // the same relaxed atomic the path already pays for send_staged -- and
@@ -151,10 +151,10 @@ struct rocketnet_server_t
     uint8_t payload_storage[ROCKETNET_MAX_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
-// The send frame seam both backends serve: reserve hands back a frame to
+// The send frame seam both drivers serve: reserve hands back a frame to
 // seal complete wire bytes into, commit stamps its length, abort returns it
-// unused. The portable backend batches frames and flushes them through the
-// socket at the end of update; the xdp backend seals straight into the
+// unused. The portable driver batches frames and flushes them through the
+// socket at the end of update; the xdp driver seals straight into the
 // af_xdp send staging, zero copies between the seal and the wire.
 
 struct rocketnet_server_frame_t
@@ -165,7 +165,7 @@ struct rocketnet_server_frame_t
 #endif // #if ROCKETNET_SERVER_XDP
 };
 
-static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_t * server_transport,
+static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                                 const rocketnet_address_t * to,
                                                                 struct rocketnet_server_frame_t * frame )
 {
@@ -198,7 +198,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_t 
 #endif // #if ROCKETNET_SERVER_XDP
 }
 
-static void rocketnet_server_commit_send_frame( struct rocketnet_server_t * server_transport,
+static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                           struct rocketnet_server_frame_t * frame,
                                                           int packet_bytes )
 {
@@ -227,7 +227,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_t * serv
 #endif // #if ROCKETNET_SERVER_XDP
 }
 
-static void rocketnet_server_abort_send_frame( struct rocketnet_server_t * server_transport,
+static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                          struct rocketnet_server_frame_t * frame )
 {
     if ( !frame->data )
@@ -242,26 +242,26 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_t * serve
     frame->data = NULL;
 }
 
-void rocketnet_server_default_config( struct rocketnet_server_config_t * config )
+void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
     rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_server_config_t) );
+    memset( config, 0, sizeof(struct rocketnet_server_transport_config_t) );
     config->max_clients = 64;
     const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( config->filter_value, test_filter, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
-void rocketnet_server_dev_config( struct rocketnet_server_config_t * config )
+void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config )
 {
     rocketnet_assert( config );
-    rocketnet_server_default_config( config );
+    rocketnet_server_transport_default_config( config );
     config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
 }
 
-static int rocketnet_server_config_has_keys( const struct rocketnet_server_config_t * config )
+static int rocketnet_server_config_has_keys( const struct rocketnet_server_transport_config_t * config )
 {
     uint8_t zero[32];
     memset( zero, 0, sizeof(zero) );
@@ -270,9 +270,9 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_confi
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
-struct rocketnet_server_t * rocketnet_server_create( void * context,
+struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
                                                                          const char * public_address_string,
-                                                                         const struct rocketnet_server_config_t * config,
+                                                                         const struct rocketnet_server_transport_config_t * config,
                                                                          double time )
 {
     rocketnet_assert( public_address_string );
@@ -290,11 +290,11 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
 
     // a server with no keys is refused, never defaulted: default keys are how
     // every deployment of a protocol ends up sharing one identity. development
-    // wants rocketnet_server_dev_config, which fills the published keys loudly.
+    // wants rocketnet_server_transport_dev_config, which fills the published keys loudly.
 
     if ( !rocketnet_server_config_has_keys( config ) )
     {
-        rocketnet_error( "server config has no keys: fill rocketnet_server_dev_config() for development, or supply production keys" );
+        rocketnet_error( "server config has no keys: fill rocketnet_server_transport_dev_config() for development, or supply production keys" );
         return NULL;
     }
 
@@ -313,11 +313,11 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     else
         memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
 
-    struct rocketnet_server_t * server_transport = (struct rocketnet_server_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_t) );
+    struct rocketnet_server_transport_t * server_transport = (struct rocketnet_server_transport_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_transport_t) );
     if ( !server_transport )
         return NULL;
 
-    memset( server_transport, 0, sizeof(struct rocketnet_server_t) );
+    memset( server_transport, 0, sizeof(struct rocketnet_server_transport_t) );
 
     server_transport->context = context;
 
@@ -336,7 +336,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     if ( server_transport->xdp_socket == NULL )
     {
         rocketnet_error( "could not create xdp server socket" );
-        rocketnet_server_destroy( server_transport );
+        rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
 
@@ -349,7 +349,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
     if ( server_transport->socket == NULL )
     {
         rocketnet_error( "could not create server socket" );
-        rocketnet_server_destroy( server_transport );
+        rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
 
@@ -360,7 +360,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
 
     server_transport->bind_address = bind_address;
     server_transport->public_address = public_address;
-    server_transport->state = ROCKETNET_SERVER_RUNNING;
+    server_transport->state = ROCKETNET_SERVER_TRANSPORT_RUNNING;
 
     // the protocol, on the configured identity, advertised at the public
     // address -- the address connect tokens are minted for
@@ -392,14 +392,14 @@ struct rocketnet_server_t * rocketnet_server_create( void * context,
 
     if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots )
     {
-        rocketnet_server_destroy( server_transport );
+        rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
 
     return server_transport;
 }
 
-void rocketnet_server_destroy( struct rocketnet_server_t * server_transport )
+void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
 
@@ -433,16 +433,16 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server_transport )
 
 #endif // #if ROCKETNET_SERVER_XDP
 
-    rocketnet_clear_and_free( server_transport->context, server_transport, sizeof(struct rocketnet_server_t) );
+    rocketnet_clear_and_free( server_transport->context, server_transport, sizeof(struct rocketnet_server_transport_t) );
 }
 
-void rocketnet_server_stop( struct rocketnet_server_t * server_transport )
+void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
-    server_transport->state = ROCKETNET_SERVER_STOPPING;
+    server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
 }
 
-int rocketnet_server_state( struct rocketnet_server_t * server_transport )
+int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     return server_transport->state;
@@ -454,7 +454,7 @@ int rocketnet_server_state( struct rocketnet_server_t * server_transport )
 // second contribute, so the published numbers are "per second" by window
 // rather than by division.
 
-static void rocketnet_server_update_stats( struct rocketnet_server_t * server_transport, double time )
+static void rocketnet_server_update_stats( struct rocketnet_server_transport_t * server_transport, double time )
 {
     // process previous stats frames
     {
@@ -497,7 +497,7 @@ static void rocketnet_server_update_stats( struct rocketnet_server_t * server_tr
     }
 }
 
-void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time )
+void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
 
@@ -505,13 +505,13 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 
     rocketnet_server_update_stats( server_transport, time );
 
-    if ( server_transport->state == ROCKETNET_SERVER_STOPPING )
+    if ( server_transport->state == ROCKETNET_SERVER_TRANSPORT_STOPPING )
     {
 #if ROCKETNET_SERVER_XDP
         rocketnet_server_socket_stop( server_transport->xdp_socket );
         rocketnet_server_socket_update( server_transport->xdp_socket );
 #endif // #if ROCKETNET_SERVER_XDP
-        server_transport->state = ROCKETNET_SERVER_STOPPED;
+        server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPED;
         return;
     }
 
@@ -653,7 +653,7 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
     }
 
     // flush. the portable response ring sends inline here; the XDP socket is
-    // flushed by rocketnet_server_send_packets -- its buffer flip retargets
+    // flushed by rocketnet_server_transport_send_packets -- its buffer flip retargets
     // the drain and zeroes the buffers behind it, so flipping with nothing
     // staged would destroy in-flight packets. update marks itself staged
     // (responses and keep-alives ride the same buffers) and the flush below
@@ -682,13 +682,13 @@ void rocketnet_server_update( struct rocketnet_server_t * server_transport, doub
 #endif // #if ROCKETNET_SERVER_XDP
 }
 
-int rocketnet_server_num_payloads( struct rocketnet_server_t * server_transport )
+int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     return server_transport->payloads.num_payloads;
 }
 
-int rocketnet_server_payloads( struct rocketnet_server_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
+int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( client_index );
@@ -702,7 +702,7 @@ int rocketnet_server_payloads( struct rocketnet_server_t * server_transport, con
     return server_transport->payloads.num_payloads;
 }
 
-uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport, int payload_index, int * client_index, int * payload_bytes )
+uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_t * server_transport, int payload_index, int * client_index, int * payload_bytes )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( client_index );
@@ -723,22 +723,22 @@ uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport
 }
 
 // The acquire/commit send surface. Phase contract, which is what makes the
-// whole family lock-free: rocketnet_server_update and
-// rocketnet_server_send_packets run on the main thread; start, finish and
+// whole family lock-free: rocketnet_server_transport_update and
+// rocketnet_server_transport_send_packets run on the main thread; start, finish and
 // abort may run on any number of game threads strictly between them. During
 // that fill phase connections are stable -- only update creates or tears
 // down mappings -- so acquisition is one atomic add for the slot and one
 // for the sequence, sealing runs on the caller's thread in place in the
 // frame, and the flush walks finished slots single-threaded.
 
-uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_transport, int client_index, struct rocketnet_packet_context_t * context )
+uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_packet_context_t * context )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
 
     memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
 
-    if ( server_transport->state != ROCKETNET_SERVER_RUNNING )
+    if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return NULL;
 
     rocketnet_address_t to;
@@ -792,7 +792,7 @@ uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_tran
     return frame;
 }
 
-void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context )
+void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
@@ -809,7 +809,7 @@ void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport
     context->frame = NULL;
 }
 
-int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
@@ -819,7 +819,7 @@ int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
-        rocketnet_server_abort_packet( server_transport, context );
+        rocketnet_server_transport_abort_packet( server_transport, context );
         return 0;
     }
 
@@ -828,7 +828,7 @@ int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport
                                                                    payload_bytes, server_transport->time );
     if ( wire_bytes == 0 )
     {
-        rocketnet_server_abort_packet( server_transport, context );
+        rocketnet_server_transport_abort_packet( server_transport, context );
         return 0;
     }
 
@@ -845,7 +845,7 @@ int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport
     return wire_bytes;
 }
 
-void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport )
+void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
 
@@ -902,7 +902,7 @@ void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport
 
 // the convenience: the same path underneath, plus one memcpy the caller chose
 
-void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
+void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport,
                                              int client_index,
                                              const uint8_t * payload_data,
                                              int payload_bytes )
@@ -914,16 +914,16 @@ void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport,
         return;
 
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_start_packet( server_transport, client_index, &context );
+    uint8_t * frame = rocketnet_server_transport_start_packet( server_transport, client_index, &context );
     if ( !frame )
         return;
 
     memcpy( frame + context.payload_index, payload_data, payload_bytes );
 
-    rocketnet_server_finish_packet( server_transport, &context, payload_bytes );
+    rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
-void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_transport, int client_index )
+void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     rocketnet_assert( server_transport );
 
@@ -951,35 +951,35 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_tran
     }
 }
 
-int rocketnet_server_num_connected_clients( struct rocketnet_server_t * server_transport )
+int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     return rocketnet_client_slots_num_connected( server_transport->protocol.client_slots );
 }
 
-int rocketnet_server_is_client_connected( struct rocketnet_server_t * server_transport, int client_index )
+int rocketnet_server_transport_is_client_connected( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     rocketnet_assert( server_transport );
     return rocketnet_client_slots_connected( server_transport->protocol.client_slots, client_index );
 }
 
-uint64_t rocketnet_server_client_id( struct rocketnet_server_t * server_transport, int client_index )
+uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     rocketnet_assert( server_transport );
     return rocketnet_client_slots_client_id( server_transport->protocol.client_slots, client_index );
 }
 
-const struct rocketnet_counters_t * rocketnet_server_counters( struct rocketnet_server_t * server_transport )
+const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
     return &server_transport->counters;
 }
 
-void rocketnet_server_stats( struct rocketnet_server_t * server_transport, struct rocketnet_server_stats_t * stats )
+void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_transport_stats_t * stats )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( stats );
-    memset( stats, 0, sizeof(struct rocketnet_server_stats_t) );
+    memset( stats, 0, sizeof(struct rocketnet_server_transport_stats_t) );
     stats->packets_sent_per_second = server_transport->server_stats.packets_sent_per_second;
     stats->packets_received_per_second = server_transport->server_stats.packets_received_per_second;
     stats->bandwidth_sent_kbps = server_transport->server_stats.bandwidth_sent_kbps;

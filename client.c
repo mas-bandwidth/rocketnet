@@ -50,7 +50,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, connect_token, NULL, rocketnet_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
     if ( !client )
     {
         rocketnet_term();
@@ -63,26 +63,26 @@ int main( int argc, char ** argv )
 
     while ( !quit )
     {
-        rocketnet_client_update( client, rocketnet_time() );
+        rocketnet_client_transport_update( client, rocketnet_time() );
 
-        const int state = rocketnet_client_state( client );
+        const int state = rocketnet_client_transport_state( client );
         if ( state != last_state )
         {
-            printf( "client state: %s\n", rocketnet_client_state_name( state ) );
+            printf( "client state: %s\n", rocketnet_client_transport_state_name( state ) );
             last_state = state;
-            if ( state < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+            if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
                 break;
         }
 
-        if ( state == ROCKETNET_CLIENT_STATE_CONNECTED )
+        if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-            rocketnet_client_send_packet( client, payload, sizeof(payload) );
+            rocketnet_client_transport_send_packet( client, payload, sizeof(payload) );
             payloads_sent++;
 
             uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_receive_packet( client, received ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received ) ) > 0 )
             {
                 payloads_received++;
                 if ( ( payloads_received % 100 ) == 0 )
@@ -95,9 +95,9 @@ int main( int argc, char ** argv )
     }
 
     printf( "\nclient disconnecting\n" );
-    rocketnet_client_disconnect( client );
+    rocketnet_client_transport_disconnect( client );
     rocketnet_sleep( 0.1 );
-    rocketnet_client_destroy( client );
+    rocketnet_client_transport_destroy( client );
 
     rocketnet_term();
 

@@ -38,11 +38,11 @@ int main( int argc, char ** argv )
         public_address = public_address_env;
     }
 
-    struct rocketnet_server_config_t config;
-    rocketnet_server_dev_config( &config );
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
     config.max_clients = 256;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address, &config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config, rocketnet_time() );
     if ( !server )
     {
         rocketnet_term();
@@ -54,7 +54,7 @@ int main( int argc, char ** argv )
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
     if ( !frame_sync )
     {
-        rocketnet_server_destroy( server );
+        rocketnet_server_transport_destroy( server );
         rocketnet_term();
         return 1;
     }
@@ -63,9 +63,9 @@ int main( int argc, char ** argv )
 
     while ( !quit )
     {
-        rocketnet_server_update( server, rocketnet_time() );
+        rocketnet_server_transport_update( server, rocketnet_time() );
 
-        const int num_connected = rocketnet_server_num_connected_clients( server );
+        const int num_connected = rocketnet_server_transport_num_connected_clients( server );
         if ( num_connected != last_num_connected )
         {
             printf( "server has %d client%s connected\n", num_connected, num_connected == 1 ? "" : "s" );
@@ -74,25 +74,25 @@ int main( int argc, char ** argv )
 
         // echo every payload back to its sender
 
-        const int num_payloads = rocketnet_server_num_payloads( server );
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
         for ( int i = 0; i < num_payloads; i++ )
         {
             int client_index, payload_bytes;
-            uint8_t * payload = rocketnet_server_payload( server, i, &client_index, &payload_bytes );
-            rocketnet_server_send_packet( server, client_index, payload, payload_bytes );
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
+            rocketnet_server_transport_send_packet( server, client_index, payload, payload_bytes );
         }
 
-        rocketnet_server_send_packets( server );
+        rocketnet_server_transport_send_packets( server );
 
         rocketnet_frame_sync_wait( frame_sync );
     }
 
     printf( "\nserver stopping\n" );
     rocketnet_frame_sync_destroy( frame_sync );
-    rocketnet_server_stop( server );
-    while ( rocketnet_server_state( server ) != ROCKETNET_SERVER_STOPPED )
-        rocketnet_server_update( server, rocketnet_time() );
-    rocketnet_server_destroy( server );
+    rocketnet_server_transport_stop( server );
+    while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED )
+        rocketnet_server_transport_update( server, rocketnet_time() );
+    rocketnet_server_transport_destroy( server );
 
     rocketnet_term();
 

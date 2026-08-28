@@ -953,7 +953,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
-    rocketnet_assert( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPED );        // IMPORTANT: Please stop the server and wait until state is ROCKETNET_SERVER_STOPPED before destroying it
+    rocketnet_assert( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPED );        // IMPORTANT: Please stop the server and wait until state is ROCKETNET_SERVER_TRANSPORT_STOPPED before destroying it
 
     if ( server_socket->program != NULL )
     {

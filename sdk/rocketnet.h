@@ -368,24 +368,24 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 //                                  client
 // -----------------------------------------
 
-#define ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED         -7
-#define ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN         -6
-#define ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT          -5
-#define ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
-#define ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT  -3
-#define ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT      -2
-#define ROCKETNET_CLIENT_STATE_CONNECTION_DENIED             -1
-#define ROCKETNET_CLIENT_STATE_DISCONNECTED                   0
-#define ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE              1
-#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST     2
-#define ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE    3
-#define ROCKETNET_CLIENT_STATE_CONNECTED                      4
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN         -6
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT          -5
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT  -3
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT      -2
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED             -1
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED                   0
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE              1
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST     2
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE    3
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED                      4
 
 #define ROCKETNET_MAX_PAYLOAD_BYTES                        1400
 
-ROCKETNET_EXPORT_FUNC const char * rocketnet_client_state_name( int state );
+ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_state_name( int state );
 
-struct rocketnet_client_t;
+struct rocketnet_client_transport_t;
 struct rocketnet_counters_t;
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
@@ -398,13 +398,13 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 // the per-title filter value and an optional state-change callback. NULL
 // config is the development posture: the published test filter, no callback.
 
-struct rocketnet_client_config_t
+struct rocketnet_client_transport_config_t
 {
     uint8_t filter_value[4];
     void (*state_change_callback)( void * context, int previous_state, int current_state );
 };
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_default_config( struct rocketnet_client_config_t * config );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
 
@@ -412,46 +412,46 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // clock to every call that takes one. The library never reads a clock of
 // its own on these paths, so a game owns time and a test can hold it still.
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_client_t * rocketnet_client_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_config_t * config, double time );
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_destroy( struct rocketnet_client_t * client_transport );      // disconnect and pump a few updates first
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_update( struct rocketnet_client_t * client_transport, double time );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_client_transport_t * client_transport, double time );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_send_packet( struct rocketnet_client_t * client_transport, const uint8_t * packet_data, int packet_bytes );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_receive_packet( struct rocketnet_client_t * client_transport, uint8_t * packet_data );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_receive_packet( struct rocketnet_client_transport_t * client_transport, uint8_t * packet_data );
 
 // the batch behind the copying cursor above: by count and index, and as
 // parallel arrays in one call. valid until the next update.
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_num_payloads( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_num_payloads( struct rocketnet_client_transport_t * client_transport );
 
-ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_payload( struct rocketnet_client_t * client_transport, int payload_index, int * payload_bytes );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_payload( struct rocketnet_client_transport_t * client_transport, int payload_index, int * payload_bytes );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_payloads( struct rocketnet_client_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_payloads( struct rocketnet_client_transport_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes );
 
 // the client's acquire/commit send family: the same shape, layout and
 // threading contract as the server's, minus the client index. NOTE:
-// rocketnet_client_send_packet (the convenience above) flushes the ring
+// rocketnet_client_transport_send_packet (the convenience above) flushes the ring
 // inline and is therefore main-thread only, never during an open fill --
 // it is the simple form, not a fill-phase participant.
 
-ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_start_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_finish_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_abort_packet( struct rocketnet_client_t * client_transport, struct rocketnet_packet_context_t * context );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_send_packets( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packets( struct rocketnet_client_transport_t * client_transport );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_state( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_client_transport_t * client_transport );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_client_index( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_client_index( struct rocketnet_client_transport_t * client_transport );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_disconnect( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_disconnect( struct rocketnet_client_transport_t * client_transport );
 
-ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_counters( struct rocketnet_client_t * client_transport );
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct rocketnet_client_transport_t * client_transport );
 
 // The client's connection quality: rtt and jitter in milliseconds, packet
 // loss as a percentage, and the last second's packet rates and bandwidth
@@ -463,7 +463,7 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_count
 // jitter over the session sequence; packet loss is receive-side, from gaps
 // in the session sequence. These numbers feed time synchronization.
 
-struct rocketnet_client_stats_t
+struct rocketnet_client_transport_stats_t
 {
     float rtt;                                      // round trip time (milliseconds)
     float jitter;                                   // inter-arrival jitter (milliseconds)
@@ -474,27 +474,27 @@ struct rocketnet_client_stats_t
     int bandwidth_received_kbps;
 };
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_stats( struct rocketnet_client_t * client_transport, struct rocketnet_client_stats_t * stats );
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_stats( struct rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats );
 
 // -----------------------------------------
 //                                  server
 // -----------------------------------------
 
-#define ROCKETNET_SERVER_RUNNING                    0
-#define ROCKETNET_SERVER_STOPPING                   1
-#define ROCKETNET_SERVER_STOPPED                    2
+#define ROCKETNET_SERVER_TRANSPORT_RUNNING                    0
+#define ROCKETNET_SERVER_TRANSPORT_STOPPING                   1
+#define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
 
-struct rocketnet_server_t;
+struct rocketnet_server_transport_t;
 
-// The server is configured explicitly. rocketnet_server_default_config gives
+// The server is configured explicitly. rocketnet_server_transport_default_config gives
 // the shape with no keys -- create refuses it until keys are supplied,
 // because default keys are how every deployment of a protocol ends up
-// sharing one identity. rocketnet_server_dev_config fills the published
+// sharing one identity. rocketnet_server_transport_dev_config fills the published
 // development keys and test filter for local work, loudly. num_xdp_queues
 // and num_os_cpus configure the XDP transport's queue and core layout;
 // zero means the transport default, and the portable build ignores both.
 
-struct rocketnet_server_config_t
+struct rocketnet_server_transport_config_t
 {
     uint64_t protocol_id;
     int max_clients;
@@ -506,41 +506,41 @@ struct rocketnet_server_config_t
     int num_os_cpus;
 };
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_default_config( struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_dev_config( struct rocketnet_server_config_t * config );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_server_t * rocketnet_server_create( void * context, const char * public_address_string, const struct rocketnet_server_config_t * config, double time );
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_destroy( struct rocketnet_server_t * server_transport );      // stop and wait for stopped first
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_stop( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_state( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_update( struct rocketnet_server_t * server_transport, double time );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 
 // The payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
 // its layout and its capacity are not part of this surface.
 //
-//     int num_payloads = rocketnet_server_num_payloads( server );
+//     int num_payloads = rocketnet_server_transport_num_payloads( server );
 //     for ( int i = 0; i < num_payloads; i++ )
 //     {
 //         int client_index, payload_bytes;
-//         uint8_t * payload = rocketnet_server_payload( server, i, &client_index, &payload_bytes );
+//         uint8_t * payload = rocketnet_server_transport_payload( server, i, &client_index, &payload_bytes );
 //         ...
 //     }
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_num_payloads( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_payload( struct rocketnet_server_t * server_transport, int payload_index, int * client_index, int * payload_bytes );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_t * server_transport, int payload_index, int * client_index, int * payload_bytes );
 
 // The whole receive batch as parallel arrays in one call, valid until the
 // next update -- the zero-per-item form of the accessors above, for
 // bindings and tight loops. Returns the number of payloads.
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_payloads( struct rocketnet_server_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
 // -----------------------------------------
 //                        sending packets
@@ -579,15 +579,15 @@ struct rocketnet_packet_context_t
     int client_index;
 };
 
-ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_start_packet( struct rocketnet_server_t * server_transport, int client_index, struct rocketnet_packet_context_t * context );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_finish_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_abort_packet( struct rocketnet_server_t * server_transport, struct rocketnet_packet_context_t * context );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packets( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packet( struct rocketnet_server_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
 // burst goes out on the next flush and the slot frees immediately. Why is
@@ -595,15 +595,15 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_send_packet( struct rocketnet_server
 // while a fill phase is open -- it tears down the connection state the
 // fill relies on.
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_disconnect_client( struct rocketnet_server_t * server_transport, int client_index );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_num_connected_clients( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_is_client_connected( struct rocketnet_server_t * server_transport, int client_index );
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_is_client_connected( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_client_id( struct rocketnet_server_t * server_transport, int client_index );
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_counters( struct rocketnet_server_t * server_transport );
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
 // The server's whole-socket rates: packets and bandwidth per second, both
 // directions, over the trailing second. Accumulation rides the walks the
@@ -614,7 +614,7 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_count
 // update pays the same fixed bucket sum it pays at one. These numbers feed
 // time synchronization.
 
-struct rocketnet_server_stats_t
+struct rocketnet_server_transport_stats_t
 {
     uint64_t packets_sent_per_second;
     uint64_t packets_received_per_second;
@@ -622,7 +622,7 @@ struct rocketnet_server_stats_t
     float bandwidth_received_kbps;
 };
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_stats( struct rocketnet_server_t * server_transport, struct rocketnet_server_stats_t * stats );
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_transport_stats_t * stats );
 
 // -----------------------------------------
 //                              frame sync
@@ -672,9 +672,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_stats( struct rocketnet_frame_sy
 
 namespace rocketnet
 {
-    inline bool server_start_packet( struct rocketnet_server_t * server, int client_index, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    inline bool server_start_packet( struct rocketnet_server_transport_t * server, int client_index, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
-        uint8_t * frame = rocketnet_server_start_packet( server, client_index, &context );
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, &context );
         if ( !frame )
             return false;
         stream.Initialize( frame + context.payload_index, context.payload_capacity );
@@ -685,51 +685,51 @@ namespace rocketnet
     // Release overflow past the payload capacity is not caught here or
     // there. Size packets to the capacity the context reports.
 
-    inline bool server_finish_packet( struct rocketnet_server_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    inline bool server_finish_packet( struct rocketnet_server_transport_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        return rocketnet_server_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
+        return rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
     }
 
-    inline void server_abort_packet( struct rocketnet_server_t * server, struct rocketnet_packet_context_t & context )
+    inline void server_abort_packet( struct rocketnet_server_transport_t * server, struct rocketnet_packet_context_t & context )
     {
-        rocketnet_server_abort_packet( server, &context );
+        rocketnet_server_transport_abort_packet( server, &context );
     }
 
-    inline bool server_payload( struct rocketnet_server_t * server, int payload_index, serialize::ReadStream & stream, int & client_index )
+    inline bool server_payload( struct rocketnet_server_transport_t * server, int payload_index, serialize::ReadStream & stream, int & client_index )
     {
         int payload_bytes;
-        uint8_t * payload = rocketnet_server_payload( server, payload_index, &client_index, &payload_bytes );
+        uint8_t * payload = rocketnet_server_transport_payload( server, payload_index, &client_index, &payload_bytes );
         if ( !payload )
             return false;
         stream.Initialize( payload, payload_bytes );
         return true;
     }
 
-    inline bool client_start_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    inline bool client_start_packet( struct rocketnet_client_transport_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
-        uint8_t * frame = rocketnet_client_start_packet( client, &context );
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, &context );
         if ( !frame )
             return false;
         stream.Initialize( frame + context.payload_index, context.payload_capacity );
         return true;
     }
 
-    inline bool client_finish_packet( struct rocketnet_client_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
+    inline bool client_finish_packet( struct rocketnet_client_transport_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        return rocketnet_client_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
+        return rocketnet_client_transport_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
     }
 
-    inline void client_abort_packet( struct rocketnet_client_t * client, struct rocketnet_packet_context_t & context )
+    inline void client_abort_packet( struct rocketnet_client_transport_t * client, struct rocketnet_packet_context_t & context )
     {
-        rocketnet_client_abort_packet( client, &context );
+        rocketnet_client_transport_abort_packet( client, &context );
     }
 
-    inline bool client_payload( struct rocketnet_client_t * client, int payload_index, serialize::ReadStream & stream )
+    inline bool client_payload( struct rocketnet_client_transport_t * client, int payload_index, serialize::ReadStream & stream )
     {
         int payload_bytes;
-        uint8_t * payload = rocketnet_client_payload( client, payload_index, &payload_bytes );
+        uint8_t * payload = rocketnet_client_transport_payload( client, payload_index, &payload_bytes );
         if ( !payload )
             return false;
         stream.Initialize( payload, payload_bytes );

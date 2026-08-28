@@ -64,9 +64,9 @@ static class Smoke
     {
         time += TimeStep;
         if ( client != IntPtr.Zero )
-            RocketNet.ClientUpdate( client, time );
-        RocketNet.ServerUpdate( server, time );
-        RocketNet.ServerSendPackets( server );
+            RocketNet.ClientTransportUpdate( client, time );
+        RocketNet.ServerTransportUpdate( server, time );
+        RocketNet.ServerTransportSendPackets( server );
         Thread.Sleep( 1 );
     }
 
@@ -80,9 +80,9 @@ static class Smoke
         int port = FreePort();
         string address = $"127.0.0.1:{port}";
 
-        RocketNet.ServerDevConfig( out RocketNet.ServerConfig serverConfig );
+        RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig serverConfig );
         serverConfig.MaxClientSlots = 4;
-        IntPtr server = RocketNet.ServerCreate( IntPtr.Zero, address, ref serverConfig, time );
+        IntPtr server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
         if ( server == IntPtr.Zero )
             Fail( $"server create on {address}" );
         Ok( $"server up on {address}" );
@@ -97,27 +97,27 @@ static class Smoke
         if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token ) == 0 )
             Fail( "write dev connect token" );
 
-        RocketNet.ClientDefaultConfig( out RocketNet.ClientConfig clientConfig );
-        IntPtr client = RocketNet.ClientCreate( IntPtr.Zero, token, ref clientConfig, time );
+        RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
+        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref clientConfig, time );
         if ( client == IntPtr.Zero )
             Fail( "client create" );
 
         int iterations = 0;
-        while ( RocketNet.ClientState( client ) != RocketNet.ClientStateConnected && iterations < 2000 )
+        while ( RocketNet.ClientTransportState( client ) != RocketNet.ClientTransportStateConnected && iterations < 2000 )
         {
             Pump( client, server );
             iterations++;
         }
-        if ( RocketNet.ClientState( client ) != RocketNet.ClientStateConnected )
-            Fail( $"client did not connect: state '{RocketNet.ClientStateName( RocketNet.ClientState( client ) )}'" );
-        if ( RocketNet.ClientStateName( RocketNet.ClientState( client ) ) != "connected" )
+        if ( RocketNet.ClientTransportState( client ) != RocketNet.ClientTransportStateConnected )
+            Fail( $"client did not connect: state '{RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( client ) )}'" );
+        if ( RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( client ) ) != "connected" )
             Fail( "client state name" );
-        if ( RocketNet.ServerNumConnectedClients( server ) != 1 )
+        if ( RocketNet.ServerTransportNumConnectedClients( server ) != 1 )
             Fail( "server connected count" );
-        int clientIndex = RocketNet.ClientClientIndex( client );
-        if ( RocketNet.ServerIsClientConnected( server, clientIndex ) == 0 )
+        int clientIndex = RocketNet.ClientTransportClientIndex( client );
+        if ( RocketNet.ServerTransportIsClientConnected( server, clientIndex ) == 0 )
             Fail( "server is_client_connected" );
-        if ( RocketNet.ServerClientId( server, clientIndex ) != clientId )
+        if ( RocketNet.ServerTransportClientId( server, clientIndex ) != clientId )
             Fail( "server client id" );
         Ok( $"connected in {iterations} iterations (client index {clientIndex})" );
 
@@ -125,26 +125,26 @@ static class Smoke
         // convenience send
 
         RocketNet.PacketContext context = default;
-        if ( RocketNet.ClientStartPacket( client, ref context ) == IntPtr.Zero )
+        if ( RocketNet.ClientTransportStartPacket( client, ref context ) == IntPtr.Zero )
             Fail( "client start packet" );
         Span<byte> payload = RocketNet.PayloadSpan( in context );
         if ( payload.Length < 256 || payload.Length % 8 != 0 )
             Fail( $"payload capacity {payload.Length}" );
         FillPattern( payload.Slice( 0, 256 ), 1 );
-        if ( RocketNet.ClientFinishPacket( client, ref context, 256 ) == 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) == 0 )
             Fail( "client finish packet" );
-        RocketNet.ClientSendPackets( client );
+        RocketNet.ClientTransportSendPackets( client );
 
         byte[] convenience = new byte[64];
         FillPattern( convenience, 2 );
-        RocketNet.ClientSendPacket( client, convenience );
+        RocketNet.ClientTransportSendPacket( client, convenience );
 
         // the oversize finish is dropped with its sequence burned, never sent
 
         RocketNet.PacketContext oversize = default;
-        if ( RocketNet.ClientStartPacket( client, ref oversize ) == IntPtr.Zero )
+        if ( RocketNet.ClientTransportStartPacket( client, ref oversize ) == IntPtr.Zero )
             Fail( "client start packet (oversize)" );
-        if ( RocketNet.ClientFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != 0 )
             Fail( "oversize finish was not dropped" );
         Ok( "oversize finish_packet dropped (returned 0)" );
 
@@ -152,9 +152,9 @@ static class Smoke
         for ( int i = 0; i < 1000 && !( got256 && got64 ); i++ )
         {
             time += TimeStep;
-            RocketNet.ClientUpdate( client, time );
-            RocketNet.ServerUpdate( server, time );
-            RocketNet.ServerPayloadBatch batch = RocketNet.ServerPayloads( server );
+            RocketNet.ClientTransportUpdate( client, time );
+            RocketNet.ServerTransportUpdate( server, time );
+            RocketNet.ServerTransportPayloadBatch batch = RocketNet.ServerTransportPayloads( server );
             for ( int j = 0; j < batch.Count; j++ )
             {
                 if ( batch.ClientIndex( j ) != clientIndex )
@@ -167,7 +167,7 @@ static class Smoke
                 else
                     Fail( $"unexpected payload at server: {received.Length} bytes" );
             }
-            RocketNet.ServerSendPackets( server );
+            RocketNet.ServerTransportSendPackets( server );
             Thread.Sleep( 1 );
         }
         if ( !got256 || !got64 )
@@ -183,25 +183,25 @@ static class Smoke
         // accessor and the batch view.
 
         RocketNet.PacketContext down = default;
-        if ( RocketNet.ServerStartPacket( server, clientIndex, ref down ) == IntPtr.Zero )
+        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, ref down ) == IntPtr.Zero )
             Fail( "server start packet" );
         FillPattern( RocketNet.PayloadSpan( in down ).Slice( 0, 256 ), 1 );
-        if ( RocketNet.ServerFinishPacket( server, ref down, 256 ) == 0 )
+        if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) == 0 )
             Fail( "server finish packet" );
-        RocketNet.ServerSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
+        RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
 
         bool gotEcho = false, gotDown = false;
         for ( int i = 0; i < 1000 && !( gotEcho && gotDown ); i++ )
         {
             Pump( client, server );
-            int num = RocketNet.ClientNumPayloads( client );
-            RocketNet.ClientPayloadBatch batch = RocketNet.ClientPayloads( client );
+            int num = RocketNet.ClientTransportNumPayloads( client );
+            RocketNet.ClientTransportPayloadBatch batch = RocketNet.ClientTransportPayloads( client );
             if ( batch.Count != num )
                 Fail( "client payload count mismatch between accessors" );
             for ( int j = 0; j < batch.Count; j++ )
             {
                 ReadOnlySpan<byte> received = batch[j];
-                if ( !received.SequenceEqual( RocketNet.ClientPayloadSpan( client, j ) ) )
+                if ( !received.SequenceEqual( RocketNet.ClientTransportPayloadSpan( client, j ) ) )
                     Fail( "client payload mismatch between accessors" );
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
                     gotEcho = true;
@@ -220,7 +220,7 @@ static class Smoke
         // handshake, rates and bandwidth nonzero over the trailing second of
         // the virtual clock, zero loss on a clean loopback
 
-        RocketNet.ClientGetStats( client, out RocketNet.ClientStats clientStats );
+        RocketNet.ClientTransportGetStats( client, out RocketNet.ClientTransportStats clientStats );
         if ( clientStats.Rtt <= 0.0f || clientStats.Rtt >= 1000.0f )
             Fail( $"client rtt implausible ({clientStats.Rtt} ms)" );
         if ( clientStats.Jitter < 0.0f )
@@ -232,7 +232,7 @@ static class Smoke
         if ( clientStats.BandwidthSentKbps <= 0 || clientStats.BandwidthReceivedKbps <= 0 )
             Fail( $"client bandwidth implausible ({clientStats.BandwidthSentKbps} up, {clientStats.BandwidthReceivedKbps} down)" );
 
-        RocketNet.ServerGetStats( server, out RocketNet.ServerStats serverStats );
+        RocketNet.ServerTransportGetStats( server, out RocketNet.ServerTransportStats serverStats );
         if ( serverStats.PacketsSentPerSecond == 0 || serverStats.PacketsReceivedPerSecond == 0 )
             Fail( $"server packet rates implausible ({serverStats.PacketsSentPerSecond} sent, {serverStats.PacketsReceivedPerSecond} received)" );
         if ( serverStats.BandwidthSentKbps <= 0.0f || serverStats.BandwidthReceivedKbps <= 0.0f )
@@ -243,7 +243,7 @@ static class Smoke
         // counters: delivery counted, and the C# counter indices line up with the
         // C names at both ends of the enum
 
-        ReadOnlySpan<ulong> serverCounters = RocketNet.CountersSpan( RocketNet.ServerCounters( server ) );
+        ReadOnlySpan<ulong> serverCounters = RocketNet.CountersSpan( RocketNet.ServerTransportCounters( server ) );
         if ( serverCounters[(int) RocketNet.Counter.PayloadDelivered] < 2 )
             Fail( "server payload delivered counter" );
         if ( RocketNet.CounterName( RocketNet.Counter.ConnectionRequestSignatureDidNotVerify ) != "CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY" )
@@ -254,15 +254,15 @@ static class Smoke
 
         // the deliberate server-side disconnect, observed by the client
 
-        RocketNet.ServerDisconnectClient( server, clientIndex );
-        for ( int i = 0; i < 1000 && RocketNet.ClientState( client ) > RocketNet.ClientStateDisconnected; i++ )
+        RocketNet.ServerTransportDisconnectClient( server, clientIndex );
+        for ( int i = 0; i < 1000 && RocketNet.ClientTransportState( client ) > RocketNet.ClientTransportStateDisconnected; i++ )
             Pump( client, server );
-        if ( RocketNet.ClientState( client ) > RocketNet.ClientStateDisconnected )
+        if ( RocketNet.ClientTransportState( client ) > RocketNet.ClientTransportStateDisconnected )
             Fail( "client did not observe server disconnect" );
-        if ( RocketNet.ServerNumConnectedClients( server ) != 0 )
+        if ( RocketNet.ServerTransportNumConnectedClients( server ) != 0 )
             Fail( "server still counts the disconnected client" );
-        Ok( $"server disconnect observed by client (state '{RocketNet.ClientStateName( RocketNet.ClientState( client ) )}')" );
-        RocketNet.ClientDestroy( client );
+        Ok( $"server disconnect observed by client (state '{RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( client ) )}')" );
+        RocketNet.ClientTransportDestroy( client );
 
         // negative control 1: one corrupted byte in the clear signed fields
         // (byte 0 is the version) and the client refuses the token at create
@@ -272,7 +272,7 @@ static class Smoke
             Fail( "write dev connect token (negative 1)" );
         badToken[0] ^= 0xFF;
         RocketNet.Quiet( true );        // the refusal logs an error by design; keep the receipt clean
-        IntPtr badClient = RocketNet.ClientCreate( IntPtr.Zero, badToken, IntPtr.Zero, time );
+        IntPtr badClient = RocketNet.ClientTransportCreate( IntPtr.Zero, badToken, IntPtr.Zero, time );
         RocketNet.Quiet( false );
         if ( badClient != IntPtr.Zero )
             Fail( "corrupted token (version byte) was accepted at client create" );
@@ -286,22 +286,22 @@ static class Smoke
         if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), unixNow, sealedBad ) == 0 )
             Fail( "write dev connect token (negative 2)" );
         sealedBad[100] ^= 0xFF;         // inside the sealed private block, under the signature
-        IntPtr sealedClient = RocketNet.ClientCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
+        IntPtr sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
         if ( sealedClient == IntPtr.Zero )
             Fail( "sealed-block corruption should pass the client's local checks" );
         ulong refusals = 0;
         for ( int i = 0; i < 1000 && refusals == 0; i++ )
         {
             Pump( sealedClient, server );
-            if ( RocketNet.ClientState( sealedClient ) == RocketNet.ClientStateConnected )
+            if ( RocketNet.ClientTransportState( sealedClient ) == RocketNet.ClientTransportStateConnected )
                 Fail( "client connected with a corrupted sealed block" );
-            refusals = RocketNet.CountersSpan( RocketNet.ServerCounters( server ) )[(int) RocketNet.Counter.ConnectionRequestSignatureDidNotVerify];
+            refusals = RocketNet.CountersSpan( RocketNet.ServerTransportCounters( server ) )[(int) RocketNet.Counter.ConnectionRequestSignatureDidNotVerify];
         }
         if ( refusals == 0 )
             Fail( "server never refused the corrupted signature" );
-        Ok( $"negative control: sealed-block corruption refused by server signature check ({refusals} refusal(s)), client state '{RocketNet.ClientStateName( RocketNet.ClientState( sealedClient ) )}'" );
-        RocketNet.ClientDisconnect( sealedClient );
-        RocketNet.ClientDestroy( sealedClient );
+        Ok( $"negative control: sealed-block corruption refused by server signature check ({refusals} refusal(s)), client state '{RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( sealedClient ) )}'" );
+        RocketNet.ClientTransportDisconnect( sealedClient );
+        RocketNet.ClientTransportDestroy( sealedClient );
 
         // frame sync: three real-time waits at 60fps and sane stats
 
@@ -318,12 +318,12 @@ static class Smoke
 
         // stop the server and shut down
 
-        RocketNet.ServerStop( server );
-        for ( int i = 0; i < 1000 && RocketNet.ServerState( server ) != RocketNet.ServerStopped; i++ )
+        RocketNet.ServerTransportStop( server );
+        for ( int i = 0; i < 1000 && RocketNet.ServerTransportState( server ) != RocketNet.ServerTransportStopped; i++ )
             Pump( IntPtr.Zero, server );
-        if ( RocketNet.ServerState( server ) != RocketNet.ServerStopped )
+        if ( RocketNet.ServerTransportState( server ) != RocketNet.ServerTransportStopped )
             Fail( "server did not stop" );
-        RocketNet.ServerDestroy( server );
+        RocketNet.ServerTransportDestroy( server );
         RocketNet.Term();
         Ok( "smoke passed" );
         return 0;
