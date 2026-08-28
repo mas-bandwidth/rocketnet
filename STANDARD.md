@@ -568,9 +568,11 @@ The composition columns are prefilter header + sequence + data + AEAD tag for
 sealed types, with the additional 8 being the clear session nonce on types 1 and
 2; the request is prefilter header + its unsealed body; the cookie is prefilter
 header + its three unsealed fields; _block_ is the sealed ack block, 7 bytes
-minimum. The session types share one receive rule — any size up to the
-1426-byte ceiling is examined further, and the geometry inside the seal decides
-— so there is one variable-size path to test, not five.
+minimum. The session types share one receive ceiling — 1426 bytes, whatever
+the sender's budget — while each keeps its own hard minimum from this table;
+past the size check, the geometry inside the seal decides. One ceiling and a
+per-type floor is one comparison each, and the counters stay attributable:
+a packet below its type's floor is `WRONG_SIZE`, never a later refusal.
 
 The connect token is a fixed 768 bytes, inside a single 1500-byte MTU with room
 to spare, by design.
@@ -1649,22 +1651,30 @@ implementations reject the same bytes:
   while _largest received_ is zero;
 * _first range length_ exceeds _largest received_;
 * any _gap_ or _length_ entry is zero;
-* the walk goes out of bounds: starting from _largest received_ and consuming
-  _first range length_, then alternately each _gap_ and _length_, the running
-  position may never reach below sequence one. *(Implementations MUST compute
-  this without unsigned underflow: check each subtraction before making it,
-  the same rule as the sealed length.)*
+* the walk goes out of bounds: _first range length_ plus the sum of every
+  _gap_ and _length_ MUST NOT exceed _largest received_ — equivalently, the
+  lowest sequence the block describes may never fall below one. *(A block
+  describing everything down to sequence one exactly is valid: the
+  fully-received vector in Appendix A is that block. Implementations MUST
+  compute the walk without unsigned underflow: check each subtraction before
+  making it, the same rule as the sealed length.)*
 
 These rules close every degenerate encoding: a conforming block's ranges are
 strictly descending, non-empty, non-touching, and confined to sequences that
-can exist.
+can exist. **Validity is evaluated on the reconstructed 64-bit _largest
+received_, not the raw wire field** — the same discipline as the wire
+sequence, including the zero test: it is the reconstructed value that must be
+nonzero for _first range length_ to be nonzero, so a genuine sequence whose
+low 32 bits happen to be zero does not read as a fresh connection.
 
 **Build rule.** A sender fills the block from its current receive state:
 _largest received_, then ranges descending, newest first, as many as exist and
 fit. Two caps bound it: _range count_ is at most 255, and the block never takes
-space the packet does not have — in a payload packet the application's bytes
-come first and the block truncates to the remaining room, oldest entries
-dropped first. Truncation loses only the oldest information, which the next
+space the packet does not have — in a payload or fragment packet the
+application's bytes come first and the block truncates to the remaining room,
+oldest entries dropped first. *(In a fragment packet the stride is chosen
+against the minimum block, so a current block with ranges always truncates
+there; the stride never shrinks to make room.)* Truncation loses only the oldest information, which the next
 block or a standalone ack restates. **The 7-byte minimum always fits: every
 session packet carries at least _largest received_ and its first range.**
 
@@ -1777,6 +1787,12 @@ fixed-size sequence buffer of **reassembly slots**, the modulo-indexed
 structure this protocol already uses for replay state. The receiver's checks,
 in order, each with its own counter:
 
+* A payload id of zero refuses (`FRAGMENT_ZERO_PAYLOAD_ID`) — zero is what an
+  uninitialized sender produces, the same argument as sequence zero.
+* A payload id older than the id currently occupying its slot refuses as
+  stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
+  its bytes into the newer payload's slot is the aliasing this check exists
+  to prevent.
 * Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
   of 1 refuses — `FRAGMENT_COUNT_INVALID`).
 * Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).
@@ -1798,7 +1814,10 @@ in order, each with its own counter:
   a two-fragment payload is an everyday event, not an edge.
 * The reconstructed payload — stride × (count − 1) plus the final fragment —
   must not exceed the receiver's configured maximum payload size
-  (`FRAGMENT_PAYLOAD_TOO_LARGE`).
+  (`FRAGMENT_PAYLOAD_TOO_LARGE`). The check runs the moment both the stride
+  and the count are known — usually the first non-final arrival — never
+  deferred to completion, so an over-large payload is refused before it
+  occupies a slot's arena rather than after filling it.
 * A fragment index already held for this payload id refuses as a duplicate
   (`FRAGMENT_ALREADY_RECEIVED`); the sealed packet's replay protection already
   refuses replayed *packets*, so this fires only on a sender defect.
@@ -1812,9 +1831,10 @@ loss-visibility counter: it is how a deployment sees fragmented payloads dying
 to loss, and a soak asserts it stays zero on a clean link.
 
 **Storage is allocated once, at create, to the maximum.** A reassembly slot
-owns capacity for the configured maximum payload size, and the slot count is
-configuration; the arena is slots × maximum, allocated at create time and
-never grown, resized or shared. At the moment of delivery the reassembled
+owns capacity for the configured maximum payload size plus its one staging
+buffer at the 1,387-byte maximum fragment size (1426 − 26 − 7 − 6), and the
+slot count is configuration; the arena is slots × (maximum payload + staging),
+allocated at create time and never grown, resized or shared. At the moment of delivery the reassembled
 payload is copied out once — the one copy fragmentation inherently costs —
 and wire-shaped packets everywhere else keep their zero-copy batch views. A
 receiver under fragment flood can therefore allocate nothing, fragment no
@@ -2648,12 +2668,13 @@ number of cookie packets sent. Their separation is diagnostic —
 and it means something entirely different from `NO_COOKIE` climbing.
 
 The same treatment applies to connection responses and to each sealed packet
-type — the session types adding `BAD_ACK_BLOCK` as an outcome, and the payload
-fragment its refusal reasons from _Fragmentation_ (`FRAGMENT_COUNT_INVALID`,
+type — the session types adding `BAD_ACK_BLOCK` and `ACK_UNKNOWN_SEQUENCE` as
+outcomes per _Acks_, and the payload fragment its refusal reasons from
+_Fragmentation_ (`FRAGMENT_ZERO_PAYLOAD_ID`, `FRAGMENT_COUNT_INVALID`,
 `FRAGMENT_INDEX_OUT_OF_RANGE`, `FRAGMENT_COUNT_MISMATCH`,
 `FRAGMENT_SIZE_MISMATCH`, `FRAGMENT_PAYLOAD_TOO_LARGE`,
-`FRAGMENT_ALREADY_RECEIVED`) — and to the lifecycle events that no packet
-triggers:
+`FRAGMENT_ALREADY_RECEIVED`, `FRAGMENT_STALE`) — and to the lifecycle events
+that no packet triggers:
 
 * `MAPPING_CREATED`, `MAPPING_IDLE_TIMEOUT`, `MAPPING_TABLE_FULL`
 * **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED`** — a handshake started and never
@@ -2663,7 +2684,6 @@ triggers:
 * `FRAGMENT_PAYLOAD_REASSEMBLED`, `FRAGMENT_PAYLOAD_ABANDONED` — per
   _Fragmentation_; abandoned is the loss-visibility counter, and a soak
   asserts it stays zero on a clean link
-* `ACK_UNKNOWN_SEQUENCE` — a block named a sequence this end never sent
 
 **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled
 handshake described above**, and it is the counter to watch. A deployment under
@@ -3315,11 +3335,15 @@ secrets; the shared secret is checked equal from both sides before use.
     00 00 00 00 00 00 00 01 00 00 00 00 01 68 65 6c
     6c 6f
 
-**The sealed outputs for the five session vectors above are re-frozen against
-the reference implementation of this wire revision; the plaintexts and
-associated data stated here are their complete inputs.** The sealed outputs
-that stood here before this revision were computed without the ack block and
-do not verify against it. *(The fragmented payload for the type 9 vector is
+**The sealed outputs for the five session vectors above are PENDING: they
+freeze against the reference implementation of this wire revision, and the
+plaintexts and associated data stated here are their complete inputs, so the
+outputs are deterministic and the freeze is a computation, not a decision.**
+Until they are printed here, this appendix proves session sealing for neither
+side — an implementation verifies the handshake vectors, the token, and the
+keyless encodings below, and session sealing awaits the freeze. The sealed
+outputs that stood here before this revision were computed without the ack
+block and do not verify against it. *(The fragmented payload for the type 9 vector is
 the 10 bytes `68 65 6c 6c 6f 77 6f 72 6c 64`, split as 5 + 5 at a fragment
 stride of 5 for the vector's purposes; stride in production derives from the
 budget per _Fragmentation_.)*
@@ -3340,7 +3364,7 @@ eye against _Acks_:
     largest 1000, count 1, first length 10, gap 1, length 90:
     e8 03 00 00 01 0a 00 01 00 5a 00
 
-    == two loss events, past the u16 horizon of nothing ==
+    == two loss events, exercising the u32 field ==
     received 69901..70000, lost 69898..69900, received 69398..69897,
     lost 68398..69397, received 66398..68397 —
     largest 70000, count 2, first length 100, then (gap 3, length 500),
