@@ -1,10 +1,13 @@
-# RocketNet 1.0 — connection standard (draft)
+# RocketNet 1.0 — transport standard (draft)
 
 **RocketNet** is a protocol for creating secure client/server connections over
-UDP. This document is the security and connection standard, so people can write
-their own conforming implementations. It is the packet-level connection layer
-only; reliability, flows and broadcast ride above it in payload packets and are
-specified separately.
+UDP. This document is the security and connection standard for the transport
+tier — in the RocketNet library, `client_transport` and `server_transport`
+over transport drivers, though a conforming implementation may name its pieces
+as it likes — so people can write their own implementations. It is the
+packet-level connection layer only; reliability, messages, flows and broadcast
+belong to a high-level tier above the transport, carried entirely in payload
+packets, and nothing in them is specified here.
 
 The shape is a connect token minted by a game backend, an address-validated
 handshake, sealed packets, and per-client slots. Two properties run through
@@ -50,6 +53,15 @@ Three components:
    centers, in the cloud, or on community-hosted machines. Each holds its own
    key exchange keypair and the backend's public key.
 3. **Clients** — endpoints running the protocol that want to connect.
+
+Throughout this document, _client_ and _server_ name the protocol's wire
+roles: the endpoint that initiates a connection and the endpoint that accepts
+it. In the RocketNet library those roles are implemented by the transport
+tier — `client_transport` and `server_transport`, running over transport
+drivers (portable UDP, XDP) that carry the packets this standard lays out.
+A high-level client and server for games to program against — anything built
+above the transport, speaking entirely in payload packets — is outside this
+document's scope.
 
 The sequence of operations for a client connect:
 
