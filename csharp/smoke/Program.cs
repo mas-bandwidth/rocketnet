@@ -125,7 +125,7 @@ static class Smoke
         // convenience send
 
         RocketNet.PacketContext context = default;
-        if ( RocketNet.ClientTransportStartPacket( client, ref context ) == IntPtr.Zero )
+        if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref context ) == IntPtr.Zero )
             Fail( "client start packet" );
         Span<byte> payload = RocketNet.PayloadSpan( in context );
         if ( payload.Length < 256 || payload.Length % 8 != 0 )
@@ -142,7 +142,7 @@ static class Smoke
         // the oversize finish is dropped with its sequence burned, never sent
 
         RocketNet.PacketContext oversize = default;
-        if ( RocketNet.ClientTransportStartPacket( client, ref oversize ) == IntPtr.Zero )
+        if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref oversize ) == IntPtr.Zero )
             Fail( "client start packet (oversize)" );
         if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != 0 )
             Fail( "oversize finish was not dropped" );
@@ -183,7 +183,7 @@ static class Smoke
         // accessor and the batch view.
 
         RocketNet.PacketContext down = default;
-        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, ref down ) == IntPtr.Zero )
+        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref down ) == IntPtr.Zero )
             Fail( "server start packet" );
         FillPattern( RocketNet.PayloadSpan( in down ).Slice( 0, 256 ), 1 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) == 0 )
@@ -245,7 +245,7 @@ static class Smoke
         // acknowledged on each end -- the join key, through the binding
 
         RocketNet.PacketContext ackedUp = default;
-        if ( RocketNet.ClientTransportStartPacket( client, ref ackedUp ) == IntPtr.Zero )
+        if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref ackedUp ) == IntPtr.Zero )
             Fail( "client start packet (acked)" );
         FillPattern( RocketNet.PayloadSpan( in ackedUp ).Slice( 0, 16 ), 4 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) == 0 )
@@ -253,7 +253,7 @@ static class Smoke
         RocketNet.ClientTransportSendPackets( client );
 
         RocketNet.PacketContext ackedDown = default;
-        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, ref ackedDown ) == IntPtr.Zero )
+        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref ackedDown ) == IntPtr.Zero )
             Fail( "server start packet (acked)" );
         FillPattern( RocketNet.PayloadSpan( in ackedDown ).Slice( 0, 16 ), 5 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) == 0 )
@@ -284,6 +284,53 @@ static class Smoke
             Fail( $"delivery notifications did not surface (client {clientSawAck}, server {serverSawAck})" );
         Ok( $"acked packet ids surfaced both ways (client id {ackedUp.PacketId}, server id {ackedDown.PacketId})" );
 
+        // fragmentation through the binding: a request above the wire's
+        // capacity fragments transparently at finish and reassembles
+        // byte-exact into the ordinary payload batch on the far side, and
+        // the payload's one packet id surfaces when every fragment's wire
+        // packet is acknowledged
+
+        RocketNet.PacketContext bigUp = default;
+        if ( RocketNet.ClientTransportStartPacket( client, 5000, ref bigUp ) == IntPtr.Zero )
+            Fail( "client start packet (fragmented)" );
+        if ( bigUp.PayloadCapacity != RocketNet.DefaultMaxPayloadBytes )
+            Fail( $"fragmented payload capacity {bigUp.PayloadCapacity}" );
+        FillPattern( RocketNet.PayloadSpan( in bigUp ).Slice( 0, 5000 ), 6 );
+        if ( RocketNet.ClientTransportFinishPacket( client, ref bigUp, 5000 ) == 0 )
+            Fail( "client finish packet (fragmented)" );
+        RocketNet.ClientTransportSendPackets( client );
+
+        bool gotFragmented = false, fragmentedAcked = false;
+        for ( int i = 0; i < 2000 && !( gotFragmented && fragmentedAcked ); i++ )
+        {
+            time += TimeStep;
+            RocketNet.ClientTransportUpdate( client, time );
+            RocketNet.ServerTransportUpdate( server, time );
+            RocketNet.ServerTransportPayloadBatch fragmentBatch = RocketNet.ServerTransportPayloads( server );
+            for ( int j = 0; j < fragmentBatch.Count; j++ )
+            {
+                ReadOnlySpan<byte> received = fragmentBatch[j];
+                if ( received.Length == 5000 && MatchesPattern( received, 6 ) )
+                    gotFragmented = true;
+                else
+                    Fail( $"unexpected payload at server during fragment exchange: {received.Length} bytes" );
+            }
+            ReadOnlySpan<ulong> fragmentAcks = RocketNet.ClientTransportAckedPacketsSpan( client );
+            for ( int j = 0; j < fragmentAcks.Length; j++ )
+                if ( fragmentAcks[j] == bigUp.PacketId )
+                    fragmentedAcked = true;
+            RocketNet.ServerTransportSendPackets( server );
+            Thread.Sleep( 1 );
+        }
+        if ( !gotFragmented || !fragmentedAcked )
+            Fail( $"fragmented payload did not cross (received {gotFragmented}, acked {fragmentedAcked})" );
+        ReadOnlySpan<ulong> fragmentCounters = RocketNet.CountersSpan( RocketNet.ServerTransportCounters( server ) );
+        if ( fragmentCounters[(int) RocketNet.Counter.FragmentPayloadReassembled] != 1 )
+            Fail( "fragment payload reassembled counter" );
+        if ( fragmentCounters[(int) RocketNet.Counter.FragmentPayloadAbandoned] != 0 )
+            Fail( "fragment payload abandoned on a clean loopback" );
+        Ok( $"fragmented payload byte-exact both ways across the binding (id {bigUp.PacketId} acked)" );
+
         // the per-client stats: fed by the acks, recomputed round-robin over
         // the slots -- after live traffic and enough updates the slot's
         // numbers have moved
@@ -311,6 +358,10 @@ static class Smoke
         if ( RocketNet.CounterName( RocketNet.Counter.AckUnknownSequence ) != "ACK_UNKNOWN_SEQUENCE" )
             Fail( "counter name mapping (ack side counter)" );
         if ( RocketNet.CounterName( RocketNet.Counter.ClientAckWrongOpenedSize ) != "CLIENT_ACK_WRONG_OPENED_SIZE" )
+            Fail( "counter name mapping (ack tail)" );
+        if ( RocketNet.CounterName( RocketNet.Counter.FragmentPayloadReassembled ) != "FRAGMENT_PAYLOAD_REASSEMBLED" )
+            Fail( "counter name mapping (fragment family)" );
+        if ( RocketNet.CounterName( RocketNet.Counter.SendArenaFull ) != "SEND_ARENA_FULL" )
             Fail( "counter name mapping (last counter)" );
         Ok( $"counters: {serverCounters[(int) RocketNet.Counter.PayloadDelivered]} payloads delivered at the server" );
 

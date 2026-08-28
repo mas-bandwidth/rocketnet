@@ -63,13 +63,22 @@ public static unsafe class RocketNet
     /// <summary>Maximum client slots a server supports.</summary>
     public const int MaxClients = 1000;
 
-    /// <summary>Largest payload accepted by the send calls: the 1232-byte send budget less the
-    /// fixed overhead and the minimum ack block, floored to a multiple of eight.</summary>
+    /// <summary>Largest payload one wire packet carries: the 1232-byte send budget less the
+    /// fixed overhead and the minimum ack block, floored to a multiple of eight. A StartPacket
+    /// request above this routes through the transport's arena and fragments at finish.</summary>
     public const int MaxPayloadBytes = 1192;
 
-    /// <summary>Largest payload the receive calls can deliver: the receive side accepts up to the
-    /// fixed 1426-byte ceiling whatever this end's own send budget. Size receive buffers by this.</summary>
+    /// <summary>Largest single-packet payload the receive calls can deliver: the receive side
+    /// accepts up to the fixed 1426-byte ceiling whatever this end's own send budget. Reassembled
+    /// fragmented payloads are larger -- size receive buffers by the configured maximum payload.</summary>
     public const int MaxReceivePayloadBytes = 1393;
+
+    /// <summary>Default configured maximum payload: the largest payload a transport sends
+    /// (fragmenting transparently) and reassembles, when the config leaves it zero.</summary>
+    public const int DefaultMaxPayloadBytes = 16384;
+
+    /// <summary>Default per-connection reassembly slot count, when the config leaves it zero.</summary>
+    public const int DefaultReassemblySlots = 8;
 
     /// <summary>Size of a connect token in bytes.</summary>
     public const int ConnectTokenBytes = 768;
@@ -120,7 +129,7 @@ public static unsafe class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 146;
+    public const int NumCounters = 188;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -274,6 +283,48 @@ public static unsafe class RocketNet
         ClientPayloadWrongOpenedSize,
         ClientDisconnectWrongOpenedSize,
         ClientAckWrongOpenedSize,
+        FragmentReceived,
+        FragmentWrongSize,
+        FragmentNoMapping,
+        FragmentZeroSequence,
+        FragmentPacketAlreadyReceived,
+        FragmentDidNotOpen,
+        FragmentNotConnected,
+        FragmentBadAckBlock,
+        FragmentWrongOpenedSize,
+        FragmentZeroPayloadId,
+        FragmentStale,
+        FragmentCountInvalid,
+        FragmentIndexOutOfRange,
+        FragmentCountMismatch,
+        FragmentSizeMismatch,
+        FragmentPayloadTooLarge,
+        FragmentAlreadyReceived,
+        FragmentAccepted,
+        FragmentPayloadReassembled,
+        FragmentPayloadAbandoned,
+        FragmentPayloadBatchFull,
+        ClientFragmentReceived,
+        ClientFragmentWrongState,
+        ClientFragmentWrongSize,
+        ClientFragmentZeroSequence,
+        ClientFragmentPacketAlreadyReceived,
+        ClientFragmentDidNotOpen,
+        ClientFragmentBadAckBlock,
+        ClientFragmentWrongOpenedSize,
+        ClientFragmentZeroPayloadId,
+        ClientFragmentStale,
+        ClientFragmentCountInvalid,
+        ClientFragmentIndexOutOfRange,
+        ClientFragmentCountMismatch,
+        ClientFragmentSizeMismatch,
+        ClientFragmentPayloadTooLarge,
+        ClientFragmentAlreadyReceived,
+        ClientFragmentAccepted,
+        ClientFragmentPayloadReassembled,
+        ClientFragmentPayloadAbandoned,
+        ClientFragmentPayloadBatchFull,
+        SendArenaFull,
     }
 #pragma warning restore 1591
 
@@ -288,6 +339,13 @@ public static unsafe class RocketNet
     {
         /// <summary>The per-title filter value, 4 bytes.</summary>
         public fixed byte FilterValue[4];
+
+        /// <summary>Largest payload this client sends (fragmenting transparently) and
+        /// reassembles; zero means <see cref="DefaultMaxPayloadBytes"/>.</summary>
+        public int MaxPayloadBytes;
+
+        /// <summary>Reassembly slots for the connection; zero means <see cref="DefaultReassemblySlots"/>.</summary>
+        public int NumReassemblySlots;
 
         /// <summary>Native function pointer for void (*)( void * context, int previous_state,
         /// int current_state ), or IntPtr.Zero for none. Delegate marshaling is deliberately
@@ -318,6 +376,13 @@ public static unsafe class RocketNet
         public int NumXdpQueues;
         /// <summary>XDP transport OS cpu count; zero means the transport default. The portable build ignores it.</summary>
         public int NumOsCpus;
+
+        /// <summary>Largest payload this server sends (fragmenting transparently) and
+        /// reassembles per client; zero means <see cref="DefaultMaxPayloadBytes"/>.</summary>
+        public int MaxPayloadBytes;
+
+        /// <summary>Reassembly slots per client slot; zero means <see cref="DefaultReassemblySlots"/>.</summary>
+        public int NumReassemblySlots;
     }
 
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
@@ -585,10 +650,13 @@ public static unsafe class RocketNet
         return new ClientTransportPayloadBatch( count, data, bytes );
     }
 
-    /// <summary>Acquires a packet to fill; see the send family contract on <see cref="ServerTransportStartPacket"/>.
-    /// Returns the frame, or IntPtr.Zero when no packet is available (ring full, not connected).</summary>
+    /// <summary>Acquires a packet to fill with the requested capacity; see the send family
+    /// contract on <see cref="ServerTransportStartPacket"/>. A request above
+    /// <see cref="MaxPayloadBytes"/> routes to the arena and fragments at finish.
+    /// Returns the frame, or IntPtr.Zero when no packet is available (ring or arena full,
+    /// not connected, request out of range).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportStartPacket( IntPtr client, ref PacketContext context );
+    public static extern IntPtr ClientTransportStartPacket( IntPtr client, int requestBytes, ref PacketContext context );
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
@@ -721,10 +789,13 @@ public static unsafe class RocketNet
     // Update: packets are never sent without it. Calling it again in the same frame is a
     // no-op. The fields of the context are read-only to the caller.
 
-    /// <summary>Acquires a packet to fill for one client; the threading contract is in the
-    /// comment above. Returns the frame, or IntPtr.Zero when no packet is available.</summary>
+    /// <summary>Acquires a packet to fill for one client with the requested capacity; the
+    /// threading contract is in the comment above. A request above <see cref="MaxPayloadBytes"/>
+    /// routes to the arena and fragments at finish -- the context's one PacketId surfaces
+    /// acknowledged when every fragment's wire packet is acknowledged. Returns the frame, or
+    /// IntPtr.Zero when no packet is available.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportStartPacket( IntPtr server, int clientIndex, ref PacketContext context );
+    public static extern IntPtr ServerTransportStartPacket( IntPtr server, int clientIndex, int requestBytes, ref PacketContext context );
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
