@@ -701,10 +701,10 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     memset( stats, 0, sizeof(struct rocketnet_client_transport_stats_t) );
 
     // rtt seeds from the handshake's round trips and the acks refresh it
-    // continuously from there: once first-ack samples exist they are the
-    // estimate
+    // continuously from there: once positive first-ack samples exist they
+    // are the estimate
 
-    stats->rtt = client_transport->protocol.ack.has_rtt_sample ?
+    stats->rtt = client_transport->protocol.ack.rtt > 0.0f ?
         client_transport->protocol.ack.rtt :
         (float) ( client_transport->protocol.rtt_estimate * 1000.0 );
     stats->jitter = (float) ( client_transport->jitter_tracker.jitter * 1000.0 );

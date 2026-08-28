@@ -63,8 +63,13 @@ public static unsafe class RocketNet
     /// <summary>Maximum client slots a server supports.</summary>
     public const int MaxClients = 1000;
 
-    /// <summary>Largest payload accepted by the send calls and delivered by the receive calls.</summary>
-    public const int MaxPayloadBytes = 1400;
+    /// <summary>Largest payload accepted by the send calls: the 1232-byte send budget less the
+    /// fixed overhead and the minimum ack block, floored to a multiple of eight.</summary>
+    public const int MaxPayloadBytes = 1192;
+
+    /// <summary>Largest payload the receive calls can deliver: the receive side accepts up to the
+    /// fixed 1426-byte ceiling whatever this end's own send budget. Size receive buffers by this.</summary>
+    public const int MaxReceivePayloadBytes = 1393;
 
     /// <summary>Size of a connect token in bytes.</summary>
     public const int ConnectTokenBytes = 768;
@@ -115,7 +120,7 @@ public static unsafe class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 105;
+    public const int NumCounters = 138;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -228,6 +233,39 @@ public static unsafe class RocketNet
         ClientDisconnectAlreadyReceived,
         ClientDisconnectDidNotOpen,
         ClientDisconnectAccepted,
+        KeepAliveWrongSize,
+        KeepAliveBadAckBlock,
+        PayloadWrongSize,
+        PayloadBadAckBlock,
+        DisconnectWrongSize,
+        DisconnectBadAckBlock,
+        AckReceived,
+        AckWrongSize,
+        AckNoMapping,
+        AckZeroSequence,
+        AckAlreadyReceived,
+        AckDidNotOpen,
+        AckNotConnected,
+        AckBadAckBlock,
+        AckAccepted,
+        AckUnknownSequence,
+        AckedBatchFull,
+        ClientKeepAliveWrongSize,
+        ClientKeepAliveBadAckBlock,
+        ClientPayloadWrongSize,
+        ClientPayloadBadAckBlock,
+        ClientDisconnectWrongSize,
+        ClientDisconnectBadAckBlock,
+        ClientAckReceived,
+        ClientAckWrongState,
+        ClientAckWrongSize,
+        ClientAckZeroSequence,
+        ClientAckAlreadyReceived,
+        ClientAckDidNotOpen,
+        ClientAckBadAckBlock,
+        ClientAckAccepted,
+        ClientAckUnknownSequence,
+        ClientAckedBatchFull,
     }
 #pragma warning restore 1591
 
@@ -296,8 +334,8 @@ public static unsafe class RocketNet
 
     /// <summary>rocketnet_client_transport_stats_t. Read with <see cref="ClientTransportGetStats"/>. rtt and
     /// jitter are milliseconds, packet loss is a percentage; the rates and bandwidth cover
-    /// the trailing second of updates. rtt is measured from the handshake's round trips
-    /// and holds from there, as the C header says.</summary>
+    /// the trailing second of updates. rtt seeds from the handshake's round trips and is
+    /// continuously refreshed by the acks, as the C header says.</summary>
     [StructLayout( LayoutKind.Sequential )]
     public struct ClientTransportStats
     {
@@ -330,6 +368,28 @@ public static unsafe class RocketNet
         public float BandwidthSentKbps;
         /// <summary>Bandwidth received over the last second, kilobits per second.</summary>
         public float BandwidthReceivedKbps;
+    }
+
+    /// <summary>rocketnet_server_transport_client_stats_t. Read with <see cref="ServerTransportGetClientStats"/>.
+    /// Per-client connection quality, per slot: rtt and jitter in milliseconds, packet loss as
+    /// the percentage of this end's sent packets never acknowledged, and the trailing bandwidth
+    /// sent, received and acknowledged. Fed by the ack blocks every session packet carries;
+    /// recomputed round-robin, a sixth of the slots per update, every slot covered.</summary>
+    [StructLayout( LayoutKind.Sequential )]
+    public struct ServerTransportClientStats
+    {
+        /// <summary>Round trip time in milliseconds.</summary>
+        public float Rtt;
+        /// <summary>Deviation of rtt samples above the minimum, in milliseconds.</summary>
+        public float Jitter;
+        /// <summary>Percent of sent packets never acknowledged.</summary>
+        public float PacketLoss;
+        /// <summary>Bandwidth sent to this client, kilobits per second.</summary>
+        public float BandwidthSentKbps;
+        /// <summary>Bandwidth received from this client, kilobits per second.</summary>
+        public float BandwidthReceivedKbps;
+        /// <summary>Bandwidth acknowledged by this client, kilobits per second.</summary>
+        public float BandwidthAckedKbps;
     }
 
     /// <summary>rocketnet_frame_sync_stats_t. Read with <see cref="FrameSyncGetStats"/>.</summary>
@@ -476,15 +536,15 @@ public static unsafe class RocketNet
     }
 
     /// <summary>The copying receive cursor: copies the next received payload into the buffer
-    /// (at least <see cref="MaxPayloadBytes"/>) and returns its size, or zero when drained.</summary>
+    /// (at least <see cref="MaxReceivePayloadBytes"/>) and returns its size, or zero when drained.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_receive_packet", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportReceivePacket( IntPtr client, byte* packetData );
 
     /// <summary>The copying receive cursor over a span.</summary>
     public static int ClientTransportReceivePacket( IntPtr client, Span<byte> buffer )
     {
-        if ( buffer.Length < MaxPayloadBytes )
-            throw new ArgumentException( "buffer must hold MaxPayloadBytes", nameof(buffer) );
+        if ( buffer.Length < MaxReceivePayloadBytes )
+            throw new ArgumentException( "buffer must hold MaxReceivePayloadBytes", nameof(buffer) );
         fixed ( byte* p = buffer )
             return ClientTransportReceivePacket( client, p );
     }
@@ -556,6 +616,20 @@ public static unsafe class RocketNet
     /// <summary>Reads the client's connection quality stats (rocketnet_client_transport_stats).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_stats", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ClientTransportGetStats( IntPtr client, out ClientTransportStats stats );
+
+    /// <summary>The client's delivery notification batch: packet ids newly acknowledged by the
+    /// last update, valid until the next update. The packet id is the one in
+    /// <see cref="PacketContext.PacketId"/> from StartPacket. Returns the batch count.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_acked_packets", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int ClientTransportAckedPackets( IntPtr client, out ulong* packetIds );
+
+    /// <summary>The client's acked packet ids as a span -- one interop crossing.
+    /// Valid until the next update.</summary>
+    public static ReadOnlySpan<ulong> ClientTransportAckedPacketsSpan( IntPtr client )
+    {
+        int count = ClientTransportAckedPackets( client, out ulong* packetIds );
+        return count == 0 ? ReadOnlySpan<ulong>.Empty : new ReadOnlySpan<ulong>( packetIds, count );
+    }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_state_name", CallingConvention = CallingConvention.Cdecl )]
     static extern IntPtr client_transport_state_name( int state );
@@ -697,6 +771,26 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_stats", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ServerTransportGetStats( IntPtr server, out ServerTransportStats stats );
 
+    /// <summary>Reads one slot's connection quality stats (rocketnet_server_transport_client_stats).
+    /// An out-of-range slot reads as zeros.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_client_stats", CallingConvention = CallingConvention.Cdecl )]
+    public static extern void ServerTransportGetClientStats( IntPtr server, int clientIndex, out ServerTransportClientStats stats );
+
+    /// <summary>The delivery notification batch: packet ids newly acknowledged by the last
+    /// update, as parallel arrays with the client index of each. Valid until the next update.
+    /// The packet id is the one in <see cref="PacketContext.PacketId"/> from StartPacket --
+    /// the join key back to whatever the game sent. Returns the batch count.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_acked_packets", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int ServerTransportAckedPackets( IntPtr server, out int* clientIndex, out ulong* packetIds );
+
+    /// <summary>The server's acked batch as a zero-copy indexed view -- one interop crossing.
+    /// Valid until the next update.</summary>
+    public static ServerTransportAckedBatch ServerTransportAckedPackets( IntPtr server )
+    {
+        int count = ServerTransportAckedPackets( server, out int* clientIndex, out ulong* packetIds );
+        return new ServerTransportAckedBatch( count, clientIndex, packetIds );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_counter_name", CallingConvention = CallingConvention.Cdecl )]
     static extern IntPtr counter_name( int counter );
 
@@ -771,6 +865,40 @@ public static unsafe class RocketNet
                     throw new IndexOutOfRangeException();
                 return new ReadOnlySpan<byte>( data[index], bytes[index] );
             }
+        }
+    }
+
+    /// <summary>The server's acked batch: packet ids newly acknowledged by the last update,
+    /// with the client index of each. Valid until the next update.</summary>
+    public readonly ref struct ServerTransportAckedBatch
+    {
+        readonly int * clientIndex;
+        readonly ulong * packetIds;
+
+        /// <summary>Number of newly acknowledged packets in the batch.</summary>
+        public readonly int Count;
+
+        internal ServerTransportAckedBatch( int count, int * clientIndex, ulong * packetIds )
+        {
+            Count = count;
+            this.clientIndex = clientIndex;
+            this.packetIds = packetIds;
+        }
+
+        /// <summary>One acknowledged packet id of the batch.</summary>
+        public ulong PacketId( int index )
+        {
+            if ( (uint) index >= (uint) Count )
+                throw new IndexOutOfRangeException();
+            return packetIds[index];
+        }
+
+        /// <summary>The destination client of one acknowledged packet of the batch.</summary>
+        public int ClientIndex( int index )
+        {
+            if ( (uint) index >= (uint) Count )
+                throw new IndexOutOfRangeException();
+            return clientIndex[index];
         }
     }
 

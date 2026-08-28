@@ -240,6 +240,66 @@ static class Smoke
         Ok( $"quality stats: client rtt {clientStats.Rtt:F1} ms, jitter {clientStats.Jitter:F2} ms, loss {clientStats.PacketLoss:F1}%, " +
             $"client {clientStats.PacketsSentPerSecond}/{clientStats.PacketsReceivedPerSecond} pps, server {serverStats.PacketsSentPerSecond}/{serverStats.PacketsReceivedPerSecond} pps" );
 
+        // the delivery notification primitive: one payload each way through
+        // acquire/commit, and the packet id start_packet handed out comes back
+        // acknowledged on each end -- the join key, through the binding
+
+        RocketNet.PacketContext ackedUp = default;
+        if ( RocketNet.ClientTransportStartPacket( client, ref ackedUp ) == IntPtr.Zero )
+            Fail( "client start packet (acked)" );
+        FillPattern( RocketNet.PayloadSpan( in ackedUp ).Slice( 0, 16 ), 4 );
+        if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) == 0 )
+            Fail( "client finish packet (acked)" );
+        RocketNet.ClientTransportSendPackets( client );
+
+        RocketNet.PacketContext ackedDown = default;
+        if ( RocketNet.ServerTransportStartPacket( server, clientIndex, ref ackedDown ) == IntPtr.Zero )
+            Fail( "server start packet (acked)" );
+        FillPattern( RocketNet.PayloadSpan( in ackedDown ).Slice( 0, 16 ), 5 );
+        if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) == 0 )
+            Fail( "server finish packet (acked)" );
+
+        bool clientSawAck = false, serverSawAck = false;
+        for ( int i = 0; i < 2000 && !( clientSawAck && serverSawAck ); i++ )
+        {
+            Pump( client, server );
+
+            ReadOnlySpan<ulong> clientAcked = RocketNet.ClientTransportAckedPacketsSpan( client );
+            for ( int j = 0; j < clientAcked.Length; j++ )
+                if ( clientAcked[j] == ackedUp.PacketId )
+                    clientSawAck = true;
+
+            RocketNet.ServerTransportAckedBatch serverAcked = RocketNet.ServerTransportAckedPackets( server );
+            for ( int j = 0; j < serverAcked.Count; j++ )
+            {
+                if ( serverAcked.PacketId( j ) == ackedDown.PacketId )
+                {
+                    if ( serverAcked.ClientIndex( j ) != clientIndex )
+                        Fail( "acked packet attributed to the wrong client index" );
+                    serverSawAck = true;
+                }
+            }
+        }
+        if ( !clientSawAck || !serverSawAck )
+            Fail( $"delivery notifications did not surface (client {clientSawAck}, server {serverSawAck})" );
+        Ok( $"acked packet ids surfaced both ways (client id {ackedUp.PacketId}, server id {ackedDown.PacketId})" );
+
+        // the per-client stats: fed by the acks, recomputed round-robin over
+        // the slots -- after live traffic and enough updates the slot's
+        // numbers have moved
+
+        RocketNet.ServerTransportGetClientStats( server, clientIndex, out RocketNet.ServerTransportClientStats slotStats );
+        if ( slotStats.BandwidthReceivedKbps <= 0.0f )
+            Fail( $"per-client received bandwidth did not move ({slotStats.BandwidthReceivedKbps} kbps)" );
+        if ( slotStats.Rtt < 0.0f || slotStats.Rtt >= 1000.0f )
+            Fail( $"per-client rtt implausible ({slotStats.Rtt} ms)" );
+        if ( slotStats.PacketLoss < 0.0f || slotStats.PacketLoss > 100.0f )
+            Fail( $"per-client packet loss implausible ({slotStats.PacketLoss}%)" );
+        RocketNet.ServerTransportGetClientStats( server, 12345, out RocketNet.ServerTransportClientStats bogusStats );
+        if ( bogusStats.Rtt != 0.0f || bogusStats.BandwidthReceivedKbps != 0.0f )
+            Fail( "out-of-range slot stats not zero" );
+        Ok( $"per-client stats: rtt {slotStats.Rtt:F1} ms, loss {slotStats.PacketLoss:F1}%, received {slotStats.BandwidthReceivedKbps:F1} kbps, acked {slotStats.BandwidthAckedKbps:F1} kbps" );
+
         // counters: delivery counted, and the C# counter indices line up with the
         // C names at both ends of the enum
 
@@ -248,7 +308,9 @@ static class Smoke
             Fail( "server payload delivered counter" );
         if ( RocketNet.CounterName( RocketNet.Counter.ConnectionRequestSignatureDidNotVerify ) != "CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY" )
             Fail( "counter name mapping (signature)" );
-        if ( RocketNet.CounterName( RocketNet.Counter.ClientDisconnectAccepted ) != "CLIENT_DISCONNECT_ACCEPTED" )
+        if ( RocketNet.CounterName( RocketNet.Counter.AckUnknownSequence ) != "ACK_UNKNOWN_SEQUENCE" )
+            Fail( "counter name mapping (ack side counter)" );
+        if ( RocketNet.CounterName( RocketNet.Counter.ClientAckedBatchFull ) != "CLIENT_ACKED_BATCH_FULL" )
             Fail( "counter name mapping (last counter)" );
         Ok( $"counters: {serverCounters[(int) RocketNet.Counter.PayloadDelivered]} payloads delivered at the server" );
 

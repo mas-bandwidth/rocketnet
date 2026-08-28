@@ -384,7 +384,10 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
 {
     rocketnet_assert( endpoint );
 
-    // rtt: the minimum over the history of first-ack samples
+    // rtt: the minimum over the history of first-ack samples. a sample of
+    // exactly zero -- possible only on a held or loopback clock -- is
+    // excluded from the minimum, the space reference's rule, so the
+    // published number stays a real round trip.
 
     float min_rtt = 0.0f;
     {
@@ -392,7 +395,7 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
         for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
         {
             const float sample = endpoint->rtt_history[i];
-            if ( sample >= 0.0f && sample < best )
+            if ( sample > 0.0f && sample < best )
                 best = sample;
         }
         if ( best < 1e9f )
