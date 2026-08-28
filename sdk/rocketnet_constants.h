@@ -79,6 +79,13 @@
 // budget. If you would rather never drop, raise MAX_CLIENTS or
 // RECEIVE_PACKETS_PER_CLIENT so the arrays cover a full queue drain.
 
+// the send arena: how many over-wire-capacity payloads one fill phase can
+// stage per transport. each slot is the configured maximum payload, spent
+// at create; exhaustion drops at start_packet on SEND_ARENA_FULL, the
+// arena sibling of the ring counter.
+
+#define ROCKETNET_SEND_ARENA_SLOTS                                          16
+
 #define ROCKETNET_NUM_CLIENT_PACKETS                                      1024
 
 #define ROCKETNET_DIRECT_TIMEOUT                                          30.0
