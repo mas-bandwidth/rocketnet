@@ -46,11 +46,16 @@ XDP or portable. Any third implementation drops into that same seam.
 
 **Owns:** socket lifecycle and tuning, threads/time, `rocketnet_address_t`, the
 18-byte `{type, pittle, chonkle}` prefix, packet buffering and batching, the
-whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives.
+whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives —
+and, on the connection protocol, the general acks: every session packet's
+sealed plaintext opens with an ack block, and the transport surfaces the
+acknowledged packet ids per update. Delivery notification is the primitive;
+the transport informs and never resends.
 
 **Leaves to the caller:** serialization and bit packing (absolutely — this is
-the design), reliability, acks, sequencing, fragmentation, payload encryption,
-handshake, keepalives, DNS, and on the direct path all connection semantics.
+the design), reliability policy on top of the notifications, sequencing,
+fragmentation (#76), payload encryption above the seal, DNS, and on the
+direct path all connection semantics.
 `rocketnet_server_socket_t` has no client table; `ROCKETNET_MAX_CLIENTS` is only an
 array-sizing constant.
 
