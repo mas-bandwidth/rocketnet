@@ -70,6 +70,69 @@ A high-level client and server for games to program against — anything built
 above the transport, speaking entirely in payload packets — is outside this
 document's scope.
 
+### Driver selection and transport configuration
+
+Which driver carries the bytes never changes the bytes — the clauses in this
+section rule the *selection and configuration surface* of an implementation
+that offers more than one driver, because silent selection is how a
+deployment ends up running a tier nobody chose and nobody can account for.
+An implementation with exactly one driver has nothing to select and may skip
+this section whole.
+
+**Selection is an ordered candidate list.** The driver selection value —
+wherever an implementation carries it — MUST be interpreted as an ordered
+list of candidate driver names, tried left to right at transport create;
+the first driver that grants wins, and the transport MUST report which. The
+value `auto` (and the empty value) MUST expand to the implementation's
+recommended order for that endpoint on that platform, kept in one table (in
+the RocketNet library: linux server `xdp,gso,portable`; macOS
+`msgx,portable`; everywhere else `portable`). An explicit list is exactly
+that list, in exactly that order — nothing is appended, no implicit floor
+exists, and a one-element list is a **pin**: that driver or loud create
+failure, never a silent fall. `auto` falls; pins refuse. A fallback the
+operator did not choose can mask a provisioning error indefinitely, which
+is why the default ladder logs every fall loudly and a pin refuses instead
+of falling.
+
+**Two tiers of unknown.** A name in the known driver set but not available
+to this endpoint on this platform MUST be ignored with one soft log line —
+this is what lets a single fleet-wide configuration line such as
+`xdp,gso,msgx,portable` deploy unmodified to heterogeneous machines. A name
+in no known driver set is a typo and MUST fail the create loudly at parse,
+listing the valid names — ignoring arbitrary strings would let a misspelled
+name become an empty ladder silently. A list whose every candidate was
+ignored or refused MUST fail the create loudly, naming what was skipped for
+platform and what refused for grant, because missing privilege, missing
+kernel support and missing hardware support are different operator errands.
+
+**The granted tier is reported.** The transport MUST expose the granted
+driver by name (request-vs-granted), and MUST log one line at create naming
+the grant and each earlier candidate's refusal. Performance claims attach
+to the granted tier, never the requested one. A driver's own internal
+probing and degradation (the GSO driver's feature tiers, the Darwin pump's
+live-refusal pause) remains that driver's documented behavior below this
+surface and does not change the granted name.
+
+**Configuration precedence is `default < struct < environment`.** Every
+transport configuration field is declared exactly once, in a table naming
+its type, default and valid range; the config struct, its defaults
+function, the environment variable name, the parse, and the validation all
+derive from that one declaration, so the surfaces cannot drift apart. The
+environment variable name derives mechanically: the `ROCKETNET_` prefix
+plus the field name uppercased (`driver` → `ROCKETNET_DRIVER`). Everything
+configurable in code MUST be configurable by environment — the audience is
+the operator deploying an already-built binary, who has no code surface at
+all — with the sole exception of fields that cannot ride an environment
+variable (pointers), which MUST be stated as excluded where they are
+declared. Every environment override MUST be logged loudly at create with
+the variable name and the value it displaced (secret material redacted), so
+nothing runs in a state nobody can account for and a forgotten variable in
+a service file cannot silently diverge a fleet. Validation MUST refuse
+loudly at create on any out-of-range value — never clamp, never silently
+correct — and applies the same rules to struct and environment values
+alike. An implementation SHOULD prove the table's completeness with a test
+that walks it and round-trips every field from environment.
+
 The sequence of operations for a client connect:
 
 1. A client authenticates with the backend.

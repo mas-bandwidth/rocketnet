@@ -17,17 +17,26 @@ compiles later on the target kernel, which needs BTF; it is not compiled by `mak
 
 ## Server transport drivers
 
-The server transport builds against one driver, selected at compile time; call sites
-never change (one header, zero `#ifdef` at the call site):
+Driver selection is runtime (#106): one build carries every driver its platform
+has — on Linux the AF_XDP driver (privileged), the GSO driver (SO_REUSEPORT +
+sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and the portable UDP driver; on macOS
+the Darwin batch pump and portable — and the transport walks an ordered candidate
+list at create. The list rides the config's `driver` field or the
+`ROCKETNET_DRIVER` environment variable (precedence: default < struct < env):
 
-    make                                      # portable UDP driver (every platform)
-    make build-gso                            # GSO driver: SO_REUSEPORT + sendmmsg/recvmmsg
-                                              #   + UDP GSO/GRO, non-root, Linux only
-    cmake -DROCKETNET_SERVER_XDP=1 ...        # AF_XDP driver, privileged, Linux only
+    ./bin/test                                # auto: the platform's recommended ladder
+                                              #   (linux: xdp,gso,portable — falls on refusal)
+    ROCKETNET_DRIVER=portable ./bin/test      # a one-element list is a pin: that driver
+                                              #   or loud failure, never a silent fall
+    ROCKETNET_DRIVER=gso,portable ./bin/test  # exactly these, exactly this order
 
-The GSO driver probes UDP_SEGMENT and UDP_GRO at create and degrades to plain
-sendmmsg/recvmmsg batching where a kernel lacks them; it needs no capability or
-privilege. Run the same `./bin/test` against each build — the suite is driver-blind.
+Names known but absent on a platform are skipped with a log line, so one fleet-wide
+value deploys everywhere; unknown names refuse loudly at create. The granted driver
+is reported by `rocketnet_server_transport_driver` and the create log line. The GSO
+driver still probes UDP_SEGMENT and UDP_GRO at create and degrades to plain
+sendmmsg/recvmmsg batching where a kernel lacks them — that degradation is internal
+to the driver, below the ladder. Run the same `./bin/test` against each rung — the
+suite is driver-blind.
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 
