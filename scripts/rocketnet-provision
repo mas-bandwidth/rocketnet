@@ -51,12 +51,17 @@
 #                             takes the interface name; whether it carries
 #                             the server's public IPv4 address is checked by
 #                             the pre-flight, which alone knows the address).
-#   R3. exclusive xdp slot    no XDP program attached (this script unloads,
-#                             and sweeps bpffs pin roots left by crashed
-#                             rocketnet instances; the library never unloads
-#                             anyone and pins only under its own pid-scoped
-#                             /sys/fs/bpf/rocketnet_xdp_<pid>). the
-#                             pre-flight verifies this read-only.
+#   R3. exclusive xdp slot    no XDP program attached (this script unloads;
+#                             the library never unloads anyone and pins only
+#                             under its own per-INSTANCE
+#                             /sys/fs/bpf/rocketnet_xdp_<pid>_<seq>, which
+#                             it creates itself and never adopts). the
+#                             pre-flight verifies this read-only. crash
+#                             leftovers are the SWEEP mode's business alone:
+#                             host pid liveness is unreliable where bpffs is
+#                             shared into containers, so neither provision
+#                             nor verify touches them -- they are inert, and
+#                             a colliding create refuses loudly.
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
 #                             its own CPU from the isolated set, one queue
 #                             one CPU (/proc/interrupts ->
@@ -80,11 +85,13 @@
 #                             checkable from shell, and nothing to perform.
 #
 # usage:
-#   rocketnet-provision <interface> <num_queues> [verify] [isolated-range]
+#   rocketnet-provision <interface> <num_queues> [verify|sweep] [isolated-range]
 #
 #     provision (default): perform the runtime tier idempotently, verify the
 #                          boot tier, loud either way
 #     verify:              check only, mutate nothing, exit 1 listing unmet
+#     sweep:               remove crash-leftover pin roots whose pid is dead
+#                          in THIS host's pid view (see the caveat inline)
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
 #                          with, default 1-15 (the 10 Gbps point) -- used in
 #                          the B1 guidance and the scaling check below
@@ -101,8 +108,8 @@ MODE="${3:-provision}"
 WANT_RANGE="${4:-1-15}"
 
 case "$MODE" in
-    provision|verify) ;;
-    *) echo "unknown mode '$MODE' (provision or verify; a misspelled verify must never mutate)" >&2; exit 2 ;;
+    provision|verify|sweep) ;;
+    *) echo "unknown mode '$MODE' (provision, verify, or sweep; a misspelled mode must never mutate)" >&2; exit 2 ;;
 esac
 
 if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
@@ -111,16 +118,50 @@ if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
 fi
 
 case "$NUM_QUEUES" in
-    ''|*[!0-9]*) echo "num_queues must be a positive integer" >&2; exit 2 ;;
+    ''|*[!0-9]*|0) echo "num_queues must be a positive integer (at least 1)" >&2; exit 2 ;;
 esac
 
 VERIFY=0
 [ "$MODE" = "verify" ] && VERIFY=1
 
+# THE SWEEP, its own deliberate mode (decided on the #110 gate, round
+# four): neither provision nor verify touches or judges crash-leftover pin
+# roots, because pid liveness read from this host's /proc is UNRELIABLE
+# where bpffs is shared into containers -- a "dead" pid here can be a live
+# instance there. the sweep states that caveat, then removes only roots
+# whose pid is not alive in this host's pid view; an operator who shares
+# bpffs across pid namespaces must sweep from the namespace that owns the
+# servers. the library itself never adopts an existing root (create
+# refuses it loudly), so an unswept orphan costs bpffs bytes, never
+# correctness.
+
 UNMET=0
 
 say()  { echo "rocketnet-provision: $*"; }
 fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; }
+
+if [ "$MODE" = "sweep" ]; then
+    if [ "$(id -u)" != "0" ]; then
+        say "sweep must run as root"; exit 1
+    fi
+    say "CAVEAT: pid liveness is read from THIS host's /proc; with bpffs shared into containers, sweep from the namespace that owns the servers"
+    SWEPT=0
+    for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
+        [ -e "$PIN_ROOT" ] || continue
+        REST="${PIN_ROOT##*/rocketnet_xdp_}"
+        PIN_PID="${REST%%_*}"
+        if [ -d "/proc/$PIN_PID" ]; then
+            say "leaving $PIN_ROOT: pid $PIN_PID is alive in this host's pid view"
+        else
+            say "sweeping $PIN_ROOT (pid $PIN_PID is gone)"
+            rm -f "$PIN_ROOT"/* 2>/dev/null
+            rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT"
+            SWEPT=1
+        fi
+    done
+    [ $SWEPT -eq 0 ] && say "nothing to sweep"
+    exit $UNMET
+fi
 
 # R1. root (needed to perform, and to read some of what verify reads)
 
@@ -142,9 +183,9 @@ CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
 
 B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
 
-case "$CMDLINE" in
-    *"irqaffinity=0"*) say "kernel command line carries irqaffinity=0 (B1)" ;;
-    *) fail "kernel command line lacks irqaffinity=0 (B1): $B1_GUIDANCE" ;;
+case " $CMDLINE " in
+    *" irqaffinity=0 "*) say "kernel command line carries irqaffinity=0 (B1)" ;;
+    *) fail "kernel command line lacks irqaffinity=0 -- exactly that token (B1): $B1_GUIDANCE" ;;
 esac
 
 for TOKEN in isolcpus nohz_full; do
@@ -213,42 +254,39 @@ if command -v xdp-loader >/dev/null 2>&1; then
         say "no XDP program attached to $INTERFACE (R3)"
     fi
 else
-    say "xdp-loader not found; skipping R3 unload (the library's own attach fails loudly on a busy NIC)"
+    fail "xdp-loader not found (R3): the exclusive slot can be neither cleared nor verified from here -- install xdp-tools"
 fi
 
-# R3's sweep: bpffs pin roots left by crashed rocketnet instances -- each
-# is pid-scoped, so one whose pid is no longer alive is orphaned state
-
-for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
-    [ -e "$PIN_ROOT" ] || continue
-    PIN_PID="${PIN_ROOT##*_}"
-    if [ -d "/proc/$PIN_PID" ]; then
-        say "pin root $PIN_ROOT belongs to live pid $PIN_PID; leaving it (R3)"
-    elif [ $VERIFY -eq 1 ]; then
-        fail "orphaned rocketnet pin root $PIN_ROOT (R3): run without verify to sweep"
-    else
-        say "sweeping orphaned pin root $PIN_ROOT (R3)"
-        rm -f "$PIN_ROOT"/* 2>/dev/null
-        rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT (R3)"
-    fi
-done
+# crash-leftover pin roots are the SWEEP mode's business, deliberately --
+# see the sweep block above for why neither provision nor verify touches
+# them (containerized pid views make host liveness unreliable). they are
+# inert until a create collides with one, and create refuses that loudly.
 
 # R4. per-queue irq pinning: one queue irq, one isolated cpu, round robin
 
-IRQS="$(awk -v IF="$INTERFACE" -F: 'BEGIN{pattern="(^|[ \t])" IF "([-: \t]|$)"} $0 ~ pattern {gsub(/ /,"",$1); print $1}' /proc/interrupts 2>/dev/null || true)"
+# the same boundary rule as rocketnet_server_socket_interrupt_line_matches_interface:
+# token bounded by start/space/tab/'-' before and '-'/':'/'@'/space/tab/end after
+
+IRQS="$(awk -v IF="$INTERFACE" -F: 'BEGIN{pattern="(^|[ \t-])" IF "([-:@ \t]|$)"} $0 ~ pattern {gsub(/ /,"",$1); print $1}' /proc/interrupts 2>/dev/null || true)"
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
 fi
+
+IRQ_COUNT=$(echo "$IRQS" | grep -c . || true)
 
 if [ -z "$IRQS" ]; then
     say "no per-queue IRQs found for $INTERFACE (R4 passes; VMs and NICs without MSI-X vectors have none)"
 elif [ ${#ISOLATED_CPUS[@]} -eq 0 ]; then
     fail "cannot pin $INTERFACE IRQs (R4): no isolated cpus (B1/B2 first)"
+elif [ "$IRQ_COUNT" -gt ${#ISOLATED_CPUS[@]} ]; then
+    # refused, exactly as the pre-flight refuses a doubled cpu: wrapping
+    # the round robin would BE the doubling
+    fail "$IRQ_COUNT IRQs on $INTERFACE but only ${#ISOLATED_CPUS[@]} isolated cpus (R4): one queue, one core -- grow the isolated range or shrink the queue count"
 else
     INDEX=0
     SEEN_CPUS=()
     for IRQ in $IRQS; do
-        CPU="${ISOLATED_CPUS[$(( INDEX % ${#ISOLATED_CPUS[@]} ))]}"
+        CPU="${ISOLATED_CPUS[$INDEX]}"
         CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
         if [ "$CURRENT" = "$CPU" ]; then
             say "irq $IRQ already pinned to cpu $CPU (R4)"
@@ -272,7 +310,7 @@ else
             esac
         else
             say "pinning irq $IRQ to cpu $CPU (R4)"
-            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || say "irq $IRQ refused affinity (some IRQs are unmovable); continuing"
+            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
         fi
         INDEX=$(( INDEX + 1 ))
     done

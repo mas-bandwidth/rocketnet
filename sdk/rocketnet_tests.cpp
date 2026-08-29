@@ -208,11 +208,14 @@ void rocketnet_test_base64()
     rocketnet_check( rocketnet_base64_decode_data( "AQ==", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0x01 );
 
-    // url-safe aliases still decode where canonical
+    // one alphabet, the standard one: the url-safe aliases are refused,
+    // so no two spellings share a decoding ("+w" is the only 0xFB)
 
-    rocketnet_check( rocketnet_base64_decode_data( "-w", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( rocketnet_base64_decode_data( "+w", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0xFB );
+    rocketnet_check( rocketnet_base64_decode_data( "-w", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "-_", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "A_==", bytes, sizeof(bytes) ) == 0 );
 }
 
 void rocketnet_test_hash()
@@ -10041,6 +10044,43 @@ void rocketnet_test_server_driver_ladder_fall()
     rocketnet_test_env_restore( &driver_guard );
 }
 
+// the R4 matcher against fixture strings of real /proc/interrupts lines:
+// driver-prefixed names from the exact families B3 tells operators to
+// build, plus the substring traps -- pure string logic, held here so the
+// pre-flight's and the script's shared boundary rule cannot drift
+// unwitnessed
+
+void rocketnet_test_xdp_interrupt_matcher()
+{
+    // driver-prefixed and bare queue names match their interface
+
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 24:  0  0  IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0\n", "ens1f0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 25:  0  0  IR-PCI-MSI 524289-edge      ice-ens1f0-TxRx-1\n", "ens1f0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 26:  0  0  PCI-MSI 1048576-edge      ens1f0-rx-3\n", "ens1f0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 27:  0  0  PCI-MSI 1048577-edge      eth0\n", "eth0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 28:  0  0  PCI-MSI 1048578-edge      mlx5_async@pci:0000:03:00.0\n", "mlx5_async" ) );
+
+    // the substring traps stay traps
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 29:  0  0  PCI-MSI 2097152-edge      velocity0-tx\n", "lo" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        "LOC:  12345  67890   Local timer interrupts\n", "lo" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 30:  0  0  PCI-MSI 2097153-edge      ens1f10-TxRx-0\n", "ens1f0" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 31:  0  0  PCI-MSI 2097154-edge      eth00\n", "eth0" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 32:  0  0  PCI-MSI 2097155-edge      i40e-lol-x\n", "lo" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 33:  0  0  PCI-MSI 2097156-edge      xeth0-TxRx-0\n", "eth0" ) );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -10265,24 +10305,28 @@ void rocketnet_test_config_env_aliases()
     rocketnet_test_env_restore( &alias_guard );
     rocketnet_test_env_restore( &successor_guard );
 
-    // the public address rides the table now: the env override reaches the
-    // granted port the tokens would be minted for -- one address everywhere
+    // the public address rides the table now, scoped first-create-consumes
+    // for the env layer. proven deterministically, no fixed port: the
+    // create PARAMETER is unparseable, so the create succeeds if and only
+    // if the env override displaced it -- and the second create proves the
+    // consumption, succeeding-by-refusal when the parameter (not the still
+    // exported variable) is what create reads.
 
     struct rocketnet_test_env_guard_t address_guard;
     rocketnet_test_env_save( &address_guard, "ROCKETNET_PUBLIC_ADDRESS" );
-    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:51473", 1 );
+    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
 
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
-    if ( server )
-    {
-        rocketnet_check( rocketnet_server_transport_port( server ) == 51473 );
-        rocketnet_server_transport_destroy( server );
-    }
-    // (a create refusal here means the fixed probe port was taken on this
-    // box -- the override path is still proven by the port match whenever
-    // the bind lands, and the alias spelling is covered above)
+
+    server = rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &address_guard );
     rocketnet_test_env_restore( &driver_guard );
@@ -10888,8 +10932,6 @@ void rocketnet_test_server_gso_send_overflow()
 
 void rocketnet_run_tests()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
     // THE COMMIT BARRIER (#110 gate, both readers): the suite must never
     // commit an XDP data plane -- not by per-test discipline, which two
     // readers proved decorative, but structurally: installed once here,
@@ -10899,9 +10941,19 @@ void rocketnet_run_tests()
     // path must call rocketnet_server_socket_allow_commit() explicitly,
     // and none does.
 
-    rocketnet_server_socket_forbid_commit();
+    rocketnet_forbid_xdp_commit();
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    // ambient address overrides would redirect the suite's first create
+    // (their designed scope) at whatever test happens to run first: the
+    // suite owns its process environment, so they are cleared here rather
+    // than defended against in every test
+
+    unsetenv( "ROCKETNET_PUBLIC_ADDRESS" );
+    unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     // while ( true )
     {
@@ -11051,6 +11103,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_server_driver_pin_gso );
         RUN_TEST( test_server_driver_pin_xdp );
         RUN_TEST( test_server_driver_ladder_fall );
+        RUN_TEST( test_xdp_interrupt_matcher );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         RUN_TEST( test_server_driver_pin_msgx );

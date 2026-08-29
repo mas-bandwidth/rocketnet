@@ -110,8 +110,12 @@ Still open, highest first:
    running at all — that project is in development, not production, and cut the
    XDP path down. Worth knowing before anyone "re-enables" something that is
    already on.
-2. **Startup side effects, output and exit status discarded**: several `popen`
-   calls, and library init disables SMT machine-wide.
+2. **Resolved by #110's verify-and-bind**: the XDP create used to disable
+   SMT machine-wide and run machine-mutating `popen` setup; all machine
+   provisioning now lives in `scripts/rocketnet-provision` and create is
+   verify-and-bind (a non-mutating pre-flight, then per-socket acts only).
+   The remaining spawned commands are read-only discovery and the private
+   build-directory workflow.
 
 3. **The umem fill-ring refill path is unverified on Linux**: the
    `num_consumed` accounting that drives release, refill and the

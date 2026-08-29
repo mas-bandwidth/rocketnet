@@ -29,6 +29,7 @@
 #include <linux/if_xdp.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
 #include <errno.h>
@@ -166,7 +167,10 @@ struct rocketnet_server_socket_t
     struct xdp_program * program;
     bool attached_native;
     bool attached_skb;
-    char pin_root[64];                  // this instance's own bpffs directory: its maps pin here and nowhere shared
+    char pin_root[64];                  // this INSTANCE's own bpffs directory (pid + per-process sequence): created by this create, adopted never
+    bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
+    int num_pinned;                     // the pins this instance OBSERVED under its root -- destroy unlinks exactly these, never fixed names
+    char pinned_paths[3][160];
     int config_map_fd;
     int socket_map_fd;
     int stats_map_fd;
@@ -265,6 +269,8 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
         const char * gateway_ip_string = NULL;
 
         FILE * file = popen( "netstat -rn", "r" );
+        if ( !file )
+            return false;
         char netstat_buffer[1024];
         while ( fgets( netstat_buffer, sizeof(netstat_buffer), file ) != NULL )
         {
@@ -302,6 +308,8 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
         bool found_mac_address = false;
 
         file = popen( "ip neigh show", "r" );
+        if ( !file )
+            return false;
         char ip_buffer[1024];
         while ( fgets( ip_buffer, sizeof(ip_buffer), file ) != NULL )
         {
@@ -470,21 +478,21 @@ static bool rocketnet_server_socket_read_sysfs( const char * path, char * value,
 // refuses at the top, before its first act. allow exists for a caller
 // that deliberately opts back in; nothing in the suite does.
 
-static bool rocketnet_server_socket_commit_forbidden_flag = false;
+static std::atomic<bool> rocketnet_server_socket_commit_forbidden_flag( false );
 
 void rocketnet_server_socket_forbid_commit()
 {
-    rocketnet_server_socket_commit_forbidden_flag = true;
+    rocketnet_server_socket_commit_forbidden_flag.store( true );
 }
 
 void rocketnet_server_socket_allow_commit()
 {
-    rocketnet_server_socket_commit_forbidden_flag = false;
+    rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
 
 bool rocketnet_server_socket_commit_forbidden()
 {
-    return rocketnet_server_socket_commit_forbidden_flag;
+    return rocketnet_server_socket_commit_forbidden_flag.load();
 }
 
 // cpu list helpers for the boot-tier checks: "1-7,9" style lists as
@@ -548,6 +556,57 @@ static int rocketnet_server_socket_count_cpu_list( const char * list )
             cursor++;
     }
     return count;
+}
+
+// The R4 interrupt-line matcher, one tested function shared in spirit
+// with the script's awk expression (same boundary sets, stated in the
+// script header): the interface name matches as a bounded token --
+// preceded by line start, whitespace, or '-' (driver-prefixed names like
+// i40e-ens1f0-TxRx-0, the exact family B3 tells operators to build) and
+// followed by '-', ':', '@', whitespace, or end. pure string logic,
+// exported so the fixture test can hold it against real /proc/interrupts
+// lines.
+
+bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name )
+{
+    rocketnet_assert( line );
+    rocketnet_assert( interface_name );
+
+    const size_t name_length = strlen( interface_name );
+    if ( name_length == 0 )
+        return false;
+
+    const char * match = strstr( line, interface_name );
+    while ( match )
+    {
+        const char before = match == line ? ' ' : match[-1];
+        const char after = match[name_length];
+        const bool before_ok = before == ' ' || before == '\t' || before == '-';
+        const bool after_ok = after == '-' || after == ':' || after == '@' || after == ' ' || after == '\t' || after == '\n' || after == '\r' || after == '\0';
+        if ( before_ok && after_ok )
+            return true;
+        match = strstr( match + 1, interface_name );
+    }
+    return false;
+}
+
+// a kernel command line token, bounded: preceded by start or space,
+// followed by space or end -- "irqaffinity=0" must not match
+// "irqaffinity=0-3" or "irqaffinity=012"
+
+static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, const char * token )
+{
+    const size_t token_length = strlen( token );
+    const char * match = strstr( cmdline, token );
+    while ( match )
+    {
+        const char before = match == cmdline ? ' ' : match[-1];
+        const char after = match[token_length];
+        if ( ( before == ' ' ) && ( after == ' ' || after == '\n' || after == '\0' ) )
+            return true;
+        match = strstr( match + 1, token );
+    }
+    return false;
 }
 
 // THE PRE-FLIGHT (#106): non-mutating, checking the two-tier condition
@@ -614,9 +673,9 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     char value[4096];
     if ( rocketnet_server_socket_read_sysfs( "/proc/cmdline", value, sizeof(value) ) )
     {
-        if ( !strstr( value, "irqaffinity=0" ) )
+        if ( !rocketnet_server_socket_cmdline_has_token( value, "irqaffinity=0" ) )
         {
-            rocketnet_warn( "xdp pre-flight: kernel command line lacks irqaffinity=0 (B1): grub + reboot, per scripts/rocketnet-provision" );
+            rocketnet_warn( "xdp pre-flight: kernel command line lacks irqaffinity=0 -- exactly that token (B1): grub + reboot, per scripts/rocketnet-provision" );
             provisioned = false;
         }
 
@@ -630,6 +689,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 provisioned = false;
             }
         }
+    }
+    else
+    {
+        // unreadable is unmet, exactly as the script's empty read fails
+        // every B1 token -- silence must never verify
+
+        rocketnet_warn( "xdp pre-flight: /proc/cmdline is unreadable (B1): cannot verify the boot tier" );
+        provisioned = false;
     }
 
     // B2: the isolated cpu set exists and is non-empty -- isolcpus= taken
@@ -670,21 +737,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             char line[4096];
             while ( fgets( line, sizeof(line), interrupts ) )
             {
-                const size_t interface_name_length = strlen( interface_name );
-                const char * match = strstr( line, interface_name );
-                bool token_match = false;
-                while ( match )
-                {
-                    const char before = match == line ? ' ' : match[-1];
-                    const char after = match[interface_name_length];
-                    if ( ( before == ' ' || before == '\t' ) && ( after == '-' || after == ':' || after == ' ' || after == '\n' || after == '\0' ) )
-                    {
-                        token_match = true;
-                        break;
-                    }
-                    match = strstr( match + 1, interface_name );
-                }
-                if ( !token_match )
+                if ( !rocketnet_server_socket_interrupt_line_matches_interface( line, interface_name ) )
                     continue;
 
                 int irq = 0;
@@ -713,7 +766,15 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                     provisioned = false;
                 }
 
-                if ( cpu >= 0 && cpu < (int) sizeof(cpu_seen) )
+                if ( cpu < 0 || cpu >= (int) sizeof(cpu_seen) )
+                {
+                    // outside the checkable range is unmet, never silently
+                    // skipped
+
+                    rocketnet_warn( "xdp pre-flight: irq %d affinity cpu %d is outside the checkable range (R4)", irq, cpu );
+                    provisioned = false;
+                }
+                else
                 {
                     if ( cpu_seen[cpu] )
                     {
@@ -833,7 +894,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // (the test suite's structural barrier) -- before its first act, so no
     // path below this line is reachable there
 
-    if ( rocketnet_server_socket_commit_forbidden_flag )
+    if ( rocketnet_server_socket_commit_forbidden_flag.load() )
     {
         rocketnet_warn( "xdp create refused: this process forbids committing an XDP data plane" );
         return NULL;
@@ -937,15 +998,36 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         server_socket->gateway_ethernet_address[5] 
     );
 
-    // this instance's maps pin under its OWN bpffs directory, never a
-    // shared name: the pin root is pid-scoped, created here, removed by
-    // destroy. the rm -f of machine-global pin names that used to live
-    // here could delete a LIVE second server's maps -- machine-global
-    // state mutated on a path that might still fall -- which is the
-    // category verify-and-bind exists to close: the library touches only
-    // state it created, per instance.
+    // STATE IDENTITY (ruled on the #110 gate, round four): every piece of
+    // bpffs state this instance touches is named for the INSTANCE -- pid
+    // plus a per-process sequence, because two instances in one process is
+    // a supported case (#106: "two servers in one process can pin
+    // different drivers and sizes") -- created by THIS create's own mkdir,
+    // and never adopted: a root that already exists (a crashed process
+    // whose pid was later recycled) is refused loudly, never reused,
+    // because libbpf's LIBBPF_PIN_BY_NAME would silently REUSE a
+    // compatible existing pin and hand this instance another instance's
+    // live kernel state. destroy unlinks only the pins this instance
+    // OBSERVED (recorded at bpf_obj_get) and removes only the directory
+    // it made. sweeping crash leftovers is the operator's deliberate act:
+    // scripts/rocketnet-provision sweep.
 
-    snprintf( server_socket->pin_root, sizeof(server_socket->pin_root), "/sys/fs/bpf/rocketnet_xdp_%d", (int) getpid() );
+    {
+        static std::atomic<uint32_t> instance_counter( 0 );
+        const uint32_t instance = instance_counter.fetch_add( 1 );
+
+        snprintf( server_socket->pin_root, sizeof(server_socket->pin_root), "/sys/fs/bpf/rocketnet_xdp_%d_%u", (int) getpid(), instance );
+    }
+
+    if ( mkdir( server_socket->pin_root, 0700 ) != 0 )
+    {
+        rocketnet_error( "pin root %s already exists or cannot be created (%s): stale state from a crashed instance is never adopted -- sweep deliberately with scripts/rocketnet-provision <interface> <num_queues> sweep, or remove it by hand", server_socket->pin_root, strerror( errno ) );
+        server_socket->pin_root[0] = '\0';
+        rocketnet_server_socket_destroy( server_socket );
+        return NULL;
+    }
+
+    server_socket->pin_root_created = true;
 
     // Build the server_xdp program in a PRIVATE directory.
     //
@@ -999,9 +1081,12 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         snprintf( command, sizeof(command),
                   "cd %s && tar -zxf server_xdp_source.tar.gz && make server_xdp.o", workdir );
         FILE * file = popen( command, "r" );
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
+        if ( file )
+        {
+            char buffer[1024];
+            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
+            pclose( file );
+        }
     }
 
     // load the server_xdp program and attach it to the network interface
@@ -1084,6 +1169,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
+    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
+    server_socket->num_pinned++;
 
     snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_socket_map", server_socket->pin_root );
     server_socket->socket_map_fd = bpf_obj_get( pin_path );
@@ -1093,6 +1180,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
+    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
+    server_socket->num_pinned++;
 
     snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_stats_map", server_socket->pin_root );
     server_socket->stats_map_fd = bpf_obj_get( pin_path );
@@ -1102,6 +1191,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
+    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
+    server_socket->num_pinned++;
 
     // save the server public address and port in network order (big endian)
 
@@ -1338,21 +1429,19 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     if ( server_socket->stats_map_fd > 0 )
         close( server_socket->stats_map_fd );
 
-    // this instance's own bpffs pins go with it -- per-instance state the
-    // library created, unpinned by name under its own pid-scoped root, so
-    // nothing here can ever touch another instance's maps
+    // this instance's bpffs state goes with it: exactly the pins THIS
+    // instance recorded when it observed them -- never fixed names -- and
+    // only the directory THIS instance's mkdir made. a create that failed
+    // between load and observation leaves unrecorded pins behind; that is
+    // crash-class state, and crash-class state belongs to the operator's
+    // deliberate sweep (scripts/rocketnet-provision sweep), never to a
+    // destroy that might be running beside a live sibling.
 
-    if ( server_socket->pin_root[0] != '\0' )
-    {
-        static const char * pinned_map_names[3] = { "server_xdp_config_map", "server_xdp_socket_map", "server_xdp_stats_map" };
-        for ( int i = 0; i < 3; i++ )
-        {
-            char pin_path[128];
-            snprintf( pin_path, sizeof(pin_path), "%s/%s", server_socket->pin_root, pinned_map_names[i] );
-            unlink( pin_path );
-        }
-        rmdir( server_socket->pin_root );
-    }
+    for ( int i = 0; i < server_socket->num_pinned; i++ )
+        unlink( server_socket->pinned_paths[i] );
+
+    if ( server_socket->pin_root_created )
+        rmdir( server_socket->pin_root );       // refuses politely when unrecorded leftovers remain
 
     // the queue array is allocated late in create, so a create that failed
     // before it exists reaches here with num_queues already set and the

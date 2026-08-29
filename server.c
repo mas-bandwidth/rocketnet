@@ -30,13 +30,11 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const char * public_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
+    // the public address rides the config table (#106): ROCKETNET_PUBLIC_ADDRESS
+    // (or its deprecated alias) overrides inside create, logged loudly --
+    // no second read here, so the displacement is never applied twice
 
-    const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    if ( public_address_env )
-    {
-        public_address = public_address_env;
-    }
+    const char * public_address = argc > 1 ? argv[1] : "127.0.0.1:40000";
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );

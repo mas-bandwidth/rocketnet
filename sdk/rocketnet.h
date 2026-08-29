@@ -665,7 +665,11 @@ struct rocketnet_server_transport_t;
 // struct or ROCKETNET_PUBLIC_ADDRESS (deprecated alias:
 // ROCKETNET_SERVER_PUBLIC_ADDRESS) -- so the address the driver ladder
 // verifies, the address the driver binds, and the address connect tokens
-// validate against are always the same one. num_xdp_queues' range
+// validate against are always the same one. the ENV form is scoped to the
+// first server create in the process and then consumed, loudly: the
+// deployed binary's one server gets its redirect, and a multi-transport
+// process is never wholesale redirected by one ambient variable. the
+// struct form is per create. num_xdp_queues' range
 // here is structural; the tighter bounds are PER DRIVER, enforced at the
 // ladder rung and refused loudly, never clamped: the xdp driver takes any
 // count from 1, the gso driver refuses past its 32 queue geometry
@@ -721,6 +725,13 @@ ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet
 // the same grant and why every earlier candidate refused.
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct rocketnet_server_transport_t * server_transport );
+
+// the commit barrier for host processes that must never commit an XDP data
+// plane (test harnesses, smokes): installed once, the xdp driver's create
+// refuses before its first act; the non-mutating pre-flight stays
+// reachable. a no-op on platforms without the xdp driver.
+
+ROCKETNET_EXPORT_FUNC void rocketnet_forbid_xdp_commit( void );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 

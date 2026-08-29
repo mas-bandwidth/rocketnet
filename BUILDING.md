@@ -90,6 +90,13 @@ only verifies the boot tier. The config's `num_os_cpus` names the first core the
 xdp workers pin from: workers occupy `num_os_cpus + queue`, so it should point
 at the isolated range.
 
+Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
+binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
+installs a commit barrier by design — so that tier's claims rest on the space
+game's provisioned server, where this configuration was measured. The pre-flight
+also sets the tree's libbpf floor at 0.8 (`bpf_xdp_query_id`); Ubuntu 22.04's
+libbpf 0.5 is below it, 24.04's is comfortably above.
+
 ## Floating point: rocketnet builds with -ffp-contract=off
 
 Estate policy for mas-bandwidth network libraries: builds are strict about floating point

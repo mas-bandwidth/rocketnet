@@ -75,6 +75,12 @@ static class Smoke
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );
+
+        // the commit barrier, structural rather than per-line discipline: this
+        // smoke must never commit an XDP data plane on any box it runs on,
+        // whatever a future edit does to the driver pins below
+
+        RocketNet.ForbidXdpCommit();
         Ok( $"init (protocol version {RocketNet.ProtocolVersion():x}, native time {RocketNet.Time():F2}, user id {RocketNet.UserIdString( 0x1234567812345678UL )})" );
 
         int port = FreePort();
@@ -87,6 +93,11 @@ static class Smoke
         RocketNet.ServerTransportDefaultConfig( out RocketNet.ServerTransportConfig defaultConfig );
         if ( defaultConfig.GetDriver() != "auto" )
             Fail( $"default config driver is '{defaultConfig.GetDriver()}', expected 'auto'" );
+        if ( defaultConfig.GetPublicAddress() != "" )
+            Fail( $"default config public address is '{defaultConfig.GetPublicAddress()}', expected empty" );
+        defaultConfig.SetPublicAddress( "10.0.0.1:5000" );
+        if ( defaultConfig.GetPublicAddress() != "10.0.0.1:5000" )
+            Fail( "public address does not round-trip through the binding" );
 
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig typoConfig );
         typoConfig.SetDriver( "protable" );

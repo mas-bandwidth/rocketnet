@@ -467,6 +467,18 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     else
         rocketnet_server_transport_default_config( &effective_config );
 
+    // the env layer's public_address is snapshotted against so its SCOPE
+    // can be enforced below: the env override redirects the FIRST server
+    // create in the process and is then consumed -- an operator's deployed
+    // binary has one server transport and gets exactly the redirect they
+    // asked for, while a process with many creates (the test suite, a
+    // soak) is not wholesale redirected by one ambient variable. the
+    // struct field keeps per-create scope: a caller who sets it in code
+    // said what they meant, every time.
+
+    char struct_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    memcpy( struct_public_address, effective_config.public_address, sizeof(struct_public_address) );
+
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
@@ -490,7 +502,26 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // the config's public_address, when set, displaces the create call's
     // address parameter HERE, before anything reads it -- so the address
     // the ladder verifies, the address the granted driver binds, and the
-    // address connect tokens validate against can never diverge
+    // address connect tokens validate against can never diverge. the env
+    // layer's version of it is first-create-consumes, per the scope note
+    // above.
+
+    if ( strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0 )
+    {
+        // the env layer (or its deprecated alias) set it
+
+        static bool env_public_address_consumed = false;
+
+        if ( env_public_address_consumed )
+        {
+            rocketnet_info( "the public_address env override was consumed by an earlier server create in this process. using the create parameters" );
+            memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
+        }
+        else
+        {
+            env_public_address_consumed = true;
+        }
+    }
 
     if ( config->public_address[0] != '\0' )
     {
@@ -830,6 +861,17 @@ uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * 
 {
     rocketnet_assert( server_transport );
     return server_transport->bind_address.port;
+}
+
+// the commit barrier, exported: a host process (the C# smoke, an embedding
+// that must never commit an XDP data plane) installs it without reaching
+// into the linux driver header; a no-op where there is no xdp driver
+
+void rocketnet_forbid_xdp_commit( void )
+{
+#if ROCKETNET_SERVER_HAS_STAGED
+    rocketnet_server_socket_forbid_commit();
+#endif // #if ROCKETNET_SERVER_HAS_STAGED
 }
 
 // the granted-tier report: the driver that won the ladder at create, by

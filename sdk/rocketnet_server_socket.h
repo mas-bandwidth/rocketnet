@@ -44,6 +44,14 @@ void rocketnet_server_socket_allow_commit();
 
 bool rocketnet_server_socket_commit_forbidden();
 
+// the R4 interrupt-line matcher, pure string logic exported for the
+// fixture test: does this /proc/interrupts line belong to this interface?
+// bounded-token semantics -- '-' allowed before (driver-prefixed names
+// like i40e-ens1f0-TxRx-0), never a bare substring ("lo" must not match
+// "velocity0").
+
+bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name );
+
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
 //

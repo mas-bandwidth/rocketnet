@@ -71,16 +71,18 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
 // wrong key without a word. Refuse-loudly is the law, and doubly so for
 // secret material: an invalid character, misplaced padding, or an
 // impossible length now refuses the whole decode (returns 0), and every
-// lookup is by value range, never by table index. The url-safe aliases
-// '-' and '_' stay accepted alongside the standard alphabet.
+// lookup is by value range, never by table index. ONE alphabet, the
+// standard one: the url-safe aliases were dropped on the #110 gate so
+// that two distinct strings can never decode to the same bytes -- with
+// aliases, "+w" and "-w" were the same key twice.
 
 static int rocketnet_base64_char_value( char c )
 {
     if ( c >= 'A' && c <= 'Z' ) return c - 'A';
     if ( c >= 'a' && c <= 'z' ) return c - 'a' + 26;
     if ( c >= '0' && c <= '9' ) return c - '0' + 52;
-    if ( c == '+' || c == '-' ) return 62;
-    if ( c == '/' || c == '_' ) return 63;
+    if ( c == '+' ) return 62;
+    if ( c == '/' ) return 63;
     return -1;
 }
 

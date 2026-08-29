@@ -847,6 +847,13 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_state", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ServerTransportState( IntPtr server );
 
+    /// <summary>The commit barrier for host processes that must never commit an XDP data
+    /// plane (test harnesses, smokes): installed once, the xdp driver's create refuses
+    /// before its first act; the non-mutating pre-flight stays reachable. A no-op on
+    /// platforms without the xdp driver.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_forbid_xdp_commit", CallingConvention = CallingConvention.Cdecl )]
+    public static extern void ForbidXdpCommit();
+
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_driver", CallingConvention = CallingConvention.Cdecl )]
     static extern IntPtr server_transport_driver( IntPtr server );
 
