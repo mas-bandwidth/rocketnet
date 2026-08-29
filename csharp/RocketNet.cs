@@ -373,7 +373,8 @@ public static unsafe class RocketNet
         public fixed byte ServerPublicKey[32];
         /// <summary>The server's secret key, 32 bytes.</summary>
         public fixed byte ServerSecretKey[32];
-        /// <summary>XDP transport queue count; zero means the transport default. The portable build ignores it.</summary>
+        /// <summary>Staged driver queue count -- XDP queues on the XDP build, reuseport sockets on the
+        /// GSO build; zero means the transport default. The portable build ignores it.</summary>
         public int NumXdpQueues;
         /// <summary>XDP transport OS cpu count; zero means the transport default. The portable build ignores it.</summary>
         public int NumOsCpus;

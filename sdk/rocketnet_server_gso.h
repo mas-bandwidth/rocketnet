@@ -1,0 +1,146 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#pragma once
+
+#ifndef ROCKETNET_SERVER_GSO_H
+#define ROCKETNET_SERVER_GSO_H
+
+#include "rocketnet_address.h"
+#include "rocketnet_constants.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_server_socket.h"        // rocketnet_server_socket_process_packets_t: the process batch shape both staged drivers hand the transport
+
+// The GSO transport driver (#97): the best non-root path Linux has, per the
+// #81 measurements -- an SO_REUSEPORT socket group with one worker thread
+// per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
+// with zero shared state between queues, recvmmsg/sendmmsg batching on both
+// sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
+// traverses the kernel's UDP path once instead of per packet. Transmit is
+// main-thread by the transport's phase contract, rotated across the group's
+// sockets for send-buffer headroom -- the xdp driver's per-queue sender
+// threads are deliberately not reproduced here.
+//
+// Every kernel feature is probed at create and degrades gracefully: no
+// UDP_SEGMENT means plain sendmmsg batching, no UDP_GRO means plain recvmmsg,
+// and the probe results are readable so a deployment knows which tier it got.
+// This driver never needs a capability or a privilege.
+//
+// Honest framing, per the #81 doctrine: this is the solid middle tier for
+// hosts without XDP -- it recovers the syscall amortization and the
+// single-traversal segmentation, not the skb-allocation avoidance. The
+// space-scale claims belong to the XDP driver that earns them.
+
+struct rocketnet_server_gso_t;
+
+// the driver's geometry, all compile time:
+
+#ifndef ROCKETNET_GSO_DEFAULT_QUEUES
+#define ROCKETNET_GSO_DEFAULT_QUEUES                                         4
+#endif
+
+#define ROCKETNET_GSO_MAX_QUEUES                                            32
+
+// send staging: one phase's worth of slots, the same budget as the xdp
+// driver's send queue. each slot is a frame-stride wire packet.
+
+#define ROCKETNET_GSO_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+
+// receive staging per queue per buffer: half the process array, so two
+// queues at full tilt cover a whole drain and a single flooded queue fills
+// its pair between drains and drops counted -- correct behaviour under
+// flood, ample at design load where the reuseport hash spreads flows
+
+#define ROCKETNET_GSO_RECV_QUEUE_SIZE                                     8192
+
+// recvmmsg geometry: how many kernel messages one call drains, and how big
+// one message's buffer is. with GRO on, one message is a coalesced run of
+// same-flow segments up to the kernel's coalescing budget (~64KB), so the
+// buffer takes the maximum; without GRO a message is one datagram and the
+// same buffer is simply generous.
+
+#define ROCKETNET_GSO_RECV_BATCH                                            64
+#define ROCKETNET_GSO_RECV_BUFFER_BYTES                                  65536
+
+// send batching geometry: sendmmsg messages per call, GSO segments per
+// super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
+// cap keeping every super-datagram inside the 16-bit UDP payload space
+
+#define ROCKETNET_GSO_SEND_BATCH                                           128
+#define ROCKETNET_GSO_MAX_SEGMENTS                                          64
+#define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
+
+// feature bits reported by rocketnet_server_gso_features: what the runtime
+// probe found and the driver is actually using
+
+#define ROCKETNET_SERVER_GSO_FEATURE_SEGMENT                    (1<<0)      // UDP_SEGMENT accepted: send batches as GSO super-datagrams
+#define ROCKETNET_SERVER_GSO_FEATURE_GRO                        (1<<1)      // UDP_GRO enabled: receives arrive coalesced
+#define ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT                  (1<<2)      // SO_REUSEPORT group bound: receives shard across queues
+
+// create flags: force a probe result off, so the degraded paths are testable
+// on kernels where the real probe would say yes -- the fallback tier must
+// never be the untested tier
+
+#define ROCKETNET_SERVER_GSO_DISABLE_SEGMENT                    (1<<0)
+#define ROCKETNET_SERVER_GSO_DISABLE_GRO                        (1<<1)
+
+// counters, readable any time from the main thread; indexes into the array
+// rocketnet_server_gso_counters fills
+
+#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT                    0
+#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED               1
+#define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
+#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // sendmmsg refused and the packets were dropped, counted never resent
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // staging full: the queue could not keep up
+#define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
+#define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          10
+
+// bind_address is read for family and port and written back when the port
+// was zero, the same contract as rocketnet_platform_socket_create. an ipv6
+// bind is dual stack: ipv4 senders arrive as native ipv4 addresses,
+// normalized exactly once at this boundary per the standard's law.
+// num_queues <= 0 selects the default. flags is the DISABLE set above, zero
+// for production.
+
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags );
+
+void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso );
+
+int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
+
+int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso );
+
+void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_t * counters );
+
+// send packets. the phase contract is the transport's: start, finish and
+// abort may run on any number of game threads strictly between one
+// send_packets call and the next; send_packets runs on the main thread and
+// flushes everything staged through sendmmsg, coalescing adjacent
+// same-destination equal-size runs into GSO super-datagrams where the probe
+// said yes. the frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
+// bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other drivers.
+
+uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id );
+
+void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data, int packet_bytes );
+
+void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data );
+
+void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
+
+// receive packets: the workers stage into per-queue double buffers off the
+// main thread; receive_packets flips the buffers and gathers everything
+// staged since the last call; process_packets exposes the gathered batch,
+// valid until the next receive_packets call.
+
+void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso );
+
+struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_packets( struct rocketnet_server_gso_t * gso );
+
+#endif // #ifndef ROCKETNET_SERVER_GSO_H

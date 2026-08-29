@@ -198,19 +198,28 @@ cannot be made non-rare by design (real wire I/O, per-packet crypto at scale)
 is made non-rare by posture: the swarm supplies load in every dev loop, so the
 library is never observed unloaded.
 
-## Planned: a non-root server implementation
+## The non-root server implementation: the GSO driver
 
 For hosts where XDP is not available — AWS GameLift and similar, no
-`CAP_NET_ADMIN` — a third server implementation alongside the portable and XDP
-ones. The abstraction already supports it: one header, zero `#ifdef` at the
-call site.
+`CAP_NET_ADMIN` — the third server implementation exists (#97):
+`rocketnet_server_gso_linux.cpp` behind the same seam, selected with
+`-DROCKETNET_SERVER_GSO=1` (`make build-gso`), Linux only, unprivileged.
 
-The right primitive is `recvmmsg`/`sendmmsg` with `SO_REUSEPORT` sharding: one
-socket per worker thread, kernel hashes flows across them, which preserves the
-per-queue-no-shared-state property that makes the XDP path scale and amortizes
-syscalls 32–64 packets at a time. It recovers most of the syscall win. It does
-not recover skb-allocation avoidance — worth knowing when sizing instances,
-because it is a solid middle tier rather than parity.
+The shape is the one this section always planned, confirmed by the #81
+measurements (GSO/GRO 11.62x over portable standalone on the space box's
+loopback; io_uring 1.13x, not worth its complexity): an `SO_REUSEPORT` group
+with one socket per worker thread, kernel 4-tuple hash sharding receives with
+zero shared state between queues, `recvmmsg`/`sendmmsg` batching, and
+`UDP_SEGMENT`/`UDP_GRO` so a batch traverses the kernel's UDP path once.
+Transmit is main-thread (the phase contract), rotated across the group's
+sockets for buffer headroom — the XDP path's per-queue sender threads are
+not reproduced, deliberately. The
+driver probes every feature at create and degrades to plain mmsg batching
+where a kernel says no; a live GSO refusal mid-flush flips the tier and
+resends plain, lossless. It recovers the syscall win and the single-traversal
+win. It does not recover skb-allocation avoidance — worth knowing when sizing
+instances, because it is a solid middle tier rather than parity, and it never
+advertises space-scale.
 
 ## Crypto
 

@@ -15,6 +15,20 @@ On Linux the build links the XDP dataplane, so it needs the dev packages CI inst
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
 
+## Server transport drivers
+
+The server transport builds against one driver, selected at compile time; call sites
+never change (one header, zero `#ifdef` at the call site):
+
+    make                                      # portable UDP driver (every platform)
+    make build-gso                            # GSO driver: SO_REUSEPORT + sendmmsg/recvmmsg
+                                              #   + UDP GSO/GRO, non-root, Linux only
+    cmake -DROCKETNET_SERVER_XDP=1 ...        # AF_XDP driver, privileged, Linux only
+
+The GSO driver probes UDP_SEGMENT and UDP_GRO at create and degrades to plain
+sendmmsg/recvmmsg batching where a kernel lacks them; it needs no capability or
+privilege. Run the same `./bin/test` against each build — the suite is driver-blind.
+
 ## Floating point: rocketnet builds with -ffp-contract=off
 
 Estate policy for mas-bandwidth network libraries: builds are strict about floating point
