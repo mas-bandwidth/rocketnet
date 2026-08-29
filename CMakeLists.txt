@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.10)
 add_compile_definitions(ROCKETNET_DEVELOPMENT=0)
 
+# A no-op build prints nothing. The per-target "Built target" lines were the only
+# output a rebuild-with-nothing-to-do produced, and they carry no information; a
+# real build still prints its [ x%] progress lines, and errors are untouched.
+set(CMAKE_TARGET_MESSAGES OFF)
+
 # server transport driver selection (#97): default portable; -DROCKETNET_SERVER_XDP=1
 # selects the AF_XDP driver, -DROCKETNET_SERVER_GSO=1 the non-root GSO driver.
 # both are linux only; the seam guarantees call sites never change.
