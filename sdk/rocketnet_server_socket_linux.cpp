@@ -558,14 +558,19 @@ static int rocketnet_server_socket_count_cpu_list( const char * list )
     return count;
 }
 
-// The R4 interrupt-line matcher, one tested function shared in spirit
-// with the script's awk expression (same boundary sets, stated in the
-// script header): the interface name matches as a bounded token --
-// preceded by line start, whitespace, or '-' (driver-prefixed names like
-// i40e-ens1f0-TxRx-0, the exact family B3 tells operators to build) and
-// followed by '-', ':', '@', whitespace, or end. pure string logic,
-// exported so the fixture test can hold it against real /proc/interrupts
-// lines.
+// The R4 interrupt-line matcher, one boundary definition implemented
+// twice (this function and the script's awk form, held to the same case
+// set by the fixture test here and the script's selftest): the interface
+// name matches as a bounded token -- preceded by line start, whitespace,
+// or '-' (driver-prefixed names like i40e-ens1f0-TxRx-0, the exact
+// family B3 tells operators to build) and followed by '-', ':', '@',
+// whitespace, or end. pure string logic, exported for the fixture test.
+// accepted asymmetries with the script's form, recorded: this reader
+// splits lines past its 4096-byte buffer where awk is unbounded (real
+// /proc/interrupts lines are far shorter); '\r' rides this after-set for
+// fgets robustness but is unreachable through awk (no CRLF procfs); the
+// empty interface name refuses here and is unreachable in the script
+// (empty arguments refuse at the door).
 
 bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name )
 {
@@ -899,12 +904,20 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             ifr.ifr_data = (char*) &channels;
 
             const int ethtool_result = ioctl( probe_fd, SIOCETHTOOL, &ifr );
-            if ( ethtool_result != 0 && errno != EOPNOTSUPP && errno != ENOTSUP )
+            if ( ethtool_result != 0 && ( errno == EOPNOTSUPP || errno == ENOTSUP ) )
+            {
+                // the honest pass, stated like its R4 sibling: no channel
+                // surface means the count cannot be wrong, and saying so
+                // is different from silence
+
+                rocketnet_info( "xdp pre-flight: %s has no channel surface (R7 passes: the driver does not support channel queries)", interface_name );
+            }
+            else if ( ethtool_result != 0 )
             {
                 rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, strerror( errno ) );
                 provisioned = false;
             }
-            else if ( ethtool_result == 0 )
+            else
             {
                 if ( (int) channels.combined_count != num_queues )
                 {

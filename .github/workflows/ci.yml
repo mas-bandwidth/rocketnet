@@ -62,8 +62,9 @@ jobs:
 
       # the provisioning script's matcher selftest: the script's awk matcher
       # and the C matcher implement ONE boundary definition; this holds the
-      # script's half to the same fixtures the C test holds its half to
-      # (round five's awk-escaping bug is the case it exists to catch)
+      # script's half to the same case set the C test holds its half to,
+      # transcribed (round five's awk-escaping bug is the case it exists
+      # to catch)
 
       - name: Provisioning script matcher selftest
         if: runner.os == 'Linux'

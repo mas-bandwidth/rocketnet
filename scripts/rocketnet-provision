@@ -113,6 +113,10 @@ set -u
 # sweep and selftest stand alone: they need no interface and no queue count
 
 if [ "${1:-}" = "sweep" ] || [ "${1:-}" = "selftest" ]; then
+    if [ -n "${2:-}" ]; then
+        echo "usage: rocketnet-provision $1   (no further arguments; a stray argument may be a mangled intent)" >&2
+        exit 2
+    fi
     MODE="$1"
     INTERFACE=""
     NUM_QUEUES=1
@@ -201,16 +205,21 @@ irq_lines_for_interface()
         }'
 }
 
-# SELFTEST: the script's matcher held to the same fixture lines as the C
-# test (rocketnet_test_xdp_interrupt_matcher), so the two implementations
-# of the one boundary definition provably agree -- including the case that
-# caught round five's escaping bug: eth0.100 must never match eth0x100.
-# runs anywhere, needs nothing, mutates nothing. CI runs it on every push.
-# (the fixture BYTES differ from the C test's deliberately in ways outside
-# the boundary logic: single spaces where the C strings carry doubles, and
-# no trailing newline -- awk strips the newline the C matcher sees, which
-# is exactly why the C after-set carries '\n' and the awk after-set covers
-# end-of-line with the empty string.)
+# SELFTEST: the script's matcher held to the SAME CASE SET as the C test
+# (rocketnet_test_xdp_interrupt_matcher), transcribed -- the bytes differ
+# deliberately in ways outside the boundary logic (single spaces where the
+# C strings carry doubles; no trailing newline, since awk strips the
+# newline the C matcher sees, which is exactly why the C after-set carries
+# '\n' and '\r' and the awk after-set covers end-of-line with the empty
+# string). so the two implementations of the one boundary definition
+# provably agree case for case -- including the case that caught round
+# five's escaping bug: eth0.100 must never match eth0x100. further
+# accepted asymmetries, recorded: the C reader splits interrupt lines
+# past its 4096-byte buffer where awk is unbounded (real /proc/interrupts
+# lines are far shorter); '\r' and the empty interface name are
+# unreachable on the script side (no CRLF procfs; empty arguments refuse
+# at the door). runs anywhere, needs nothing, mutates nothing. CI runs it
+# on every push.
 
 if [ "$MODE" = "selftest" ]; then
     PASS=1
@@ -289,8 +298,14 @@ if [ "$MODE" = "sweep" ]; then
             # fields resume after the LAST ')' -- comm may contain
             # anything, including a ') ' -- matching the C recorder exactly
             LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null || true)"
+            if [ -z "$LIVE_START" ]; then
+                # rule 5's principle: an unreadable start time is not
+                # PROVABLY stale, and we never delete what we cannot judge
+                say "leaving $PIN_ROOT: pid $PIN_PID is alive but its start time is unreadable -- not provably stale"
+                continue
+            fi
             if [ "$LIVE_START" != "$PIN_START" ]; then
-                REASON="pid $PIN_PID was recycled (start time ${LIVE_START:-unknown}, instance recorded $PIN_START)"
+                REASON="pid $PIN_PID was recycled (start time $LIVE_START, instance recorded $PIN_START)"
             fi
         fi
         if [ -n "$REASON" ]; then
@@ -393,7 +408,13 @@ fi
 # R3. exclusive xdp slot
 
 if command -v xdp-loader >/dev/null 2>&1; then
-    if xdp-loader status "$INTERFACE" 2>/dev/null | grep -q "xdp_dispatcher\|XDP_"; then
+    # keyed on xdp-loader's OWN exit status, never the pipeline's grep: a
+    # query that fails must refuse, not read as an empty slot
+    XDP_STATUS_OUTPUT="$(xdp-loader status "$INTERFACE" 2>&1)"
+    XDP_STATUS_RC=$?
+    if [ $XDP_STATUS_RC -ne 0 ]; then
+        fail "xdp-loader could not query $INTERFACE (R3): $XDP_STATUS_OUTPUT"
+    elif printf '%s\n' "$XDP_STATUS_OUTPUT" | grep -q "xdp_dispatcher\|XDP_"; then
         if [ $VERIFY -eq 1 ]; then
             fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
         else
@@ -545,7 +566,12 @@ fi
 
 if ! command -v ethtool >/dev/null 2>&1; then
     fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
-elif ethtool -l "$INTERFACE" >/dev/null 2>&1; then
+else
+    ETHTOOL_ERROR="$(ethtool -l "$INTERFACE" 2>&1 >/dev/null)"
+    ETHTOOL_RC=$?
+fi
+
+if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
     CURRENT="$(ethtool -l "$INTERFACE" 2>/dev/null | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
     if [ "$CURRENT" = "$NUM_QUEUES" ]; then
         say "combined queue count already $NUM_QUEUES (R7)"
@@ -555,8 +581,20 @@ elif ethtool -l "$INTERFACE" >/dev/null 2>&1; then
         say "setting combined queue count = $NUM_QUEUES (R7)"
         ethtool -L "$INTERFACE" combined "$NUM_QUEUES" || fail "ethtool -L refused combined $NUM_QUEUES (R7)"
     fi
-else
-    say "no channel control on $INTERFACE (R7 passes: the NIC has no channel surface, matching the pre-flight's ioctl pass)"
+elif command -v ethtool >/dev/null 2>&1; then
+    # the failure is discriminated, exactly as the pre-flight discriminates
+    # errno: ONLY the no-channel-support refusal passes -- a vanished
+    # device, EBUSY, or a netlink mismatch is an unmet condition, never a
+    # silent pass (the header's law: change a condition anywhere, change it
+    # everywhere)
+    case "$ETHTOOL_ERROR" in
+        *"Operation not supported"*|*"not supported"*)
+            say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
+            ;;
+        *)
+            fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
+            ;;
+    esac
 fi
 
 if [ $VERIFY -eq 1 ]; then

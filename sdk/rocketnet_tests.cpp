@@ -9508,11 +9508,13 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_STRING:
             {
-                // a value valid for the field under test: the driver field
-                // must parse as a candidate list; other strings only need
-                // to be strings
+                // one value for every string field: the table's validate
+                // checks termination only (the driver list's CONTENT is
+                // parsed by the ladder at create, which this walk never
+                // reaches), so a per-field special case here would be
+                // decoration
 
-                snprintf( value_string, sizeof(value_string), "%s", strcmp( field->name, "driver" ) == 0 ? "portable" : "value-under-test" );
+                snprintf( value_string, sizeof(value_string), "value-under-test" );
             }
             break;
 
@@ -10062,7 +10064,8 @@ void rocketnet_test_xdp_interrupt_matcher()
     // real. the honest limit is also pinned: mlx5's completion vectors
     // carry NO netdev name, so no netdev can match them -- the pre-flight
     // states that limit instead of claiming there is nothing to pin. the
-    // script's selftest mode holds its awk matcher to these same lines.
+    // script's selftest mode holds its awk matcher to the SAME CASE SET,
+    // transcribed (the deliberate byte differences are recorded there).
 
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 24:  0  0  IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0\n", "ens1f0" ) );
