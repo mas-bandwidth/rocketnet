@@ -618,6 +618,8 @@ case "$1" in
         ;;
     -L)
         IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: -L without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "stub: -L on unknown interface '"'"'$IFACE'"'"'" >&2; exit 99; }
         [ "$3" = "combined" ] || { echo "stub: unexpected -L form $*" >&2; exit 99; }
         case "$(cat "$STUB_STATE_DIR/setl_mode")" in
             works) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
@@ -791,6 +793,18 @@ STUB
     echo 7 > "$STUB_STATE_DIR/combined.eth0.100"
     OUT="$(run_r7 1 eth0.100 7)"
     expect_case "r7 vlan name unmangled" $? 0 "$OUT" "already"
+
+    # ...and the ACT paths: unload and -L must carry the dotted name too --
+    # a mangled act mutates a device the operator never named, so the
+    # argument-asserting stubs turn any mangle into a loud failure here
+
+    echo foreign > "$STUB_STATE_DIR/state.eth1.200"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 eth1.200)"
+    expect_case "r3 provision vlan unmangled through unload" $? 0 "$OUT" "confirmed clear after unload"
+
+    echo 4 > "$STUB_STATE_DIR/combined.eth1.200"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 eth1.200 5)"
+    expect_case "r7 provision vlan unmangled through -L" $? 0 "$OUT" "confirmed at 5"
 
     # --- THE TOP OF THE LADDER: the WHOLE SCRIPT, door to fail. a verify
     # run of this very script under the stub environment must exit 1 and
@@ -1219,6 +1233,13 @@ if [ $VERIFY -eq 1 ]; then
     say "verify passed: machine is provisioned for the xdp driver"
     exit 0
 fi
+
+# ACCEPTED-UNDRIVEN (listed with the top-wiring entry in the receipt):
+# this provision-mode summary gate cannot be driven by the unprivileged
+# selftest -- provision exits at the root gate before any enforcement --
+# so its correctness rests on being the verify gate's structural twin,
+# on the function-level provision drives, and on the C pre-flight's
+# independent R3 re-check at create.
 
 if [ $UNMET -eq 1 ]; then
     say "provision FAILED: $UNMET_COUNT unmet condition(s) above (boot-tier conditions need grub + reboot; failed runtime writes are named where they failed)"
