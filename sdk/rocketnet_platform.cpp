@@ -420,20 +420,35 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     sockaddr_storage sockaddr_from;
-    socklen_t from_length = sizeof( sockaddr_from );
+    socklen_t from_length;
 
-    int result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
-
-    if ( result <= 0 )
+    int result;
+    for ( ;; )
     {
-        if ( errno == EAGAIN || errno == EINTR )
+        from_length = sizeof( sockaddr_from );
+
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
+
+        if ( result < 0 )
         {
+            if ( errno != EAGAIN && errno != EINTR )
+            {
+                rocketnet_debug( "recvfrom failed with error %d", errno );
+            }
             return 0;
         }
 
-        rocketnet_debug( "recvfrom failed with error %d", errno );
-        
-        return 0;
+        if ( result == 0 )
+        {
+            // a zero-length datagram is legal UDP carrying nothing the
+            // protocol admits -- and returning 0 here would read as
+            // "socket drained", letting byte-less chaff cap an entire
+            // drain at one packet (#100's review). skip it, keep reading:
+            // both pumps share this semantic.
+            continue;
+        }
+
+        break;
     }
 
     if ( sockaddr_from.ss_family == AF_INET6 )
@@ -1701,10 +1716,19 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 #define ROCKETNET_MSGX_RETRY_SECONDS 60.0
 
+// the name reports the LIVE path -- tests and logs treat it as ground
+// truth, so a paused pump reads as portable until its pause expires. a
+// pure read: expiry itself is cleared by the next batch call's
+// rocketnet_msgx_active, never here.
+
 const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
-    return socket->msgx ? "msgx" : "portable";
+    if ( !socket->msgx )
+        return "portable";
+    if ( socket->msgx_down_until > 0.0 && rocketnet_platform_time() < socket->msgx_down_until )
+        return "portable";
+    return "msgx";
 }
 
 // is the msgx pump live for this call? eligibility is decided at create;
@@ -1910,7 +1934,15 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             const int error = errno;
 
-            if ( rocketnet_msgx_send_weather( error ) )
+            if ( result == 0 && error == 0 )
+            {
+                // zero messages accepted and no errno: nothing to
+                // diagnose, nothing to pause over -- weather. the bounded
+                // pass below finishes the chunk (inventing a pause from
+                // strerror(0) was #100's review, round two).
+                rocketnet_debug( "sendmsg_x accepted nothing. chunk finishes per-packet" );
+            }
+            else if ( rocketnet_msgx_send_weather( error ) )
             {
                 rocketnet_debug( "sendmsg_x error (%s). chunk finishes per-packet", strerror( error ) );
             }

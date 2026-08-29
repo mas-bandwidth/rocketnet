@@ -44,6 +44,7 @@
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -5594,24 +5595,41 @@ static void rocketnet_test_pump_chaff_exchange( void )
     }
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
 
-    // drain through the batch pump: every real packet, in order, intact,
-    // and not one drain capped by the chaff
+    // drain through the batch pump: every real packet, in order, intact --
+    // and in ONE receive_packets call, because a retry loop here greens
+    // over the exact bug this test names (the review measured it: an
+    // unfixed path consumes chaff between calls, so retries make
+    // progress). loopback arrival is asynchronous (also measured: a
+    // recvfrom immediately after sendto answers EAGAIN), so the wait is
+    // on ARRIVAL -- readability, then a settle window orders of magnitude
+    // past loopback flight time -- and never on the drain itself. the
+    // injector socket's FIFO means readability plus the settle has every
+    // datagram above queued before the one drain call runs.
+
+    {
+        double deadline = rocketnet_platform_time() + 5.0;
+        for ( ;; )
+        {
+            fd_set readable;
+            FD_ZERO( &readable );
+            FD_SET( socket->handle, &readable );
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;
+            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
+                break;
+            rocketnet_check( rocketnet_platform_time() < deadline );
+        }
+        usleep( 200000 );
+    }
 
     static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
     static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
     static uint8_t receive_data[ROCKETNET_TEST_PUMP_PACKETS*ROCKETNET_TEST_PUMP_STRIDE];
 
-    int received = 0;
-    double start_time = rocketnet_platform_time();
-    while ( received < sent_real && rocketnet_platform_time() - start_time < 5.0 )
-    {
-        received += rocketnet_platform_socket_receive_packets( socket,
-                                                               from + received,
-                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
-                                                               ROCKETNET_TEST_PUMP_STRIDE,
-                                                               packet_bytes + received,
-                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
-    }
+    const int received = rocketnet_platform_socket_receive_packets( socket, from, receive_data,
+                                                                    ROCKETNET_TEST_PUMP_STRIDE, packet_bytes,
+                                                                    ROCKETNET_TEST_PUMP_PACKETS );
     rocketnet_check( received == sent_real );
 
     for ( int i = 0; i < received; i++ )
@@ -5624,21 +5642,38 @@ static void rocketnet_test_pump_chaff_exchange( void )
     }
 
     // and the per-packet primitive itself skips chaff: one zero-length
-    // then one real packet, received through the single-packet call
+    // then one real packet, and the FIRST single-packet call must hand
+    // back the real one -- a retry loop here would green over a
+    // per-packet path that still reads chaff as drain-end
 
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
     uint8_t single[64];
     memset( single, 0x5a, sizeof(single) );
     rocketnet_check( sendto( injector, single, sizeof(single), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(single) );
 
-    uint8_t single_received[ROCKETNET_TEST_PUMP_STRIDE];
-    int single_bytes = 0;
-    start_time = rocketnet_platform_time();
-    while ( single_bytes == 0 && rocketnet_platform_time() - start_time < 5.0 )
+    // the same arrival wait, then the FIRST per-packet call must hand
+    // back the real packet through the chaff
+
     {
-        rocketnet_address_t single_from;
-        single_bytes = rocketnet_platform_socket_receive_packet( socket, &single_from, single_received, sizeof(single_received) );
+        double deadline = rocketnet_platform_time() + 5.0;
+        for ( ;; )
+        {
+            fd_set readable;
+            FD_ZERO( &readable );
+            FD_SET( socket->handle, &readable );
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;
+            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
+                break;
+            rocketnet_check( rocketnet_platform_time() < deadline );
+        }
+        usleep( 200000 );
     }
+
+    uint8_t single_received[ROCKETNET_TEST_PUMP_STRIDE];
+    rocketnet_address_t single_from;
+    int single_bytes = rocketnet_platform_socket_receive_packet( socket, &single_from, single_received, sizeof(single_received) );
     rocketnet_check( single_bytes == (int) sizeof(single) );
     for ( int j = 0; j < single_bytes; j++ )
         rocketnet_check( single_received[j] == 0x5a );
