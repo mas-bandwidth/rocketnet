@@ -1,5 +1,7 @@
 # rocketnet CI: build the library and every tool the Makefile produces, then run the
-# test suite, on ubuntu and macos — the two platforms the Makefile builds on.
+# test suite, on ubuntu and macos — the two platforms the Makefile builds on — and
+# on windows via CMake+MSVC directly (build-and-test-windows below), which is the
+# windows baseline row of the #81 matrix doctrine made real.
 #
 # This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
 # then run bin/test directly. The Linux build links the XDP dataplane against
@@ -45,6 +47,40 @@ jobs:
       - name: Run tests
         run: ./bin/test
 
+  # The windows leg (#81's baseline doctrine): the portable driver built with
+  # MSVC — the first machine ever to compile the windows arm — and the full
+  # test suite run on the runner, Debug and Release. /fp:precise comes from
+  # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
+  # policy. libsodium comes from vcpkg (preinstalled on the runner); the
+  # multi-config generator puts binaries under bin/<config>. Two tests are
+  # compiled out on windows, named and logged by the suite itself: the
+  # refused-destination and zero-length-chaff pump tests, whose raw-socket
+  # injector is posix-only.
+
+  build-and-test-windows:
+    name: windows-2025 / ${{ matrix.build_type }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install libsodium (vcpkg)
+        run: vcpkg install libsodium:x64-windows
+
+      - name: Configure
+        run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Run tests
+        shell: bash
+        run: ./bin/${{ matrix.build_type }}/test.exe
+
   # The GSO driver leg (#97): the same suite, byte-identical above the seam,
   # against the server transport built on the non-root GSO driver --
   # SO_REUSEPORT sharding, sendmmsg/recvmmsg, UDP GSO/GRO with runtime
@@ -72,12 +108,15 @@ jobs:
   # loads at runtime), build the binding and its smoke test with the .NET 8
   # SDK (the binding's TFM floor), and run the smoke against the built
   # library. The smoke exits nonzero on any failure, which fails the job.
+  # On windows the shared library is rocketnet.dll under bin/Release (the
+  # multi-config generator), which the binding's resolver already handles;
+  # vcpkg's applocal step drops libsodium.dll beside it.
 
   csharp-smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
 
@@ -93,15 +132,27 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install libsodium:x64-windows
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
       - name: Build the shared library
+        if: runner.os != 'Windows'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target rocketnet_shared -j
+
+      - name: Build the shared library (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" && cmake --build build --config Release --target rocketnet_shared --parallel
 
       - name: Build the C# binding and smoke test
         run: dotnet build csharp/smoke -c Release
 
       - name: Run the smoke test
-        run: ROCKETNET_LIBRARY_PATH=bin dotnet run --project csharp/smoke -c Release --no-build
+        shell: bash
+        env:
+          ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
+        run: dotnet run --project csharp/smoke -c Release --no-build

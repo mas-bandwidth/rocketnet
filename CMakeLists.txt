@@ -14,23 +14,6 @@ if(ROCKETNET_SERVER_GSO)
     add_compile_definitions(ROCKETNET_SERVER_GSO=1)
 endif()
 
-# strict floating point. Estate policy for mas-bandwidth network libraries: "generally
-# speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
-#   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
-#     -ffp-contract=fast, which contracts across statements, and clang's default =on still
-#     fuses within a single expression.
-#   - MSVC: /fp:precise, which since VS 2022 does not imply contraction.
-# rocketnet's float wire encoding is a bit copy (memcpy of the bits), so
-# this is the family floor rather than a wire fix: the float arithmetic here is the RTT,
-# jitter and bandwidth tracking. Contraction is architecture-dependent (FMA is in the
-# aarch64 baseline and absent from the x86-64 one), so any float arithmetic that ever
-# nears the wire diverges bit-wise between architectures without it. Set globally, so
-# every target in this file -- C and C++ -- builds with it; CI builds through this file.
-if(MSVC)
-    add_compile_options(/fp:precise)
-else()
-    add_compile_options(-ffp-contract=off)
-endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
@@ -40,7 +23,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # server xdp — the XDP program source is packed as a tarball into a generated
 # header; the SDK builds and loads it on the target kernel at runtime.
+# regeneration needs bash/tar/xxd, which windows doesn't reliably have; the
+# header is committed and the XDP dataplane is linux-only, so the windows
+# build consumes the committed artifact as-is.
 
+if(NOT WIN32)
 add_custom_command(
     COMMENT "Generating rocketnet_server_xdp.h"
     OUTPUT ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
@@ -54,22 +41,54 @@ add_custom_command(
     COMMAND bash -c "rm -f rocketnet_server_xdp.tar.gz"
     DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h
 )
+endif()
 
 
 # rocketnet
 
 project(rocketnet)
 enable_language(CXX)
+
+# strict floating point. Estate policy for mas-bandwidth network libraries: "generally
+# speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
+#   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
+#     -ffp-contract=fast, which contracts across statements, and clang's default =on still
+#     fuses within a single expression.
+#   - MSVC: /fp:precise, which since VS 2022 does not imply contraction.
+# rocketnet's float wire encoding is a bit copy (memcpy of the bits), so
+# this is the family floor rather than a wire fix: the float arithmetic here is the RTT,
+# jitter and bandwidth tracking. Contraction is architecture-dependent (FMA is in the
+# aarch64 baseline and absent from the x86-64 one), so any float arithmetic that ever
+# nears the wire diverges bit-wise between architectures without it. Set here, directly
+# after the first project() call -- the MSVC variable is undefined before the compiler
+# is detected, and testing it earlier silently handed every compiler the gcc/clang
+# branch (the windows leg's D9002 "ignoring unknown option -ffp-contract=off" caught
+# it). Every target in this file -- C and C++ -- is created after this line, so all
+# of them build with the floor; CI builds through this file.
+if(MSVC)
+    add_compile_options(/fp:precise)
+else()
+    add_compile_options(-ffp-contract=off)
+endif()
+
 file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
 find_package(Threads REQUIRED)
 
 # libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
-# package (brew on mac, libsodium-dev on linux) so construction moves quickly;
-# the gutted two-file vendor replaces this before anything ships.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SODIUM REQUIRED libsodium)
+# package (brew on mac, libsodium-dev on linux, vcpkg on windows) so
+# construction moves quickly; the gutted two-file vendor replaces this before
+# anything ships. Windows has no pkg-config, so the library is found directly
+# there -- vcpkg's toolchain file puts its installed tree on the find path,
+# and find_library returns a full path so SODIUM_LIBRARY_DIRS stays empty.
+if(WIN32)
+    find_path(SODIUM_INCLUDE_DIRS sodium.h REQUIRED)
+    find_library(SODIUM_LIBRARIES NAMES libsodium sodium REQUIRED)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SODIUM REQUIRED libsodium)
+endif()
 target_include_directories(rocketnet PUBLIC ${SODIUM_INCLUDE_DIRS})
 target_link_directories(rocketnet PUBLIC ${SODIUM_LIBRARY_DIRS})
 target_link_libraries(rocketnet ${SODIUM_LIBRARIES})
