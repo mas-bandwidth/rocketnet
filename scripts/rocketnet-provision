@@ -47,12 +47,16 @@
 # RUNTIME TIER -- this script PERFORMS these, idempotently:
 #
 #   R1. root                  the XDP data plane requires euid 0.
-#   R2. interface             an UP interface carries the server's public
-#                             IPv4 address (taken as an argument here; the
-#                             pre-flight checks the one create will use).
-#   R3. exclusive xdp slot    no foreign XDP program attached (this script
-#                             unloads; the library never unloads anyone --
-#                             its own attach fails loudly on a busy NIC).
+#   R2. interface             the interface exists and is UP (this script
+#                             takes the interface name; whether it carries
+#                             the server's public IPv4 address is checked by
+#                             the pre-flight, which alone knows the address).
+#   R3. exclusive xdp slot    no XDP program attached (this script unloads,
+#                             and sweeps bpffs pin roots left by crashed
+#                             rocketnet instances; the library never unloads
+#                             anyone and pins only under its own pid-scoped
+#                             /sys/fs/bpf/rocketnet_xdp_<pid>). the
+#                             pre-flight verifies this read-only.
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
 #                             its own CPU from the isolated set, one queue
 #                             one CPU (/proc/interrupts ->
@@ -68,6 +72,12 @@
 #                             queue count the server is configured for
 #                             (ethtool -L; a NIC without channel support
 #                             passes).
+#
+#   K1. kernel capability     the kernel grants an AF_XDP socket and a BPF
+#                             program load. Verified by the library
+#                             pre-flight only (probe descriptors created
+#                             and closed, nothing bound or attached); not
+#                             checkable from shell, and nothing to perform.
 #
 # usage:
 #   rocketnet-provision <interface> <num_queues> [verify] [isolated-range]
@@ -90,8 +100,13 @@ NUM_QUEUES="${2:-}"
 MODE="${3:-provision}"
 WANT_RANGE="${4:-1-15}"
 
+case "$MODE" in
+    provision|verify) ;;
+    *) echo "unknown mode '$MODE' (provision or verify; a misspelled verify must never mutate)" >&2; exit 2 ;;
+esac
+
 if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
-    echo "usage: rocketnet-provision <interface> <num_queues> [verify]" >&2
+    echo "usage: rocketnet-provision <interface> <num_queues> [verify] [isolated-range]" >&2
     exit 2
 fi
 
@@ -119,11 +134,23 @@ fi
 
 # B1. kernel command line
 
+# the values are checked, not just the knobs: irqaffinity must be exactly
+# 0, and the range parameters must carry a value -- matching the library
+# pre-flight's B1 check exactly
+
 CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
-for TOKEN in irqaffinity= isolcpus= nohz_full=; do
+
+B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
+
+case "$CMDLINE" in
+    *"irqaffinity=0"*) say "kernel command line carries irqaffinity=0 (B1)" ;;
+    *) fail "kernel command line lacks irqaffinity=0 (B1): $B1_GUIDANCE" ;;
+esac
+
+for TOKEN in isolcpus nohz_full; do
     case "$CMDLINE" in
-        *"$TOKEN"*) say "kernel command line carries $TOKEN (B1)" ;;
-        *) fail "kernel command line lacks $TOKEN (B1): set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)" ;;
+        *"$TOKEN="[!\ ]*) say "kernel command line carries $TOKEN=<range> (B1)" ;;
+        *) fail "kernel command line lacks $TOKEN=<range> (B1): $B1_GUIDANCE" ;;
     esac
 done
 
@@ -161,7 +188,12 @@ fi
 # R2. interface exists and is up
 
 if [ -d "/sys/class/net/$INTERFACE" ]; then
-    say "interface $INTERFACE present (R2)"
+    FLAGS="$(cat /sys/class/net/$INTERFACE/flags 2>/dev/null || echo 0)"
+    if [ $(( FLAGS & 1 )) -eq 1 ]; then
+        say "interface $INTERFACE present and up (R2)"
+    else
+        fail "interface $INTERFACE is not up (R2): ip link set $INTERFACE up"
+    fi
 else
     fail "interface $INTERFACE does not exist (R2)"
     [ $VERIFY -eq 0 ] && exit 1
@@ -181,12 +213,29 @@ if command -v xdp-loader >/dev/null 2>&1; then
         say "no XDP program attached to $INTERFACE (R3)"
     fi
 else
-    say "xdp-loader not found; skipping R3 (the library's own attach fails loudly on a busy NIC)"
+    say "xdp-loader not found; skipping R3 unload (the library's own attach fails loudly on a busy NIC)"
 fi
+
+# R3's sweep: bpffs pin roots left by crashed rocketnet instances -- each
+# is pid-scoped, so one whose pid is no longer alive is orphaned state
+
+for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
+    [ -e "$PIN_ROOT" ] || continue
+    PIN_PID="${PIN_ROOT##*_}"
+    if [ -d "/proc/$PIN_PID" ]; then
+        say "pin root $PIN_ROOT belongs to live pid $PIN_PID; leaving it (R3)"
+    elif [ $VERIFY -eq 1 ]; then
+        fail "orphaned rocketnet pin root $PIN_ROOT (R3): run without verify to sweep"
+    else
+        say "sweeping orphaned pin root $PIN_ROOT (R3)"
+        rm -f "$PIN_ROOT"/* 2>/dev/null
+        rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT (R3)"
+    fi
+done
 
 # R4. per-queue irq pinning: one queue irq, one isolated cpu, round robin
 
-IRQS="$(awk -v IF="$INTERFACE" -F: '$0 ~ IF {gsub(/ /,"",$1); print $1}' /proc/interrupts 2>/dev/null || true)"
+IRQS="$(awk -v IF="$INTERFACE" -F: 'BEGIN{pattern="(^|[ \t])" IF "([-: \t]|$)"} $0 ~ pattern {gsub(/ /,"",$1); print $1}' /proc/interrupts 2>/dev/null || true)"
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
 fi
@@ -197,6 +246,7 @@ elif [ ${#ISOLATED_CPUS[@]} -eq 0 ]; then
     fail "cannot pin $INTERFACE IRQs (R4): no isolated cpus (B1/B2 first)"
 else
     INDEX=0
+    SEEN_CPUS=()
     for IRQ in $IRQS; do
         CPU="${ISOLATED_CPUS[$(( INDEX % ${#ISOLATED_CPUS[@]} ))]}"
         CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
@@ -205,7 +255,20 @@ else
         elif [ $VERIFY -eq 1 ]; then
             case "$CURRENT" in
                 *-*|*,*|"") fail "irq $IRQ affinity is '$CURRENT', want a single isolated cpu (R4)" ;;
-                *) say "irq $IRQ pinned to cpu $CURRENT (R4)" ;;      # a single cpu, even if not the one round-robin would pick
+                *)
+                    IN_SET=0
+                    for CPU_CANDIDATE in "${ISOLATED_CPUS[@]}"; do
+                        [ "$CPU_CANDIDATE" = "$CURRENT" ] && IN_SET=1
+                    done
+                    if [ $IN_SET -eq 0 ]; then
+                        fail "irq $IRQ is pinned to cpu $CURRENT, which is not in the isolated set $ISOLATED (R4)"
+                    elif printf '%s\n' "${SEEN_CPUS[@]:-}" | grep -qx "$CURRENT"; then
+                        fail "two IRQs pinned to cpu $CURRENT (R4): one queue, one core"
+                    else
+                        say "irq $IRQ pinned to isolated cpu $CURRENT (R4)"
+                    fi
+                    SEEN_CPUS+=("$CURRENT")
+                    ;;
             esac
         else
             say "pinning irq $IRQ to cpu $CPU (R4)"
@@ -227,7 +290,7 @@ if [ -f "$NAPI_DEFER" ]; then
         fail "napi_defer_hard_irqs is $(cat $NAPI_DEFER), want 2 (R5): echo 2 > $NAPI_DEFER"
     else
         say "setting napi_defer_hard_irqs = 2 (R5)"
-        echo 2 > "$NAPI_DEFER"
+        echo 2 > "$NAPI_DEFER" || fail "could not set napi_defer_hard_irqs (R5)"
     fi
 else
     say "no napi_defer_hard_irqs knob on this kernel (R5 passes)"
@@ -240,7 +303,7 @@ if [ -f "$GRO_FLUSH" ]; then
         fail "gro_flush_timeout is $(cat $GRO_FLUSH), want 200000 (R5): echo 200000 > $GRO_FLUSH"
     else
         say "setting gro_flush_timeout = 200000 (R5)"
-        echo 200000 > "$GRO_FLUSH"
+        echo 200000 > "$GRO_FLUSH" || fail "could not set gro_flush_timeout (R5)"
     fi
 else
     say "no gro_flush_timeout knob on this kernel (R5 passes)"
@@ -260,7 +323,7 @@ if [ -f "$SMT_CONTROL" ]; then
                 fail "smt is '$SMT', want off (R6): echo off > $SMT_CONTROL (or B1's nosmt)"
             else
                 say "disabling smt (R6)"
-                echo off > "$SMT_CONTROL"
+                echo off > "$SMT_CONTROL" || fail "could not disable smt (R6)"
             fi
             ;;
     esac
@@ -278,7 +341,7 @@ if command -v ethtool >/dev/null 2>&1 && ethtool -l "$INTERFACE" >/dev/null 2>&1
         fail "combined queue count is ${CURRENT:-unknown}, want $NUM_QUEUES (R7): ethtool -L $INTERFACE combined $NUM_QUEUES"
     else
         say "setting combined queue count = $NUM_QUEUES (R7)"
-        ethtool -L "$INTERFACE" combined "$NUM_QUEUES"
+        ethtool -L "$INTERFACE" combined "$NUM_QUEUES" || fail "ethtool -L refused combined $NUM_QUEUES (R7)"
     fi
 else
     say "no channel control on $INTERFACE (R7 passes)"

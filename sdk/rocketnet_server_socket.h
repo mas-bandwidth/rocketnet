@@ -31,6 +31,19 @@ struct rocketnet_server_socket_t;
 
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues );
 
+// The commit barrier: a process that must never commit an XDP data plane
+// forbids the committing create outright -- the test suite installs this
+// once at its start, structurally, so every present and future test is
+// safe by default; the pre-flight stays reachable (non-mutating by
+// contract) and create refuses before its first act. allow_commit is the
+// deliberate opt-out; nothing in the suite calls it.
+
+void rocketnet_server_socket_forbid_commit();
+
+void rocketnet_server_socket_allow_commit();
+
+bool rocketnet_server_socket_commit_forbidden();
+
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
 //

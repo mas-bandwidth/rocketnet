@@ -77,13 +77,16 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 
 // The runtime driver ladder (#106): the driver config value is always an
 // ordered candidate list, tried left to right at transport create, first
-// grant wins, exhausted list fails loudly. "auto" (or the empty string)
-// expands to the platform's recommended order for the endpoint. A name in
-// the known transport set but not available to this endpoint on this
-// platform is ignored with one soft log line (fleet configs stay
-// portable); a name in no transport set anywhere is a typo and fails
-// loudly at parse listing the valid names (spelling errors stay
-// catchable). A one-element list is a pin: that driver or loud failure.
+// grant wins, and a list exhausted by refusal fails loudly. "auto" (or the
+// empty string) expands to the platform's recommended order for the
+// endpoint. A name in the known transport set but not available to this
+// endpoint on this platform is ignored with one soft log line (fleet
+// configs stay portable), and a list whose EVERY name is ignored falls to
+// the endpoint's own auto order, loudly, rather than bricking an endpoint
+// the value was not addressing; a name in no transport set anywhere is a
+// typo and fails loudly at parse listing the valid names (spelling errors
+// stay catchable). An applicable one-element list is a pin: that driver or
+// loud failure.
 
 #define ROCKETNET_DRIVER_PORTABLE       0
 #define ROCKETNET_DRIVER_GSO            1
@@ -106,8 +109,9 @@ struct rocketnet_driver_ladder_t
 // parse a candidate list against an explicit availability order --
 // explicit so tests can exercise any platform's table anywhere. value
 // NULL, empty, or "auto" expands to the availability order itself (which
-// IS the recommended order). whitespace around names is tolerated; names
-// match exactly otherwise. returns false, loudly, on a name in no
+// IS the recommended order) -- as does, loudly, a list whose every name
+// was skipped for this endpoint. whitespace around names is tolerated;
+// names match exactly otherwise. returns false, loudly, on a name in no
 // transport set, an empty list element, "auto" inside a longer list, or a
 // list longer than ROCKETNET_MAX_DRIVER_CANDIDATES.
 

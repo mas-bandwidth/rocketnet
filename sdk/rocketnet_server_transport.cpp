@@ -422,6 +422,30 @@ static bool rocketnet_server_apply_env_alias( const char * alias_name, const cha
     return true;
 }
 
+static bool rocketnet_server_apply_env_alias_string( const char * alias_name, const char * successor_name, char * field, int capacity )
+{
+    const char * value = rocketnet_platform_getenv( alias_name );
+    if ( !value || value[0] == '\0' )
+        return true;
+
+    const char * successor_value = rocketnet_platform_getenv( successor_name );
+    if ( successor_value && successor_value[0] != '\0' )
+    {
+        rocketnet_warn( "server config ignores %s: its successor %s is set", alias_name, successor_name );
+        return true;
+    }
+
+    if ( (int) strlen( value ) >= capacity )
+    {
+        rocketnet_error( "server config %s value is too long (%d character maximum)", alias_name, capacity - 1 );
+        return false;
+    }
+
+    rocketnet_info( "server config override %s=%s (deprecated alias; %s is the successor) (displaces %s)", alias_name, value, successor_name, field );
+    snprintf( field, (size_t) capacity, "%s", value );
+    return true;
+}
+
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
                                                                          const char * public_address_string,
                                                                          const struct rocketnet_server_transport_config_t * config,
@@ -455,10 +479,24 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_OS_CPUS", "ROCKETNET_NUM_OS_CPUS", &effective_config.num_os_cpus ) )
         return NULL;
 
+    if ( !rocketnet_server_apply_env_alias_string( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "ROCKETNET_PUBLIC_ADDRESS", effective_config.public_address, (int) sizeof(effective_config.public_address) ) )
+        return NULL;
+
     if ( !rocketnet_config_validate( "server", &effective_config, config_fields, num_config_fields ) )
         return NULL;
 
     config = &effective_config;
+
+    // the config's public_address, when set, displaces the create call's
+    // address parameter HERE, before anything reads it -- so the address
+    // the ladder verifies, the address the granted driver binds, and the
+    // address connect tokens validate against can never diverge
+
+    if ( config->public_address[0] != '\0' )
+    {
+        rocketnet_info( "server config public_address %s displaces the create parameter %s", config->public_address, public_address_string );
+        public_address_string = config->public_address;
+    }
 
     const int max_clients = config->max_clients;        // the table validated the range
 
@@ -539,19 +577,17 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
             case ROCKETNET_DRIVER_XDP:
             {
-                // the non-mutating pre-flight (Glenn's ruling on #106:
-                // "Do an early check to see if we have XDP before changing
-                // the machine"): it verifies the machine is provisioned --
+                // create is verify-and-bind (Glenn's ruling on #106: "Do
+                // an early check to see if we have XDP before changing the
+                // machine"): its first act is the non-mutating pre-flight,
+                // which verifies the machine is provisioned --
                 // scripts/rocketnet-provision does the provisioning, the
-                // library never does -- and names each unmet condition as
-                // its own operator errand. only a verified machine
-                // proceeds to the create, whose own acts are per-socket.
+                // library never does -- naming each unmet condition as its
+                // own operator errand, against the same resolved address
+                // this rung would bind. a refusal falls through here.
 
                 const int num_xdp_queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : 7;
                 const int num_os_cpus = config->num_os_cpus > 0 ? config->num_os_cpus : 1;
-
-                if ( !rocketnet_server_socket_preflight( public_address_string, num_xdp_queues ) )
-                    break;
 
                 server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
                 if ( server_transport->xdp_socket )

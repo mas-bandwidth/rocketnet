@@ -192,8 +192,27 @@ void rocketnet_test_base64()
 
     rocketnet_check( rocketnet_base64_decode_data( "AAECAw==", bytes, sizeof(bytes) ) == 4 );
     rocketnet_check( bytes[0] == 0x00 && bytes[1] == 0x01 && bytes[2] == 0x02 && bytes[3] == 0x03 );
-    rocketnet_check( rocketnet_base64_decode_data( "-_", bytes, sizeof(bytes) ) == 1 );
+
+    // a bare invalid character inside a well-formed length
+
+    rocketnet_check( rocketnet_base64_decode_data( "AA!A", bytes, sizeof(bytes) ) == 0 );
+
+    // canonical tails only: "AB" and "AC" used to both decode to 0x00 --
+    // two distinct strings must never yield the same bytes, so nonzero
+    // leftover bits refuse ("AB==" likewise, against canonical "AQ==")
+
+    rocketnet_check( rocketnet_base64_decode_data( "AA", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( bytes[0] == 0x00 );
+    rocketnet_check( rocketnet_base64_decode_data( "AB", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AB==", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AQ==", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( bytes[0] == 0x01 );
+
+    // url-safe aliases still decode where canonical
+
+    rocketnet_check( rocketnet_base64_decode_data( "-w", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0xFB );
+    rocketnet_check( rocketnet_base64_decode_data( "-_", bytes, sizeof(bytes) ) == 0 );
 }
 
 void rocketnet_test_hash()
@@ -10183,9 +10202,92 @@ void rocketnet_test_config_override_logging()
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
 
+    // the failure path redacts too: a mistyped secret is still a secret
+
+    setenv( "ROCKETNET_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
+
     rocketnet_test_env_restore( &clients_guard );
     rocketnet_test_env_restore( &secret_guard );
 }
+
+// the deprecated env aliases (the pre-#106 spellings): honored where the
+// successor is unset, logged loudly naming the successor, yielding loudly
+// beside it -- and the public address alias feeds the one resolved
+// address create uses everywhere
+
+void rocketnet_test_config_env_aliases()
+{
+    struct rocketnet_test_env_guard_t alias_guard;
+    rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
+
+    struct rocketnet_test_env_guard_t successor_guard;
+    rocketnet_test_env_save( &successor_guard, "ROCKETNET_NUM_XDP_QUEUES" );
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    // the alias is honored where the successor is unset...
+
+    unsetenv( "ROCKETNET_NUM_XDP_QUEUES" );
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_server_transport_destroy( server );
+
+    // ...parsed strictly...
+
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    // ...and yields to the successor when both are set
+
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
+    setenv( "ROCKETNET_NUM_XDP_QUEUES", "2", 1 );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_env_restore( &alias_guard );
+    rocketnet_test_env_restore( &successor_guard );
+
+    // the public address rides the table now: the env override reaches the
+    // granted port the tokens would be minted for -- one address everywhere
+
+    struct rocketnet_test_env_guard_t address_guard;
+    rocketnet_test_env_save( &address_guard, "ROCKETNET_PUBLIC_ADDRESS" );
+    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:51473", 1 );
+
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    if ( server )
+    {
+        rocketnet_check( rocketnet_server_transport_port( server ) == 51473 );
+        rocketnet_server_transport_destroy( server );
+    }
+    // (a create refusal here means the fixed probe port was taken on this
+    // box -- the override path is still proven by the port match whenever
+    // the bind lands, and the alias spelling is covered above)
+
+    rocketnet_test_env_restore( &address_guard );
+    rocketnet_test_env_restore( &driver_guard );
+}
+
 
 void rocketnet_test_client_driver()
 {
@@ -10786,6 +10888,21 @@ void rocketnet_test_server_gso_send_overflow()
 
 void rocketnet_run_tests()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+    // THE COMMIT BARRIER (#110 gate, both readers): the suite must never
+    // commit an XDP data plane -- not by per-test discipline, which two
+    // readers proved decorative, but structurally: installed once here,
+    // it removes the committing create from every test's reach, present
+    // and future, root box or not. the pre-flight stays reachable (it is
+    // non-mutating by contract); a test that ever needs the committing
+    // path must call rocketnet_server_socket_allow_commit() explicitly,
+    // and none does.
+
+    rocketnet_server_socket_forbid_commit();
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
     // while ( true )
     {
         RUN_TEST( test_time );
@@ -10941,6 +11058,7 @@ void rocketnet_run_tests()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         RUN_TEST( test_driver_all_skipped_uses_auto );
         RUN_TEST( test_config_override_logging );
+        RUN_TEST( test_config_env_aliases );
         RUN_TEST( test_client_driver );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

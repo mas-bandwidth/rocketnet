@@ -3110,6 +3110,21 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
+    // a required msgx under the ROCKETNET_PUMP=portable override refuses
+    // BEFORE any socket exists: pre-#106 there was exactly one bind, and a
+    // refused rung that binds and releases a fixed port before the next
+    // rung rebinds it would open a window the old code never had
+
+    if ( require_msgx )
+    {
+        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
+        if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
+        {
+            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
+            return NULL;
+        }
+    }
+
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
                                                                                       force_portable ? ROCKETNET_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PUMP_MODE_AUTO );
     if ( !socket )
@@ -3117,11 +3132,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
     if ( require_msgx && !socket->msgx )
     {
-        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
-        if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
-            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
-        else
-            rocketnet_warn( "msgx pump refused by the probe" );
+        rocketnet_warn( "msgx pump refused by the probe" );
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }

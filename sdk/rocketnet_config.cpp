@@ -514,7 +514,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
             if ( ladder->num_skipped >= ROCKETNET_MAX_DRIVER_CANDIDATES )
             {
-                rocketnet_error( "driver list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "driver list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
                 return false;
             }
             ladder->skipped[ladder->num_skipped++] = driver;
@@ -546,7 +546,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
         }
 
-        rocketnet_info( "driver list \"%s\" names no driver for this endpoint on this platform. using auto (%s)", value, auto_names );
+        rocketnet_warn( "driver list \"%s\" names no driver for this endpoint on this platform. using auto (%s)", value, auto_names );
 
         for ( int i = 0; i < num_available; i++ )
             ladder->candidates[ladder->num_candidates++] = available[i];

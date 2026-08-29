@@ -287,7 +287,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_log_level( int level );
 // bounded stretch (the test suite's expected-refusal brackets) can restore
 // what it found rather than guessing
 
-ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level();
+ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level( void );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 
@@ -660,7 +660,12 @@ struct rocketnet_server_transport_t;
 // fragment aggregate rings, about 48KB per client slot.
 //
 // The server transport config table -- the single declaration everything
-// derives from, per the config system comment above. num_xdp_queues' range
+// derives from, per the config system comment above. public_address, empty
+// by default, displaces the create call's address parameter when set --
+// struct or ROCKETNET_PUBLIC_ADDRESS (deprecated alias:
+// ROCKETNET_SERVER_PUBLIC_ADDRESS) -- so the address the driver ladder
+// verifies, the address the driver binds, and the address connect tokens
+// validate against are always the same one. num_xdp_queues' range
 // here is structural; the tighter bounds are PER DRIVER, enforced at the
 // ladder rung and refused loudly, never clamped: the xdp driver takes any
 // count from 1, the gso driver refuses past its 32 queue geometry
@@ -678,7 +683,8 @@ struct rocketnet_server_transport_t;
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
+    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
 
 struct rocketnet_server_transport_config_t
 {

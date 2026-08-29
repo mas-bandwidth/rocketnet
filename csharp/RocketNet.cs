@@ -367,7 +367,7 @@ public static unsafe class RocketNet
 
         /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
         /// mirroring the C surface, which refuses loudly and never truncates.</summary>
-        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteDriverString( driver, value ); }
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteFixedString( driver, DriverStringLength, value, "driver list" ); }
     }
 
     /// <summary>rocketnet_server_transport_config_t. The server is configured explicitly;
@@ -414,23 +414,44 @@ public static unsafe class RocketNet
         /// <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
         public fixed byte Driver[DriverStringLength];
 
+        /// <summary>The server's public address (#110 review), a NUL-terminated string of up
+        /// to <see cref="AddressStringLength"/> - 1 characters; empty (the default) means
+        /// "use the create call's address parameter". When set — struct, or the
+        /// ROCKETNET_PUBLIC_ADDRESS env var (deprecated alias ROCKETNET_SERVER_PUBLIC_ADDRESS)
+        /// — it displaces that parameter before anything reads it, so the address the driver
+        /// ladder verifies, the address the granted driver binds, and the address connect
+        /// tokens validate against are always the same one. Read and write through
+        /// <see cref="GetPublicAddress"/> / <see cref="SetPublicAddress"/>.</summary>
+        public fixed byte PublicAddress[AddressStringLength];
+
         /// <summary>Reads the driver candidate list as a string.</summary>
         public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
 
         /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
         /// mirroring the C surface, which refuses loudly and never truncates.</summary>
-        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteDriverString( driver, value ); }
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteFixedString( driver, DriverStringLength, value, "driver list" ); }
+
+        /// <summary>Reads the public address override as a string.</summary>
+        public string GetPublicAddress() { fixed ( byte * address = PublicAddress ) return Marshal.PtrToStringUTF8( (IntPtr) address ) ?? string.Empty; }
+
+        /// <summary>Writes the public address override. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetPublicAddress( string value ) { fixed ( byte * address = PublicAddress ) WriteFixedString( address, AddressStringLength, value, "public address" ); }
     }
 
     /// <summary>rocketnet.h ROCKETNET_DRIVER_STRING_LENGTH: the driver field's capacity,
     /// terminator included.</summary>
     public const int DriverStringLength = 64;
 
-    static void WriteDriverString( byte * buffer, string value )
+    /// <summary>rocketnet.h ROCKETNET_MAX_ADDRESS_STRING_LENGTH: the public address field's
+    /// capacity, terminator included.</summary>
+    public const int AddressStringLength = 256;
+
+    static void WriteFixedString( byte * buffer, int capacity, string value, string what )
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes( value ?? string.Empty );
-        if ( bytes.Length >= DriverStringLength )
-            throw new ArgumentException( $"driver list is too long ({DriverStringLength - 1} character maximum)" );
+        if ( bytes.Length >= capacity )
+            throw new ArgumentException( $"{what} is too long ({capacity - 1} character maximum)" );
         for ( int i = 0; i < bytes.Length; i++ )
             buffer[i] = bytes[i];
         buffer[bytes.Length] = 0;

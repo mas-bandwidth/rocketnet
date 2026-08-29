@@ -141,6 +141,13 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
         }
     }
 
+    // canonical tails only: leftover bits below the last whole byte must
+    // be zero, so two distinct strings can never decode to the same bytes
+    // ("AB" and "AC" both used to yield 0x00)
+
+    if ( bits > 0 && ( accumulator & ( ( 1u << bits ) - 1 ) ) != 0 )
+        return 0;
+
     rocketnet_assert( j == output_length );
 
     return int( output_length );
@@ -160,6 +167,9 @@ int rocketnet_base64_decode_string( const char * input, char * output, size_t ou
     rocketnet_assert( input );
     rocketnet_assert( output );
     rocketnet_assert( output_size > 0 );
+
+    if ( output_size < 2 )
+        return 0;       // room for nothing but the terminator; decode_data requires a real buffer
 
     int output_length = rocketnet_base64_decode_data( input, (uint8_t *)( output ), output_size - 1 );
     if ( output_length < 0 )

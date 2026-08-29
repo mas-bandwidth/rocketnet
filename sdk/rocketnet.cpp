@@ -86,7 +86,7 @@ void rocketnet_log_level( int level )
     log_level = level;
 }
 
-int rocketnet_get_log_level()
+int rocketnet_get_log_level( void )
 {
     return log_level;
 }

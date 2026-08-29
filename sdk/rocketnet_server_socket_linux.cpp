@@ -166,6 +166,7 @@ struct rocketnet_server_socket_t
     struct xdp_program * program;
     bool attached_native;
     bool attached_skb;
+    char pin_root[64];                  // this instance's own bpffs directory: its maps pin here and nowhere shared
     int config_map_fd;
     int socket_map_fd;
     int stats_map_fd;
@@ -228,12 +229,30 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
     // a parameter override under the #106 loud-override law: not a config
     // table field (it overrides a discovered value, not a declared one),
-    // but it reads through the platform wrapper and logs what it displaces
-    // (the address discovery it preempts) like every other env override
+    // but it reads through the platform wrapper, logs what it displaces
+    // (the address discovery it preempts), and STRICT-PARSES like every
+    // other env value -- a malformed MAC refuses loudly rather than
+    // silently becoming 00:00:00:00:00:00 through strtol
 
     const char * gateway_ethernet_address_env = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
     if ( gateway_ethernet_address_env && gateway_ethernet_address_env[0] != '\0' )
     {
+        bool valid = strlen( gateway_ethernet_address_env ) == 17;
+        for ( int i = 0; valid && i < 17; i++ )
+        {
+            const char c = gateway_ethernet_address_env[i];
+            if ( ( i % 3 ) == 2 )
+                valid = c == ':' || c == '.';
+            else
+                valid = ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) || ( c >= 'A' && c <= 'F' );
+        }
+
+        if ( !valid )
+        {
+            rocketnet_error( "could not parse ROCKETNET_GATEWAY_ETHERNET_ADDRESS=\"%s\" as a mac address (xx:xx:xx:xx:xx:xx)", gateway_ethernet_address_env );
+            return false;
+        }
+
         rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
 
         strncpy( mac_address_string, gateway_ethernet_address_env, 17 );
@@ -444,14 +463,101 @@ static bool rocketnet_server_socket_read_sysfs( const char * path, char * value,
     return true;
 }
 
+// THE COMMIT BARRIER: a process that must never commit an XDP data plane
+// -- the test suite installs this once, structurally, for every present
+// and future test -- forbids the committing create outright. the
+// pre-flight stays reachable (it is non-mutating by contract); create
+// refuses at the top, before its first act. allow exists for a caller
+// that deliberately opts back in; nothing in the suite does.
+
+static bool rocketnet_server_socket_commit_forbidden_flag = false;
+
+void rocketnet_server_socket_forbid_commit()
+{
+    rocketnet_server_socket_commit_forbidden_flag = true;
+}
+
+void rocketnet_server_socket_allow_commit()
+{
+    rocketnet_server_socket_commit_forbidden_flag = false;
+}
+
+bool rocketnet_server_socket_commit_forbidden()
+{
+    return rocketnet_server_socket_commit_forbidden_flag;
+}
+
+// cpu list helpers for the boot-tier checks: "1-7,9" style lists as
+// /sys/devices/system/cpu/isolated and /proc/irq/N/smp_affinity_list
+// print them
+
+static bool rocketnet_server_socket_cpu_in_list( const char * list, int cpu )
+{
+    const char * cursor = list;
+    while ( *cursor )
+    {
+        int first = -1;
+        int last = -1;
+        char * end = NULL;
+        first = (int) strtol( cursor, &end, 10 );
+        if ( end == cursor )
+            break;
+        cursor = end;
+        last = first;
+        if ( *cursor == '-' )
+        {
+            cursor++;
+            last = (int) strtol( cursor, &end, 10 );
+            if ( end == cursor )
+                break;
+            cursor = end;
+        }
+        if ( cpu >= first && cpu <= last )
+            return true;
+        if ( *cursor == ',' )
+            cursor++;
+    }
+    return false;
+}
+
+static int rocketnet_server_socket_count_cpu_list( const char * list )
+{
+    int count = 0;
+    const char * cursor = list;
+    while ( *cursor )
+    {
+        int first = -1;
+        int last = -1;
+        char * end = NULL;
+        first = (int) strtol( cursor, &end, 10 );
+        if ( end == cursor )
+            break;
+        cursor = end;
+        last = first;
+        if ( *cursor == '-' )
+        {
+            cursor++;
+            last = (int) strtol( cursor, &end, 10 );
+            if ( end == cursor )
+                break;
+            cursor = end;
+        }
+        if ( last >= first )
+            count += last - first + 1;
+        if ( *cursor == ',' )
+            cursor++;
+    }
+    return count;
+}
+
 // THE PRE-FLIGHT (#106): non-mutating, checking the two-tier condition
 // list in scripts/rocketnet-provision's header -- the single documented
 // source this check, that script and BUILDING.md all derive from. Every
 // unmet condition names the knob, the wanted value, and the script;
 // nothing here changes machine state (probe descriptors are created and
 // closed, never bound, never attached). All conditions that can be
-// checked are checked, so one run names every errand at once rather than
-// one per attempt.
+// checked from here are checked, so one run names every errand at once
+// rather than one per attempt.
 
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
 {
@@ -487,45 +593,98 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         return false;
     }
 
-    // B1: the boot tier's kernel command line -- irqaffinity, isolcpus,
-    // nohz_full (nosmt's effect is verified by state under R6). grub
-    // changes, so the script can only verify these too; the errand is a
-    // reboot, named as one.
+    // R3: the exclusive xdp slot -- no program of anyone's attached to the
+    // interface. read-only query; the library never unloads anyone (the
+    // script does the clearing, deliberately).
+
+    {
+        unsigned int attached_program_id = 0;
+        if ( bpf_xdp_query_id( (int) interface_index, 0, &attached_program_id ) == 0 && attached_program_id != 0 )
+        {
+            rocketnet_warn( "xdp pre-flight: an XDP program (id %u) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, interface_name, interface_name, num_queues );
+            provisioned = false;
+        }
+    }
+
+    // B1: the boot tier's kernel command line -- irqaffinity=0 exactly,
+    // isolcpus= and nohz_full= with values (nosmt's effect is verified by
+    // state under R6). grub changes, so the script can only verify these
+    // too; the errand is a reboot, named as one.
 
     char value[4096];
     if ( rocketnet_server_socket_read_sysfs( "/proc/cmdline", value, sizeof(value) ) )
     {
-        const char * boot_tokens[3] = { "irqaffinity=", "isolcpus=", "nohz_full=" };
-        for ( int i = 0; i < 3; i++ )
+        if ( !strstr( value, "irqaffinity=0" ) )
         {
-            if ( !strstr( value, boot_tokens[i] ) )
+            rocketnet_warn( "xdp pre-flight: kernel command line lacks irqaffinity=0 (B1): grub + reboot, per scripts/rocketnet-provision" );
+            provisioned = false;
+        }
+
+        const char * ranged_tokens[2] = { "isolcpus=", "nohz_full=" };
+        for ( int i = 0; i < 2; i++ )
+        {
+            const char * token = strstr( value, ranged_tokens[i] );
+            if ( !token || token[strlen( ranged_tokens[i] )] == '\0' || token[strlen( ranged_tokens[i] )] == ' ' )
             {
-                rocketnet_warn( "xdp pre-flight: kernel command line lacks %s (B1): grub + reboot, per scripts/rocketnet-provision", boot_tokens[i] );
+                rocketnet_warn( "xdp pre-flight: kernel command line lacks %s<range> (B1): grub + reboot, per scripts/rocketnet-provision", ranged_tokens[i] );
                 provisioned = false;
             }
         }
     }
 
-    // B2: the isolated cpu set is non-empty -- isolcpus= taken effect
+    // B2: the isolated cpu set exists and is non-empty -- isolcpus= taken
+    // effect. an absent file is the same errand as an empty one, in both
+    // this check and the script.
 
-    if ( rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/isolated", value, sizeof(value) ) && value[0] == '\0' )
+    char isolated[1024];
+    bool have_isolated = rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/isolated", isolated, sizeof(isolated) ) && isolated[0] != '\0';
+    if ( !have_isolated )
     {
         rocketnet_warn( "xdp pre-flight: no isolated cpus (B2): B1's isolcpus= has not taken effect (grub + reboot, per scripts/rocketnet-provision)" );
         provisioned = false;
     }
 
-    // R4: each of the interface's queue IRQs is pinned to a single cpu --
-    // an affinity list with a range or a comma is the scheduler default,
-    // not a pin. interfaces with no per-queue IRQs (VMs) pass.
+    // R4's scaling clause: one queue wants one isolated core
+
+    if ( have_isolated && rocketnet_server_socket_count_cpu_list( isolated ) < num_queues )
+    {
+        rocketnet_warn( "xdp pre-flight: only %d isolated cpus for %d queues (R4 scales with B1): one queue wants one isolated core", rocketnet_server_socket_count_cpu_list( isolated ), num_queues );
+        provisioned = false;
+    }
+
+    // R4: each of the interface's queue IRQs is pinned to exactly one cpu
+    // FROM THE ISOLATED SET, no cpu doubled -- a range or comma is the
+    // scheduler default, a non-isolated cpu (0 included, which
+    // irqaffinity=0 parks everything on) is not a pin, and two queues on
+    // one core is not one-queue-one-core. interfaces with no per-queue
+    // IRQs (VMs) pass. the interface name matches as a whole token, never
+    // a substring ("lo" must not match "velocity0").
 
     {
         FILE * interrupts = fopen( "/proc/interrupts", "r" );
         if ( interrupts )
         {
+            uint8_t cpu_seen[1024];
+            memset( cpu_seen, 0, sizeof(cpu_seen) );
+
             char line[4096];
             while ( fgets( line, sizeof(line), interrupts ) )
             {
-                if ( !strstr( line, interface_name ) )
+                const size_t interface_name_length = strlen( interface_name );
+                const char * match = strstr( line, interface_name );
+                bool token_match = false;
+                while ( match )
+                {
+                    const char before = match == line ? ' ' : match[-1];
+                    const char after = match[interface_name_length];
+                    if ( ( before == ' ' || before == '\t' ) && ( after == '-' || after == ':' || after == ' ' || after == '\n' || after == '\0' ) )
+                    {
+                        token_match = true;
+                        break;
+                    }
+                    match = strstr( match + 1, interface_name );
+                }
+                if ( !token_match )
                     continue;
 
                 int irq = 0;
@@ -536,13 +695,32 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 snprintf( affinity_path, sizeof(affinity_path), "/proc/irq/%d/smp_affinity_list", irq );
 
                 char affinity[256];
-                if ( rocketnet_server_socket_read_sysfs( affinity_path, affinity, sizeof(affinity) ) )
+                if ( !rocketnet_server_socket_read_sysfs( affinity_path, affinity, sizeof(affinity) ) )
+                    continue;
+
+                if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
                 {
-                    if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
+                    rocketnet_warn( "xdp pre-flight: irq %d affinity is '%s', want a single isolated cpu (R4): run scripts/rocketnet-provision %s %d", irq, affinity, interface_name, num_queues );
+                    provisioned = false;
+                    continue;
+                }
+
+                const int cpu = atoi( affinity );
+
+                if ( have_isolated && !rocketnet_server_socket_cpu_in_list( isolated, cpu ) )
+                {
+                    rocketnet_warn( "xdp pre-flight: irq %d is pinned to cpu %d, which is not in the isolated set %s (R4): run scripts/rocketnet-provision %s %d", irq, cpu, isolated, interface_name, num_queues );
+                    provisioned = false;
+                }
+
+                if ( cpu >= 0 && cpu < (int) sizeof(cpu_seen) )
+                {
+                    if ( cpu_seen[cpu] )
                     {
-                        rocketnet_warn( "xdp pre-flight: irq %d affinity is '%s', want a single isolated cpu (R4): run scripts/rocketnet-provision %s %d", irq, affinity, interface_name, num_queues );
+                        rocketnet_warn( "xdp pre-flight: two of %s's IRQs are pinned to cpu %d (R4): one queue, one core -- run scripts/rocketnet-provision %s %d", interface_name, cpu, interface_name, num_queues );
                         provisioned = false;
                     }
+                    cpu_seen[cpu] = 1;
                 }
             }
             fclose( interrupts );
@@ -597,7 +775,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             {
                 if ( (int) channels.combined_count != num_queues )
                 {
-                    rocketnet_warn( "xdp pre-flight: combined queue count is %u, want %d (condition 6): run scripts/rocketnet-provision %s %d", channels.combined_count, num_queues, interface_name, num_queues );
+                    rocketnet_warn( "xdp pre-flight: combined queue count is %u, want %d (R7): run scripts/rocketnet-provision %s %d", channels.combined_count, num_queues, interface_name, num_queues );
                     provisioned = false;
                 }
             }
@@ -605,14 +783,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         }
     }
 
-    // kernel capability, per the ruling's checklist: an AF_XDP socket
+    // K1, kernel capability, per the ruling's checklist: an AF_XDP socket
     // created and closed without a bind...
 
     {
         int xdp_fd = socket( AF_XDP, SOCK_RAW, 0 );
         if ( xdp_fd < 0 )
         {
-            rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s). this kernel cannot run the XDP data plane", strerror( errno ) );
+            rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
             provisioned = false;
         }
         else
@@ -633,7 +811,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         int program_fd = bpf_prog_load( BPF_PROG_TYPE_XDP, "rocketnet_pf", "GPL", instructions, 2, NULL );
         if ( program_fd < 0 )
         {
-            rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s). this kernel cannot run the XDP data plane", strerror( errno ) );
+            rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
             provisioned = false;
         }
         else
@@ -651,21 +829,21 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     rocketnet_assert( public_address_string );
     rocketnet_assert( filter_value );
 
-    // the queue and cpu counts arrive from the transport config, which the
-    // #106 table already exposes as ROCKETNET_NUM_XDP_QUEUES and
-    // ROCKETNET_NUM_OS_CPUS with validation and loud override logging --
-    // the silent ROCKETNET_SERVER_NUM_QUEUES / ROCKETNET_SERVER_NUM_OS_CPUS
-    // reads that used to live here were the second config mechanism that
-    // system exists to absorb, so they are gone rather than kept as an
-    // unlogged shadow layer. this one is a create PARAMETER override, not a
-    // config field, so it stays -- under the same loud-override law.
+    // the committing create refuses outright in a process that forbade it
+    // (the test suite's structural barrier) -- before its first act, so no
+    // path below this line is reachable there
 
-    const char * public_address_env = rocketnet_platform_getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    if ( public_address_env && public_address_env[0] != '\0' )
+    if ( rocketnet_server_socket_commit_forbidden_flag )
     {
-        rocketnet_info( "server config override ROCKETNET_SERVER_PUBLIC_ADDRESS=%s (displaces %s)", public_address_env, public_address_string );
-        public_address_string = public_address_env;
+        rocketnet_warn( "xdp create refused: this process forbids committing an XDP data plane" );
+        return NULL;
     }
+
+    // the queue and cpu counts, and since the #110 review the public
+    // address too, arrive from the transport config table (with loud
+    // override logging and deprecated aliases handled there) -- no env is
+    // read here, so the address the pre-flight verified is the address
+    // this create binds, always
 
     rocketnet_info( "server public address is %s", public_address_string );
 
@@ -759,32 +937,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         server_socket->gateway_ethernet_address[5] 
     );
 
-    // delete all bpf maps we use so stale data doesn't stick around
-    {
-        {
-            const char * command = "rm -f /sys/fs/bpf/server_xdp_config_map";
-            FILE * file = popen( command, "r" );
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
-        }
+    // this instance's maps pin under its OWN bpffs directory, never a
+    // shared name: the pin root is pid-scoped, created here, removed by
+    // destroy. the rm -f of machine-global pin names that used to live
+    // here could delete a LIVE second server's maps -- machine-global
+    // state mutated on a path that might still fall -- which is the
+    // category verify-and-bind exists to close: the library touches only
+    // state it created, per instance.
 
-        {
-            const char * command = "rm -f /sys/fs/bpf/server_xdp_socket_map";
-            FILE * file = popen( command, "r" );
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
-        }
-
-        {
-            const char * command = "rm -f /sys/fs/bpf/server_xdp_stats_map";
-            FILE * file = popen( command, "r" );
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
-        }
-    }
+    snprintf( server_socket->pin_root, sizeof(server_socket->pin_root), "/sys/fs/bpf/rocketnet_xdp_%d", (int) getpid() );
 
     // Build the server_xdp program in a PRIVATE directory.
     //
@@ -848,9 +1009,17 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     rocketnet_info( "loading server_xdp..." );
 
     {
+        // the open opts carry this instance's pin root, so LIBBPF_PIN_BY_NAME
+        // pins land under it -- never under a name another instance shares
+
+        struct bpf_object_open_opts open_opts;
+        memset( &open_opts, 0, sizeof(open_opts) );
+        open_opts.sz = sizeof(open_opts);
+        open_opts.pin_root_path = server_socket->pin_root;
+
         char object[1024];
         snprintf( object, sizeof(object), "%s/server_xdp.o", workdir );
-        server_socket->program = xdp_program__open_file( object, "server_xdp", NULL );
+        server_socket->program = xdp_program__open_file( object, "server_xdp", &open_opts );
     }
 
     // Clean up after ourselves. This happens AFTER the load, unlike the old
@@ -902,9 +1071,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // get file descriptors for maps so we can communicate with the server_xdp program running in kernel space
+    // get file descriptors for maps so we can communicate with the server_xdp
+    // program running in kernel space -- under this instance's own pin root
 
-    server_socket->config_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_config_map" );
+    char pin_path[128];
+
+    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_config_map", server_socket->pin_root );
+    server_socket->config_map_fd = bpf_obj_get( pin_path );
     if ( server_socket->config_map_fd <= 0 )
     {
         rocketnet_error( "server could not get config map: %s", strerror(errno) );
@@ -912,7 +1085,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    server_socket->socket_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_socket_map" );
+    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_socket_map", server_socket->pin_root );
+    server_socket->socket_map_fd = bpf_obj_get( pin_path );
     if ( server_socket->socket_map_fd <= 0 )
     {
         rocketnet_error( "server could not get socket map: %s", strerror(errno) );
@@ -920,7 +1094,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    server_socket->stats_map_fd = bpf_obj_get( "/sys/fs/bpf/server_xdp_stats_map" );
+    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_stats_map", server_socket->pin_root );
+    server_socket->stats_map_fd = bpf_obj_get( pin_path );
     if ( server_socket->stats_map_fd <= 0 )
     {
         rocketnet_error( "server could not get stats map: %s", strerror(errno) );
@@ -1154,6 +1329,29 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
             xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
         }
         xdp_program__close( server_socket->program );
+    }
+
+    if ( server_socket->config_map_fd > 0 )
+        close( server_socket->config_map_fd );
+    if ( server_socket->socket_map_fd > 0 )
+        close( server_socket->socket_map_fd );
+    if ( server_socket->stats_map_fd > 0 )
+        close( server_socket->stats_map_fd );
+
+    // this instance's own bpffs pins go with it -- per-instance state the
+    // library created, unpinned by name under its own pid-scoped root, so
+    // nothing here can ever touch another instance's maps
+
+    if ( server_socket->pin_root[0] != '\0' )
+    {
+        static const char * pinned_map_names[3] = { "server_xdp_config_map", "server_xdp_socket_map", "server_xdp_stats_map" };
+        for ( int i = 0; i < 3; i++ )
+        {
+            char pin_path[128];
+            snprintf( pin_path, sizeof(pin_path), "%s/%s", server_socket->pin_root, pinned_map_names[i] );
+            unlink( pin_path );
+        }
+        rmdir( server_socket->pin_root );
     }
 
     // the queue array is allocated late in create, so a create that failed
