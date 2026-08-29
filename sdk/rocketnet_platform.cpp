@@ -161,7 +161,13 @@ uint16_t rocketnet_platform_preferred_client_port()
 
 bool rocketnet_platform_client_dual_stack()
 {
+#if defined(__OpenBSD__)
+    // openbsd rejects v4-mapped addresses by design: no socket is ever
+    // dual stack. the client transport binds the server's family instead.
+    return false;
+#else
     return true;
+#endif // #if defined(__OpenBSD__)
 }
 
 // ---------------------------------------------------
@@ -226,8 +232,11 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
     }
 
-    // enable dual stack for ipv6 sockets
+    // enable dual stack for ipv6 sockets. openbsd forbids clearing
+    // IPV6_V6ONLY (no v4-mapped addresses, by design), so there the socket
+    // stays ipv6-only and rocketnet_platform_client_dual_stack() says so.
 
+#if !defined(__OpenBSD__)
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int yes = 0;
@@ -238,6 +247,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
             return NULL;
         }
     }
+#endif // #if !defined(__OpenBSD__)
 
     // increase socket send and receive buffer sizes.
     //
