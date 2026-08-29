@@ -348,11 +348,25 @@ public static unsafe class RocketNet
         /// <summary>Reassembly slots for the connection; zero means <see cref="DefaultReassemblySlots"/>.</summary>
         public int NumReassemblySlots;
 
+        /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
+        /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
+        /// tried left to right at create, first grant wins ("auto" walks the platform's
+        /// recommended order; a one-element list is a pin that refuses loudly). Read and
+        /// write it through <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
+        public fixed byte Driver[DriverStringLength];
+
         /// <summary>Native function pointer for void (*)( void * context, int previous_state,
         /// int current_state ), or IntPtr.Zero for none. Delegate marshaling is deliberately
         /// not built here: the callback fires on library threads, and the pinning and lifetime
         /// rules that makes safe are not worth the surface in v1 — poll <see cref="ClientTransportState(IntPtr)"/>.</summary>
         public IntPtr StateChangeCallback;
+
+        /// <summary>Reads the driver candidate list as a string.</summary>
+        public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
+
+        /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteDriverString( driver, value ); }
     }
 
     /// <summary>rocketnet_server_transport_config_t. The server is configured explicitly;
@@ -385,6 +399,36 @@ public static unsafe class RocketNet
 
         /// <summary>Reassembly slots per client slot; zero means <see cref="DefaultReassemblySlots"/>.</summary>
         public int NumReassemblySlots;
+
+        /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
+        /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
+        /// tried left to right at create, first grant wins — on linux the auto ladder is
+        /// xdp,gso,portable — and a one-element list is a pin that refuses loudly rather
+        /// than falling. Known names absent on the platform are skipped softly; unknown
+        /// names refuse the create at parse. Read and write it through
+        /// <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
+        public fixed byte Driver[DriverStringLength];
+
+        /// <summary>Reads the driver candidate list as a string.</summary>
+        public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
+
+        /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteDriverString( driver, value ); }
+    }
+
+    /// <summary>rocketnet.h ROCKETNET_DRIVER_STRING_LENGTH: the driver field's capacity,
+    /// terminator included.</summary>
+    public const int DriverStringLength = 64;
+
+    static void WriteDriverString( byte * buffer, string value )
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes( value ?? string.Empty );
+        if ( bytes.Length >= DriverStringLength )
+            throw new ArgumentException( $"driver list is too long ({DriverStringLength - 1} character maximum)" );
+        for ( int i = 0; i < bytes.Length; i++ )
+            buffer[i] = bytes[i];
+        buffer[bytes.Length] = 0;
     }
 
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
@@ -704,6 +748,13 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_state", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportState( IntPtr client );
 
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_driver", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr client_transport_driver( IntPtr client );
+
+    /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
+    /// that won the ladder at create ("portable", "msgx"), never the requested list.</summary>
+    public static string ClientTransportDriver( IntPtr client ) => Marshal.PtrToStringUTF8( client_transport_driver( client ) ) ?? string.Empty;
+
     /// <summary>The client's slot index on the server, -1 when not connected.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_client_index", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportClientIndex( IntPtr client );
@@ -769,6 +820,14 @@ public static unsafe class RocketNet
     /// <summary>The server state, one of the Server state constants.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_state", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ServerTransportState( IntPtr server );
+
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_driver", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr server_transport_driver( IntPtr server );
+
+    /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
+    /// that won the ladder at create ("xdp", "gso", "msgx", "portable"), never the requested
+    /// list. Performance claims attach to what this returns.</summary>
+    public static string ServerTransportDriver( IntPtr server ) => Marshal.PtrToStringUTF8( server_transport_driver( server ) ) ?? string.Empty;
 
     /// <summary>Advances the server one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]
