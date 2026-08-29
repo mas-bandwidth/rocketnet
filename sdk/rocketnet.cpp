@@ -359,6 +359,7 @@ const char * rocketnet_platform_string( int platform_id )
         case ROCKETNET_PLATFORM_MAC:           return "mac";
         case ROCKETNET_PLATFORM_LINUX:         return "linux";
         case ROCKETNET_PLATFORM_IOS:           return "ios";
+        case ROCKETNET_PLATFORM_BSD:           return "bsd";
         default:
             break;
     }

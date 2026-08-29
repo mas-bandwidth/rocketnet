@@ -5,9 +5,12 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
-// linux
+// linux and the BSDs. one POSIX section: the sockets, threads and mutexes
+// are identical; everything linux-only in here (netlink, the wireless
+// ioctl, PMTU discovery, the raw clock) sits behind __linux__ with the
+// portable shape beside it.
 
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -23,14 +26,23 @@
 #include <unistd.h>
 #include <errno.h>
 #include <unistd.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
 #include <sys/ioctl.h>
-#include <linux/wireless.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+
+#if defined(__linux__)
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/wireless.h>
 #include <alloca.h>
+#endif // #if defined(__linux__)
+
+// the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
+// unadjusted-rate monotonic clock and serves the same reads
+#if !defined(CLOCK_MONOTONIC_RAW)
+#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
+#endif // #if !defined(CLOCK_MONOTONIC_RAW)
 
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
@@ -61,7 +73,7 @@ const char * rocketnet_platform_getenv( const char * var )
 
 int rocketnet_platform_id()
 {
-    return ROCKETNET_PLATFORM_LINUX;
+    return ROCKETNET_PLATFORM;
 }
 
 int rocketnet_platform_connection_type()
@@ -149,7 +161,13 @@ uint16_t rocketnet_platform_preferred_client_port()
 
 bool rocketnet_platform_client_dual_stack()
 {
+#if defined(__OpenBSD__)
+    // openbsd rejects v4-mapped addresses by design: no socket is ever
+    // dual stack. the client transport binds the server's family instead.
+    return false;
+#else
     return true;
+#endif // #if defined(__OpenBSD__)
 }
 
 // ---------------------------------------------------
@@ -170,6 +188,23 @@ void rocketnet_platform_sleep( double time )
 // ---------------------------------------------------
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
+
+static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction )
+{
+    int size = requested_bytes;
+    if ( setsockopt( handle, SOL_SOCKET, option, (char*)( &size ), sizeof( int ) ) == 0 )
+        return true;
+    while ( size > 1 )
+    {
+        size /= 2;
+        if ( setsockopt( handle, SOL_SOCKET, option, (char*)( &size ), sizeof( int ) ) == 0 )
+        {
+            rocketnet_warn( "socket %s buffer request of %d refused by the kernel, granted %d", direction, requested_bytes, size );
+            return true;
+        }
+    }
+    return false;
+}
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
@@ -197,8 +232,11 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         return NULL;
     }
 
-    // enable dual stack for ipv6 sockets
+    // enable dual stack for ipv6 sockets. openbsd forbids clearing
+    // IPV6_V6ONLY (no v4-mapped addresses, by design), so there the socket
+    // stays ipv6-only and rocketnet_platform_client_dual_stack() says so.
 
+#if !defined(__OpenBSD__)
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int yes = 0;
@@ -209,16 +247,26 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
             return NULL;
         }
     }
+#endif // #if !defined(__OpenBSD__)
 
-    // increase socket send and receive buffer sizes
+    // increase socket send and receive buffer sizes.
+    //
+    // linux silently clamps an over-limit request to net.core.wmem_max /
+    // rmem_max (defaults near 208KB), so this call has always meant "the
+    // largest buffer the kernel grants, up to the request". the BSDs refuse
+    // an over-limit request outright instead (netbsd: ENOBUFS above
+    // kern.sbmax, default 256KB), so on refusal walk down to what the
+    // kernel grants and say so; fail only when nothing can be set. on
+    // linux the first attempt succeeds and behavior is unchanged.
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_SNDBUF, (char*)( &send_buffer_size ), sizeof( int ) ) != 0 )
+    if ( !rocketnet_platform_set_socket_buffer_size( socket->handle, SO_SNDBUF, send_buffer_size, "send" ) )
     {
         rocketnet_error( "failed to set socket send buffer size" );
+        rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &receive_buffer_size ), sizeof( int ) ) != 0 )
+    if ( !rocketnet_platform_set_socket_buffer_size( socket->handle, SO_RCVBUF, receive_buffer_size, "receive" ) )
     {
         rocketnet_error( "failed to set socket receive buffer size" );
         rocketnet_platform_socket_destroy( socket );
@@ -326,6 +374,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     // set don't fragment bit
 
+#if defined(__linux__)
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int val = IPV6_PMTUDISC_DO;
@@ -336,6 +385,25 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         int val = IP_PMTUDISC_DO;
         setsockopt( socket->handle, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val) );
     }
+#else
+    // the BSDs express DF via the RFC 3542 options where they have them
+    // (FreeBSD both, OpenBSD and NetBSD IPv6 only); same shape the darwin
+    // section uses, and like the linux calls above, refusal is tolerated
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+    #if defined(IPV6_DONTFRAG)
+        int val = 1;
+        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, &val, sizeof(val) );
+    #endif // #if defined(IPV6_DONTFRAG)
+    }
+    else
+    {
+    #if defined(IP_DONTFRAG)
+        int val = 1;
+        setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val) );
+    #endif // #if defined(IP_DONTFRAG)
+    }
+#endif // #if defined(__linux__)
 
     return socket;
 }
@@ -575,7 +643,10 @@ bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
     
     pthread_mutexattr_t attr;
     pthread_mutexattr_init( &attr );
-    pthread_mutexattr_settype( &attr, 0 );
+    // PTHREAD_MUTEX_NORMAL by name: it is 0 on linux (the old literal here),
+    // but 3 on freebsd, where settype( 0 ) stores the invalid type and
+    // pthread_mutex_init then refuses with EINVAL
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_NORMAL );
     int result = pthread_mutex_init( &mutex->handle, &attr );
     pthread_mutexattr_destroy( &attr );
 
@@ -746,6 +817,8 @@ template <typename T> struct rocketnet_vector_t
 
 
 // ---------------------------------------------------
+
+#if defined(__linux__)
 
 struct rocketnet_iftable_t
 {
@@ -1064,6 +1137,18 @@ static int get_connection_type()
 
     return classify_connection_type( &route_table, &interface_list, &address );
 }
+
+#else // #if defined(__linux__)
+
+// the BSDs: no netlink and no wireless-extensions ioctl to classify with.
+// UNKNOWN is the honest answer and is already the init fallback everywhere.
+
+static int get_connection_type()
+{
+    return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+}
+
+#endif // #if defined(__linux__)
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 

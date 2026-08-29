@@ -218,6 +218,32 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     rocketnet_packet_loss_tracker_reset( &client_transport->packet_loss_tracker );
     rocketnet_jitter_tracker_reset( &client_transport->jitter_tracker );
 
+    // connect with the caller's token: the token names the server and is
+    // the credential. the game owns the clock; unix time is read here once
+    // for the token expiry check, which is wall-clock by definition.
+
+    rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
+
+    client_transport->protocol.reassembly = client_transport->reassembly;
+
+    memcpy( client_transport->protocol.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    client_transport->config = *config;
+    client_transport->time = time;
+    client_transport->last_state = client_transport->protocol.state;
+
+    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
+    {
+        rocketnet_client_transport_destroy( client_transport );
+        return NULL;
+    }
+
+    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
+
+    // the socket binds after the token parse so the bind family can follow
+    // the server when the platform has no dual stack
+
     rocketnet_address_t bind_address;
     memset( &bind_address, 0, sizeof(bind_address) );
     bind_address.type = ROCKETNET_ADDRESS_IPV4;
@@ -226,6 +252,14 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     if ( rocketnet_platform_client_dual_stack() )
     {
         rocketnet_info( "client socket is dual stack ipv4 and ipv6" );
+        bind_address.type = ROCKETNET_ADDRESS_IPV6;
+    }
+    else if ( client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        // no dual stack on this platform (openbsd rejects v4-mapped
+        // addresses by design): one socket speaks one family, so bind
+        // the server's own
+        rocketnet_info( "client socket is ipv6 only" );
         bind_address.type = ROCKETNET_ADDRESS_IPV6;
     }
 
@@ -253,29 +287,6 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     rocketnet_info( "client bound to %s", rocketnet_address_to_string( &bind_address, address_string ) );
 
     client_transport->bound_port = bind_address.port;
-
-    // connect with the caller's token: the token names the server and is
-    // the credential. the game owns the clock; unix time is read here once
-    // for the token expiry check, which is wall-clock by definition.
-
-    rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
-
-    client_transport->protocol.reassembly = client_transport->reassembly;
-
-    memcpy( client_transport->protocol.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-
-    client_transport->config = *config;
-    client_transport->time = time;
-    client_transport->last_state = client_transport->protocol.state;
-
-    if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
-    {
-        rocketnet_client_transport_destroy( client_transport );
-        return NULL;
-    }
-
-    char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
     {

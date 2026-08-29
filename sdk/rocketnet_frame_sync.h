@@ -52,10 +52,10 @@ struct rocketnet_frame_sync_t
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     pthread_t waiter_thread;
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
     int waiter_previous_policy;
     struct sched_param waiter_previous_param;
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 };
 
 // The pure parts, tested directly.
