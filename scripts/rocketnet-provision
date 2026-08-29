@@ -100,6 +100,10 @@
 #                          the metadata in their names (rules inline at the
 #                          sweep block); also invocable bare as
 #                          `rocketnet-provision sweep`
+#     selftest:            hold this script's IRQ matcher and R3 capture
+#                          discipline to their fixture cases (no root, no
+#                          arguments, mutates nothing; CI runs it); also
+#                          invocable bare as `rocketnet-provision selftest`
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
 #                          with, default 1-15 (the 10 Gbps point) -- used in
 #                          the B1 guidance and the scaling check below
@@ -113,7 +117,9 @@ set -u
 # sweep and selftest stand alone: they need no interface and no queue count
 
 if [ "${1:-}" = "sweep" ] || [ "${1:-}" = "selftest" ]; then
-    if [ -n "${2:-}" ]; then
+    if [ $# -gt 1 ]; then
+        # counted, not tested for emptiness: an explicit empty argument is
+        # as much a mangled intent as a non-empty one
         echo "usage: rocketnet-provision $1   (no further arguments; a stray argument may be a mangled intent)" >&2
         exit 2
     fi
@@ -176,6 +182,14 @@ UNMET=0
 
 say()  { echo "rocketnet-provision: $*"; }
 fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; }
+
+# xdp-loader's status, stdout only -- stderr never reaches the caller's
+# content grep, and the exit status is this exact invocation's
+
+query_xdp_slot_stdout()
+{
+    xdp-loader status "$1" 2>/dev/null
+}
 
 irq_lines_for_interface()
 {
@@ -248,6 +262,29 @@ if [ "$MODE" = "selftest" ]; then
     expect_match "eth0"     " 33:  0 0 PCI-MSI 2097154-edge      eth00" "no"
     expect_match "eth0"     " 34:  0 0 PCI-MSI 2097156-edge      xeth0-TxRx-0" "no"
     expect_match "ens1f0"   " 35:  0 0 IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0" "no"
+
+    # the R3 capture-discipline case (round eight's regression class,
+    # pinned): a stub xdp-loader that exits 0 with a clean stdout but
+    # XDP_-bearing STDERR must grade the slot CLEAN -- the content grep
+    # reads stdout only. the stub lives in a private temp dir on PATH for
+    # exactly one call; nothing else is touched.
+
+    STUB_DIR="$(mktemp -d)"
+    cat > "$STUB_DIR/xdp-loader" << 'STUB'
+#!/bin/sh
+echo "XDP_DEBUG: probing interface" >&2
+echo "no XDP program loaded on interface"
+exit 0
+STUB
+    chmod +x "$STUB_DIR/xdp-loader"
+    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_xdp_slot_stdout ignored0)"
+    STUB_RC=$?
+    if [ $STUB_RC -ne 0 ]; then
+        echo "selftest FAIL: the stub query should exit 0"; PASS=0
+    elif printf '%s\n' "$STUB_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
+        echo "selftest FAIL: stderr XDP_ noise reached the content grep -- the captures are merged"; PASS=0
+    fi
+    rm -rf "$STUB_DIR"
 
     if [ $PASS -eq 1 ]; then
         echo "rocketnet-provision selftest passed"
@@ -408,18 +445,37 @@ fi
 # R3. exclusive xdp slot
 
 if command -v xdp-loader >/dev/null 2>&1; then
-    # keyed on xdp-loader's OWN exit status, never the pipeline's grep: a
-    # query that fails must refuse, not read as an empty slot
-    XDP_STATUS_OUTPUT="$(xdp-loader status "$INTERFACE" 2>&1)"
+    # the content grep reads STDOUT ONLY (round eight's regression class:
+    # a diagnostic on stderr containing "XDP_" must never grade an empty
+    # slot occupied) and the rc keys to that same invocation; the error
+    # text is fetched by a second read-only query only on the failure path
+
+    XDP_STATUS_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"
     XDP_STATUS_RC=$?
+
     if [ $XDP_STATUS_RC -ne 0 ]; then
-        fail "xdp-loader could not query $INTERFACE (R3): $XDP_STATUS_OUTPUT"
-    elif printf '%s\n' "$XDP_STATUS_OUTPUT" | grep -q "xdp_dispatcher\|XDP_"; then
+        XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
+        fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-exit $XDP_STATUS_RC}"
+    elif printf '%s\n' "$XDP_STATUS_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
         if [ $VERIFY -eq 1 ]; then
             fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
         else
+            # the act half of R3 lives under the same law as its query
+            # half: a failed unload is UNMET, and the slot is RE-QUERIED
+            # after the act -- an unload that claims success but leaves a
+            # program attached must never verify by omission
+
             say "unloading XDP programs from $INTERFACE (R3)"
-            xdp-loader unload -a "$INTERFACE"
+            xdp-loader unload -a "$INTERFACE" || fail "xdp-loader unload -a $INTERFACE failed (R3)"
+
+            XDP_AFTER_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"
+            if [ $? -ne 0 ]; then
+                fail "could not re-query $INTERFACE after unload (R3)"
+            elif printf '%s\n' "$XDP_AFTER_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
+                fail "an XDP program is still attached to $INTERFACE after unload (R3)"
+            else
+                say "exclusive xdp slot confirmed clear after unload (R3)"
+            fi
         fi
     else
         say "no XDP program attached to $INTERFACE (R3)"
@@ -566,13 +622,18 @@ fi
 
 if ! command -v ethtool >/dev/null 2>&1; then
     fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
+    ETHTOOL_RC=127
 else
-    ETHTOOL_ERROR="$(ethtool -l "$INTERFACE" 2>&1 >/dev/null)"
+    # ONE invocation on the success path: rc and the parsed output come
+    # from the same run (stdout only -- the R3 lesson), locale pinned so
+    # the failure signature match below cannot rot under translation; the
+    # error text is fetched by a second read-only run only on failure
+    ETHTOOL_STDOUT="$(LC_ALL=C ethtool -l "$INTERFACE" 2>/dev/null)"
     ETHTOOL_RC=$?
 fi
 
 if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
-    CURRENT="$(ethtool -l "$INTERFACE" 2>/dev/null | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
+    CURRENT="$(printf '%s\n' "$ETHTOOL_STDOUT" | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
     if [ "$CURRENT" = "$NUM_QUEUES" ]; then
         say "combined queue count already $NUM_QUEUES (R7)"
     elif [ $VERIFY -eq 1 ]; then
@@ -586,9 +647,11 @@ elif command -v ethtool >/dev/null 2>&1; then
     # errno: ONLY the no-channel-support refusal passes -- a vanished
     # device, EBUSY, or a netlink mismatch is an unmet condition, never a
     # silent pass (the header's law: change a condition anywhere, change it
-    # everywhere)
+    # everywhere). LC_ALL=C keeps the signature in the C locale strerror
+    # spelling; "not supported" covers the EOPNOTSUPP family
+    ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
     case "$ETHTOOL_ERROR" in
-        *"Operation not supported"*|*"not supported"*)
+        *"not supported"*)
             say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
             ;;
         *)
