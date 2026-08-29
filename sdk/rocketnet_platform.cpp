@@ -607,7 +607,10 @@ bool rocketnet_platform_mutex_create( rocketnet_platform_mutex_t * mutex )
     
     pthread_mutexattr_t attr;
     pthread_mutexattr_init( &attr );
-    pthread_mutexattr_settype( &attr, 0 );
+    // PTHREAD_MUTEX_NORMAL by name: it is 0 on linux (the old literal here),
+    // but 3 on freebsd, where settype( 0 ) stores the invalid type and
+    // pthread_mutex_init then refuses with EINVAL
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_NORMAL );
     int result = pthread_mutex_init( &mutex->handle, &attr );
     pthread_mutexattr_destroy( &attr );
 
