@@ -61,11 +61,14 @@ jobs:
         run: ROCKETNET_DRIVER=portable ./bin/test
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
-      # C test's case set, transcribed (round five's escaping bug is the
-      # case that half exists to catch), plus the R3 capture-discipline pin
-      # (round eight's merged-capture regression is the case that half
-      # exists to catch). needs no root; touches only a private temp dir it
-      # creates and removes.
+      # C test's case set, transcribed, plus the R3/R7 enforcement functions
+      # driven end to end in both modes against stubs replaying captured
+      # xdp-tools output -- every fail site in both functions paired to a
+      # driving case (the fail-site enumeration receipt on PR #110 is the
+      # pairing), and the WHOLE SCRIPT driven door-to-fail by the selftest's
+      # full-flow verify case. exit state asserts the UNMET/say distinction,
+      # so fail-open consumer drift goes red here. needs no root; touches
+      # only a private temp dir it creates and removes.
 
       - name: Provisioning script selftest
         if: runner.os == 'Linux'

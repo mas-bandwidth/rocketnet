@@ -118,6 +118,8 @@
 
 set -u
 
+SELF="$0"          # the selftest's full-flow case re-invokes this very script
+
 # sweep and selftest stand alone: they need no interface and no queue count
 
 if [ "${1:-}" = "sweep" ] || [ "${1:-}" = "selftest" ]; then
@@ -292,6 +294,14 @@ irq_lines_for_interface()
 
 r3_enforce()
 {
+    # env contract, asserted: INTERFACE must be non-empty -- an empty name
+    # would query and unload whatever the tools default to
+
+    if [ -z "${INTERFACE:-}" ]; then
+        fail "r3_enforce called without INTERFACE (contract)"
+        return
+    fi
+
     if command -v xdp-loader >/dev/null 2>&1; then
         # the content grep reads STDOUT ONLY (round eight's regression class:
         # a diagnostic on stderr containing "XDP_" must never grade an empty
@@ -361,7 +371,7 @@ r7_enforce()
 {
     if ! command -v ethtool >/dev/null 2>&1; then
         fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
-        ETHTOOL_RC=127
+        ETHTOOL_RC=127      # belt: command -v is re-tested below; this keeps set -u honest on every path
     else
         # ONE invocation on the success path: rc and the parsed output come
         # from the same run (stdout only -- the R3 lesson), locale pinned so
@@ -444,6 +454,12 @@ r7_enforce()
 if [ "$MODE" = "selftest" ]; then
     PASS=1
 
+    # the watchdog: a mutation that HANGS instead of failing must still
+    # end red -- the killer fires only if the selftest overruns its bound
+
+    ( sleep 120 && echo "selftest FAIL: watchdog timeout (120s)" && kill -TERM $$ ) 2>/dev/null &
+    WATCHDOG_PID=$!
+
     expect_match()
     {
         RESULT="$(printf '%s\n' "$2" | irq_lines_for_interface "$1")"
@@ -496,6 +512,8 @@ if [ "$MODE" = "selftest" ]; then
         echo "selftest FAIL: could not create a private temp dir for the stubs"
         exit 1
     fi
+    # (a noexec TMPDIR surfaces below as the first enforcement case failing
+    #  on exit state: the stubs cannot execute from a noexec mount)
 
     # the replay stub: xdp-loader status <iface> answers from captured
     # xdp-tools 1.6.2 output according to the per-interface state files;
@@ -716,6 +734,43 @@ STUB
     RC=$?
     expect_case "r7 tool-absent" $RC 1 "$OUT" "install ethtool" 1
 
+    # --- the env contract: an empty INTERFACE is refused at the door,
+    # with a substring unique to the contract arm ---
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=""; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 empty-interface contract" $RC 1 "$OUT" "without INTERFACE (contract)" 1
+
+    # --- the interface arrives UNMANGLED: a VLAN name keeps its dot all
+    # the way to the tool (the replay stub asserts its argument, so any
+    # in-flight mangling -- an inserted \${INTERFACE%%.*} -- becomes a
+    # loud query failure and this case goes red) ---
+
+    echo clean > "$STUB_STATE_DIR/state.eth0.100"
+    OUT="$(run_r3 1 eth0.100)"
+    expect_case "r3 vlan name unmangled" $? 0 "$OUT" "no XDP program attached to eth0.100"
+
+    # --- THE TOP OF THE LADDER: the WHOLE SCRIPT, door to fail. a verify
+    # run of this very script under the stub environment must exit 1 and
+    # carry the R3 and R7 UNMETs by name in its full-flow output -- this
+    # pins the top-level call sites themselves (deleting an enforcement
+    # invocation ships green nowhere: it goes red HERE), and there is no
+    # level above the whole script, so the pin ladder terminates by
+    # construction ---
+
+    echo foreign > "$STUB_STATE_DIR/state.stubiface0"
+    echo 4 > "$STUB_STATE_DIR/combined.stubiface0"
+    FULL_OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface0 7 verify 2>&1 )"
+    FULL_RC=$?
+    if [ $FULL_RC -ne 1 ]; then
+        echo "selftest FAIL: full-flow verify should exit 1 (got $FULL_RC)"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -q "an XDP program is attached to stubiface0 (R3)"; then
+        echo "selftest FAIL: full-flow verify output lacks the R3 UNMET -- is r3_enforce still wired at the top?"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -q "combined queue count is 4, want 7 (R7)"; then
+        echo "selftest FAIL: full-flow verify output lacks the R7 UNMET -- is r7_enforce still wired at the top?"; PASS=0
+    fi
+
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---
 
@@ -776,17 +831,20 @@ exit 0'
               UNMET=0; VERIFY=1; INTERFACE=clean0; PATH="$STUB_DIR:$PATH"
               r3_enforce; exit $UNMET ) 2>&1 )"
     RC=$?
-    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "outside the outcome set" 1
+    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "R3 grade .maybe. is outside the outcome set" 1
 
     OUT="$( ( r3_query_and_grade() { if [ ! -f "$STUB_STATE_DIR/garbage_marker" ]; then touch "$STUB_STATE_DIR/garbage_marker"; echo occupied; else echo maybe; fi; return 0; }
               UNMET=0; VERIFY=0; INTERFACE=p0; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
               echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
               r3_enforce; exit $UNMET ) 2>&1 )"
     RC=$?
-    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "outside the outcome set" 1
+    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "R3 re-grade .maybe. is outside the outcome set" 1
     rm -f "$STUB_STATE_DIR/garbage_marker"
 
     rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
+
+    kill "$WATCHDOG_PID" 2>/dev/null
+    wait "$WATCHDOG_PID" 2>/dev/null
 
     if [ $PASS -eq 1 ]; then
         echo "rocketnet-provision selftest passed"
