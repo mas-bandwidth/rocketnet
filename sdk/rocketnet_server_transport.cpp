@@ -474,6 +474,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
 #endif // #if ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
 
+    // a public address created with port zero adopts the granted bind
+    // port, so the advertised address -- the one connect tokens are minted
+    // for and validated against -- is the real one, and
+    // rocketnet_server_transport_port reads it back
+
+    if ( public_address.port == 0 )
+        public_address.port = bind_address.port;
+
     server_transport->bind_address = bind_address;
     server_transport->public_address = public_address;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_RUNNING;
@@ -601,6 +609,12 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
 {
     rocketnet_assert( server_transport );
     return server_transport->state;
+}
+
+uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->bind_address.port;
 }
 
 // process the previous stats frames into published per-second numbers, then
@@ -885,21 +899,22 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     acks->update_count++;
 
-    // flush. the caller's contract (rocketnet.h) is send_packets once per
-    // frame after update -- but the portable driver has always ALSO sent
-    // update's own responses and keep-alives inline right here, and much of
-    // the test suite's pump loops lean on that without ever calling
-    // send_packets. the xdp driver does not have that property: its worker
-    // drains only the off buffer, so nothing staged by update leaves until
-    // the send_packets flip retargets the buffers -- a divergence the suite
+    // flush. the per-driver law is stated where callers read it, at
+    // send_packets in rocketnet.h: send_packets once per frame after
+    // update is the guarantee, and when staged packets actually leave is
+    // per driver. the portable driver has always ALSO sent update's own
+    // responses and keep-alives inline right here, and much of the test
+    // suite's pump loops lean on that without ever calling send_packets.
+    // the xdp driver does not have that property: its worker drains only
+    // the off buffer, so nothing staged by update leaves until the
+    // send_packets flip retargets the buffers -- a divergence the suite
     // has never observed because it has never run against xdp (no root in
-    // CI), recorded here so nobody rediscovers it. the gso driver sides
-    // with the portable behavior: update's own staging flushes inline on
-    // the main thread -- the flush is idempotent -- and send_flushed
-    // advances with it, so send_packets flips only for what the fill phase
-    // stages after this point. the xdp flip is destructive to run twice on
-    // one staging generation, which is what the staged/flushed guard below
-    // protects.
+    // CI). the gso driver sides with the portable behavior: update's own
+    // staging flushes inline on the main thread -- the flush is idempotent
+    // -- and send_flushed advances with it, so send_packets flips only for
+    // what the fill phase stages after this point. the xdp flip is
+    // destructive to run twice on one staging generation, which is what
+    // the staged/flushed guard below protects.
 
 #if ROCKETNET_SERVER_STAGED
 

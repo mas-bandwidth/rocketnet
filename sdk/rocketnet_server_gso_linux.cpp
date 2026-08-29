@@ -624,8 +624,21 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
     if ( ( flags & ROCKETNET_SERVER_GSO_DISABLE_SEGMENT ) == 0 )
     {
-        int zero = 0;
-        if ( setsockopt( gso->queues[0].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) ) == 0 )
+        // transmit rotates across the whole group, so a probe result
+        // claimed for the group is established for the group: every socket
+        // must accept UDP_SEGMENT -- the same all-or-nothing reasoning as
+        // the GRO enable below. unlike GRO there is no partial state to
+        // roll back on refusal: the probe writes segment size zero, the
+        // disabled value every socket already holds.
+
+        int segment_sockets = 0;
+        for ( int i = 0; i < num_queues; i++ )
+        {
+            int zero = 0;
+            if ( setsockopt( gso->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) ) == 0 )
+                segment_sockets++;
+        }
+        if ( segment_sockets == num_queues )
         {
             gso->features |= ROCKETNET_SERVER_GSO_FEATURE_SEGMENT;
         }

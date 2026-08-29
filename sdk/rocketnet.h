@@ -590,6 +590,17 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stop( struct rocketnet_ser
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport );
 
+// The port the transport actually bound. A public address string carrying
+// port zero asks the kernel for an ephemeral port at create; the granted
+// port is adopted into the advertised address -- so connect tokens minted
+// for it validate -- and this reads it back. Tests and single-box tools
+// build their token address from it instead of hardcoding a port and
+// racing every other process on the machine; production servers know
+// their public address already. (Port-zero discovery is a portable and
+// GSO driver property; the XDP driver binds the port it is given.)
+
+ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
+
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 
 // The payloads delivered by the last update, valid until the next update.
@@ -654,9 +665,15 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // of game threads strictly between an update and the following
 // send_packets, and the handoff between fill and flush must be a
 // synchronizing operation (a join or a barrier), not a wall-clock wait.
-// send_packets is required once per frame, after update: packets are never
-// sent without it. Calling it again in the same frame is a no-op. The
-// fields of the context are read-only to the caller.
+// send_packets is required once per frame, after update. When staged
+// packets actually leave is per driver, and a caller owns only the
+// guarantee: everything staged before send_packets is sent by it, and
+// nothing is guaranteed sent without it. The portable and GSO drivers
+// also flush update's own staging -- protocol responses and keep-alives
+// -- inline in update; the XDP driver sends nothing until send_packets.
+// Code against the guarantee, not a driver's eagerness. Calling
+// send_packets again in the same frame is a no-op. The fields of the
+// context are read-only to the caller.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
 // dropped instead (payload out of range, or the connection gone) -- the
