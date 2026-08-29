@@ -200,11 +200,46 @@ query_xdp_slot_stdout()
 # through this exact function, so the pin exercises the code that grades,
 # never a transcription of it (round nine: a green selftest was proven
 # possible over a reverted defect when the grade lived in copies).
-# takes the stdout capture; exit 0 = occupied, 1 = clean.
+# takes the stdout capture; exit 0 = occupied, anything else = clean
+# (grep's error status 2 grades clean too -- by construction it cannot
+# occur here, since the input is a shell variable piped in, never a file
+# that could fail to read).
 
 xdp_slot_occupied()
 {
     printf '%s\n' "$1" | grep -q "xdp_dispatcher\|XDP_"
+}
+
+# THE ONE R3 PATH: query and grade fused, so there is no top-level capture
+# left to drift back to round seven's merged form (the wiring itself was
+# the one place the selftest could not see -- proven by a reader running
+# the old defect under a green selftest). echoes occupied|clean; returns
+# nonzero when the query itself failed. the live block and the selftest
+# both drive THIS function.
+
+r3_query_and_grade()
+{
+    R3_QUERY_STDOUT="$(query_xdp_slot_stdout "$1")" || return 1
+    if xdp_slot_occupied "$R3_QUERY_STDOUT"; then
+        echo occupied
+    else
+        echo clean
+    fi
+    return 0
+}
+
+# R7's query and parser, each ONE function used by every R7 read -- the
+# probe, the current-count parse, and the post-write read-back -- so no
+# transcription can drift and every rc keys to its own invocation
+
+query_combined_stdout()
+{
+    LC_ALL=C ethtool -l "$1" 2>/dev/null
+}
+
+parse_combined_count()
+{
+    printf '%s\n' "$1" | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}'
 }
 
 irq_lines_for_interface()
@@ -286,7 +321,8 @@ if [ "$MODE" = "selftest" ]; then
     # exactly one call; nothing else is touched.
 
     # the temp dir is guarded: an unguarded empty STUB_DIR would put the
-    # working directory on PATH and write ./xdp-loader wherever we stand
+    # working directory on PATH and write /xdp-loader at the filesystem
+    # root (the empty expansion leaves the leading slash)
 
     STUB_DIR="$(mktemp -d)" || STUB_DIR=""
     if [ -z "$STUB_DIR" ]; then
@@ -300,12 +336,16 @@ echo "no XDP program loaded on interface"
 exit 0
 STUB
     chmod +x "$STUB_DIR/xdp-loader"
-    # "ignored0" is an arbitrary interface argument: the stub ignores it
-    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_xdp_slot_stdout ignored0)"
+    # "ignored0" is an arbitrary interface argument: the stub ignores it.
+    # the case drives r3_query_and_grade -- the SAME fused function the
+    # live R3 block calls -- so neither the capture, nor the grader, nor
+    # the wiring between them can drift unwitnessed (round nine's residual
+    # gap: the wiring was the one strand the pin did not hold)
+    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade ignored0)"
     STUB_RC=$?
     if [ $STUB_RC -ne 0 ]; then
-        echo "selftest FAIL: the stub query should exit 0"; PASS=0
-    elif xdp_slot_occupied "$STUB_STDOUT"; then
+        echo "selftest FAIL: the stub query should exit 0 (a noexec temp dir also lands here)"; PASS=0
+    elif [ "$STUB_GRADE" != "clean" ]; then
         echo "selftest FAIL: stderr XDP_ noise reached the grader -- the captures are merged"; PASS=0
     fi
 
@@ -316,7 +356,7 @@ STUB
         echo "selftest FAIL: an occupied stdout must grade occupied"; PASS=0
     fi
 
-    rm -rf "$STUB_DIR"
+    rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
 
     if [ $PASS -eq 1 ]; then
         echo "rocketnet-provision selftest passed"
@@ -373,6 +413,9 @@ if [ "$MODE" = "sweep" ]; then
                 say "leaving $PIN_ROOT: pid $PIN_PID is alive but its start time is unreadable -- not provably stale"
                 continue
             fi
+            # string-compared, accepted: a leading-zero spelling difference
+            # (never produced by the C recorder or by /proc) would grade
+            # stale -- erring on the loud, operator-visible side
             if [ "$LIVE_START" != "$PIN_START" ]; then
                 REASON="pid $PIN_PID was recycled (start time $LIVE_START, instance recorded $PIN_START)"
             fi
@@ -482,30 +525,31 @@ if command -v xdp-loader >/dev/null 2>&1; then
     # slot occupied) and the rc keys to that same invocation; the error
     # text is fetched by a second read-only query only on the failure path
 
-    XDP_STATUS_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"
-    XDP_STATUS_RC=$?
+    XDP_GRADE="$(r3_query_and_grade "$INTERFACE")"
+    XDP_GRADE_RC=$?
 
-    if [ $XDP_STATUS_RC -ne 0 ]; then
+    if [ $XDP_GRADE_RC -ne 0 ]; then
         # the second query can race a change on the NIC; its staleness
         # colors only this error text, never a grade
         XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
-        fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-exit $XDP_STATUS_RC}"
-    elif xdp_slot_occupied "$XDP_STATUS_STDOUT"; then
+        fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
+    elif [ "$XDP_GRADE" = "occupied" ]; then
         if [ $VERIFY -eq 1 ]; then
             fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
         else
             # the act half of R3 lives under the same law as its query
-            # half: a failed unload is UNMET, and the slot is RE-QUERIED
-            # after the act -- an unload that claims success but leaves a
-            # program attached must never verify by omission
+            # half: a failed unload is UNMET, and the slot is RE-GRADED
+            # through the same fused path after the act -- an unload that
+            # claims success but leaves a program attached must never
+            # verify by omission
 
             say "unloading XDP programs from $INTERFACE (R3)"
             xdp-loader unload -a "$INTERFACE" || fail "xdp-loader unload -a $INTERFACE failed (R3)"
 
-            XDP_AFTER_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"
+            XDP_AFTER_GRADE="$(r3_query_and_grade "$INTERFACE")"
             if [ $? -ne 0 ]; then
                 fail "could not re-query $INTERFACE after unload (R3)"
-            elif xdp_slot_occupied "$XDP_AFTER_STDOUT"; then
+            elif [ "$XDP_AFTER_GRADE" = "occupied" ]; then
                 fail "an XDP program is still attached to $INTERFACE after unload (R3)"
             else
                 say "exclusive xdp slot confirmed clear after unload (R3)"
@@ -662,25 +706,36 @@ else
     # from the same run (stdout only -- the R3 lesson), locale pinned so
     # the failure signature match below cannot rot under translation; the
     # error text is fetched by a second read-only run only on failure
-    ETHTOOL_STDOUT="$(LC_ALL=C ethtool -l "$INTERFACE" 2>/dev/null)"
+    ETHTOOL_STDOUT="$(query_combined_stdout "$INTERFACE")"
     ETHTOOL_RC=$?
 fi
 
 if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
-    CURRENT="$(printf '%s\n' "$ETHTOOL_STDOUT" | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
+    CURRENT="$(parse_combined_count "$ETHTOOL_STDOUT")"
     if [ "$CURRENT" = "$NUM_QUEUES" ]; then
         say "combined queue count already $NUM_QUEUES (R7)"
     elif [ $VERIFY -eq 1 ]; then
         fail "combined queue count is ${CURRENT:-unknown}, want $NUM_QUEUES (R7): ethtool -L $INTERFACE combined $NUM_QUEUES"
     else
         say "setting combined queue count = $NUM_QUEUES (R7)"
-        ethtool -L "$INTERFACE" combined "$NUM_QUEUES" || fail "ethtool -L refused combined $NUM_QUEUES (R7)"
-        # a write that claims success is read back, like R3's unload: an
-        # ethtool that returns 0 without taking effect must never verify
-        # by omission (read-back on the remaining runtime writes is a
-        # recorded follow-on, not smuggled into this change)
-        REREAD="$(LC_ALL=C ethtool -l "$INTERFACE" 2>/dev/null | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
-        [ "$REREAD" = "$NUM_QUEUES" ] || fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
+        if ! ethtool -L "$INTERFACE" combined "$NUM_QUEUES"; then
+            fail "ethtool -L refused combined $NUM_QUEUES (R7)"
+        else
+            # a write that claims success is read back, like R3's unload:
+            # an ethtool that returns 0 without taking effect must never
+            # verify by omission. the read-back keys rc to its own
+            # invocation and parses through the one parser -- a FAILED
+            # read is its own errand, distinct from a write that did not
+            # take (read-back on the remaining runtime writes is a
+            # recorded follow-on, not smuggled into this change)
+            REREAD_STDOUT="$(query_combined_stdout "$INTERFACE")"
+            if [ $? -ne 0 ]; then
+                fail "could not re-read the queue count after ethtool -L (R7): the write may or may not have taken"
+            else
+                REREAD="$(parse_combined_count "$REREAD_STDOUT")"
+                [ "$REREAD" = "$NUM_QUEUES" ] || fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
+            fi
+        fi
     fi
 elif command -v ethtool >/dev/null 2>&1; then
     # the failure is discriminated, exactly as the pre-flight discriminates
