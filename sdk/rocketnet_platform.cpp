@@ -183,6 +183,23 @@ void rocketnet_platform_sleep( double time )
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
+static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction )
+{
+    int size = requested_bytes;
+    if ( setsockopt( handle, SOL_SOCKET, option, (char*)( &size ), sizeof( int ) ) == 0 )
+        return true;
+    while ( size > 1 )
+    {
+        size /= 2;
+        if ( setsockopt( handle, SOL_SOCKET, option, (char*)( &size ), sizeof( int ) ) == 0 )
+        {
+            rocketnet_warn( "socket %s buffer request of %d refused by the kernel, granted %d", direction, requested_bytes, size );
+            return true;
+        }
+    }
+    return false;
+}
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
 {
     rocketnet_assert( address );
@@ -222,15 +239,24 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         }
     }
 
-    // increase socket send and receive buffer sizes
+    // increase socket send and receive buffer sizes.
+    //
+    // linux silently clamps an over-limit request to net.core.wmem_max /
+    // rmem_max (defaults near 208KB), so this call has always meant "the
+    // largest buffer the kernel grants, up to the request". the BSDs refuse
+    // an over-limit request outright instead (netbsd: ENOBUFS above
+    // kern.sbmax, default 256KB), so on refusal walk down to what the
+    // kernel grants and say so; fail only when nothing can be set. on
+    // linux the first attempt succeeds and behavior is unchanged.
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_SNDBUF, (char*)( &send_buffer_size ), sizeof( int ) ) != 0 )
+    if ( !rocketnet_platform_set_socket_buffer_size( socket->handle, SO_SNDBUF, send_buffer_size, "send" ) )
     {
         rocketnet_error( "failed to set socket send buffer size" );
+        rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
 
-    if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVBUF, (char*)( &receive_buffer_size ), sizeof( int ) ) != 0 )
+    if ( !rocketnet_platform_set_socket_buffer_size( socket->handle, SO_RCVBUF, receive_buffer_size, "receive" ) )
     {
         rocketnet_error( "failed to set socket receive buffer size" );
         rocketnet_platform_socket_destroy( socket );
