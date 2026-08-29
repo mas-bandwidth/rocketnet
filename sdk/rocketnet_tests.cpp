@@ -9343,6 +9343,115 @@ void rocketnet_test_transport_ipv6_loopback()
 #define UDP_SEGMENT 103
 #endif
 
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
+// does this HOST actually coalesce? the driver's feature bits prove only
+// that the setsockopts were ACCEPTED -- with `ethtool -K lo
+// tx-udp-segmentation off`, a legitimate configuration, a UDP_SEGMENT
+// super-datagram is segmented at transmit and arrives as plain datagrams,
+// no UDP_GRO cmsg ever appears, and a counter assertion gated on the
+// feature bits alone would encode that host tunable as a protocol fact.
+// so probe the host itself, once, with the exact shape the provocation
+// phase sends: a scratch socket with UDP_GRO enabled mails itself one
+// eight-segment super-datagram over loopback and watches for an arrival
+// carrying the UDP_GRO stride cmsg below its length -- the kernel's own
+// statement that it delivered coalesced.
+
+static bool rocketnet_test_gso_host_coalesces()
+{
+    int fd = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if ( fd < 0 )
+        return false;
+
+    struct sockaddr_in address;
+    memset( &address, 0, sizeof(address) );
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    address.sin_port = 0;
+    socklen_t address_length = sizeof(address);
+    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) != 0 ||
+         getsockname( fd, (struct sockaddr*) &address, &address_length ) != 0 )
+    {
+        close( fd );
+        return false;
+    }
+
+    int one = 1;
+    if ( setsockopt( fd, IPPROTO_UDP, UDP_GRO, &one, sizeof(one) ) != 0 )
+    {
+        close( fd );
+        return false;
+    }
+
+    const int probe_segments = 8;
+    const int probe_segment_bytes = 100;
+
+    uint8_t super[probe_segments * probe_segment_bytes];
+    memset( super, 0xAB, sizeof(super) );
+
+    struct iovec iov = { super, sizeof(super) };
+    char control[CMSG_SPACE(sizeof(uint16_t))];
+    memset( control, 0, sizeof(control) );
+    struct msghdr msg;
+    memset( &msg, 0, sizeof(msg) );
+    msg.msg_name = &address;
+    msg.msg_namelen = sizeof(address);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+    cmsg->cmsg_level = IPPROTO_UDP;
+    cmsg->cmsg_type = UDP_SEGMENT;
+    cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+    uint16_t stride = (uint16_t) probe_segment_bytes;
+    memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+
+    if ( sendmsg( fd, &msg, 0 ) != (ssize_t) sizeof(super) )
+    {
+        close( fd );
+        return false;
+    }
+
+    bool coalesced = false;
+    int received_bytes = 0;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 2.0 && received_bytes < (int) sizeof(super) && !coalesced )
+    {
+        uint8_t buffer[sizeof(super)];
+        struct iovec receive_iov = { buffer, sizeof(buffer) };
+        char receive_control[CMSG_SPACE(sizeof(int))];
+        struct msghdr receive_msg;
+        memset( &receive_msg, 0, sizeof(receive_msg) );
+        receive_msg.msg_iov = &receive_iov;
+        receive_msg.msg_iovlen = 1;
+        receive_msg.msg_control = receive_control;
+        receive_msg.msg_controllen = sizeof(receive_control);
+        ssize_t bytes = recvmsg( fd, &receive_msg, MSG_DONTWAIT );
+        if ( bytes <= 0 )
+        {
+            rocketnet_platform_sleep( 0.001 );
+            continue;
+        }
+        received_bytes += (int) bytes;
+        for ( struct cmsghdr * c = CMSG_FIRSTHDR( &receive_msg ); c; c = CMSG_NXTHDR( &receive_msg, c ) )
+        {
+            if ( c->cmsg_level == IPPROTO_UDP && c->cmsg_type == UDP_GRO )
+            {
+                int segment_bytes = 0;
+                memcpy( &segment_bytes, CMSG_DATA( c ), sizeof(int) );
+                if ( segment_bytes > 0 && segment_bytes < (int) bytes )
+                    coalesced = true;
+            }
+        }
+    }
+
+    close( fd );
+    return coalesced;
+}
+
 void rocketnet_test_server_gso_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -9549,6 +9658,8 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
          ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) &&
          server_address.type == ROCKETNET_ADDRESS_IPV4 )
     {
+        const bool host_coalesces = rocketnet_test_gso_host_coalesces();
+
         const int gro_segments = 8;
         const int gro_segment_bytes = 100;
 
@@ -9618,10 +9729,23 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
         rocketnet_check( num_segments_seen == gro_segments );
 
         // the counter is the proof the coalesced path ran -- eight distinct
-        // arrivals alone would also be produced by uncoalesced delivery
+        // arrivals alone would also be produced by uncoalesced delivery. it
+        // is asserted only where the host probe observed real coalescing:
+        // the feature bits mean the setsockopts were accepted, and a host
+        // with tx-udp-segmentation off on loopback delivers this same send
+        // uncoalesced -- legitimate configuration, not a driver failure. on
+        // such a host the byte-exact segment coverage above still ran, and
+        // the skip says so out loud rather than passing silently.
 
-        rocketnet_server_gso_counters( gso, counters );
-        rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] > gro_before );
+        if ( host_coalesces )
+        {
+            rocketnet_server_gso_counters( gso, counters );
+            rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] > gro_before );
+        }
+        else
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "    skipped GRO_BATCHES assertion: this host delivers UDP_SEGMENT super-datagrams uncoalesced over loopback (tx-udp-segmentation off?) -- segments still surfaced byte-exact above" );
+        }
     }
 
     rocketnet_platform_socket_destroy( peer );
