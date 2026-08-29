@@ -60,13 +60,14 @@ jobs:
       - name: Run tests (portable rung pinned by env)
         run: ROCKETNET_DRIVER=portable ./bin/test
 
-      # the provisioning script's matcher selftest: the script's awk matcher
-      # and the C matcher implement ONE boundary definition; this holds the
-      # script's half to the same case set the C test holds its half to,
-      # transcribed (round five's awk-escaping bug is the case it exists
-      # to catch)
+      # the provisioning script's selftest: the awk IRQ matcher held to the
+      # C test's case set, transcribed (round five's escaping bug is the
+      # case that half exists to catch), plus the R3 capture-discipline pin
+      # (round eight's merged-capture regression is the case that half
+      # exists to catch). needs no root; touches only a private temp dir it
+      # creates and removes.
 
-      - name: Provisioning script matcher selftest
+      - name: Provisioning script selftest
         if: runner.os == 'Linux'
         run: bash scripts/rocketnet-provision selftest
 

@@ -92,10 +92,11 @@ Cold, on a fresh box, as root:
     #    the servers. Leftovers are inert -- a colliding create refuses
     #    loudly and names this sweep.
 
-    # (scripts/rocketnet-provision selftest runs the script's IRQ-name
-    #  matcher against the same fixture lines the C test uses -- CI runs it
-    #  on every push, so the two halves of the one boundary definition
-    #  cannot drift apart silently.)
+    # (scripts/rocketnet-provision selftest holds the script's IRQ-name
+    #  matcher to the C test's case set AND pins the R3 capture discipline
+    #  with a stub -- it needs no root and touches only a private temp dir
+    #  it creates and removes. CI runs it on every push, so the two halves
+    #  of the one boundary definition cannot drift apart silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
 the busy-poll pair — is the 10 Gbps point, as measured on the space game's Linux

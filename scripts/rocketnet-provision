@@ -102,8 +102,9 @@
 #                          `rocketnet-provision sweep`
 #     selftest:            hold this script's IRQ matcher and R3 capture
 #                          discipline to their fixture cases (no root, no
-#                          arguments, mutates nothing; CI runs it); also
-#                          invocable bare as `rocketnet-provision selftest`
+#                          arguments; touches only a private temp dir it
+#                          creates and removes; CI runs it); also invocable
+#                          bare as `rocketnet-provision selftest`
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
 #                          with, default 1-15 (the 10 Gbps point) -- used in
 #                          the B1 guidance and the scaling check below
@@ -183,12 +184,27 @@ UNMET=0
 say()  { echo "rocketnet-provision: $*"; }
 fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; }
 
-# xdp-loader's status, stdout only -- stderr never reaches the caller's
-# content grep, and the exit status is this exact invocation's
+# xdp-loader's status, stdout only -- stderr never reaches the grader,
+# and the exit status is this exact invocation's. ASSUMPTION, stated:
+# xdp-tools prints program listings on stdout; the selftest pins the
+# capture discipline with a STUB (exit 0, clean stdout, XDP_ noise on
+# stderr), not against every real xdp-tools version's output shape.
 
 query_xdp_slot_stdout()
 {
     xdp-loader status "$1" 2>/dev/null
+}
+
+# THE ONE GRADER: every judgment of "is the slot occupied" -- the initial
+# query, the post-unload re-query, and the selftest's stub case -- goes
+# through this exact function, so the pin exercises the code that grades,
+# never a transcription of it (round nine: a green selftest was proven
+# possible over a reverted defect when the grade lived in copies).
+# takes the stdout capture; exit 0 = occupied, 1 = clean.
+
+xdp_slot_occupied()
+{
+    printf '%s\n' "$1" | grep -q "xdp_dispatcher\|XDP_"
 }
 
 irq_lines_for_interface()
@@ -232,8 +248,8 @@ irq_lines_for_interface()
 # past its 4096-byte buffer where awk is unbounded (real /proc/interrupts
 # lines are far shorter); '\r' and the empty interface name are
 # unreachable on the script side (no CRLF procfs; empty arguments refuse
-# at the door). runs anywhere, needs nothing, mutates nothing. CI runs it
-# on every push.
+# at the door). runs anywhere, needs no root, and touches only a private
+# temp dir it creates and removes (the R3 stub). CI runs it on every push.
 
 if [ "$MODE" = "selftest" ]; then
     PASS=1
@@ -269,7 +285,14 @@ if [ "$MODE" = "selftest" ]; then
     # reads stdout only. the stub lives in a private temp dir on PATH for
     # exactly one call; nothing else is touched.
 
-    STUB_DIR="$(mktemp -d)"
+    # the temp dir is guarded: an unguarded empty STUB_DIR would put the
+    # working directory on PATH and write ./xdp-loader wherever we stand
+
+    STUB_DIR="$(mktemp -d)" || STUB_DIR=""
+    if [ -z "$STUB_DIR" ]; then
+        echo "selftest FAIL: could not create a private temp dir for the stub"
+        exit 1
+    fi
     cat > "$STUB_DIR/xdp-loader" << 'STUB'
 #!/bin/sh
 echo "XDP_DEBUG: probing interface" >&2
@@ -277,13 +300,22 @@ echo "no XDP program loaded on interface"
 exit 0
 STUB
     chmod +x "$STUB_DIR/xdp-loader"
+    # "ignored0" is an arbitrary interface argument: the stub ignores it
     STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_xdp_slot_stdout ignored0)"
     STUB_RC=$?
     if [ $STUB_RC -ne 0 ]; then
         echo "selftest FAIL: the stub query should exit 0"; PASS=0
-    elif printf '%s\n' "$STUB_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
-        echo "selftest FAIL: stderr XDP_ noise reached the content grep -- the captures are merged"; PASS=0
+    elif xdp_slot_occupied "$STUB_STDOUT"; then
+        echo "selftest FAIL: stderr XDP_ noise reached the grader -- the captures are merged"; PASS=0
     fi
+
+    # and the grader's positive direction, so a neutered grader cannot go
+    # green either: an occupied stdout must grade occupied
+
+    if ! xdp_slot_occupied "prog xdp_dispatcher id 42 attached"; then
+        echo "selftest FAIL: an occupied stdout must grade occupied"; PASS=0
+    fi
+
     rm -rf "$STUB_DIR"
 
     if [ $PASS -eq 1 ]; then
@@ -454,9 +486,11 @@ if command -v xdp-loader >/dev/null 2>&1; then
     XDP_STATUS_RC=$?
 
     if [ $XDP_STATUS_RC -ne 0 ]; then
+        # the second query can race a change on the NIC; its staleness
+        # colors only this error text, never a grade
         XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
         fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-exit $XDP_STATUS_RC}"
-    elif printf '%s\n' "$XDP_STATUS_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
+    elif xdp_slot_occupied "$XDP_STATUS_STDOUT"; then
         if [ $VERIFY -eq 1 ]; then
             fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
         else
@@ -471,7 +505,7 @@ if command -v xdp-loader >/dev/null 2>&1; then
             XDP_AFTER_STDOUT="$(query_xdp_slot_stdout "$INTERFACE")"
             if [ $? -ne 0 ]; then
                 fail "could not re-query $INTERFACE after unload (R3)"
-            elif printf '%s\n' "$XDP_AFTER_STDOUT" | grep -q "xdp_dispatcher\|XDP_"; then
+            elif xdp_slot_occupied "$XDP_AFTER_STDOUT"; then
                 fail "an XDP program is still attached to $INTERFACE after unload (R3)"
             else
                 say "exclusive xdp slot confirmed clear after unload (R3)"
@@ -641,6 +675,12 @@ if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
     else
         say "setting combined queue count = $NUM_QUEUES (R7)"
         ethtool -L "$INTERFACE" combined "$NUM_QUEUES" || fail "ethtool -L refused combined $NUM_QUEUES (R7)"
+        # a write that claims success is read back, like R3's unload: an
+        # ethtool that returns 0 without taking effect must never verify
+        # by omission (read-back on the remaining runtime writes is a
+        # recorded follow-on, not smuggled into this change)
+        REREAD="$(LC_ALL=C ethtool -l "$INTERFACE" 2>/dev/null | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}')"
+        [ "$REREAD" = "$NUM_QUEUES" ] || fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
     fi
 elif command -v ethtool >/dev/null 2>&1; then
     # the failure is discriminated, exactly as the pre-flight discriminates
