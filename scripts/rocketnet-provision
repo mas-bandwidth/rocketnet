@@ -100,11 +100,14 @@
 #                          the metadata in their names (rules inline at the
 #                          sweep block); also invocable bare as
 #                          `rocketnet-provision sweep`
-#     selftest:            hold this script's IRQ matcher and R3 capture
-#                          discipline to their fixture cases (no root, no
-#                          arguments; touches only a private temp dir it
-#                          creates and removes; CI runs it); also invocable
-#                          bare as `rocketnet-provision selftest`
+#     selftest:            drive this script's own machinery against
+#                          replayed reality -- the IRQ matcher's case set,
+#                          and the R3/R7 enforcement functions end to end
+#                          in both modes over stubs replaying captured
+#                          xdp-tools 1.6.2 output (no root, no arguments;
+#                          touches only a private temp dir it creates and
+#                          removes; CI runs it); also invocable bare as
+#                          `rocketnet-provision selftest`
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
 #                          with, default 1-15 (the 10 Gbps point) -- used in
 #                          the B1 guidance and the scaling check below
@@ -195,19 +198,27 @@ query_xdp_slot_stdout()
     xdp-loader status "$1" 2>/dev/null
 }
 
-# THE ONE GRADER: every judgment of "is the slot occupied" -- the initial
-# query, the post-unload re-query, and the selftest's stub case -- goes
-# through this exact function, so the pin exercises the code that grades,
-# never a transcription of it (round nine: a green selftest was proven
-# possible over a reverted defect when the grade lived in copies).
-# takes the stdout capture; exit 0 = occupied, anything else = clean
-# (grep's error status 2 grades clean too -- by construction it cannot
-# occur here, since the input is a shell variable piped in, never a file
-# that could fail to read).
+# THE ONE GRADER, derived from observation, never assumption. Captured
+# from xdp-tools 1.6.2 (ubuntu, lima VM, 2026-08-29), single-interface
+# queries, all three attachment states:
+#
+#   clean:       lo    <No XDP program loaded!>
+#   dispatcher:  lo    xdp_dispatcher    skb   129  ba2e1a15f08cd656
+#                 =>   50  xdp_pass_prog       138  d4f8542f2b42fac5  XDP_PASS
+#   foreign (ip link set dev lo xdp obj -- no dispatcher):
+#                lo    xdp_pass_prog     skb   115  d4f8542f2b42fac5
+#
+# the FOREIGN row carries neither "xdp_dispatcher" nor any "XDP_" token,
+# so the old token allowlist was fail-open by measurement, not just by
+# argument. the one stable CLEAN marker is the "<No XDP program loaded!>"
+# row: clean iff the marker is present, occupied otherwise -- an unknown
+# output shape grades occupied, which fails the condition; it never opens
+# the machine. exit 0 = occupied, anything else = clean (grep error rc
+# cannot occur: the input is a shell variable, never a file).
 
 xdp_slot_occupied()
 {
-    printf '%s\n' "$1" | grep -q "xdp_dispatcher\|XDP_"
+    ! printf '%s\n' "$1" | grep -q "No XDP program loaded"
 }
 
 # THE ONE R3 PATH: query and grade fused, so there is no top-level capture
@@ -219,10 +230,9 @@ xdp_slot_occupied()
 
 r3_query_and_grade()
 {
-    # R3_QUERY_STDOUT is set-and-consumed inside this function only (POSIX
-    # sh has no local): the substitution-only contract -- no caller reads
-    # it after return; the grade token on stdout is the whole interface
+    # local: the grade token on stdout is this function's whole interface
 
+    local R3_QUERY_STDOUT
     R3_QUERY_STDOUT="$(query_xdp_slot_stdout "$1")" || return 1
     if xdp_slot_occupied "$R3_QUERY_STDOUT"; then
         echo occupied
@@ -274,6 +284,147 @@ irq_lines_for_interface()
         }'
 }
 
+# R3 ENFORCEMENT AS A FUNCTION (the round-twelve boundary move): the
+# consumer is no longer live-only -- the selftest drives this exact
+# function end to end, verify and provision modes alike, against stub
+# environments, asserting exit state AND the UNMET/say distinction. env
+# contract: INTERFACE, VERIFY; effects: say/fail only.
+
+r3_enforce()
+{
+    if command -v xdp-loader >/dev/null 2>&1; then
+        # the content grep reads STDOUT ONLY (round eight's regression class:
+        # a diagnostic on stderr containing "XDP_" must never grade an empty
+        # slot occupied) and the rc keys to that same invocation; the error
+        # text is fetched by a second read-only query only on the failure path
+
+        XDP_GRADE="$(r3_query_and_grade "$INTERFACE")"
+        XDP_GRADE_RC=$?
+
+        if [ $XDP_GRADE_RC -ne 0 ]; then
+            # the second query can race a change on the NIC; its staleness
+            # colors only this error text, never a grade
+            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
+            fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
+        else
+            # FAIL CLOSED outside the outcome set (the round-eleven law): the
+            # grade is an explicit token, and anything that is not exactly
+            # "occupied" or "clean" is UNMET -- never clean by default
+            case "$XDP_GRADE" in
+                occupied)
+                    if [ $VERIFY -eq 1 ]; then
+                        fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
+                    else
+                        # the act half of R3 lives under the same law as its
+                        # query half: a failed unload is UNMET, and the slot is
+                        # RE-GRADED through the same fused path after the act
+
+                        say "unloading XDP programs from $INTERFACE (R3)"
+                        if ! xdp-loader unload -a "$INTERFACE"; then
+                            # one act, one UNMET: a failed unload is not also
+                            # graded for the state it failed to change -- the
+                            # same one-act-one-UNMET law R7's read-back follows
+                            fail "xdp-loader unload -a $INTERFACE failed (R3)"
+                        else
+                            XDP_AFTER_GRADE="$(r3_query_and_grade "$INTERFACE")"
+                            XDP_AFTER_RC=$?
+                            if [ $XDP_AFTER_RC -ne 0 ]; then
+                                fail "could not re-query $INTERFACE after unload (R3)"
+                            else
+                                case "$XDP_AFTER_GRADE" in
+                                    clean)    say "exclusive xdp slot confirmed clear after unload (R3)" ;;
+                                    occupied) fail "an XDP program is still attached to $INTERFACE after unload (R3)" ;;
+                                    *)        fail "R3 re-grade '$XDP_AFTER_GRADE' is outside the outcome set: failing closed" ;;
+                                esac
+                            fi
+                        fi
+                    fi
+                    ;;
+                clean)
+                    say "no XDP program attached to $INTERFACE (R3)"
+                    ;;
+                *)
+                    fail "R3 grade '$XDP_GRADE' is outside the outcome set: failing closed"
+                    ;;
+            esac
+        fi
+    else
+        fail "xdp-loader not found (R3): the exclusive slot can be neither cleared nor verified from here -- install xdp-tools"
+    fi
+}
+
+# R7 ENFORCEMENT AS A FUNCTION, same boundary move and same contract:
+# INTERFACE, NUM_QUEUES, VERIFY in; say/fail out; the selftest drives it
+# end to end in both modes.
+
+r7_enforce()
+{
+    if ! command -v ethtool >/dev/null 2>&1; then
+        fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
+        ETHTOOL_RC=127
+    else
+        # ONE invocation on the success path: rc and the parsed output come
+        # from the same run (stdout only -- the R3 lesson), locale pinned so
+        # the failure signature match below cannot rot under translation; the
+        # error text is fetched by a second read-only run only on failure
+        ETHTOOL_STDOUT="$(query_combined_stdout "$INTERFACE")"
+        ETHTOOL_RC=$?
+    fi
+
+    if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
+        CURRENT="$(parse_combined_count "$ETHTOOL_STDOUT")"
+        if [ "$CURRENT" = "$NUM_QUEUES" ]; then
+            say "combined queue count already $NUM_QUEUES (R7)"
+        elif [ $VERIFY -eq 1 ]; then
+            fail "combined queue count is ${CURRENT:-unknown}, want $NUM_QUEUES (R7): ethtool -L $INTERFACE combined $NUM_QUEUES"
+        else
+            say "setting combined queue count = $NUM_QUEUES (R7)"
+            if ! ethtool -L "$INTERFACE" combined "$NUM_QUEUES"; then
+                fail "ethtool -L refused combined $NUM_QUEUES (R7)"
+            else
+                # a write that claims success is read back, like R3's unload:
+                # an ethtool that returns 0 without taking effect must never
+                # verify by omission. the read-back keys rc to its own
+                # invocation and parses through the one parser -- a FAILED
+                # read is its own errand, distinct from a write that did not
+                # take (read-back on the remaining runtime writes is a
+                # recorded follow-on, not smuggled into this change)
+                REREAD_STDOUT="$(query_combined_stdout "$INTERFACE")"
+                REREAD_RC=$?
+                if [ $REREAD_RC -ne 0 ]; then
+                    fail "could not re-read the queue count after ethtool -L (R7): the write may or may not have taken"
+                else
+                    REREAD="$(parse_combined_count "$REREAD_STDOUT")"
+                    if [ "$REREAD" = "$NUM_QUEUES" ]; then
+                        say "combined queue count confirmed at $NUM_QUEUES after ethtool -L (R7)"
+                    else
+                        fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
+                    fi
+                fi
+            fi
+        fi
+    elif command -v ethtool >/dev/null 2>&1; then
+        # the failure is discriminated, exactly as the pre-flight discriminates
+        # errno: ONLY the no-channel-support refusal passes -- a vanished
+        # device, EBUSY, or a netlink mismatch is an unmet condition, never a
+        # silent pass (the header's law: change a condition anywhere, change it
+        # everywhere). LC_ALL=C keeps the signature in the C locale strerror
+        # spelling; "not supported" covers the EOPNOTSUPP family. this
+        # invocation deliberately does NOT ride query_combined_stdout: it wants
+        # the INVERSE stream (stderr for the signature, stdout discarded), so
+        # the locale pin is repeated here rather than shared
+        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
+        case "$ETHTOOL_ERROR" in
+            *"not supported"*)
+                say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
+                ;;
+            *)
+                fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
+                ;;
+        esac
+    fi
+}
+
 # SELFTEST: the script's matcher held to the SAME CASE SET as the C test
 # (rocketnet_test_xdp_interrupt_matcher), transcribed -- the bytes differ
 # deliberately in ways outside the boundary logic (single spaces where the
@@ -318,17 +469,20 @@ if [ "$MODE" = "selftest" ]; then
     expect_match "eth0"     " 34:  0 0 PCI-MSI 2097156-edge      xeth0-TxRx-0" "no"
     expect_match "ens1f0"   " 35:  0 0 IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0" "no"
 
-    # THE OUTCOME PINS (the round-eleven law: a pin covers a function when
-    # it drives EVERY outcome of that function through the function itself,
-    # and every consumer fails closed on states outside the outcome set).
-    # each outcome of r3_query_and_grade -- clean, occupied, query-failure
-    # -- and each behavior of the R7 pair -- parse-success, parse-empty,
-    # merged-capture -- is driven through the REAL functions with its own
-    # stub. no literal transcriptions: three consecutive rounds proved a
-    # transcribed pin can sit green over a live defect. the stubs live in a
-    # private temp dir on PATH for exactly these calls; the dir is guarded
-    # (an unguarded empty expansion would write at the filesystem root)
-    # and removed after.
+    # THE OUTCOME AND ENFORCEMENT PINS (rounds eleven and twelve): every
+    # outcome of the graded functions is driven through the REAL functions,
+    # and the CONSUMERS are driven too -- r3_enforce and r7_enforce run end
+    # to end, verify and provision modes alike, against stub environments,
+    # with the exit state asserting the UNMET/say distinction (a fail
+    # turned into a say goes red here). the stubs REPLAY REAL OUTPUT
+    # captured from xdp-tools 1.6.2 on the lima VM (see the grader's
+    # derivation comment), carry a second interface with a program attached
+    # so the interface argument is load-bearing, and ASSERT their arguments
+    # -- a stub invoked with a missing or unknown interface exits 99, so
+    # wiring drift becomes a loud query failure, never a silent pass. the
+    # stubs live in a private temp dir on PATH; the dir is guarded (an
+    # unguarded empty expansion would write at the filesystem root) and
+    # removed after.
 
     STUB_DIR="$(mktemp -d)" || STUB_DIR=""
     if [ -z "$STUB_DIR" ]; then
@@ -336,79 +490,194 @@ if [ "$MODE" = "selftest" ]; then
         exit 1
     fi
 
-    make_stub()
+    # the replay stub: xdp-loader status <iface> answers from captured
+    # xdp-tools 1.6.2 output according to the per-interface state files;
+    # unload -a <iface> transitions state (or refuses, per LOADER_UNLOAD)
+
+    cat > "$STUB_DIR/xdp-loader" << 'STUB'
+#!/bin/sh
+BANNER="CURRENT XDP PROGRAM STATUS:
+
+Interface        Prio  Program name      Mode     ID   Tag               Chain actions
+--------------------------------------------------------------------------------------"
+case "$1" in
+    status)
+        IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: status invoked without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
+        STATE="$(cat "$STUB_STATE_DIR/state.$IFACE")"
+        echo "$BANNER"
+        case "$STATE" in
+            clean)
+                echo "$IFACE                     <No XDP program loaded!>"
+                ;;
+            dispatcher)
+                echo "$IFACE                     xdp_dispatcher    skb      129  ba2e1a15f08cd656 "
+                echo " =>              50     xdp_pass_prog             138  d4f8542f2b42fac5  XDP_PASS"
+                ;;
+            foreign)
+                echo "$IFACE                     xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
+                ;;
+        esac
+        echo ""
+        exit 0
+        ;;
+    unload)
+        [ "$2" = "-a" ] || { echo "stub: unexpected unload form $*" >&2; exit 99; }
+        IFACE="$3"
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
+        case "$(cat "$STUB_STATE_DIR/unload_mode")" in
+            works) echo clean > "$STUB_STATE_DIR/state.$IFACE"; exit 0 ;;
+            fails) echo "stub: unload refused" >&2; exit 1 ;;
+            lies)  exit 0 ;;
+        esac
+        ;;
+esac
+echo "stub: unexpected invocation $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_DIR/xdp-loader"
+
+    # the ethtool stub: -l <iface> reports the current combined count from
+    # state; -L <iface> combined N transitions it (or refuses/lies)
+
+    cat > "$STUB_DIR/ethtool" << 'STUB'
+#!/bin/sh
+case "$1" in
+    -l)
+        IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: -l without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "netlink error: no device matches name (offset 24)" >&2; exit 1; }
+        COUNT="$(cat "$STUB_STATE_DIR/combined.$IFACE")"
+        if [ "$COUNT" = "nochannels" ]; then
+            echo "netlink error: Operation not supported" >&2
+            exit 1
+        fi
+        echo "Channel parameters for $IFACE:"
+        echo "Pre-set maximums:"
+        echo "Combined:       32"
+        echo "Current hardware settings:"
+        echo "Combined:       $COUNT"
+        exit 0
+        ;;
+    -L)
+        IFACE="$2"
+        [ "$3" = "combined" ] || { echo "stub: unexpected -L form $*" >&2; exit 99; }
+        case "$(cat "$STUB_STATE_DIR/setl_mode")" in
+            works) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
+            fails) echo "stub: -L refused" >&2; exit 1 ;;
+            lies)  exit 0 ;;
+        esac
+        ;;
+esac
+echo "stub: unexpected invocation $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_DIR/ethtool"
+
+    # each case runs the REAL enforcement function in a subshell with the
+    # stub environment; the subshell exits with its own UNMET, so the
+    # UNMET/say distinction is the asserted contract, not the wording
+
+    run_r3()        # $1 verify-flag  $2 iface  -> rc = UNMET; output on stdout
+    {
+        ( UNMET=0; VERIFY="$1"; INTERFACE="$2"; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+          r3_enforce; exit $UNMET ) 2>&1
+    }
+
+    run_r7()        # $1 verify-flag  $2 iface  $3 queues  -> rc = UNMET
+    {
+        ( UNMET=0; VERIFY="$1"; INTERFACE="$2"; NUM_QUEUES="$3"; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+          r7_enforce; exit $UNMET ) 2>&1
+    }
+
+    expect_case()   # $1 name  $2 got-rc  $3 want-rc  $4 output  $5 required-substring  [$6 required-UNMET-count]
+    {
+        if [ "$2" != "$3" ]; then
+            echo "selftest FAIL: $1: exit $2, want $3"; PASS=0
+        elif ! printf '%s\n' "$4" | grep -q "$5"; then
+            echo "selftest FAIL: $1: output lacks: $5"; PASS=0
+        elif [ -n "${6:-}" ] && [ "$(printf '%s\n' "$4" | grep -c UNMET)" != "$6" ]; then
+            echo "selftest FAIL: $1: UNMET count $(printf '%s\n' "$4" | grep -c UNMET), want $6"; PASS=0
+        fi
+    }
+
+    STUB_STATE_DIR="$STUB_DIR/state"
+    mkdir -p "$STUB_STATE_DIR"
+    export STUB_STATE_DIR
+
+    # the standing second interface, occupied, so the interface argument
+    # is load-bearing in every clean-graded case below
+    echo foreign > "$STUB_STATE_DIR/state.busy0"
+    echo 4 > "$STUB_STATE_DIR/combined.busy0"
+
+    # --- r3, verify mode ---
+
+    echo clean > "$STUB_STATE_DIR/state.clean0"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 1 clean0)"; expect_case "r3 verify clean" $? 0 "$OUT" "no XDP program attached"
+
+    echo foreign > "$STUB_STATE_DIR/state.for0"
+    OUT="$(run_r3 1 for0)"; expect_case "r3 verify foreign-occupied" $? 1 "$OUT" "run without verify" 1
+
+    echo dispatcher > "$STUB_STATE_DIR/state.dis0"
+    OUT="$(run_r3 1 dis0)"; expect_case "r3 verify dispatcher-occupied" $? 1 "$OUT" "run without verify" 1
+
+    # --- r3, provision mode ---
+
+    echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p0)"; expect_case "r3 provision unload-works" $? 0 "$OUT" "confirmed clear after unload"
+
+    echo foreign > "$STUB_STATE_DIR/state.p1"; echo fails > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p1)"; expect_case "r3 provision unload-fails" $? 1 "$OUT" "unload -a p1 failed" 1
+
+    echo foreign > "$STUB_STATE_DIR/state.p2"; echo lies > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p2)"; expect_case "r3 provision unload-lies" $? 1 "$OUT" "still attached" 1
+
+    # --- r3, query failure (unknown interface: the stub asserts its args) ---
+
+    OUT="$(run_r3 1 ghost0)"; expect_case "r3 query-failure" $? 1 "$OUT" "could not query" 1
+
+    # --- r7, verify mode ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.q0"
+    OUT="$(run_r7 1 q0 7)"; expect_case "r7 verify match" $? 0 "$OUT" "already"
+
+    OUT="$(run_r7 1 q0 8)"; expect_case "r7 verify mismatch" $? 1 "$OUT" "combined queue count is" 1
+
+    echo nochannels > "$STUB_STATE_DIR/combined.q1"
+    OUT="$(run_r7 1 q1 7)"; expect_case "r7 verify no-channel-surface" $? 0 "$OUT" "no channel surface"
+
+    OUT="$(run_r7 1 ghostq 7)"; expect_case "r7 verify other-failure" $? 1 "$OUT" "cannot verify the queue count" 1
+
+    # --- r7, provision mode ---
+
+    echo 4 > "$STUB_STATE_DIR/combined.q2"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q2 7)"; expect_case "r7 provision set-works" $? 0 "$OUT" "confirmed at 7"
+
+    echo 4 > "$STUB_STATE_DIR/combined.q3"; echo fails > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q3 7)"; expect_case "r7 provision set-fails" $? 1 "$OUT" "refused combined 7" 1
+
+    echo 4 > "$STUB_STATE_DIR/combined.q4"; echo lies > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q4 7)"; expect_case "r7 provision set-lies" $? 1 "$OUT" "reads back 4" 1
+
+    # --- the pair-level pins kept from round eleven: the parser sees only
+    # what the query's stdout carried ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.q5"
+    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" query_combined_stdout q5)"
+    STUB_RC=$?
+    STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
+    if [ $STUB_RC -ne 0 ] || [ "$STUB_COUNT" != "7" ]; then
+        echo "selftest FAIL: the current-settings Combined must parse to 7 (got rc $STUB_RC, count \"$STUB_COUNT\")"; PASS=0
+    fi
+
+    make_noise_stub()
     {
         printf '#!/bin/sh\n%s\n' "$2" > "$STUB_DIR/$1"
         chmod +x "$STUB_DIR/$1"
     }
 
-    # r3 outcome: CLEAN -- and the round-eight capture pin rides this stub
-    # (XDP_ noise on stderr must not reach the grader)
-
-    make_stub xdp-loader 'echo "XDP_DEBUG: probing interface" >&2
-echo "no XDP program loaded on interface"
-exit 0'
-    # "ignored0" is an arbitrary interface argument: the stubs ignore it
-    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade ignored0)"
-    STUB_RC=$?
-    if [ $STUB_RC -ne 0 ]; then
-        echo "selftest FAIL: the clean stub should exit 0 (a noexec temp dir also lands here)"; PASS=0
-    elif [ "$STUB_GRADE" != "clean" ]; then
-        echo "selftest FAIL: a clean stdout must grade exactly clean (got '\''$STUB_GRADE'\''; merged captures land here too)"; PASS=0
-    fi
-
-    # r3 outcome: OCCUPIED
-
-    make_stub xdp-loader 'echo "prog xdp_dispatcher id 42 attached"
-exit 0'
-    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade ignored0)"
-    STUB_RC=$?
-    if [ $STUB_RC -ne 0 ]; then
-        echo "selftest FAIL: the occupied stub should exit 0"; PASS=0
-    elif [ "$STUB_GRADE" != "occupied" ]; then
-        echo "selftest FAIL: an occupied stdout must grade exactly occupied (got '\''$STUB_GRADE'\'')"; PASS=0
-    fi
-
-    # r3 outcome: QUERY FAILURE
-
-    make_stub xdp-loader 'echo "netlink error" >&2
-exit 1'
-    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade ignored0)"
-    STUB_RC=$?
-    if [ $STUB_RC -eq 0 ]; then
-        echo "selftest FAIL: a failing query must not return success (got rc 0, grade '\''$STUB_GRADE'\'')"; PASS=0
-    fi
-
-    # r7: PARSE SUCCESS through the real query and the real parser
-
-    make_stub ethtool 'echo "Channel parameters for $2:"
-echo "Pre-set maximums:"
-echo "Combined:       32"
-echo "Current hardware settings:"
-echo "Combined:       7"
-exit 0'
-    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_combined_stdout ignored0)"
-    STUB_RC=$?
-    STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
-    if [ $STUB_RC -ne 0 ] || [ "$STUB_COUNT" != "7" ]; then
-        echo "selftest FAIL: the current-settings Combined must parse to 7 (got rc $STUB_RC, '\''$STUB_COUNT'\'')"; PASS=0
-    fi
-
-    # r7: PARSE EMPTY -- consumers compare the count and fail closed on a
-    # mismatch, so empty must stay empty, never something invented
-
-    make_stub ethtool 'echo "Channel parameters for $2:"
-exit 0'
-    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_combined_stdout ignored0)"
-    STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
-    if [ -n "$STUB_COUNT" ]; then
-        echo "selftest FAIL: a block with no Combined must parse empty (got '\''$STUB_COUNT'\'')"; PASS=0
-    fi
-
-    # r7: MERGED CAPTURE (round eight'\''s exact shape, now pinned on this
-    # pair too): a Combined on STDERR must never reach the parser
-
-    make_stub ethtool 'echo "Current hardware settings:" >&2
+    make_noise_stub ethtool 'echo "Current hardware settings:" >&2
 echo "Combined:       9" >&2
 exit 0'
     STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_combined_stdout ignored0)"
@@ -416,6 +685,44 @@ exit 0'
     if [ "$STUB_COUNT" = "9" ]; then
         echo "selftest FAIL: a Combined on stderr reached the parser -- the captures are merged"; PASS=0
     fi
+
+    # and R3's mirror of that case, at the outcome level: an occupied
+    # stdout with clean-marker NOISE on stderr (the shape a merged capture
+    # would flip) must still grade occupied through the real fused path.
+    # libxdp genuinely writes diagnostics to stderr -- we captured one
+    # while deriving the grader -- so the noise is realistic, not invented.
+
+    make_noise_stub xdp-loader 'echo " libxdp: hint: No XDP program loaded on some other interface" >&2
+echo "CURRENT XDP PROGRAM STATUS:"
+echo ""
+echo "Interface        Prio  Program name      Mode     ID   Tag               Chain actions"
+echo "--------------------------------------------------------------------------------------"
+echo "noisy0                 xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
+exit 0'
+    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade noisy0)"
+    STUB_RC=$?
+    if [ $STUB_RC -ne 0 ] || [ "$STUB_GRADE" != "occupied" ]; then
+        echo "selftest FAIL: clean-marker noise on stderr flipped the grade (got rc $STUB_RC, grade \"$STUB_GRADE\") -- the captures are merged"; PASS=0
+    fi
+
+    # THE OUTSIDE-SET ARMS, driven: the consumers' fail-closed defaults
+    # are unreachable through the real grader (it emits only two tokens),
+    # so the selftest INJECTS the impossible state by overriding the fused
+    # function inside a subshell -- the arms are law, and law gets driven
+
+    OUT="$( ( r3_query_and_grade() { echo maybe; return 0; }
+              UNMET=0; VERIFY=1; INTERFACE=clean0; PATH="$STUB_DIR:$PATH"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "outside the outcome set" 1
+
+    OUT="$( ( r3_query_and_grade() { if [ ! -f "$STUB_STATE_DIR/garbage_marker" ]; then touch "$STUB_STATE_DIR/garbage_marker"; echo occupied; else echo maybe; fi; return 0; }
+              UNMET=0; VERIFY=0; INTERFACE=p0; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "outside the outcome set" 1
+    rm -f "$STUB_STATE_DIR/garbage_marker"
 
     rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
 
@@ -580,66 +887,8 @@ fi
 
 # R3. exclusive xdp slot
 
-if command -v xdp-loader >/dev/null 2>&1; then
-    # the content grep reads STDOUT ONLY (round eight's regression class:
-    # a diagnostic on stderr containing "XDP_" must never grade an empty
-    # slot occupied) and the rc keys to that same invocation; the error
-    # text is fetched by a second read-only query only on the failure path
+r3_enforce
 
-    XDP_GRADE="$(r3_query_and_grade "$INTERFACE")"
-    XDP_GRADE_RC=$?
-
-    if [ $XDP_GRADE_RC -ne 0 ]; then
-        # the second query can race a change on the NIC; its staleness
-        # colors only this error text, never a grade
-        XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
-        fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
-    else
-        # FAIL CLOSED outside the outcome set (the round-eleven law): the
-        # grade is an explicit token, and anything that is not exactly
-        # "occupied" or "clean" is UNMET -- never clean by default
-        case "$XDP_GRADE" in
-            occupied)
-                if [ $VERIFY -eq 1 ]; then
-                    fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
-                else
-                    # the act half of R3 lives under the same law as its
-                    # query half: a failed unload is UNMET, and the slot is
-                    # RE-GRADED through the same fused path after the act
-
-                    say "unloading XDP programs from $INTERFACE (R3)"
-                    if ! xdp-loader unload -a "$INTERFACE"; then
-                        # one act, one UNMET: a failed unload is not also
-                        # graded for the state it failed to change (the
-                        # pile-on shape R7's read-back was reworked to
-                        # avoid)
-                        fail "xdp-loader unload -a $INTERFACE failed (R3)"
-                    else
-                        XDP_AFTER_GRADE="$(r3_query_and_grade "$INTERFACE")"
-                        XDP_AFTER_RC=$?
-                        if [ $XDP_AFTER_RC -ne 0 ]; then
-                            fail "could not re-query $INTERFACE after unload (R3)"
-                        else
-                            case "$XDP_AFTER_GRADE" in
-                                clean)    say "exclusive xdp slot confirmed clear after unload (R3)" ;;
-                                occupied) fail "an XDP program is still attached to $INTERFACE after unload (R3)" ;;
-                                *)        fail "R3 re-grade '$XDP_AFTER_GRADE' is outside the outcome set: failing closed" ;;
-                            esac
-                        fi
-                    fi
-                fi
-                ;;
-            clean)
-                say "no XDP program attached to $INTERFACE (R3)"
-                ;;
-            *)
-                fail "R3 grade '$XDP_GRADE' is outside the outcome set: failing closed"
-                ;;
-        esac
-    fi
-else
-    fail "xdp-loader not found (R3): the exclusive slot can be neither cleared nor verified from here -- install xdp-tools"
-fi
 
 # crash-leftover pin roots are the SWEEP mode's business, deliberately --
 # see the sweep block above for why neither provision nor verify touches
@@ -777,70 +1026,8 @@ fi
 
 # R7. queue count
 
-if ! command -v ethtool >/dev/null 2>&1; then
-    fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
-    ETHTOOL_RC=127
-else
-    # ONE invocation on the success path: rc and the parsed output come
-    # from the same run (stdout only -- the R3 lesson), locale pinned so
-    # the failure signature match below cannot rot under translation; the
-    # error text is fetched by a second read-only run only on failure
-    ETHTOOL_STDOUT="$(query_combined_stdout "$INTERFACE")"
-    ETHTOOL_RC=$?
-fi
+r7_enforce
 
-if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
-    CURRENT="$(parse_combined_count "$ETHTOOL_STDOUT")"
-    if [ "$CURRENT" = "$NUM_QUEUES" ]; then
-        say "combined queue count already $NUM_QUEUES (R7)"
-    elif [ $VERIFY -eq 1 ]; then
-        fail "combined queue count is ${CURRENT:-unknown}, want $NUM_QUEUES (R7): ethtool -L $INTERFACE combined $NUM_QUEUES"
-    else
-        say "setting combined queue count = $NUM_QUEUES (R7)"
-        if ! ethtool -L "$INTERFACE" combined "$NUM_QUEUES"; then
-            fail "ethtool -L refused combined $NUM_QUEUES (R7)"
-        else
-            # a write that claims success is read back, like R3's unload:
-            # an ethtool that returns 0 without taking effect must never
-            # verify by omission. the read-back keys rc to its own
-            # invocation and parses through the one parser -- a FAILED
-            # read is its own errand, distinct from a write that did not
-            # take (read-back on the remaining runtime writes is a
-            # recorded follow-on, not smuggled into this change)
-            REREAD_STDOUT="$(query_combined_stdout "$INTERFACE")"
-            REREAD_RC=$?
-            if [ $REREAD_RC -ne 0 ]; then
-                fail "could not re-read the queue count after ethtool -L (R7): the write may or may not have taken"
-            else
-                REREAD="$(parse_combined_count "$REREAD_STDOUT")"
-                if [ "$REREAD" = "$NUM_QUEUES" ]; then
-                    say "combined queue count confirmed at $NUM_QUEUES after ethtool -L (R7)"
-                else
-                    fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
-                fi
-            fi
-        fi
-    fi
-elif command -v ethtool >/dev/null 2>&1; then
-    # the failure is discriminated, exactly as the pre-flight discriminates
-    # errno: ONLY the no-channel-support refusal passes -- a vanished
-    # device, EBUSY, or a netlink mismatch is an unmet condition, never a
-    # silent pass (the header's law: change a condition anywhere, change it
-    # everywhere). LC_ALL=C keeps the signature in the C locale strerror
-    # spelling; "not supported" covers the EOPNOTSUPP family. this
-    # invocation deliberately does NOT ride query_combined_stdout: it wants
-    # the INVERSE stream (stderr for the signature, stdout discarded), so
-    # the locale pin is repeated here rather than shared
-    ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
-    case "$ETHTOOL_ERROR" in
-        *"not supported"*)
-            say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
-            ;;
-        *)
-            fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
-            ;;
-    esac
-fi
 
 if [ $VERIFY -eq 1 ]; then
     if [ $UNMET -eq 1 ]; then
