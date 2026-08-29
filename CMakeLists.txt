@@ -2,6 +2,18 @@
 cmake_minimum_required(VERSION 3.10)
 add_compile_definitions(ROCKETNET_DEVELOPMENT=0)
 
+# server transport driver selection (#97): default portable; -DROCKETNET_SERVER_XDP=1
+# selects the AF_XDP driver, -DROCKETNET_SERVER_GSO=1 the non-root GSO driver.
+# both are linux only; the seam guarantees call sites never change.
+option(ROCKETNET_SERVER_XDP "build the server transport against the AF_XDP driver (linux)" OFF)
+option(ROCKETNET_SERVER_GSO "build the server transport against the GSO driver (linux)" OFF)
+if(ROCKETNET_SERVER_XDP)
+    add_compile_definitions(ROCKETNET_SERVER_XDP=1)
+endif()
+if(ROCKETNET_SERVER_GSO)
+    add_compile_definitions(ROCKETNET_SERVER_GSO=1)
+endif()
+
 # strict floating point. Estate policy for mas-bandwidth network libraries: "generally
 # speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
 #   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is

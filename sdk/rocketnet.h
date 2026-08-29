@@ -547,8 +547,11 @@ struct rocketnet_server_transport_t;
 // because default keys are how every deployment of a protocol ends up
 // sharing one identity. rocketnet_server_transport_dev_config fills the published
 // development keys and test filter for local work, loudly. num_xdp_queues
-// and num_os_cpus configure the XDP transport's queue and core layout;
-// zero means the transport default, and the portable build ignores both.
+// is the staged driver's queue count whichever staged driver is compiled --
+// XDP queues on the XDP build, reuseport sockets on the GSO build -- kept
+// under its historic name for ABI stability with the language bindings;
+// num_os_cpus configures the XDP transport's core layout. zero means the
+// transport default, and the portable build ignores both.
 
 struct rocketnet_server_transport_config_t
 {

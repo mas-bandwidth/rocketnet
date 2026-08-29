@@ -17,15 +17,61 @@
 
 // The transport driver is selected at compile time for now: the portable
 // UDP socket by default, the AF_XDP server socket with
-// -DROCKETNET_SERVER_XDP=1 on linux. Runtime selection with
-// preference ordering is a named follow-on.
+// -DROCKETNET_SERVER_XDP=1 on linux, and the non-root GSO driver --
+// SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the #81
+// measurements -- with -DROCKETNET_SERVER_GSO=1 on linux. Runtime selection
+// with preference ordering across drivers is a named follow-on; the GSO
+// driver's own feature probing and degradation is already runtime, inside
+// the driver.
 
 #if !defined( ROCKETNET_SERVER_XDP )
 #define ROCKETNET_SERVER_XDP 0
 #endif // #if !defined( ROCKETNET_SERVER_XDP )
 
+#if !defined( ROCKETNET_SERVER_GSO )
+#define ROCKETNET_SERVER_GSO 0
+#endif // #if !defined( ROCKETNET_SERVER_GSO )
+
+#if ROCKETNET_SERVER_XDP && ROCKETNET_SERVER_GSO
+#error select one server transport driver: ROCKETNET_SERVER_XDP or ROCKETNET_SERVER_GSO
+#endif // #if ROCKETNET_SERVER_XDP && ROCKETNET_SERVER_GSO
+
+#if ROCKETNET_SERVER_GSO && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+#error the GSO transport driver is linux only
+#endif // #if ROCKETNET_SERVER_GSO && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+
+// The staged drivers share one shape behind one set of names: packets stage
+// into the driver from any thread between flushes (start/finish/abort), the
+// main thread flushes with send_packets and drains with receive_packets/
+// process_packets. The XDP socket and the GSO driver both satisfy it; the
+// portable socket keeps its own per-packet path below.
+
+#define ROCKETNET_SERVER_STAGED ( ROCKETNET_SERVER_XDP || ROCKETNET_SERVER_GSO )
+
 #if ROCKETNET_SERVER_XDP
+
 #include "rocketnet_server_socket.h"
+
+typedef struct rocketnet_server_socket_t rocketnet_server_driver_t;
+#define rocketnet_server_driver_start_packet        rocketnet_server_socket_start_packet
+#define rocketnet_server_driver_finish_packet       rocketnet_server_socket_finish_packet
+#define rocketnet_server_driver_abort_packet        rocketnet_server_socket_abort_packet
+#define rocketnet_server_driver_send_packets        rocketnet_server_socket_send_packets
+#define rocketnet_server_driver_receive_packets     rocketnet_server_socket_receive_packets
+#define rocketnet_server_driver_process_packets     rocketnet_server_socket_process_packets
+
+#elif ROCKETNET_SERVER_GSO // #if ROCKETNET_SERVER_XDP
+
+#include "rocketnet_server_gso.h"
+
+typedef struct rocketnet_server_gso_t rocketnet_server_driver_t;
+#define rocketnet_server_driver_start_packet        rocketnet_server_gso_start_packet
+#define rocketnet_server_driver_finish_packet       rocketnet_server_gso_finish_packet
+#define rocketnet_server_driver_abort_packet        rocketnet_server_gso_abort_packet
+#define rocketnet_server_driver_send_packets        rocketnet_server_gso_send_packets
+#define rocketnet_server_driver_receive_packets     rocketnet_server_gso_receive_packets
+#define rocketnet_server_driver_process_packets     rocketnet_server_gso_process_packets
+
 #endif // #if ROCKETNET_SERVER_XDP
 
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
@@ -112,19 +158,19 @@ struct rocketnet_server_transport_t
     rocketnet_address_t bind_address;
     rocketnet_address_t public_address;
 
-#if ROCKETNET_SERVER_XDP
-    struct rocketnet_server_socket_t * xdp_socket;
-#else // #if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_t * driver_socket;
+#else // #if ROCKETNET_SERVER_STAGED
     rocketnet_platform_socket_t * socket;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_counters_t counters;
     struct rocketnet_server_protocol_t protocol;
 
-#if !ROCKETNET_SERVER_XDP
+#if !ROCKETNET_SERVER_STAGED
     struct rocketnet_server_send_buffer_t send_buffer;
     struct rocketnet_server_payload_ring_t payload_ring;
-#endif // #if !ROCKETNET_SERVER_XDP
+#endif // #if !ROCKETNET_SERVER_STAGED
 
     double time;                                        // the game's clock, last seen
     uint64_t frame;                                     // advanced once per update; indexes the stats ring
@@ -146,18 +192,19 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_transport_stats_t server_stats;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
 
-    // payload sends on the xdp driver seal straight into the socket's own
-    // staging from any game thread, so there is no transport-side ring for
-    // the flush walk to read; each finish adds its packet here instead --
-    // the same relaxed atomic the path already pays for send_staged -- and
-    // send_packets folds the pair into the current bucket on the main thread.
+    // payload sends on the staged drivers seal straight into the driver's
+    // own staging from any game thread, so there is no transport-side ring
+    // for the flush walk to read; each finish adds its packet here instead
+    // -- the same relaxed atomic the path already pays for send_staged --
+    // and send_packets folds the pair into the current bucket on the main
+    // thread.
     volatile uint64_t stats_pending_packets_sent;
     volatile uint64_t stats_pending_bytes_sent;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_payloads_t payloads;
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
@@ -166,34 +213,35 @@ struct rocketnet_server_transport_t
     uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
-// The send frame seam both drivers serve: reserve hands back a frame to
+// The send frame seam every driver serves: reserve hands back a frame to
 // seal complete wire bytes into, commit stamps its length, abort returns it
 // unused. The portable driver batches frames and flushes them through the
-// socket at the end of update; the xdp driver seals straight into the
-// af_xdp send staging, zero copies between the seal and the wire.
+// socket at the end of update; the staged drivers seal straight into their
+// own send staging -- the af_xdp umem path or the GSO sendmmsg batch --
+// zero copies between the seal and the flush.
 
 struct rocketnet_server_frame_t
 {
     uint8_t * data;
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
     uint64_t packet_id;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 };
 
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                                 const rocketnet_address_t * to,
                                                                 struct rocketnet_server_frame_t * frame )
 {
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
-    frame->data = rocketnet_server_socket_start_packet( server_transport->xdp_socket, to, &frame->packet_id );
+    frame->data = rocketnet_server_driver_start_packet( server_transport->driver_socket, to, &frame->packet_id );
     if ( !frame->data )
     {
         rocketnet_spam( "server transport send staging full. packet dropped" );
     }
     return frame->data;
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
 
@@ -210,7 +258,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
     frame->data = send_buffer->data + index * ROCKETNET_FRAME_SIZE;
     return frame->data;
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 }
 
 static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
@@ -229,17 +277,17 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     server_transport->stats_frames[stats_index].packets_sent++;
     server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
-    rocketnet_server_socket_finish_packet( server_transport->xdp_socket, frame->packet_id, frame->data, packet_bytes );
+    rocketnet_server_driver_finish_packet( server_transport->driver_socket, frame->packet_id, frame->data, packet_bytes );
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
     send_buffer->num_packets++;
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 }
 
 static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport_t * server_transport,
@@ -248,11 +296,11 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
     if ( !frame->data )
         return;
 
-#if ROCKETNET_SERVER_XDP
-    rocketnet_server_socket_abort_packet( server_transport->xdp_socket, frame->packet_id, frame->data );
-#else // #if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_abort_packet( server_transport->driver_socket, frame->packet_id, frame->data );
+#else // #if ROCKETNET_SERVER_STAGED
     (void) server_transport;        // the reserved slot is reused by the next reserve; nothing to undo
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     frame->data = NULL;
 }
@@ -369,8 +417,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const int num_xdp_queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : 7;
     const int num_os_cpus = config->num_os_cpus > 0 ? config->num_os_cpus : 1;
 
-    server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
-    if ( server_transport->xdp_socket == NULL )
+    server_transport->driver_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
+    if ( server_transport->driver_socket == NULL )
     {
         rocketnet_error( "could not create xdp server socket" );
         rocketnet_server_transport_destroy( server_transport );
@@ -379,6 +427,24 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_info( "server transport started on %s [xdp] (%s keys)", rocketnet_address_to_string( &public_address, address_string ), development_keys ? "development" : "production" );
+
+#elif ROCKETNET_SERVER_GSO // #if ROCKETNET_SERVER_XDP
+
+    // the queue count rides the config's num_xdp_queues field: it is the
+    // staged driver's queue count whichever staged driver is compiled, kept
+    // under its historic name for ABI stability with the language bindings.
+    // zero means the driver default.
+
+    server_transport->driver_socket = rocketnet_server_gso_create( context, &bind_address, config->num_xdp_queues, 0 );
+    if ( server_transport->driver_socket == NULL )
+    {
+        rocketnet_error( "could not create gso server socket" );
+        rocketnet_server_transport_destroy( server_transport );
+        return NULL;
+    }
+
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "server transport started on %s [gso] (%s keys)", rocketnet_address_to_string( &bind_address, address_string ), development_keys ? "development" : "production" );
 
 #else // #if ROCKETNET_SERVER_XDP
 
@@ -393,7 +459,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_info( "server transport started on %s (%s keys)", rocketnet_address_to_string( &bind_address, address_string ), development_keys ? "development" : "production" );
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
 
     server_transport->bind_address = bind_address;
     server_transport->public_address = public_address;
@@ -451,13 +517,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     server_transport->next_packet_id = 1;
 
-#if ROCKETNET_SERVER_XDP
-    // the xdp socket assigns its own packet ids to ordinary sends from a
-    // separate monotonic counter, so the transport's ids for fragmented
+#if ROCKETNET_SERVER_STAGED
+    // the staged drivers assign their own packet ids to ordinary sends from
+    // a separate monotonic counter, so the transport's ids for fragmented
     // payloads start in the high half of the space -- the join keys can
     // never collide
     server_transport->next_packet_id = 1ULL << 63;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     return server_transport;
 }
@@ -483,24 +549,31 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 
 #if ROCKETNET_SERVER_XDP
 
-    if ( server_transport->xdp_socket )
+    if ( server_transport->driver_socket )
     {
         // the xdp socket requires stop then a pump to stopped before destroy
 
-        if ( rocketnet_server_socket_state( server_transport->xdp_socket ) != ROCKETNET_SERVER_SOCKET_STOPPED )
+        if ( rocketnet_server_socket_state( server_transport->driver_socket ) != ROCKETNET_SERVER_SOCKET_STOPPED )
         {
-            rocketnet_server_socket_stop( server_transport->xdp_socket );
-            rocketnet_server_socket_update( server_transport->xdp_socket );
+            rocketnet_server_socket_stop( server_transport->driver_socket );
+            rocketnet_server_socket_update( server_transport->driver_socket );
         }
-        rocketnet_server_socket_destroy( server_transport->xdp_socket );
+        rocketnet_server_socket_destroy( server_transport->driver_socket );
     }
+
+#elif ROCKETNET_SERVER_GSO // #if ROCKETNET_SERVER_XDP
+
+    // the gso driver joins its workers and closes its sockets inline
+
+    if ( server_transport->driver_socket )
+        rocketnet_server_gso_destroy( server_transport->driver_socket );
 
 #else // #if ROCKETNET_SERVER_XDP
 
     if ( server_transport->socket )
         rocketnet_platform_socket_destroy( server_transport->socket );
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
 
     rocketnet_clear_and_free( server_transport->context, server_transport, sizeof(struct rocketnet_server_transport_t) );
 }
@@ -577,8 +650,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     if ( server_transport->state == ROCKETNET_SERVER_TRANSPORT_STOPPING )
     {
 #if ROCKETNET_SERVER_XDP
-        rocketnet_server_socket_stop( server_transport->xdp_socket );
-        rocketnet_server_socket_update( server_transport->xdp_socket );
+        rocketnet_server_socket_stop( server_transport->driver_socket );
+        rocketnet_server_socket_update( server_transport->driver_socket );
 #endif // #if ROCKETNET_SERVER_XDP
         server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPED;
         return;
@@ -601,11 +674,11 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // receive and process, responses sealed straight into send frames
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
-    rocketnet_server_socket_receive_packets( server_transport->xdp_socket );
+    rocketnet_server_driver_receive_packets( server_transport->driver_socket );
 
-    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_socket_process_packets( server_transport->xdp_socket );
+    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_driver_process_packets( server_transport->driver_socket );
 
     const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
 
@@ -676,7 +749,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         }
     }
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     uint8_t receive_frame[ROCKETNET_RECEIVE_CEILING];
 
@@ -753,7 +826,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         }
     }
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     // the sweep, then per client: the paced keep-alive or -- when the ack
     // debt has reached the threshold with no other block going out -- the
@@ -789,20 +862,21 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     acks->update_count++;
 
-    // flush. the portable response ring sends inline here; the XDP socket is
-    // flushed by rocketnet_server_transport_send_packets -- its buffer flip retargets
-    // the drain and zeroes the buffers behind it, so flipping with nothing
-    // staged would destroy in-flight packets. update marks itself staged
-    // (responses and keep-alives ride the same buffers) and the flush below
-    // flips only when something has staged since the last flip, which makes
-    // a redundant send_packets call a no-op instead of the failure this
-    // machinery produced live.
+    // flush. the portable response ring sends inline here; the staged
+    // drivers are flushed by rocketnet_server_transport_send_packets -- the xdp
+    // buffer flip retargets the drain and zeroes the buffers behind it, so
+    // flipping with nothing staged would destroy in-flight packets. update
+    // marks itself staged (responses and keep-alives ride the same buffers)
+    // and the flush below flips only when something has staged since the
+    // last flip, which makes a redundant send_packets call a no-op instead
+    // of the failure this machinery produced live. the gso flush is
+    // naturally idempotent but rides the same guard.
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
     server_transport->send_staged++;
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
     {
@@ -816,7 +890,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
     server_transport->send_buffer.num_packets = 0;
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 }
 
 int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport )
@@ -918,10 +992,10 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return frame;
     }
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
     uint64_t packet_id;
-    frame = rocketnet_server_socket_start_packet( server_transport->xdp_socket, &to, &packet_id );
+    frame = rocketnet_server_driver_start_packet( server_transport->driver_socket, &to, &packet_id );
     if ( !frame )
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -930,7 +1004,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
     context->packet_id = packet_id;
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -954,7 +1028,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     context->packet_id = rocketnet_platform_atomic_add_u64( &server_transport->next_packet_id, 1 );
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
@@ -982,40 +1056,41 @@ void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_
         return;
     }
 
-#if ROCKETNET_SERVER_XDP
-    rocketnet_server_socket_abort_packet( server_transport->xdp_socket, context->packet_id, context->frame );
-#else // #if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_abort_packet( server_transport->driver_socket, context->packet_id, context->frame );
+#else // #if ROCKETNET_SERVER_STAGED
     const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
     server_transport->payload_ring.info[slot].wire_bytes = 0;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     context->frame = NULL;
 }
 
 // The fill-phase wire frame behind the arena finish: one sealed packet's
-// destination on either driver, reserved before sealing so a split goes
+// destination on any driver, reserved before sealing so a split goes
 // out whole or not at all. On the portable driver the frame is a payload
-// ring slot; on xdp it is a socket frame with its own packet id for the
-// socket's bookkeeping -- the application's join key stays the context's.
+// ring slot; on the staged drivers it is a driver frame with its own packet
+// id for the driver's bookkeeping -- the application's join key stays the
+// context's.
 
 struct rocketnet_server_fill_frame_t
 {
     uint8_t * data;
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
     uint64_t socket_packet_id;
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
     uint64_t slot;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 };
 
 static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transport_t * server_transport,
                                                 const rocketnet_address_t * to, int client_index,
                                                 struct rocketnet_server_fill_frame_t * frame )
 {
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
     (void) client_index;
-    frame->data = rocketnet_server_socket_start_packet( server_transport->xdp_socket, to, &frame->socket_packet_id );
+    frame->data = rocketnet_server_driver_start_packet( server_transport->driver_socket, to, &frame->socket_packet_id );
     if ( !frame->data )
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -1024,7 +1099,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
     return 1;
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1043,19 +1118,19 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     frame->data = ring->data + frame->slot * ROCKETNET_FRAME_STRIDE;
     return 1;
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 }
 
 static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
 {
-#if ROCKETNET_SERVER_XDP
-    rocketnet_server_socket_finish_packet( server_transport->xdp_socket, frame->socket_packet_id, frame->data, wire_bytes );
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_finish_packet( server_transport->driver_socket, frame->socket_packet_id, frame->data, wire_bytes );
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 }
 
 static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport_t * server_transport,
@@ -1063,11 +1138,11 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
 {
     if ( !frame->data )
         return;
-#if ROCKETNET_SERVER_XDP
-    rocketnet_server_socket_abort_packet( server_transport->xdp_socket, frame->socket_packet_id, frame->data );
-#else // #if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_abort_packet( server_transport->driver_socket, frame->socket_packet_id, frame->data );
+#else // #if ROCKETNET_SERVER_STAGED
     server_transport->payload_ring.info[frame->slot].wire_bytes = 0;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
     frame->data = NULL;
 }
 
@@ -1079,10 +1154,11 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
 // seals, so a reservation shortfall drops the payload whole; a seal
 // refusal mid-split -- possible only through a fill-contract violation,
 // since connections are stable during a fill -- withdraws every reserved
-// frame on the portable driver, while frames already committed to the xdp
-// socket stay committed there, a partial payload the semantics already
-// price as fragments lost on the wire. Returns the total wire bytes
-// staged.
+// frame on the portable and gso drivers, whose staging is untouched until
+// the main-thread flush, while frames already committed to the xdp socket
+// stay committed there (its worker drains staging asynchronously), a
+// partial payload the semantics already price as fragments lost on the
+// wire. Returns the total wire bytes staged.
 
 static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
@@ -1216,14 +1292,14 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
         return 0;
     }
 
-#if ROCKETNET_SERVER_XDP
-    rocketnet_server_socket_finish_packet( server_transport->xdp_socket, context->packet_id, context->frame, wire_bytes );
+#if ROCKETNET_SERVER_STAGED
+    rocketnet_server_driver_finish_packet( server_transport->driver_socket, context->packet_id, context->frame, wire_bytes );
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
     rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
     const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
     server_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     context->frame = NULL;
 
@@ -1236,7 +1312,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
     const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
 
-#if ROCKETNET_SERVER_XDP
+#if ROCKETNET_SERVER_STAGED
 
     // fold the fill phase's payload sends into the current bucket. the fill
     // is closed before this call by the threading contract, so the pending
@@ -1247,16 +1323,17 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     server_transport->stats_pending_packets_sent = 0;
     server_transport->stats_pending_bytes_sent = 0;
 
-    // flip only when something staged since the last flip: the flip is
-    // destructive to run twice on one staging generation
+    // flip only when something staged since the last flip: the xdp flip is
+    // destructive to run twice on one staging generation; the gso flush is
+    // naturally idempotent but rides the same guard
 
     if ( server_transport->send_staged != server_transport->send_flushed )
     {
         server_transport->send_flushed = server_transport->send_staged;
-        rocketnet_server_socket_send_packets( server_transport->xdp_socket );
+        rocketnet_server_driver_send_packets( server_transport->driver_socket );
     }
 
-#else // #if ROCKETNET_SERVER_XDP
+#else // #if ROCKETNET_SERVER_STAGED
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1282,7 +1359,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
     ring->num_packets = 0;
 
-#endif // #if ROCKETNET_SERVER_XDP
+#endif // #if ROCKETNET_SERVER_STAGED
 
     rocketnet_send_arena_reset( server_transport->send_arena );
 }
