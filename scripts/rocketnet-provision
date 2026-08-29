@@ -187,7 +187,16 @@ VERIFY=0
 UNMET=0
 
 say()  { echo "rocketnet-provision: $*"; }
-fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; }
+
+# fail() counts every condition it ACTED on (UNMET_COUNT), and the mode
+# summaries publish that count beside the UNMET lines -- so an unmet that
+# PRINTS without being COUNTED (an enforcement call drifted into a
+# subshell or a pipeline, its flag discarded with the child) is visible
+# as a lines-vs-count mismatch, which the selftest's full-flow case
+# asserts. propagation, pinned -- not just printing.
+
+UNMET_COUNT=0
+fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; UNMET_COUNT=$((UNMET_COUNT+1)); }
 
 # xdp-loader's status, stdout only -- stderr never reaches the grader,
 # and the exit status is this exact invocation's. ASSUMPTION, stated:
@@ -369,6 +378,13 @@ r3_enforce()
 
 r7_enforce()
 {
+    # env contract, asserted like r3's: INTERFACE must be non-empty
+
+    if [ -z "${INTERFACE:-}" ]; then
+        fail "r7_enforce called without INTERFACE (contract)"
+        return
+    fi
+
     if ! command -v ethtool >/dev/null 2>&1; then
         fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
         ETHTOOL_RC=127      # belt: command -v is re-tested below; this keeps set -u honest on every path
@@ -457,7 +473,13 @@ if [ "$MODE" = "selftest" ]; then
     # the watchdog: a mutation that HANGS instead of failing must still
     # end red -- the killer fires only if the selftest overruns its bound
 
-    ( sleep 120 && echo "selftest FAIL: watchdog timeout (120s)" && kill -TERM $$ ) 2>/dev/null &
+    # stdout is DETACHED (</dev/null >/dev/null): the sleep child inherits
+    # the subshell's descriptors, and an inherited stdout pipe would make
+    # every command-substitution caller -- CI runners included -- wait the
+    # full 120s on the PASS path (measured: 1s to a file, 120s captured).
+    # the timeout message rides stderr, which timeout diagnosis owns.
+
+    ( sleep 120 && echo "selftest FAIL: watchdog timeout (120s)" >&2 && kill -TERM $$ ) </dev/null >/dev/null &
     WATCHDOG_PID=$!
 
     expect_match()
@@ -511,6 +533,7 @@ if [ "$MODE" = "selftest" ]; then
     STUB_DIR="$(mktemp -d)" || STUB_DIR=""
     if [ -z "$STUB_DIR" ]; then
         echo "selftest FAIL: could not create a private temp dir for the stubs"
+        kill "$WATCHDOG_PID" 2>/dev/null
         exit 1
     fi
     # (a noexec TMPDIR surfaces below as the first enforcement case failing
@@ -629,11 +652,11 @@ STUB
     {
         if [ "$2" != "$3" ]; then
             echo "selftest FAIL: $1: exit $2, want $3"; PASS=0
-        elif ! printf '%s\n' "$4" | grep -q "$5"; then
+        elif ! printf '%s\n' "$4" | grep -qF "$5"; then
             echo "selftest FAIL: $1: output lacks: $5"; PASS=0
-        elif [ -n "${6:-}" ] && [ "$(printf '%s\n' "$4" | grep -c UNMET)" != "$6" ]; then
-            echo "selftest FAIL: $1: UNMET count $(printf '%s\n' "$4" | grep -c UNMET), want $6"; PASS=0
-        elif [ -n "${7:-}" ] && printf '%s\n' "$4" | grep -q "$7"; then
+        elif [ -n "${6:-}" ] && [ "$(printf '%s\n' "$4" | grep -cF UNMET)" != "$6" ]; then
+            echo "selftest FAIL: $1: UNMET count $(printf '%s\n' "$4" | grep -cF UNMET), want $6"; PASS=0
+        elif [ -n "${7:-}" ] && printf '%s\n' "$4" | grep -qF "$7"; then
             echo "selftest FAIL: $1: output must not contain: $7"; PASS=0
         fi
     }
@@ -745,7 +768,12 @@ STUB
     OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=""; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
               r3_enforce; exit $UNMET ) 2>&1 )"
     RC=$?
-    expect_case "r3 empty-interface contract" $RC 1 "$OUT" "without INTERFACE (contract)" 1
+    expect_case "r3 empty-interface contract" $RC 1 "$OUT" "r3_enforce called without INTERFACE (contract)" 1
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=""; NUM_QUEUES=7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r7 empty-interface contract" $RC 1 "$OUT" "r7_enforce called without INTERFACE (contract)" 1
 
     # --- the interface arrives UNMANGLED: a VLAN name keeps its dot all
     # the way to the tool (the replay stub asserts its argument, so any
@@ -755,6 +783,14 @@ STUB
     echo clean > "$STUB_STATE_DIR/state.eth0.100"
     OUT="$(run_r3 1 eth0.100)"
     expect_case "r3 vlan name unmangled" $? 0 "$OUT" "no XDP program attached to eth0.100"
+
+    # ...and r7's mirror: the dotted name must reach ethtool intact -- a
+    # mangled name would read (and in provision mode WRITE) the parent
+    # device, so the state file exists only under the dotted spelling
+
+    echo 7 > "$STUB_STATE_DIR/combined.eth0.100"
+    OUT="$(run_r7 1 eth0.100 7)"
+    expect_case "r7 vlan name unmangled" $? 0 "$OUT" "already"
 
     # --- THE TOP OF THE LADDER: the WHOLE SCRIPT, door to fail. a verify
     # run of this very script under the stub environment must exit 1 and
@@ -768,12 +804,33 @@ STUB
     echo 4 > "$STUB_STATE_DIR/combined.stubiface0"
     FULL_OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface0 7 verify 2>&1 )"
     FULL_RC=$?
+    FULL_UNMET_LINES="$(printf '%s\n' "$FULL_OUT" | grep -cF "UNMET:")"
     if [ $FULL_RC -ne 1 ]; then
         echo "selftest FAIL: full-flow verify should exit 1 (got $FULL_RC)"; PASS=0
-    elif ! printf '%s\n' "$FULL_OUT" | grep -q "an XDP program is attached to stubiface0 (R3)"; then
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "an XDP program is attached to stubiface0 (R3)"; then
         echo "selftest FAIL: full-flow verify output lacks the R3 UNMET -- is r3_enforce still wired at the top?"; PASS=0
-    elif ! printf '%s\n' "$FULL_OUT" | grep -q "combined queue count is 4, want 7 (R7)"; then
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "combined queue count is 4, want 7 (R7)"; then
         echo "selftest FAIL: full-flow verify output lacks the R7 UNMET -- is r7_enforce still wired at the top?"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "verify FAILED: $FULL_UNMET_LINES unmet condition(s)"; then
+        echo "selftest FAIL: full-flow PROPAGATION: $FULL_UNMET_LINES UNMET lines printed but the summary counted differently -- an enforcement call is printing without its flag reaching the exit (subshell or pipeline drift)"; PASS=0
+    fi
+
+    # the count must TRACK, not merely match once: a second full-flow run
+    # with R3 and R7 both met prints two fewer UNMETs, and its summary
+    # must count ITS OWN lines -- a count hardcoded to either run's value
+    # mismatches the other and goes red
+
+    echo clean > "$STUB_STATE_DIR/state.stubiface1"
+    echo 7 > "$STUB_STATE_DIR/combined.stubiface1"
+    FULL2_OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface1 7 verify 2>&1 )"
+    FULL2_RC=$?
+    FULL2_UNMET_LINES="$(printf '%s\n' "$FULL2_OUT" | grep -cF "UNMET:")"
+    if [ $FULL2_RC -ne 1 ]; then
+        echo "selftest FAIL: second full-flow verify should still exit 1 on this unprovisioned box (got $FULL2_RC)"; PASS=0
+    elif [ "$FULL2_UNMET_LINES" = "$FULL_UNMET_LINES" ]; then
+        echo "selftest FAIL: the two full-flow runs printed the same UNMET count ($FULL_UNMET_LINES) -- the R3/R7 conditions did not vary between them"; PASS=0
+    elif ! printf '%s\n' "$FULL2_OUT" | grep -qF "verify FAILED: $FULL2_UNMET_LINES unmet condition(s)"; then
+        echo "selftest FAIL: second full-flow PROPAGATION: $FULL2_UNMET_LINES UNMET lines printed but the summary counted differently"; PASS=0
     fi
 
     # --- the pair-level pins kept from round eleven: the parser sees only
@@ -836,14 +893,14 @@ exit 0'
               UNMET=0; VERIFY=1; INTERFACE=clean0; PATH="$STUB_DIR:$PATH"
               r3_enforce; exit $UNMET ) 2>&1 )"
     RC=$?
-    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "R3 grade .maybe. is outside the outcome set" 1
+    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "R3 grade 'maybe' is outside the outcome set" 1
 
     OUT="$( ( r3_query_and_grade() { if [ ! -f "$STUB_STATE_DIR/garbage_marker" ]; then touch "$STUB_STATE_DIR/garbage_marker"; echo occupied; else echo maybe; fi; return 0; }
               UNMET=0; VERIFY=0; INTERFACE=p0; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
               echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
               r3_enforce; exit $UNMET ) 2>&1 )"
     RC=$?
-    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "R3 re-grade .maybe. is outside the outcome set" 1
+    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "R3 re-grade 'maybe' is outside the outcome set" 1
     rm -f "$STUB_STATE_DIR/garbage_marker"
 
     rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
@@ -1156,7 +1213,7 @@ r7_enforce
 
 if [ $VERIFY -eq 1 ]; then
     if [ $UNMET -eq 1 ]; then
-        say "verify FAILED: boot-tier conditions need grub + reboot (see header); runtime conditions: run rocketnet-provision $INTERFACE $NUM_QUEUES as root"
+        say "verify FAILED: $UNMET_COUNT unmet condition(s) above -- boot-tier conditions need grub + reboot (see header); runtime conditions: run rocketnet-provision $INTERFACE $NUM_QUEUES as root"
         exit 1
     fi
     say "verify passed: machine is provisioned for the xdp driver"
@@ -1164,7 +1221,7 @@ if [ $VERIFY -eq 1 ]; then
 fi
 
 if [ $UNMET -eq 1 ]; then
-    say "provision FAILED: unmet conditions above (boot-tier conditions need grub + reboot; failed runtime writes are named where they failed)"
+    say "provision FAILED: $UNMET_COUNT unmet condition(s) above (boot-tier conditions need grub + reboot; failed runtime writes are named where they failed)"
     exit 1
 fi
 

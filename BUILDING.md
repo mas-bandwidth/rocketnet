@@ -97,7 +97,9 @@ Cold, on a fresh box, as root:
     #  functions end to end, both modes, against stubs replaying captured
     #  xdp-tools output (R3) and real-shaped ethtool output (R7) -- every
     #  fail site in both functions has a driving
-    #  case, paired in the fail-site enumeration receipt on PR #110. it
+    #  case, paired in the fail-site enumeration receipt on PR #110, and
+    #  the WHOLE SCRIPT is driven door-to-fail by a full-flow verify case
+    #  (there is no level above the whole script). it
     #  needs no root and touches only a private temp dir it creates and
     #  removes. CI runs it on every push, so neither the matcher halves nor
     #  the enforcement paths can drift silently.)
