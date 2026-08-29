@@ -106,10 +106,30 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
 }
 
 // strict full-string numeric parses: the whole value or a loud failure,
-// never a prefix silently accepted
+// never a prefix silently accepted. the charset is checked BEFORE the
+// strto* call, because strtoll/strtoull quietly skip leading whitespace
+// and accept '+' and '-' spellings the strict form refuses -- validating
+// after the fact would let " 5" and "+5" ride through.
+
+static bool rocketnet_config_numeric_charset( const char * value, bool allow_negative )
+{
+    const char * cursor = value;
+    if ( allow_negative && *cursor == '-' )
+        cursor++;
+    if ( *cursor == '\0' )
+        return false;
+    for ( ; *cursor != '\0'; cursor++ )
+    {
+        if ( *cursor < '0' || *cursor > '9' )
+            return false;
+    }
+    return true;
+}
 
 static bool rocketnet_config_parse_int( const char * value, int * out )
 {
+    if ( !rocketnet_config_numeric_charset( value, true ) )
+        return false;
     char * end = NULL;
     errno = 0;
     long long parsed = strtoll( value, &end, 10 );
@@ -121,9 +141,14 @@ static bool rocketnet_config_parse_int( const char * value, int * out )
     return true;
 }
 
+bool rocketnet_config_parse_int_value( const char * value, int * out )
+{
+    return rocketnet_config_parse_int( value, out );
+}
+
 static bool rocketnet_config_parse_uint64( const char * value, uint64_t * out )
 {
-    if ( value[0] == '-' || value[0] == '+' )
+    if ( !rocketnet_config_numeric_charset( value, false ) )
         return false;
     char * end = NULL;
     errno = 0;
@@ -224,7 +249,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                 int parsed;
                 if ( !rocketnet_config_parse_int( value, &parsed ) )
                 {
-                    rocketnet_error( "%s config could not parse %s=\"%s\" as an integer", transport_name, env_name, value );
+                    // the failing value is never echoed for a secret field
+                    // -- a mistyped secret is still a secret
+                    rocketnet_error( "%s config could not parse %s=\"%s\" as an integer", transport_name, env_name, secret ? "(redacted)" : value );
                     return false;
                 }
                 memcpy( base, &parsed, sizeof(parsed) );
@@ -236,7 +263,7 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                 uint64_t parsed;
                 if ( !rocketnet_config_parse_uint64( value, &parsed ) )
                 {
-                    rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
+                    rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, secret ? "(redacted)" : value );
                     return false;
                 }
                 memcpy( base, &parsed, sizeof(parsed) );
@@ -246,7 +273,14 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
             case ROCKETNET_CONFIG_KIND_BYTES:
             {
                 uint8_t decoded[256];
-                rocketnet_assert( field->size <= (int) sizeof(decoded) );
+                if ( field->size > (int) sizeof(decoded) )
+                {
+                    // a real check, not an assert compiled out of release:
+                    // a table field wider than the decode staging refuses
+                    // rather than truncating
+                    rocketnet_error( "%s config field \"%s\" is wider than the decode staging (%d > %d)", transport_name, field->name, field->size, (int) sizeof(decoded) );
+                    return false;
+                }
                 const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
                 if ( decoded_bytes != field->size )
                 {
@@ -474,10 +508,16 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         else
         {
             // known transport, absent here: ignored so one fleet-wide
-            // config line deploys unmodified to heterogeneous boxes
+            // config line deploys unmodified to heterogeneous boxes. the
+            // skip list is bounded like the candidate list -- overflowing
+            // it silently would under-name the exhausted report.
 
-            if ( ladder->num_skipped < ROCKETNET_MAX_DRIVER_CANDIDATES )
-                ladder->skipped[ladder->num_skipped++] = driver;
+            if ( ladder->num_skipped >= ROCKETNET_MAX_DRIVER_CANDIDATES )
+            {
+                rocketnet_error( "driver list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                return false;
+            }
+            ladder->skipped[ladder->num_skipped++] = driver;
             rocketnet_info( "driver %.*s is not available here. skipped", name_length, name );
         }
 
@@ -485,6 +525,31 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             break;
 
         cursor = comma + 1;
+    }
+
+    // a list whose every name was skipped names no driver for this endpoint
+    // at all -- a fleet-wide line read by an endpoint it was not addressing
+    // (ROCKETNET_DRIVER=gso on a box that also runs a client). bricking
+    // that endpoint would break the one-line-deploys-everywhere guarantee
+    // the ignore rule exists for, so the endpoint falls to its own auto
+    // order, loudly. a list with at least one applicable candidate keeps
+    // full pin semantics: those candidates and only those, refusal is
+    // failure. (ruled on the #110 review, inside the #106 ignore rule.)
+
+    if ( ladder->num_candidates == 0 )
+    {
+        char auto_names[128];
+        auto_names[0] = '\0';
+        for ( int i = 0; i < num_available; i++ )
+        {
+            const size_t used = strlen( auto_names );
+            snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
+        }
+
+        rocketnet_info( "driver list \"%s\" names no driver for this endpoint on this platform. using auto (%s)", value, auto_names );
+
+        for ( int i = 0; i < num_available; i++ )
+            ladder->candidates[ladder->num_candidates++] = available[i];
     }
 
     return true;

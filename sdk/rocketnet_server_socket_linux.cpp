@@ -28,6 +28,9 @@
 #include <linux/if_ether.h>
 #include <linux/if_xdp.h>
 #include <sys/eventfd.h>
+#include <sys/ioctl.h>
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
 #include <errno.h>
 #include <poll.h>
 #include <unistd.h>   // mkdtemp (POSIX declares it in stdlib.h; unistd.h is the portable belt-and-braces)
@@ -223,10 +226,15 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
     char mac_address_string[18];
     memset( mac_address_string, 0, sizeof(mac_address_string) );
 
-    const char * gateway_ethernet_address_env = getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
-    if ( gateway_ethernet_address_env )
+    // a parameter override under the #106 loud-override law: not a config
+    // table field (it overrides a discovered value, not a declared one),
+    // but it reads through the platform wrapper and logs what it displaces
+    // (the address discovery it preempts) like every other env override
+
+    const char * gateway_ethernet_address_env = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
+    if ( gateway_ethernet_address_env && gateway_ethernet_address_env[0] != '\0' )
     {
-        // let the user force the gateway ethernet address to use (useful for testing)
+        rocketnet_info( "server config override ROCKETNET_GATEWAY_ETHERNET_ADDRESS=%s (displaces gateway discovery)", gateway_ethernet_address_env );
 
         strncpy( mac_address_string, gateway_ethernet_address_env, 17 );
         mac_address_string[17] = 0;
@@ -382,23 +390,280 @@ static void rocketnet_server_socket_remove_workdir( const char * workdir )
     }
 }
 
+// the network interface carrying the public address, read-only -- shared by
+// the pre-flight and create so they cannot disagree about which interface
+// the driver would use
+
+static bool rocketnet_server_socket_find_interface( uint32_t public_address_ipv4, char * interface_name, size_t interface_name_size, unsigned int * interface_index )
+{
+    interface_name[0] = '\0';
+    *interface_index = 0;
+
+    struct ifaddrs * addrs;
+    if ( getifaddrs( &addrs ) != 0 )
+        return false;
+
+    bool found = false;
+
+    for ( struct ifaddrs * iap = addrs; iap != NULL; iap = iap->ifa_next )
+    {
+        if ( iap->ifa_addr && ( iap->ifa_flags & IFF_UP ) && iap->ifa_addr->sa_family == AF_INET )
+        {
+            struct sockaddr_in * sa = (struct sockaddr_in*) iap->ifa_addr;
+            if ( sa->sin_addr.s_addr == public_address_ipv4 )
+            {
+                strncpy( interface_name, iap->ifa_name, interface_name_size - 1 );
+                interface_name[interface_name_size - 1] = '\0';
+                *interface_index = if_nametoindex( iap->ifa_name );
+                found = *interface_index != 0;
+                break;
+            }
+        }
+    }
+
+    freeifaddrs( addrs );
+
+    return found;
+}
+
+// read one small sysfs value; returns false when the file does not exist
+
+static bool rocketnet_server_socket_read_sysfs( const char * path, char * value, size_t value_size )
+{
+    FILE * file = fopen( path, "r" );
+    if ( !file )
+        return false;
+    value[0] = '\0';
+    if ( fgets( value, (int) value_size, file ) )
+    {
+        char * newline = strchr( value, '\n' );
+        if ( newline )
+            *newline = '\0';
+    }
+    fclose( file );
+    return true;
+}
+
+// THE PRE-FLIGHT (#106): non-mutating, checking the two-tier condition
+// list in scripts/rocketnet-provision's header -- the single documented
+// source this check, that script and BUILDING.md all derive from. Every
+// unmet condition names the knob, the wanted value, and the script;
+// nothing here changes machine state (probe descriptors are created and
+// closed, never bound, never attached). All conditions that can be
+// checked are checked, so one run names every errand at once rather than
+// one per attempt.
+
+bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
+{
+    rocketnet_assert( public_address_string );
+    rocketnet_assert( num_queues >= 1 );
+
+    // R1: root. the data plane requires euid 0 -- the same refusal create
+    // itself would give, checked here so the ladder can name it without
+    // touching anything.
+
+    if ( geteuid() != 0 )
+    {
+        rocketnet_warn( "xdp pre-flight: not root (R1 of scripts/rocketnet-provision). the XDP data plane requires euid 0" );
+        return false;
+    }
+
+    bool provisioned = true;
+
+    // R2: an UP interface carries the public address
+
+    rocketnet_address_t public_address;
+    if ( !rocketnet_address_parse( &public_address, public_address_string ) || public_address.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_warn( "xdp pre-flight: public address %s is not a parseable ipv4 address (R2 of scripts/rocketnet-provision)", public_address_string );
+        return false;
+    }
+
+    char interface_name[1024];
+    unsigned int interface_index = 0;
+    if ( !rocketnet_server_socket_find_interface( rocketnet_address_ipv4( &public_address ), interface_name, sizeof(interface_name), &interface_index ) )
+    {
+        rocketnet_warn( "xdp pre-flight: no UP interface carries the public address (R2 of scripts/rocketnet-provision)" );
+        return false;
+    }
+
+    // B1: the boot tier's kernel command line -- irqaffinity, isolcpus,
+    // nohz_full (nosmt's effect is verified by state under R6). grub
+    // changes, so the script can only verify these too; the errand is a
+    // reboot, named as one.
+
+    char value[4096];
+    if ( rocketnet_server_socket_read_sysfs( "/proc/cmdline", value, sizeof(value) ) )
+    {
+        const char * boot_tokens[3] = { "irqaffinity=", "isolcpus=", "nohz_full=" };
+        for ( int i = 0; i < 3; i++ )
+        {
+            if ( !strstr( value, boot_tokens[i] ) )
+            {
+                rocketnet_warn( "xdp pre-flight: kernel command line lacks %s (B1): grub + reboot, per scripts/rocketnet-provision", boot_tokens[i] );
+                provisioned = false;
+            }
+        }
+    }
+
+    // B2: the isolated cpu set is non-empty -- isolcpus= taken effect
+
+    if ( rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/isolated", value, sizeof(value) ) && value[0] == '\0' )
+    {
+        rocketnet_warn( "xdp pre-flight: no isolated cpus (B2): B1's isolcpus= has not taken effect (grub + reboot, per scripts/rocketnet-provision)" );
+        provisioned = false;
+    }
+
+    // R4: each of the interface's queue IRQs is pinned to a single cpu --
+    // an affinity list with a range or a comma is the scheduler default,
+    // not a pin. interfaces with no per-queue IRQs (VMs) pass.
+
+    {
+        FILE * interrupts = fopen( "/proc/interrupts", "r" );
+        if ( interrupts )
+        {
+            char line[4096];
+            while ( fgets( line, sizeof(line), interrupts ) )
+            {
+                if ( !strstr( line, interface_name ) )
+                    continue;
+
+                int irq = 0;
+                if ( sscanf( line, " %d:", &irq ) != 1 )
+                    continue;
+
+                char affinity_path[256];
+                snprintf( affinity_path, sizeof(affinity_path), "/proc/irq/%d/smp_affinity_list", irq );
+
+                char affinity[256];
+                if ( rocketnet_server_socket_read_sysfs( affinity_path, affinity, sizeof(affinity) ) )
+                {
+                    if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
+                    {
+                        rocketnet_warn( "xdp pre-flight: irq %d affinity is '%s', want a single isolated cpu (R4): run scripts/rocketnet-provision %s %d", irq, affinity, interface_name, num_queues );
+                        provisioned = false;
+                    }
+                }
+            }
+            fclose( interrupts );
+        }
+    }
+
+    // R6: smt off (absent knob passes; belt-and-braces under B1's nosmt)
+
+    if ( rocketnet_server_socket_read_sysfs( "/sys/devices/system/cpu/smt/control", value, sizeof(value) ) )
+    {
+        if ( strcmp( value, "off" ) != 0 && strcmp( value, "forceoff" ) != 0 && strcmp( value, "notsupported" ) != 0 && strcmp( value, "notimplemented" ) != 0 )
+        {
+            rocketnet_warn( "xdp pre-flight: smt is '%s', want off (R6): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+            provisioned = false;
+        }
+    }
+
+    // R5: the busy-poll pair (absent knobs pass)
+
+    char path[2048];
+    snprintf( path, sizeof(path), "/sys/class/net/%s/napi_defer_hard_irqs", interface_name );
+    if ( rocketnet_server_socket_read_sysfs( path, value, sizeof(value) ) && strcmp( value, "2" ) != 0 )
+    {
+        rocketnet_warn( "xdp pre-flight: napi_defer_hard_irqs is %s, want 2 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+        provisioned = false;
+    }
+
+    snprintf( path, sizeof(path), "/sys/class/net/%s/gro_flush_timeout", interface_name );
+    if ( rocketnet_server_socket_read_sysfs( path, value, sizeof(value) ) && strcmp( value, "200000" ) != 0 )
+    {
+        rocketnet_warn( "xdp pre-flight: gro_flush_timeout is %s, want 200000 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
+        provisioned = false;
+    }
+
+    // R7: the NIC's combined channel count equals the configured queue
+    // count (a NIC without channel support passes)
+
+    {
+        int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+        if ( probe_fd >= 0 )
+        {
+            struct ethtool_channels channels;
+            memset( &channels, 0, sizeof(channels) );
+            channels.cmd = ETHTOOL_GCHANNELS;
+
+            struct ifreq ifr;
+            memset( &ifr, 0, sizeof(ifr) );
+            strncpy( ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1 );
+            ifr.ifr_data = (char*) &channels;
+
+            if ( ioctl( probe_fd, SIOCETHTOOL, &ifr ) == 0 )
+            {
+                if ( (int) channels.combined_count != num_queues )
+                {
+                    rocketnet_warn( "xdp pre-flight: combined queue count is %u, want %d (condition 6): run scripts/rocketnet-provision %s %d", channels.combined_count, num_queues, interface_name, num_queues );
+                    provisioned = false;
+                }
+            }
+            close( probe_fd );
+        }
+    }
+
+    // kernel capability, per the ruling's checklist: an AF_XDP socket
+    // created and closed without a bind...
+
+    {
+        int xdp_fd = socket( AF_XDP, SOCK_RAW, 0 );
+        if ( xdp_fd < 0 )
+        {
+            rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s). this kernel cannot run the XDP data plane", strerror( errno ) );
+            provisioned = false;
+        }
+        else
+        {
+            close( xdp_fd );
+        }
+    }
+
+    // ...and a BPF program loaded and closed without an attach
+
+    {
+        struct bpf_insn instructions[2];
+        memset( instructions, 0, sizeof(instructions) );
+        instructions[0].code = BPF_ALU64 | BPF_MOV | BPF_K;         // r0 = XDP_PASS
+        instructions[0].imm = 2;
+        instructions[1].code = BPF_JMP | BPF_EXIT;
+
+        int program_fd = bpf_prog_load( BPF_PROG_TYPE_XDP, "rocketnet_pf", "GPL", instructions, 2, NULL );
+        if ( program_fd < 0 )
+        {
+            rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s). this kernel cannot run the XDP data plane", strerror( errno ) );
+            provisioned = false;
+        }
+        else
+        {
+            close( program_fd );
+        }
+    }
+
+    return provisioned;
+}
+
 rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
     rocketnet_assert( filter_value );
-    
+
     // the queue and cpu counts arrive from the transport config, which the
     // #106 table already exposes as ROCKETNET_NUM_XDP_QUEUES and
     // ROCKETNET_NUM_OS_CPUS with validation and loud override logging --
     // the silent ROCKETNET_SERVER_NUM_QUEUES / ROCKETNET_SERVER_NUM_OS_CPUS
     // reads that used to live here were the second config mechanism that
     // system exists to absorb, so they are gone rather than kept as an
-    // unlogged shadow layer
+    // unlogged shadow layer. this one is a create PARAMETER override, not a
+    // config field, so it stays -- under the same loud-override law.
 
-    const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-    if ( public_address_env )
+    const char * public_address_env = rocketnet_platform_getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    if ( public_address_env && public_address_env[0] != '\0' )
     {
+        rocketnet_info( "server config override ROCKETNET_SERVER_PUBLIC_ADDRESS=%s (displaces %s)", public_address_env, public_address_string );
         public_address_string = public_address_env;
     }
 
@@ -417,119 +682,46 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
+    // VERIFY, then bind (#106): the non-mutating pre-flight refuses unless
+    // the machine is provisioned -- provisioning itself lives in
+    // scripts/rocketnet-provision, run deliberately by the operator, and
+    // nothing below this point changes machine state. everything from here
+    // is the library's own per-socket work: its BPF program built, loaded
+    // and attached, AF_XDP binds, the memlock rlimit.
+
+    if ( !rocketnet_server_socket_preflight( public_address_string, num_queues ) )
+    {
+        rocketnet_error( "xdp pre-flight failed: this machine is not provisioned for the XDP data plane (see scripts/rocketnet-provision)" );
+        return NULL;
+    }
+
     rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t*) rocketnet_malloc( context, sizeof(rocketnet_server_socket_t) );
     if ( !server_socket )
         return NULL;
 
     memset( server_socket, 0, sizeof( rocketnet_server_socket_t) );
-    
+
     server_socket->context = context;
 
-    // AF_XDP can only run as root
+    // find the network interface that matches the public address -- the
+    // same read-only lookup the pre-flight just passed
 
-    if ( geteuid() != 0 ) 
+    const uint32_t public_address_ipv4 = rocketnet_address_ipv4( &public_address );
+
+    char interface_name[1024];
+    unsigned int interface_index = 0;
+    if ( !rocketnet_server_socket_find_interface( public_address_ipv4, interface_name, sizeof(interface_name), &interface_index ) )
     {
-        rocketnet_error( "server must run as root" );
+        rocketnet_error( "server could not find any network interface matching public address" );
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
 
-    // find the network interface that matches the public address
-
-    uint32_t public_address_ipv4 = rocketnet_address_ipv4( &public_address );
-
-    char interface_name[1024];
-    memset( interface_name, 0, sizeof(interface_name) );
-    {
-        bool found = false;
-
-        struct ifaddrs * addrs;
-        if ( getifaddrs( &addrs ) != 0 )
-        {
-            rocketnet_error( "server getifaddrs failed" );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
-        }
-
-        for ( struct ifaddrs * iap = addrs; iap != NULL; iap = iap->ifa_next ) 
-        {
-            if ( iap->ifa_addr && ( iap->ifa_flags & IFF_UP ) && iap->ifa_addr->sa_family == AF_INET )
-            {
-                struct sockaddr_in * sa = (struct sockaddr_in*) iap->ifa_addr;
-                if ( sa->sin_addr.s_addr == public_address_ipv4 )
-                {
-                    strncpy( interface_name, iap->ifa_name, sizeof(interface_name) );
-                    rocketnet_info( "server found network interface: %s", interface_name );
-                    server_socket->interface_index = if_nametoindex( iap->ifa_name );
-                    if ( !server_socket->interface_index ) 
-                    {
-                        rocketnet_error( "server if_nametoindex failed" );
-                        rocketnet_server_socket_destroy( server_socket );
-                        return NULL;
-                    }
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        freeifaddrs( addrs );
-
-        if ( !found )
-        {
-            rocketnet_error( "server could not find any network interface matching public address" );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
-        }
-    }
+    server_socket->interface_index = (int) interface_index;
 
     rocketnet_info( "server network interface is %s", interface_name );
 
-    // make sure no xdp programs are loaded on the NIC
-    {
-        char command[2048];
-        snprintf( command, sizeof(command), "xdp-loader unload -a %s", interface_name );
-        FILE * file = popen( command, "r" );
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
-    }
-
-    // disable hyperthreading
-    {
-        char command[2048];
-        snprintf( command, sizeof(command), "echo off > /sys/devices/system/cpu/smt/control" );
-        FILE * file = popen( command, "r" );
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
-    }
-
-    // setup for busy polling
-    {
-        char command[4096];
-        snprintf( command, sizeof(command), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs && echo 200000 > /sys/class/net/%s/gro_flush_timeout", interface_name, interface_name );
-        FILE * file = popen( command, "r" );
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
-    }
-
-    // force the NIC to use the number of NIC queues we want
-    {
-        rocketnet_info( "initializing %d queues", num_queues );
-
-        server_socket->num_queues = num_queues;
-
-        char command[2048];
-        snprintf( command, sizeof(command), "ethtool -L %s combined %d", interface_name, num_queues );
-        FILE * file = popen( command, "r" );
-        char buffer[1024];
-        while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-        pclose( file );
-    }
-
-    // todo: we should set num queues on the sister NIC port as well (0/1)
+    server_socket->num_queues = num_queues;
 
     // look up the ethernet address of the network interface
 

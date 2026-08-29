@@ -86,6 +86,11 @@ void rocketnet_log_level( int level )
     log_level = level;
 }
 
+int rocketnet_get_log_level()
+{
+    return log_level;
+}
+
 const char * rocketnet_log_level_string( int level )
 {
     if ( level == ROCKETNET_LOG_LEVEL_SPAM )

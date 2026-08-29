@@ -18,8 +18,28 @@ struct rocketnet_server_socket_t;
 #define ROCKETNET_SERVER_SOCKET_RUNNING    1
 #define ROCKETNET_SERVER_SOCKET_STOPPING   2
 
+// The non-mutating pre-flight (#106, ruled on the #110 review): checks the
+// machine IS provisioned for the XDP data plane and refuses by name when it
+// is not -- each unmet condition logs the knob, the wanted value, and
+// scripts/rocketnet-provision, whose header carries the authoritative
+// condition list both this check and that script derive from. Read-only by
+// contract: it may create and close probe descriptors (an AF_XDP socket
+// never bound, a BPF program never attached) but never changes machine
+// state. create() runs it first and refuses without it; the driver ladder
+// and the test suite call it directly so a refusal is named without ever
+// touching the committing path.
+
+bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues );
+
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
+//
+// create is VERIFY AND BIND only: the pre-flight above, then the library's
+// own per-socket acts -- building and loading its BPF program, attaching
+// it, AF_XDP binds, the memlock rlimit. Machine provisioning (xdp-loader
+// clearing, SMT, napi tuning, ethtool -L queue counts, isolcpus guidance)
+// lives in scripts/rocketnet-provision, run deliberately by the operator;
+// create never mutates machine state.
 
 struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * filter_value, int num_xdp_queues = 7, int num_os_cpus = 1 );
 

@@ -1415,7 +1415,23 @@ void rocketnet_platform_sleep( double time )
 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 
+// the pump request (#106): the plain create probes for the batch pump
+// (auto); a forced-portable create SUPPRESSES the probe entirely -- the
+// pre-#106 ROCKETNET_PUMP=portable semantic, and the probe's recvmsg_x can
+// consume a queued datagram on a fixed-port bind, so a portable pin must
+// never run it at all
+
+#define ROCKETNET_PUMP_MODE_AUTO             0
+#define ROCKETNET_PUMP_MODE_FORCE_PORTABLE   1
+
+static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode );
+
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
+{
+    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, ROCKETNET_PUMP_MODE_AUTO );
+}
+
+static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int pump_mode )
 {
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
@@ -1594,7 +1610,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     // dropped the syscall, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
     // socket on the portable pump. degradation is silent above the seam.
 
-    if ( rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
+    if ( pump_mode != ROCKETNET_PUMP_MODE_FORCE_PORTABLE && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
         const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
@@ -3070,40 +3086,54 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 {
     const bool require_msgx = pump && strcmp( pump, "msgx" ) == 0;
 
+    // refusals here log at WARN, not ERROR: this call sits under the driver
+    // ladder, whose own summary decides whether a refusal was a fall (warn)
+    // or a create failure (error) -- an msgx refusal on a falling auto
+    // ladder is normal operation, not an error line in every log
+
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
 
     if ( require_msgx )
     {
-        rocketnet_error( "msgx pump is not available on this platform" );
+        rocketnet_warn( "msgx pump is not available on this platform" );
         return NULL;
     }
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
 
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size );
-    if ( !socket )
-        return NULL;
-
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+
+    // a forced-portable request suppresses the msgx probe entirely -- the
+    // probe never runs, so it can never consume a queued datagram on a
+    // fixed-port bind and the pre-#106 ROCKETNET_PUMP=portable semantics
+    // hold exactly
 
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
-    if ( force_portable )
-    {
-        socket->msgx = false;
-    }
-    else if ( require_msgx && !socket->msgx )
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size,
+                                                                                      force_portable ? ROCKETNET_PUMP_MODE_FORCE_PORTABLE : ROCKETNET_PUMP_MODE_AUTO );
+    if ( !socket )
+        return NULL;
+
+    if ( require_msgx && !socket->msgx )
     {
         const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
-            rocketnet_error( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
+            rocketnet_warn( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
         else
-            rocketnet_error( "msgx pump refused by the probe" );
+            rocketnet_warn( "msgx pump refused by the probe" );
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-
     return socket;
+
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+
+    // every other platform has exactly one pump, so "portable" and auto
+    // are the same create
+
+    return rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size );
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 }

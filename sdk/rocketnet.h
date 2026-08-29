@@ -283,6 +283,12 @@ ROCKETNET_EXPORT_FUNC void rocketnet_quiet( bool flag );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_level( int level );
 
+// the level currently in force, so a caller that lowers the level for a
+// bounded stretch (the test suite's expected-refusal brackets) can restore
+// what it found rather than guessing
+
+ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level();
+
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_printf( int level, const char * format, ... );
@@ -450,16 +456,20 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 // than discovered.
 
 // The driver field: an ORDERED CANDIDATE LIST, comma separated, tried left
-// to right at create -- first grant wins, exhausted list fails loudly.
-// "auto" (the default, also the empty string) expands to this platform's
-// recommended order: linux server xdp,gso,portable; macOS msgx,portable;
-// everywhere else portable. A one-element list is a pin: that driver or
-// loud failure, never a silent fall. A name in the known transport set
-// (xdp, gso, msgx, portable) but absent on this platform -- or not
-// applicable to this endpoint, like xdp for a client -- is IGNORED with
-// one soft log line, so one fleet-wide config line deploys unmodified to
-// heterogeneous boxes. A name in no transport set anywhere is a typo and
-// fails loudly at parse, listing the valid names.
+// to right at create -- first grant wins, and a list exhausted by REFUSAL
+// fails loudly. "auto" (the default, also the empty string) expands to
+// this platform's recommended order for the endpoint: linux server
+// xdp,gso,portable; macOS msgx,portable; everywhere else portable
+// (clients: portable everywhere, plus msgx on macOS). A one-element list
+// is a pin: that driver or loud failure, never a silent fall. A name in
+// the known transport set (xdp, gso, msgx, portable) but absent on this
+// platform -- or not applicable to this endpoint, like xdp for a client --
+// is IGNORED with one soft log line, so one fleet-wide config line deploys
+// unmodified to heterogeneous boxes; a list whose EVERY name is ignored
+// names no driver for this endpoint at all and falls to the endpoint's own
+// auto order, loudly, rather than bricking an endpoint the line was not
+// addressing. A name in no transport set anywhere is a typo and fails
+// loudly at parse, listing the valid names.
 
 #define ROCKETNET_DRIVER_STRING_LENGTH 64
 
@@ -650,9 +660,11 @@ struct rocketnet_server_transport_t;
 // fragment aggregate rings, about 48KB per client slot.
 //
 // The server transport config table -- the single declaration everything
-// derives from, per the config system comment above. num_xdp_queues' upper
-// bound is the gso driver's ROCKETNET_GSO_MAX_QUEUES, the tighter of the
-// staged drivers' geometries, refused loudly rather than clamped.
+// derives from, per the config system comment above. num_xdp_queues' range
+// here is structural; the tighter bounds are PER DRIVER, enforced at the
+// ladder rung and refused loudly, never clamped: the xdp driver takes any
+// count from 1, the gso driver refuses past its 32 queue geometry
+// (ROCKETNET_GSO_MAX_QUEUES).
 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
@@ -661,7 +673,7 @@ struct rocketnet_server_transport_t;
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
     BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
     BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET )    \
-    INT_FIELD(    num_xdp_queues,        0,                              1, 32,                                                ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_xdp_queues,        0,                              1, 1024,                                              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \

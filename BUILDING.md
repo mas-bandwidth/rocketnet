@@ -30,13 +30,65 @@ list at create. The list rides the config's `driver` field or the
                                               #   or loud failure, never a silent fall
     ROCKETNET_DRIVER=gso,portable ./bin/test  # exactly these, exactly this order
 
-Names known but absent on a platform are skipped with a log line, so one fleet-wide
-value deploys everywhere; unknown names refuse loudly at create. The granted driver
-is reported by `rocketnet_server_transport_driver` and the create log line. The GSO
-driver still probes UDP_SEGMENT and UDP_GRO at create and degrades to plain
-sendmmsg/recvmmsg batching where a kernel lacks them — that degradation is internal
-to the driver, below the ladder. Run the same `./bin/test` against each rung — the
-suite is driver-blind.
+Names known but absent on a platform — or not applicable to an endpoint, like
+`gso` for a client — are skipped with a log line, so one fleet-wide value deploys
+everywhere; a list whose every name is skipped falls to that endpoint's own auto
+order, loudly, rather than bricking an endpoint the value was not addressing.
+Unknown names refuse loudly at create. The granted driver is reported by
+`rocketnet_server_transport_driver` / `rocketnet_client_transport_driver` and the
+create log line. Queue-count bounds are per driver, refused loudly and never
+clamped: the xdp driver takes any `num_xdp_queues` from 1, the gso driver refuses
+past its 32-queue geometry. The GSO driver still probes UDP_SEGMENT and UDP_GRO at
+create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
+that degradation is internal to the driver, below the ladder; likewise the Darwin
+batch pump's live-refusal pause. The pre-#106 `ROCKETNET_PUMP=portable` override is
+absorbed into this system with its exact old meaning — the msgx pump off —
+honored and named in the logs, with `ROCKETNET_DRIVER=portable` as its successor;
+`ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
+working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
+`ROCKETNET_NUM_OS_CPUS`. Run the same `./bin/test` against each rung — the suite is
+driver-blind.
+
+## Deploying the XDP driver: provision, then verify-and-bind
+
+The library never mutates machine state. `rocketnet_server_transport_create()`
+with the xdp driver is verify-and-bind only: a non-mutating pre-flight checks
+that the machine is provisioned and refuses by name — each unmet condition logs
+the knob, the wanted value, and the script that sets it — and the library's own
+acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
+the memlock rlimit). Provisioning is `scripts/rocketnet-provision`, a shipped
+deliverable: the setup was hand-run once for the space game and no game that uses
+rocketnet with XDP reconstructs it. The script's header carries the authoritative
+condition list; the pre-flight checks exactly those conditions.
+
+Cold, on a fresh box, as root:
+
+    # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
+    #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
+    #    then: update-grub && reboot
+    #    (build a recent vendor NIC driver where the distro's is too old — for
+    #    Intel 700 series, i40e from github.com/mas-bandwidth/ethernet-linux-i40e)
+
+    # 2. RUNTIME TIER (idempotent, re-run any time):
+    scripts/rocketnet-provision eth0 7
+
+    # 3. Check without changing anything (what the library's pre-flight will say):
+    scripts/rocketnet-provision eth0 7 verify
+
+    # 4. Run the server: the xdp rung grants only on a verified machine, and the
+    #    auto ladder falls to gso with the reason named where it is not.
+
+This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
+the busy-poll pair — is the 10 Gbps point, as measured on the space game's Linux
+server; the magnitude belongs to that machine, and the claim attaches to a
+verified-provisioned box, never to the library alone. The isolated-core mask, the
+queue count and the IRQ pinning scale together with NIC bandwidth: one queue
+wants one isolated core, and higher-bandwidth NICs need more cores (the script
+takes the range as a parameter; 1-15 is the default, not a constant). `isolcpus`
+is a boot parameter — nothing at runtime can perform it, which is why the script
+only verifies the boot tier. The config's `num_os_cpus` names the first core the
+xdp workers pin from: workers occupy `num_os_cpus + queue`, so it should point
+at the isolated range.
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 

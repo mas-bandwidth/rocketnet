@@ -48,6 +48,12 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
 
+// the strict integer parse, exposed for the deprecated env alias reads
+// (the pre-#106 spellings kept working under the ROCKETNET_PUMP pattern):
+// whole-string, digits only after an optional leading minus, or false.
+
+bool rocketnet_config_parse_int_value( const char * value, int * out );
+
 // overlay the environment onto a config struct, field by field from the
 // descriptors: unset vars leave the struct value; set vars parse under the
 // field's kind, log the override loudly with the displaced value (secret

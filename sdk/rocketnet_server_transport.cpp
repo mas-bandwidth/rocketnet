@@ -391,41 +391,36 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
            memcmp( config->backend_public_key, zero, 32 ) != 0;
 }
 
-// the ladder's fast privilege gate for the xdp candidate: missing
-// privilege is a different operator errand from missing NIC or kernel
-// support, so the ladder names it directly instead of letting the xdp
-// create fail deep in its setup. root, or CAP_NET_ADMIN in the effective
-// set (bit 12 of CapEff in /proc/self/status), is the entry requirement.
+// the pre-#106 env spellings kept working under the ROCKETNET_PUMP pattern:
+// a deprecated alias is honored only where its successor is unset, strict-
+// parsed by the same rules, and every use is logged loudly naming the
+// successor; set beside the successor it yields, loudly. these two used to
+// be silent raw getenv reads inside the xdp driver.
 
-#if ROCKETNET_SERVER_HAS_STAGED
-
-static bool rocketnet_server_xdp_privilege_check( void )
+static bool rocketnet_server_apply_env_alias( const char * alias_name, const char * successor_name, int * field )
 {
-    if ( geteuid() == 0 )
+    const char * value = rocketnet_platform_getenv( alias_name );
+    if ( !value || value[0] == '\0' )
         return true;
 
-    bool net_admin = false;
-
-    FILE * file = fopen( "/proc/self/status", "r" );
-    if ( file )
+    const char * successor_value = rocketnet_platform_getenv( successor_name );
+    if ( successor_value && successor_value[0] != '\0' )
     {
-        char line[256];
-        while ( fgets( line, sizeof(line), file ) )
-        {
-            unsigned long long cap_effective = 0;
-            if ( sscanf( line, "CapEff: %llx", &cap_effective ) == 1 )
-            {
-                net_admin = ( cap_effective & ( 1ULL << 12 ) ) != 0;        // CAP_NET_ADMIN
-                break;
-            }
-        }
-        fclose( file );
+        rocketnet_warn( "server config ignores %s: its successor %s is set", alias_name, successor_name );
+        return true;
     }
 
-    return net_admin;
-}
+    int parsed;
+    if ( !rocketnet_config_parse_int_value( value, &parsed ) )
+    {
+        rocketnet_error( "server config could not parse %s=\"%s\" as an integer", alias_name, value );
+        return false;
+    }
 
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
+    rocketnet_info( "server config override %s=%d (deprecated alias; %s is the successor) (displaces %d)", alias_name, parsed, successor_name, *field );
+    *field = parsed;
+    return true;
+}
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
                                                                          const char * public_address_string,
@@ -452,6 +447,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+        return NULL;
+
+    if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_QUEUES", "ROCKETNET_NUM_XDP_QUEUES", &effective_config.num_xdp_queues ) )
+        return NULL;
+
+    if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_OS_CPUS", "ROCKETNET_NUM_OS_CPUS", &effective_config.num_os_cpus ) )
         return NULL;
 
     if ( !rocketnet_config_validate( "server", &effective_config, config_fields, num_config_fields ) )
@@ -538,14 +539,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
             case ROCKETNET_DRIVER_XDP:
             {
-                if ( !rocketnet_server_xdp_privilege_check() )
-                {
-                    rocketnet_warn( "xdp driver refused: missing privilege (root or CAP_NET_ADMIN)" );
-                    break;
-                }
+                // the non-mutating pre-flight (Glenn's ruling on #106:
+                // "Do an early check to see if we have XDP before changing
+                // the machine"): it verifies the machine is provisioned --
+                // scripts/rocketnet-provision does the provisioning, the
+                // library never does -- and names each unmet condition as
+                // its own operator errand. only a verified machine
+                // proceeds to the create, whose own acts are per-socket.
 
                 const int num_xdp_queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : 7;
                 const int num_os_cpus = config->num_os_cpus > 0 ? config->num_os_cpus : 1;
+
+                if ( !rocketnet_server_socket_preflight( public_address_string, num_xdp_queues ) )
+                    break;
 
                 server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
                 if ( server_transport->xdp_socket )
@@ -558,7 +564,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                 // the queue count rides the config's num_xdp_queues field:
                 // it is the staged drivers' queue count whichever grants,
                 // kept under its historic name for ABI stability with the
-                // language bindings. zero means the driver default.
+                // language bindings. zero means the driver default. bounds
+                // are per driver (#110 review): the table's range is
+                // structural, and this rung refuses -- never clamps -- a
+                // count past the gso driver's own geometry.
+
+                if ( config->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
+                {
+                    rocketnet_warn( "gso driver refused: num_xdp_queues %d is past the gso driver's %d queue geometry", config->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
+                    break;
+                }
 
                 rocketnet_address_t gso_bind_address = bind_address;
 

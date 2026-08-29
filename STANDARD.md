@@ -85,14 +85,15 @@ list of candidate driver names, tried left to right at transport create;
 the first driver that grants wins, and the transport MUST report which. The
 value `auto` (and the empty value) MUST expand to the implementation's
 recommended order for that endpoint on that platform, kept in one table (in
-the RocketNet library: linux server `xdp,gso,portable`; macOS
-`msgx,portable`; everywhere else `portable`). An explicit list is exactly
+the RocketNet library — servers: linux `xdp,gso,portable`, macOS
+`msgx,portable`, everywhere else `portable`; clients: `portable`
+everywhere, with `msgx` ahead of it on macOS). An explicit list is exactly
 that list, in exactly that order — nothing is appended, no implicit floor
-exists, and a one-element list is a **pin**: that driver or loud create
-failure, never a silent fall. `auto` falls; pins refuse. A fallback the
-operator did not choose can mask a provisioning error indefinitely, which
-is why the default ladder logs every fall loudly and a pin refuses instead
-of falling.
+exists, and an applicable one-element list is a **pin**: that driver or
+loud create failure, never a silent fall. `auto` falls; pins refuse. A
+fallback the operator did not choose can mask a provisioning error
+indefinitely, which is why the default ladder logs every fall loudly and a
+pin refuses instead of falling.
 
 **Two tiers of unknown.** A name in the known driver set but not available
 to this endpoint on this platform MUST be ignored with one soft log line —
@@ -100,10 +101,30 @@ this is what lets a single fleet-wide configuration line such as
 `xdp,gso,msgx,portable` deploy unmodified to heterogeneous machines. A name
 in no known driver set is a typo and MUST fail the create loudly at parse,
 listing the valid names — ignoring arbitrary strings would let a misspelled
-name become an empty ladder silently. A list whose every candidate was
-ignored or refused MUST fail the create loudly, naming what was skipped for
-platform and what refused for grant, because missing privilege, missing
-kernel support and missing hardware support are different operator errands.
+name become an empty ladder silently. A list whose every name was ignored
+names no driver for this endpoint at all — a fleet-wide value read by an
+endpoint it was not addressing — and MUST fall to that endpoint's own
+`auto` order with one loud log line, because bricking that endpoint would
+break the very guarantee the ignore rule exists for. A list with at least
+one applicable candidate keeps full pin semantics, and when every
+applicable candidate REFUSES the create MUST fail loudly, naming what was
+skipped for platform apart from what refused for grant — missing
+privilege, missing kernel support and missing hardware support are
+different operator errands.
+
+**Drivers that need a provisioned machine bind; they never provision.** A
+driver whose performance depends on machine state — kernel boot
+parameters, NIC queue configuration, IRQ affinity, scheduler isolation —
+MUST NOT mutate that state at transport create. Create is verify-and-bind:
+a non-mutating pre-flight checks the machine against one documented
+condition list (in the RocketNet library, the header of
+`scripts/rocketnet-provision`, which is also the shipped tool that
+performs the runtime-tier conditions idempotently and verifies the
+boot-tier ones it cannot perform), refuses by name — each unmet condition
+identifying the knob, the wanted value, and the provisioning step — and
+only a verified machine proceeds to the driver's own per-socket acts.
+Machine provisioning is a deliberate operator act, never a side effect of
+starting a server.
 
 **The granted tier is reported.** The transport MUST expose the granted
 driver by name (request-vs-granted), and MUST log one line at create naming

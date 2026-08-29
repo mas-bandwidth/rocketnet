@@ -351,8 +351,9 @@ public static unsafe class RocketNet
         /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
         /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
         /// tried left to right at create, first grant wins ("auto" walks the platform's
-        /// recommended order; a one-element list is a pin that refuses loudly). Read and
-        /// write it through <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
+        /// recommended order; an applicable one-element list is a pin that refuses loudly;
+        /// a list whose every name is inapplicable to this endpoint falls to auto, loudly).
+        /// Read and write it through <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
         public fixed byte Driver[DriverStringLength];
 
         /// <summary>Native function pointer for void (*)( void * context, int previous_state,
@@ -387,10 +388,13 @@ public static unsafe class RocketNet
         public fixed byte ServerPublicKey[32];
         /// <summary>The server's secret key, 32 bytes.</summary>
         public fixed byte ServerSecretKey[32];
-        /// <summary>Staged driver queue count -- XDP queues on the XDP build, reuseport sockets on the
-        /// GSO build; zero means the transport default. The portable build ignores it.</summary>
+        /// <summary>The staged drivers' queue count at runtime -- XDP queues on an xdp grant,
+        /// reuseport sockets on a gso grant; zero means the driver default. Bounds are per
+        /// driver, refused loudly at the rung (gso refuses past 32). The portable driver
+        /// ignores it.</summary>
         public int NumXdpQueues;
-        /// <summary>XDP transport OS cpu count; zero means the transport default. The portable build ignores it.</summary>
+        /// <summary>The xdp driver's OS cpu count (its workers pin from this core upward);
+        /// zero means the driver default. The other drivers ignore it.</summary>
         public int NumOsCpus;
 
         /// <summary>Largest payload this server sends (fragmenting transparently) and
@@ -403,8 +407,9 @@ public static unsafe class RocketNet
         /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
         /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
         /// tried left to right at create, first grant wins — on linux the auto ladder is
-        /// xdp,gso,portable — and a one-element list is a pin that refuses loudly rather
-        /// than falling. Known names absent on the platform are skipped softly; unknown
+        /// xdp,gso,portable — and an applicable one-element list is a pin that refuses
+        /// loudly rather than falling. Known names absent on the platform or endpoint are
+        /// skipped softly (a list of nothing but skips falls to auto, loudly); unknown
         /// names refuse the create at parse. Read and write it through
         /// <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
         public fixed byte Driver[DriverStringLength];
