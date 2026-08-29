@@ -224,6 +224,25 @@ struct bench_sender_options_t
     uint64_t pace_pps;                              /* 0 = flat out */
 };
 
+/*
+    Receiver poll option (#100): "poll=<usec>" makes the receiver sleep
+    that long after an empty drain instead of spinning. The spin loop
+    saturates a core by construction, which makes wall CPU useless as a
+    per-packet cost instrument; the poll shape is the transport's real
+    cadence (drain per tick), so with it /usr/bin/time -l reads back what
+    a pump COSTS at a fixed delivered rate.
+*/
+
+static inline int bench_parse_poll_usec( int argc, char ** argv, int first )
+{
+    for ( int i = first; i < argc; i++ )
+    {
+        if ( strncmp( argv[i], "poll=", 5 ) == 0 )
+            return atoi( argv[i] + 5 );
+    }
+    return 0;
+}
+
 static inline struct bench_sender_options_t bench_parse_sender_options( int argc, char ** argv, int first )
 {
     struct bench_sender_options_t options;

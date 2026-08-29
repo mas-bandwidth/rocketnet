@@ -85,6 +85,18 @@ struct rocketnet_server_send_buffer_t
     uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_SERVER_MAX_SEND_PACKETS];
 };
 
+// the receive batch on the non-xdp drivers: one pump call fills these, then
+// processing walks them. the stride is the receive ceiling, so any packet
+// the wire admits fits a slot; the pump moves the batch in as few syscalls
+// as the platform earned (#100) and every platform serves the same call.
+
+struct rocketnet_server_receive_buffer_t
+{
+    rocketnet_address_t from[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    int packet_bytes[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    uint8_t data[ROCKETNET_RECEIVE_CEILING*ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+};
+
 // the portable payload ring: what the acquire/commit surface fills between
 // update and the flush, from any number of game threads. slot acquisition is
 // one atomic add; each slot's info sits alone on its cache line so
@@ -169,6 +181,7 @@ struct rocketnet_server_transport_t
 
 #if !ROCKETNET_SERVER_STAGED
     struct rocketnet_server_send_buffer_t send_buffer;
+    struct rocketnet_server_receive_buffer_t receive_buffer;
     struct rocketnet_server_payload_ring_t payload_ring;
 #endif // #if !ROCKETNET_SERVER_STAGED
 
@@ -457,7 +470,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "server transport started on %s (%s keys)", rocketnet_address_to_string( &bind_address, address_string ), development_keys ? "development" : "production" );
+    rocketnet_info( "server transport started on %s [%s] (%s keys)", rocketnet_address_to_string( &bind_address, address_string ), rocketnet_platform_socket_pump( server_transport->socket ), development_keys ? "development" : "production" );
 
 #endif // #if ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
 
@@ -751,16 +764,26 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
 #else // #if ROCKETNET_SERVER_STAGED
 
-    uint8_t receive_frame[ROCKETNET_RECEIVE_CEILING];
+    // one pump call drains the batch, then processing walks it -- the batch
+    // is how a platform with batch syscalls earns its keep, and on every
+    // other platform the pump is the same per-packet loop this used to be
+
+    struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
+
+    const int num_received = rocketnet_platform_socket_receive_packets( server_transport->socket,
+                                                                        receive_buffer->from,
+                                                                        receive_buffer->data,
+                                                                        ROCKETNET_RECEIVE_CEILING,
+                                                                        receive_buffer->packet_bytes,
+                                                                        ROCKETNET_SERVER_MAX_RECEIVE_PACKETS );
 
     const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
 
-    for ( int i = 0; i < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS; i++ )
+    for ( int i = 0; i < num_received; i++ )
     {
-        struct rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( server_transport->socket, &from, receive_frame, sizeof(receive_frame) );
-        if ( packet_bytes == 0 )
-            break;
+        struct rocketnet_address_t from = receive_buffer->from[i];
+        uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+        const int packet_bytes = receive_buffer->packet_bytes[i];
 
         server_transport->stats_frames[stats_index].packets_received++;
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
@@ -889,16 +912,20 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
 #else // #if ROCKETNET_SERVER_STAGED
 
+    struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    int num_sends = 0;
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
     {
         if ( server_transport->send_buffer.packet_bytes[i] > 0 )
         {
-            rocketnet_platform_socket_send_packet( server_transport->socket,
-                                                   &server_transport->send_buffer.to[i],
-                                                   server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET,
-                                                   server_transport->send_buffer.packet_bytes[i] );
+            sends[num_sends].to = &server_transport->send_buffer.to[i];
+            sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
+            sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
+            num_sends++;
         }
     }
+    if ( num_sends > 0 )
+        rocketnet_platform_socket_send_packets( server_transport->socket, sends, num_sends );
     server_transport->send_buffer.num_packets = 0;
 
 #endif // #if ROCKETNET_SERVER_STAGED
@@ -1352,6 +1379,9 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     if ( num_packets > ROCKETNET_SERVER_PAYLOAD_RING_SIZE )
         num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
 
+    struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+    int num_sends = 0;
+
     for ( uint64_t i = 0; i < num_packets; i++ )
     {
         if ( ring->info[i].wire_bytes > 0 )
@@ -1362,11 +1392,15 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
             server_transport->stats_frames[stats_index].packets_sent++;
             server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-            rocketnet_platform_socket_send_packet( server_transport->socket, &ring->info[i].to,
-                                                   ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
-                                                   ring->info[i].wire_bytes );
+            sends[num_sends].to = &ring->info[i].to;
+            sends[num_sends].packet_data = ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
+            sends[num_sends].packet_bytes = ring->info[i].wire_bytes;
+            num_sends++;
         }
     }
+
+    if ( num_sends > 0 )
+        rocketnet_platform_socket_send_packets( server_transport->socket, sends, num_sends );
 
     ring->num_packets = 0;
 
