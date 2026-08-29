@@ -62,9 +62,10 @@ Throughout this document, _client_ and _server_ name the protocol's wire
 roles: the endpoint that initiates a connection and the endpoint that accepts
 it. In the RocketNet library those roles are implemented by the transport
 tier — `client_transport` and `server_transport`, running over transport
-drivers (portable UDP, XDP, the Linux GSO driver) that carry the packets this
-standard lays out. Drivers are below this standard's scope: every driver
-carries the same bytes, and nothing in this document varies by driver.
+drivers (portable UDP, XDP, the Linux GSO driver, the Darwin batch pump)
+that carry the packets this standard lays out. Drivers are below this
+standard's scope: every driver carries the same bytes, and nothing in this
+document varies by driver.
 A high-level client and server for games to program against — anything built
 above the transport, speaking entirely in payload packets — is outside this
 document's scope.
