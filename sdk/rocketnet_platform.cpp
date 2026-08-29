@@ -1330,6 +1330,8 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     socket->msgx = false;
 
+    socket->msgx_down_until = 0.0;
+
     // create socket
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -1485,14 +1487,16 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     // the batch pump probe: resolved symbols, a non-blocking socket (the
     // pump's spin discipline assumes it), no environment override, and one
-    // real recvmsg_x against the freshly bound empty socket -- a live
-    // syscall must answer EAGAIN, and anything else (ENOSYS on a kernel
-    // that dropped it, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
+    // real recvmsg_x against the just-bound socket -- a live syscall
+    // answers EAGAIN (or delivers, if the socket bound a fixed port that
+    // already had traffic queued: that consumes one datagram, priced as
+    // the UDP loss it is), and anything else (ENOSYS on a kernel that
+    // dropped the syscall, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
     // socket on the portable pump. degradation is silent above the seam.
 
     if ( rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
     {
-        const char * pump_override = getenv( "ROCKETNET_PUMP" );
+        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
         if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
         {
             uint8_t probe_data[64];
@@ -1609,20 +1613,35 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     sockaddr_storage sockaddr_from;
-    socklen_t from_length = sizeof( sockaddr_from );
+    socklen_t from_length;
 
-    int result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
-
-    if ( result <= 0 )
+    int result;
+    for ( ;; )
     {
-        if ( errno == EAGAIN || errno == EINTR )
+        from_length = sizeof( sockaddr_from );
+
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
+
+        if ( result < 0 )
         {
+            if ( errno != EAGAIN && errno != EINTR )
+            {
+                rocketnet_debug( "recvfrom failed with error %d", errno );
+            }
             return 0;
         }
 
-        rocketnet_debug( "recvfrom failed with error %d", errno );
-        
-        return 0;
+        if ( result == 0 )
+        {
+            // a zero-length datagram is legal UDP carrying nothing the
+            // protocol admits -- and returning 0 here would read as
+            // "socket drained", letting byte-less chaff cap an entire
+            // drain at one packet (#100's review). skip it, keep reading:
+            // both pumps share this semantic.
+            continue;
+        }
+
+        break;
     }
 
     if ( sockaddr_from.ss_family == AF_INET6 )
@@ -1667,15 +1686,63 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 // stay the degradation target: every path through these either moves the
 // batch through sendmsg_x/recvmsg_x or hands the remainder to the
 // per-packet loop, so a packet is never lost to a refusal -- it is sent
-// or dropped exactly where the portable pump would have sent or dropped
-// it. on iOS the msgx flag is never set and these ARE the portable loop.
+// or dropped where the portable pump would have sent or dropped it, with
+// one priced exception recorded at the send loop's error path below. on
+// iOS the msgx flag is never set and these ARE the portable loop.
+//
+// a hard refusal (an errno outside UDP's ordinary weather) PAUSES the
+// msgx pump on that socket rather than killing it: batch calls run
+// portable until the pause expires, and the first batch attempt after
+// expiry is itself the re-probe. a transient misclassification therefore
+// costs at most one pause window, never the feature (#100's review: a
+// permanent degrade hands any single weird errno a kill switch).
 
 #define ROCKETNET_PLATFORM_HAS_BATCH_PUMP 1
+
+#define ROCKETNET_MSGX_RETRY_SECONDS 60.0
 
 const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
     return socket->msgx ? "msgx" : "portable";
+}
+
+// is the msgx pump live for this call? eligibility is decided at create;
+// a pause expires here, making the caller's next batch attempt the
+// re-probe. main-thread only, like every batch call (the transport's
+// phase contract: update and the flushes run on the main thread).
+
+static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
+{
+    if ( !socket->msgx )
+        return false;
+    if ( socket->msgx_down_until > 0.0 )
+    {
+        if ( rocketnet_platform_time() < socket->msgx_down_until )
+            return false;
+        socket->msgx_down_until = 0.0;
+        rocketnet_debug( "msgx pump pause expired. next batch call is the re-probe" );
+    }
+    return true;
+}
+
+static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
+{
+    socket->msgx_down_until = rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS;
+    rocketnet_warn( "%s refused (%s). msgx pump pauses %g seconds", which, strerror( error ), ROCKETNET_MSGX_RETRY_SECONDS );
+}
+
+// UDP's ordinary weather on the send path: errnos the per-packet path
+// also produces on a routine bad destination or a full buffer, and which
+// therefore must not pause the pump -- the review measured EADDRNOTAVAIL
+// from a single forged source port, which under a permanent degrade was
+// a one-packet kill switch for the feature.
+
+static bool rocketnet_msgx_send_weather( int error )
+{
+    return error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS || error == ECONNREFUSED ||
+           error == EHOSTUNREACH || error == ENETUNREACH || error == EMSGSIZE || error == EADDRNOTAVAIL ||
+           error == EPERM || error == EACCES || error == EHOSTDOWN || error == ENETDOWN;
 }
 
 // fill a sockaddr for one destination, mirroring send_packet's dual-stack
@@ -1762,7 +1829,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
     rocketnet_assert( socket );
     rocketnet_assert( sends || num_packets == 0 );
 
-    if ( !socket->msgx )
+    if ( !rocketnet_msgx_active( socket ) )
     {
         for ( int i = 0; i < num_packets; i++ )
         {
@@ -1823,37 +1890,55 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             if ( errno == EINTR )
                 continue;
 
-            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH || errno == EMSGSIZE )
+            // any other -1: the delivered prefix of [offset..count) is
+            // INDETERMINATE. xnu can deliver part of a batch and still
+            // return -1 with no count -- measured on the Studio: 8 messages
+            // with a refused destination at index 5 delivered 0-4 and
+            // returned -1 -- so no retry that assumes "nothing was sent"
+            // (nor "only the head failed") can be right. the law here: one
+            // bounded per-packet pass finishes the chunk. every message in
+            // the tail gets exactly one attempt through the per-packet
+            // path, which sends or drops it exactly as the portable pump
+            // would; a message the kernel had already delivered may go
+            // twice. the duplication is priced: at most one duplicate per
+            // message per error event (amplification <= 2x, O(count) cost,
+            // never O(count^2)), and the protocol's replay protection eats
+            // duplicates at the receiver. a weather errno (a routine bad
+            // destination, a full buffer) stays on the msgx pump for the
+            // next chunk; anything else pauses the pump for
+            // ROCKETNET_MSGX_RETRY_SECONDS and this call finishes portable.
+
+            const int error = errno;
+
+            if ( rocketnet_msgx_send_weather( error ) )
             {
-                // the head message is refused for a reason the per-packet
-                // path also drops on: drop it alone and keep sending. at
-                // most one extra syscall per dropped packet, the portable
-                // pump's own cost shape.
-                rocketnet_debug( "sendmsg_x dropped a packet: %s", strerror( errno ) );
-                offset++;
-                continue;
+                rocketnet_debug( "sendmsg_x error (%s). chunk finishes per-packet", strerror( error ) );
+            }
+            else
+            {
+                rocketnet_msgx_pause( socket, "sendmsg_x", error );
             }
 
-            // an errno outside UDP's ordinary weather (ENOSYS from a kernel
-            // that dropped the syscall, EOPNOTSUPP, EINVAL on ABI drift):
-            // degrade this socket to the portable pump for good and hand it
-            // the remainder, in order, so nothing is lost to the refusal.
-
-            rocketnet_warn( "sendmsg_x refused (%s). socket pump degrades to portable", strerror( errno ) );
-            socket->msgx = false;
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];
                 rocketnet_platform_socket_send_packet( socket, send->to, send->packet_data, send->packet_bytes );
             }
-            for ( int i = base + scanned; i < num_packets; i++ )
+            offset = count;
+        }
+
+        base += scanned;
+
+        // a pause landed mid-call: the rest of this batch goes per-packet
+
+        if ( !rocketnet_msgx_active( socket ) )
+        {
+            for ( int i = base; i < num_packets; i++ )
             {
                 rocketnet_platform_socket_send_packet( socket, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
             }
             return;
         }
-
-        base += scanned;
     }
 }
 
@@ -1866,21 +1951,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
-    if ( !socket->msgx )
-    {
-        int num_packets = 0;
-        while ( num_packets < max_packets )
-        {
-            int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
-            if ( bytes == 0 )
-                break;
-            packet_bytes[num_packets] = bytes;
-            num_packets++;
-        }
-        return num_packets;
-    }
-
     int total = 0;
+
+    if ( !rocketnet_msgx_active( socket ) )
+        goto per_packet;
+
     while ( total < max_packets )
     {
         int want = max_packets - total;
@@ -1910,19 +1985,18 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             if ( errno == EINTR )
                 continue;
             if ( errno == EAGAIN || errno == EWOULDBLOCK )
-                break;
+                return total;
 
-            // outside ordinary weather: degrade for good. what earlier
-            // chunks already drained is delivered; the portable pump takes
-            // over from the next call on.
+            // outside ordinary weather: pause the pump and finish this
+            // call per-packet -- what earlier chunks drained is already
+            // delivered, nothing about this call's contract changes.
 
-            rocketnet_warn( "recvmsg_x refused (%s). socket pump degrades to portable", strerror( errno ) );
-            socket->msgx = false;
-            break;
+            rocketnet_msgx_pause( socket, "recvmsg_x", errno );
+            goto per_packet;
         }
 
         if ( result == 0 )
-            break;
+            return total;
 
         // walk the chunk in place. a zero-length datagram or a family the
         // transport does not speak (the per-packet path delivers neither)
@@ -1947,9 +2021,21 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         if ( result < want )
-            break;
+            return total;
     }
 
+    return total;
+
+per_packet:
+
+    while ( total < max_packets )
+    {
+        int bytes = rocketnet_platform_socket_receive_packet( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride );
+        if ( bytes == 0 )
+            break;
+        packet_bytes[total] = bytes;
+        total++;
+    }
     return total;
 }
 
@@ -2661,22 +2747,39 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     typedef int socklen_t;
-    
+
     sockaddr_storage sockaddr_from;
-    socklen_t from_length = sizeof( sockaddr_from );
+    socklen_t from_length;
 
-    int result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
-
-    if ( result == SOCKET_ERROR )
+    int result;
+    for ( ;; )
     {
-        int error = WSAGetLastError();
+        from_length = sizeof( sockaddr_from );
 
-        if ( error == WSAEWOULDBLOCK || error == WSAETIMEDOUT || error == WSAECONNRESET )
+        result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
+
+        if ( result == SOCKET_ERROR )
+        {
+            int error = WSAGetLastError();
+
+            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
+            {
+                rocketnet_debug( "recvfrom failed with error %d", error );
+            }
             return 0;
+        }
 
-        rocketnet_debug( "recvfrom failed with error %d", error );
+        if ( result == 0 )
+        {
+            // a zero-length datagram is legal UDP carrying nothing the
+            // protocol admits -- and returning 0 here would read as
+            // "socket drained", letting byte-less chaff cap an entire
+            // drain at one packet (#100's review). skip it, keep reading:
+            // both pumps share this semantic.
+            continue;
+        }
 
-        return 0;
+        break;
     }
 
     if ( sockaddr_from.ss_family == AF_INET6 )

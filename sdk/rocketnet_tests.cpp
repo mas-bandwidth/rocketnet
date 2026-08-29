@@ -39,6 +39,16 @@
 #include <string.h>
 #include <time.h>
 
+// the zero-length chaff injection test drives a raw socket beside the
+// platform socket, so it can send what the platform surface refuses to
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 static void rocketnet_check_handler( const char * condition,
                                 const char * function,
                                 const char * file,
@@ -5399,7 +5409,18 @@ void rocketnet_test_platform_socket()
 #define ROCKETNET_TEST_PUMP_PACKETS 100         // several pump chunks, with a short final chunk
 #define ROCKETNET_TEST_PUMP_STRIDE  1426        // the transport's own receive ceiling
 
-static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string )
+// the pump each platform must be running when nothing forces portable: on
+// macOS the msgx pump, everywhere else the portable loop. asserted inside
+// the exchange so a silently-degraded driver can never pass the suite as
+// "tested" -- the batch tests would otherwise green over the fallback.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#define ROCKETNET_TEST_EXPECTED_PUMP "msgx"
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#define ROCKETNET_TEST_EXPECTED_PUMP "portable"
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_t local_address;
@@ -5407,6 +5428,7 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
     rocketnet_address_parse( &local_address, local_string );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( socket );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), expected_pump ) == 0 );
     local_address.port = bind_address.port;
 
     // batch send: varied sizes, a content pattern keyed by index
@@ -5491,10 +5513,10 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
 
 void rocketnet_test_platform_batch_pump()
 {
-    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1" );
+    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
 
 #if ROCKETNET_PLATFORM_HAS_IPV6
-    rocketnet_test_pump_exchange( "[::]", "[::1]" );
+    rocketnet_test_pump_exchange( "[::]", "[::1]", ROCKETNET_TEST_EXPECTED_PUMP );
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
@@ -5517,12 +5539,194 @@ void rocketnet_test_platform_batch_pump_degraded()
     rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
     rocketnet_platform_socket_destroy( socket );
 
-    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1" );
+    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", "portable" );
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     unsetenv( "ROCKETNET_PUMP" );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 }
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// zero-length chaff injection (#100's review): a zero-length datagram is
+// legal UDP, and before this round the portable path treated one as
+// "socket drained" -- byte-less chaff capped every drain at one packet, a
+// standing DoS lever. both pumps now share skip-and-continue semantics,
+// pinned here by injecting chaff between real packets from one raw socket
+// (one source socket, so loopback preserves the interleaving) and
+// requiring every real packet back, in order, contents intact -- which
+// also proves the msgx compaction memmove, since kept packets after a
+// mid-chunk skip must move down a slot.
+
+static void rocketnet_test_pump_chaff_exchange( void )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+
+    struct sockaddr_in to;
+    memset( &to, 0, sizeof(to) );
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    to.sin_port = htons( bind_address.port );
+
+    // interleave: chaff leads, trails, and lands between every couple of
+    // real packets, crossing msgx chunk boundaries (48 real > one chunk)
+
+    const int num_real = 48;
+    uint8_t real_packet[256];
+    int sent_real = 0;
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    for ( int i = 0; i < num_real; i++ )
+    {
+        const int bytes = 24 + i;
+        real_packet[0] = (uint8_t) i;
+        for ( int j = 1; j < bytes; j++ )
+            real_packet[j] = (uint8_t) ( 3 * i + j );
+        rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr*) &to, sizeof(to) ) == bytes );
+        sent_real++;
+        if ( ( i % 2 ) == 1 )
+            rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    }
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+
+    // drain through the batch pump: every real packet, in order, intact,
+    // and not one drain capped by the chaff
+
+    static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
+    static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
+    static uint8_t receive_data[ROCKETNET_TEST_PUMP_PACKETS*ROCKETNET_TEST_PUMP_STRIDE];
+
+    int received = 0;
+    double start_time = rocketnet_platform_time();
+    while ( received < sent_real && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        received += rocketnet_platform_socket_receive_packets( socket,
+                                                               from + received,
+                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
+                                                               ROCKETNET_TEST_PUMP_STRIDE,
+                                                               packet_bytes + received,
+                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
+    }
+    rocketnet_check( received == sent_real );
+
+    for ( int i = 0; i < received; i++ )
+    {
+        const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_TEST_PUMP_STRIDE;
+        rocketnet_check( packet[0] == (uint8_t) i );
+        rocketnet_check( packet_bytes[i] == 24 + i );
+        for ( int j = 1; j < packet_bytes[i]; j++ )
+            rocketnet_check( packet[j] == (uint8_t) ( 3 * i + j ) );
+    }
+
+    // and the per-packet primitive itself skips chaff: one zero-length
+    // then one real packet, received through the single-packet call
+
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    uint8_t single[64];
+    memset( single, 0x5a, sizeof(single) );
+    rocketnet_check( sendto( injector, single, sizeof(single), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(single) );
+
+    uint8_t single_received[ROCKETNET_TEST_PUMP_STRIDE];
+    int single_bytes = 0;
+    start_time = rocketnet_platform_time();
+    while ( single_bytes == 0 && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        rocketnet_address_t single_from;
+        single_bytes = rocketnet_platform_socket_receive_packet( socket, &single_from, single_received, sizeof(single_received) );
+    }
+    rocketnet_check( single_bytes == (int) sizeof(single) );
+    for ( int j = 0; j < single_bytes; j++ )
+        rocketnet_check( single_received[j] == 0x5a );
+
+    close( injector );
+    rocketnet_platform_socket_destroy( socket );
+}
+
+// a refused destination mid-batch (#100's review, the blocker): xnu can
+// deliver a prefix of a sendmsg_x batch and still return -1 with no
+// count, so the send path's law is one bounded per-packet finish of the
+// chunk. this pins the survivable half of that law on the real kernel: a
+// batch with a refused destination in the middle must deliver every other
+// packet AT LEAST once (duplicates are legal, priced, and eaten by replay
+// protection above; spurious loss is not legal).
+
+void rocketnet_test_platform_batch_pump_refused_destination()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_t refused_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &local_address, "127.0.0.1" );
+    rocketnet_address_parse( &refused_address, "0.0.0.0" );        // port 0: the kernel refuses it at send
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+    local_address.port = bind_address.port;
+
+    const int num_packets = 8;
+    const int refused_index = 5;
+
+    static uint8_t send_data[8][64];
+    struct rocketnet_platform_send_t sends[8];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        memset( send_data[i], i, sizeof(send_data[i]) );
+        sends[i].to = i == refused_index ? &refused_address : &local_address;
+        sends[i].packet_data = send_data[i];
+        sends[i].packet_bytes = (int) sizeof(send_data[i]);
+    }
+    rocketnet_platform_socket_send_packets( socket, sends, num_packets );
+
+    bool seen[8];
+    memset( seen, 0, sizeof(seen) );
+    int distinct = 0;
+
+    double start_time = rocketnet_platform_time();
+    while ( distinct < num_packets - 1 && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        rocketnet_address_t from[8];
+        int packet_bytes[8];
+        uint8_t receive_data[8*ROCKETNET_TEST_PUMP_STRIDE];
+        int received = rocketnet_platform_socket_receive_packets( socket, from, receive_data, ROCKETNET_TEST_PUMP_STRIDE, packet_bytes, 8 );
+        for ( int i = 0; i < received; i++ )
+        {
+            const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_TEST_PUMP_STRIDE;
+            const int index = packet[0];
+            rocketnet_check( index < num_packets );
+            rocketnet_check( index != refused_index );
+            rocketnet_check( packet_bytes[i] == 64 );
+            for ( int j = 0; j < 64; j++ )
+                rocketnet_check( packet[j] == (uint8_t) index );
+            if ( !seen[index] )
+            {
+                seen[index] = true;
+                distinct++;
+            }
+        }
+    }
+
+    rocketnet_check( distinct == num_packets - 1 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+void rocketnet_test_platform_pump_zero_length_chaff()
+{
+    // both pumps: whatever the platform runs by default, and the portable
+    // pump forced -- identical semantics is the seam law under review
+
+    rocketnet_test_pump_chaff_exchange();
+
+    setenv( "ROCKETNET_PUMP", "portable", 1 );
+    rocketnet_test_pump_chaff_exchange();
+    unsetenv( "ROCKETNET_PUMP" );
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static bool threads_work = false;
 
@@ -9560,6 +9764,10 @@ void rocketnet_run_tests()
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_batch_pump );
         RUN_TEST( test_platform_batch_pump_degraded );
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+        RUN_TEST( test_platform_batch_pump_refused_destination );
+        RUN_TEST( test_platform_pump_zero_length_chaff );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
         RUN_TEST( test_value_tracker );

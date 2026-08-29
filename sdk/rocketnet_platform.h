@@ -219,7 +219,8 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         bool ipv6;
-        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is live (probed at create, macOS only, degradable)
+        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (probed at create, macOS only)
+        double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
         rocketnet_platform_socket_handle_t handle;
     };
 
