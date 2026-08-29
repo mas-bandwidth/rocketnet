@@ -1,5 +1,7 @@
 # rocketnet CI: build the library and every tool the Makefile produces, then run the
-# test suite, on ubuntu and macos — the two platforms the Makefile builds on.
+# test suite, on ubuntu and macos — the two platforms the Makefile builds on — and
+# on windows via CMake+MSVC directly (build-and-test-windows below), which is the
+# windows baseline row of the #81 matrix doctrine made real.
 #
 # This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
 # then run bin/test directly. The Linux build links the XDP dataplane against
@@ -44,6 +46,40 @@ jobs:
 
       - name: Run tests
         run: ./bin/test
+
+  # The windows leg (#81's baseline doctrine): the portable driver built with
+  # MSVC — the first machine ever to compile the windows arm — and the full
+  # test suite run on the runner, Debug and Release. /fp:precise comes from
+  # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
+  # policy. libsodium comes from vcpkg (preinstalled on the runner); the
+  # multi-config generator puts binaries under bin/<config>. Two tests are
+  # compiled out on windows, named and logged by the suite itself: the
+  # refused-destination and zero-length-chaff pump tests, whose raw-socket
+  # injector is posix-only.
+
+  build-and-test-windows:
+    name: windows-2025 / ${{ matrix.build_type }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install libsodium (vcpkg)
+        run: vcpkg install libsodium:x64-windows
+
+      - name: Configure
+        run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Run tests
+        shell: bash
+        run: ./bin/${{ matrix.build_type }}/test.exe
 
   # The GSO driver leg (#97): the same suite, byte-identical above the seam,
   # against the server transport built on the non-root GSO driver --

@@ -40,7 +40,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # server xdp — the XDP program source is packed as a tarball into a generated
 # header; the SDK builds and loads it on the target kernel at runtime.
+# regeneration needs bash/tar/xxd, which windows doesn't reliably have; the
+# header is committed and the XDP dataplane is linux-only, so the windows
+# build consumes the committed artifact as-is.
 
+if(NOT WIN32)
 add_custom_command(
     COMMENT "Generating rocketnet_server_xdp.h"
     OUTPUT ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
@@ -54,6 +58,7 @@ add_custom_command(
     COMMAND bash -c "rm -f rocketnet_server_xdp.tar.gz"
     DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h
 )
+endif()
 
 
 # rocketnet
@@ -66,10 +71,18 @@ add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_ser
 find_package(Threads REQUIRED)
 
 # libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
-# package (brew on mac, libsodium-dev on linux) so construction moves quickly;
-# the gutted two-file vendor replaces this before anything ships.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SODIUM REQUIRED libsodium)
+# package (brew on mac, libsodium-dev on linux, vcpkg on windows) so
+# construction moves quickly; the gutted two-file vendor replaces this before
+# anything ships. Windows has no pkg-config, so the library is found directly
+# there -- vcpkg's toolchain file puts its installed tree on the find path,
+# and find_library returns a full path so SODIUM_LIBRARY_DIRS stays empty.
+if(WIN32)
+    find_path(SODIUM_INCLUDE_DIRS sodium.h REQUIRED)
+    find_library(SODIUM_LIBRARIES NAMES libsodium sodium REQUIRED)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SODIUM REQUIRED libsodium)
+endif()
 target_include_directories(rocketnet PUBLIC ${SODIUM_INCLUDE_DIRS})
 target_link_directories(rocketnet PUBLIC ${SODIUM_LIBRARY_DIRS})
 target_link_libraries(rocketnet ${SODIUM_LIBRARIES})

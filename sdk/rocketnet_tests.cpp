@@ -9981,6 +9981,12 @@ void rocketnet_run_tests()
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         RUN_TEST( test_platform_batch_pump_refused_destination );
         RUN_TEST( test_platform_pump_zero_length_chaff );
+#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+        // a skipped test is named and logged, never silent: both drive the
+        // posix raw-socket injector beside the platform socket, which has no
+        // windows arm (and the chaff test also leans on setenv)
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_batch_pump_refused_destination [SKIPPED on windows: posix raw-socket injector]" );
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_pump_zero_length_chaff [SKIPPED on windows: posix raw-socket injector]" );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
