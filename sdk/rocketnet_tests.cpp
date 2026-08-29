@@ -9554,8 +9554,22 @@ void rocketnet_test_config_env_round_trip()
     rocketnet_check( server_has_driver );
 }
 
+// expected-refusal bracket: these tests PROVOKE refusals and assert them
+// by return value, so the error chatter of a refusal that is the point is
+// quieted for the provocation and the #107 posture (errors always print)
+// restored right after. nothing true is lost: when a provoked refusal
+// unexpectedly succeeds there was no error line to see anyway, and the
+// failing check names the spot.
+
+static void rocketnet_test_expect_refusals( bool expecting )
+{
+    rocketnet_log_level( expecting ? ROCKETNET_LOG_LEVEL_NONE : ROCKETNET_LOG_LEVEL_ERROR );
+}
+
 void rocketnet_test_config_validation()
 {
+    rocketnet_test_expect_refusals( true );
+
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
 
@@ -9639,12 +9653,16 @@ void rocketnet_test_config_validation()
     setenv( "ROCKETNET_MAX_CLIENTS", "0", 1 );
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:41031", &server_config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
+
+    rocketnet_test_expect_refusals( false );
 }
 
 void rocketnet_test_driver_ladder_parse()
 {
+    rocketnet_test_expect_refusals( true );
+
     const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
     const int mac_endpoint[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
 
@@ -9710,6 +9728,8 @@ void rocketnet_test_driver_ladder_parse()
 
     rocketnet_check( rocketnet_driver_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
+
+    rocketnet_test_expect_refusals( false );
 }
 
 void rocketnet_test_config_precedence()
@@ -9725,7 +9745,7 @@ void rocketnet_test_config_precedence()
 
     // default layer
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:41032", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     rocketnet_server_transport_destroy( server );
@@ -9733,7 +9753,7 @@ void rocketnet_test_config_precedence()
     // struct displaces default
 
     config.max_payload_bytes = 18000;
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:41032", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
     rocketnet_server_transport_destroy( server );
@@ -9741,7 +9761,7 @@ void rocketnet_test_config_precedence()
     // env displaces struct
 
     setenv( "ROCKETNET_MAX_PAYLOAD_BYTES", "20000", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:41032", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
     rocketnet_server_transport_destroy( server );
@@ -9752,9 +9772,11 @@ void rocketnet_test_config_precedence()
 // the rung-forcing exchange: pin a driver list on the server, expect the
 // named grant, and pass real payloads both ways through it -- the matrix
 // doctrine's runtime form. the pin rides the struct, so ROCKETNET_DRIVER
-// is cleared for the duration (env would win, by design).
+// is cleared for the duration (env would win, by design). port zero per
+// the #107 law: the kernel grants the port and the token is minted for
+// what was granted, so no other process on the box can race this test.
 
-static void rocketnet_test_driver_pin_exchange( const char * driver_list, const char * expected_driver, const char * server_address )
+static void rocketnet_test_driver_pin_exchange( const char * driver_list, const char * expected_driver )
 {
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
@@ -9763,9 +9785,12 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
     rocketnet_server_transport_dev_config( &server_config );
     snprintf( server_config.driver, sizeof(server_config.driver), "%s", driver_list );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_address, &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), expected_driver ) == 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
@@ -9842,14 +9867,14 @@ void rocketnet_test_server_driver_pin_portable()
     // the portable rung carries traffic on every platform -- the floor
     // must never be the untested tier
 
-    rocketnet_test_driver_pin_exchange( "portable", "portable", "127.0.0.1:41033" );
+    rocketnet_test_driver_pin_exchange( "portable", "portable" );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_server_driver_pin_gso()
 {
-    rocketnet_test_driver_pin_exchange( "gso", "gso", "127.0.0.1:41034" );
+    rocketnet_test_driver_pin_exchange( "gso", "gso" );
 }
 
 void rocketnet_test_server_driver_pin_xdp()
@@ -9868,7 +9893,7 @@ void rocketnet_test_server_driver_pin_xdp()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:41035", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     if ( server )
     {
         rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
@@ -9895,7 +9920,7 @@ void rocketnet_test_server_driver_ladder_fall()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-    struct rocketnet_server_transport_t * probe = rocketnet_server_transport_create( NULL, "127.0.0.1:41036", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * probe = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     const bool xdp_grants = probe != NULL;
     if ( probe )
     {
@@ -9906,7 +9931,7 @@ void rocketnet_test_server_driver_ladder_fall()
 
     snprintf( config.driver, sizeof(config.driver), "xdp,gso,portable" );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:41036", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), xdp_grants ? "xdp" : "gso" ) == 0 );
     rocketnet_server_transport_stop( server );
@@ -9922,7 +9947,7 @@ void rocketnet_test_server_driver_ladder_fall()
 
 void rocketnet_test_server_driver_pin_msgx()
 {
-    rocketnet_test_driver_pin_exchange( "msgx", "msgx", "127.0.0.1:41037" );
+    rocketnet_test_driver_pin_exchange( "msgx", "msgx" );
 }
 
 void rocketnet_test_driver_pump_alias()
@@ -9941,7 +9966,9 @@ void rocketnet_test_driver_pump_alias()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:41038", &config, rocketnet_platform_time() );
+    rocketnet_test_expect_refusals( true );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_test_expect_refusals( false );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
     rocketnet_server_transport_stop( server );
@@ -9956,6 +9983,8 @@ void rocketnet_test_driver_pump_alias()
 
 void rocketnet_test_driver_exhausted()
 {
+    rocketnet_test_expect_refusals( true );
+
     // a list whose every name is a platform-skip exhausts before any
     // attempt and fails loudly; a typo fails at parse. both are create
     // refusals, never silent substitutions.
@@ -9972,12 +10001,14 @@ void rocketnet_test_driver_exhausted()
     snprintf( config.driver, sizeof(config.driver), "gso" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:41039", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
 
     snprintf( config.driver, sizeof(config.driver), "protable" );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:41039", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
 
     rocketnet_test_env_restore( &driver_guard );
+
+    rocketnet_test_expect_refusals( false );
 }
 
 void rocketnet_test_client_driver()
@@ -10017,7 +10048,9 @@ void rocketnet_test_client_driver()
     // exhausts the client ladder loudly on every platform
 
     snprintf( config.driver, sizeof(config.driver), "gso" );
+    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &driver_guard );
 }
