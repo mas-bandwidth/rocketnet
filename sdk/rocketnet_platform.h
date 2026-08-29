@@ -176,9 +176,9 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
 // ----------------------------------------------------------------
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
-    // linux
+    // linux and the BSDs: same pure-POSIX shapes
 
     #include <pthread.h>
     #include <unistd.h>

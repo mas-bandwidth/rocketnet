@@ -71,7 +71,8 @@
 #define ROCKETNET_PLATFORM_MAC                                         2
 #define ROCKETNET_PLATFORM_LINUX                                       3
 #define ROCKETNET_PLATFORM_IOS                                         4
-#define ROCKETNET_PLATFORM_MAX                                         5
+#define ROCKETNET_PLATFORM_BSD                                         5
+#define ROCKETNET_PLATFORM_MAX                                         6
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -116,6 +117,11 @@
     #else
         #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_MAC
     #endif
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    // the BSDs verified per #81 ("Free, open. Net."): one platform bucket,
+    // pure POSIX, portable driver only -- the linux bucket keeps netlink,
+    // GSO and XDP, none of which exist here.
+    #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_BSD
 #else
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_LINUX
 #endif

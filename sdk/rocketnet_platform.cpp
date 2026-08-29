@@ -5,9 +5,12 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
-// linux
+// linux and the BSDs. one POSIX section: the sockets, threads and mutexes
+// are identical; everything linux-only in here (netlink, the wireless
+// ioctl, PMTU discovery, the raw clock) sits behind __linux__ with the
+// portable shape beside it.
 
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
@@ -23,14 +26,23 @@
 #include <unistd.h>
 #include <errno.h>
 #include <unistd.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
 #include <sys/ioctl.h>
-#include <linux/wireless.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+
+#if defined(__linux__)
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/wireless.h>
 #include <alloca.h>
+#endif // #if defined(__linux__)
+
+// the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
+// unadjusted-rate monotonic clock and serves the same reads
+#if !defined(CLOCK_MONOTONIC_RAW)
+#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
+#endif // #if !defined(CLOCK_MONOTONIC_RAW)
 
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
@@ -61,7 +73,7 @@ const char * rocketnet_platform_getenv( const char * var )
 
 int rocketnet_platform_id()
 {
-    return ROCKETNET_PLATFORM_LINUX;
+    return ROCKETNET_PLATFORM;
 }
 
 int rocketnet_platform_connection_type()
@@ -326,6 +338,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     // set don't fragment bit
 
+#if defined(__linux__)
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         int val = IPV6_PMTUDISC_DO;
@@ -336,6 +349,25 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         int val = IP_PMTUDISC_DO;
         setsockopt( socket->handle, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val) );
     }
+#else
+    // the BSDs express DF via the RFC 3542 options where they have them
+    // (FreeBSD both, OpenBSD and NetBSD IPv6 only); same shape the darwin
+    // section uses, and like the linux calls above, refusal is tolerated
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+    #if defined(IPV6_DONTFRAG)
+        int val = 1;
+        setsockopt( socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, &val, sizeof(val) );
+    #endif // #if defined(IPV6_DONTFRAG)
+    }
+    else
+    {
+    #if defined(IP_DONTFRAG)
+        int val = 1;
+        setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val) );
+    #endif // #if defined(IP_DONTFRAG)
+    }
+#endif // #if defined(__linux__)
 
     return socket;
 }
@@ -747,6 +779,8 @@ template <typename T> struct rocketnet_vector_t
 
 // ---------------------------------------------------
 
+#if defined(__linux__)
+
 struct rocketnet_iftable_t
 {
     uint32_t if_index;
@@ -1064,6 +1098,18 @@ static int get_connection_type()
 
     return classify_connection_type( &route_table, &interface_list, &address );
 }
+
+#else // #if defined(__linux__)
+
+// the BSDs: no netlink and no wireless-extensions ioctl to classify with.
+// UNKNOWN is the honest answer and is already the init fallback everywhere.
+
+static int get_connection_type()
+{
+    return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+}
+
+#endif // #if defined(__linux__)
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 

@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <math.h>
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
     #include <sched.h>
     #include <time.h>
@@ -29,7 +29,7 @@
 // the platform clock and the absolute sleep it pairs with
 // -------------------------------------------------------------------
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 uint64_t rocketnet_frame_sync_now_ns()
 {
@@ -42,9 +42,23 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 {
     (void) frame_sync;
     struct timespec ts;
+#if defined(__OpenBSD__)
+    // openbsd has no clock_nanosleep. sleep the remaining interval relative
+    // to a fresh read of the same clock; the spin guard above this call
+    // already absorbs an early wake, and a late one is the scheduler's to
+    // give on every platform.
+    uint64_t now_ns = rocketnet_frame_sync_now_ns();
+    if ( now_ns >= deadline_ns )
+        return;
+    uint64_t remaining_ns = deadline_ns - now_ns;
+    ts.tv_sec = (time_t) ( remaining_ns / ROCKETNET_NANOS_PER_SECOND );
+    ts.tv_nsec = (long) ( remaining_ns % ROCKETNET_NANOS_PER_SECOND );
+    nanosleep( &ts, NULL );
+#else
     ts.tv_sec = (time_t) ( deadline_ns / ROCKETNET_NANOS_PER_SECOND );
     ts.tv_nsec = (long) ( deadline_ns % ROCKETNET_NANOS_PER_SECOND );
     clock_nanosleep( CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL );
+#endif // #if defined(__OpenBSD__)
 }
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -121,7 +135,7 @@ static void rocketnet_frame_sync_sleep_until( struct rocketnet_frame_sync_t * fr
 // priority on the waiting thread, refusal reported and degraded, never faked
 // -------------------------------------------------------------------
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t * frame_sync )
 {
@@ -265,9 +279,9 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
         return NULL;
     }
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
     rocketnet_frame_sync_platform_init();
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
 
     struct rocketnet_frame_sync_t * frame_sync = (struct rocketnet_frame_sync_t*) rocketnet_malloc( context, sizeof( struct rocketnet_frame_sync_t ) );
     if ( !frame_sync )
