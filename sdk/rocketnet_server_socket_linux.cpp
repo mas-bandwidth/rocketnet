@@ -388,17 +388,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     rocketnet_assert( public_address_string );
     rocketnet_assert( filter_value );
     
-    const char * num_queues_env = getenv( "ROCKETNET_SERVER_NUM_QUEUES" );
-    if ( num_queues_env )
-    {
-        num_queues = atoi( num_queues_env );
-    }
-
-    const char * num_os_cpus_env = getenv( "ROCKETNET_SERVER_NUM_OS_CPUS" );
-    if ( num_os_cpus_env )
-    {
-        num_os_cpus = atoi( num_os_cpus_env );
-    }
+    // the queue and cpu counts arrive from the transport config, which the
+    // #106 table already exposes as ROCKETNET_NUM_XDP_QUEUES and
+    // ROCKETNET_NUM_OS_CPUS with validation and loud override logging --
+    // the silent ROCKETNET_SERVER_NUM_QUEUES / ROCKETNET_SERVER_NUM_OS_CPUS
+    // reads that used to live here were the second config mechanism that
+    // system exists to absorb, so they are gone rather than kept as an
+    // unlogged shadow layer
 
     const char * public_address_env = getenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
     if ( public_address_env )

@@ -419,6 +419,79 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 
 #define ROCKETNET_CONNECT_TOKEN_BYTES 768
 
+// -----------------------------------------
+//                        transport config
+// -----------------------------------------
+
+// The per-transport config system (#106). Each transport's config is
+// declared ONCE, in a table below: field name, type, default, valid range.
+// Everything else derives from the table mechanically -- the struct field,
+// the environment variable name (ROCKETNET_ prefix plus the field name
+// uppercased: cfg.driver -> ROCKETNET_DRIVER), the parse, the validation,
+// and the field descriptors a test walks to prove every field round-trips
+// from environment. Adding a field here IS adding it everywhere; there is
+// no second list to forget.
+//
+// Precedence at create is DEFAULT < CONFIG STRUCT < ENVIRONMENT: the app
+// ships what it means in code, and an operator standing at an already-built
+// binary overrides with env vars, no rebuild. Every env override is logged
+// loudly at create with the variable name and the value it displaced
+// (secret fields log redacted). Validation refuses loudly at create on any
+// out-of-range value -- never clamps, never silently corrects.
+//
+// Env encodings: integers are decimal; byte fields are base64 of exactly
+// the field's length (keygen prints keys in base64); the driver field is
+// the ordered candidate list documented at the driver section below. An
+// env var set to the empty string is ignored as if unset, with a log line.
+//
+// The one field class the table cannot carry is pointers (the client's
+// state-change callback below): a pointer cannot ride an env var, so it
+// sits outside the table and outside the env surface, stated here rather
+// than discovered.
+
+// The driver field: an ORDERED CANDIDATE LIST, comma separated, tried left
+// to right at create -- first grant wins, exhausted list fails loudly.
+// "auto" (the default, also the empty string) expands to this platform's
+// recommended order: linux server xdp,gso,portable; macOS msgx,portable;
+// everywhere else portable. A one-element list is a pin: that driver or
+// loud failure, never a silent fall. A name in the known transport set
+// (xdp, gso, msgx, portable) but absent on this platform -- or not
+// applicable to this endpoint, like xdp for a client -- is IGNORED with
+// one soft log line, so one fleet-wide config line deploys unmodified to
+// heterogeneous boxes. A name in no transport set anywhere is a typo and
+// fails loudly at parse, listing the valid names.
+
+#define ROCKETNET_DRIVER_STRING_LENGTH 64
+
+// field flags: ZERO_MEANS_DEFAULT admits zero as "use the built-in
+// default" beside the stated range; SECRET redacts the value in override
+// logging
+
+#define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
+#define ROCKETNET_CONFIG_SECRET                 (1<<1)
+
+#define ROCKETNET_CONFIG_ZERO_BYTES             {0}
+
+// The client transport config table: filter value, fragmentation shape
+// (zero means the defaults above), and the driver candidate list.
+//
+//   INT_FIELD( name, default, min, max, flags )
+//   UINT64_FIELD( name, default, flags )
+//   BYTES_FIELD( name, size, default, flags )
+//   STRING_FIELD( name, capacity, default, flags )
+
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+    BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
+    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
+                                                                         ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
+
+#define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
+#define ROCKETNET_CONFIG_STRUCT_UINT64( name, def, flags )              uint64_t name;
+#define ROCKETNET_CONFIG_STRUCT_BYTES( name, size, def, flags )         uint8_t name[size];
+#define ROCKETNET_CONFIG_STRUCT_STRING( name, capacity, def, flags )    char name[capacity];
+
 // The client connects with a token, never an address: the token names the
 // server, carries the keys, and is the credential -- minted by a backend in
 // production, or locally by rocketnet_write_dev_connect_token against the
@@ -427,15 +500,13 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 // payload this client sends and reassembles, and the per-connection
 // reassembly slot count, zero meaning the defaults above; the client's
 // delivered mirror sizes itself to the client's own drain bound, about
-// 8.4MB at the default maximum -- and an
+// 8.4MB at the default maximum -- the driver candidate list, and an
 // optional state-change callback. NULL config is the development posture:
 // the published test filter, the defaults, no callback.
 
 struct rocketnet_client_transport_config_t
 {
-    uint8_t filter_value[4];
-    int max_payload_bytes;
-    int num_reassembly_slots;
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     void (*state_change_callback)( void * context, int previous_state, int current_state );
 };
 
@@ -499,6 +570,12 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packets( struct rocke
 
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_client_transport_t * client_transport );
 
+// the granted driver, request-vs-granted style: the name of the candidate
+// that won the ladder at create ("portable", "msgx"), never the requested
+// list. any performance claim attaches to what this returns.
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_driver( struct rocketnet_client_transport_t * client_transport );
+
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_client_index( struct rocketnet_client_transport_t * client_transport );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_disconnect( struct rocketnet_client_transport_t * client_transport );
@@ -549,39 +626,51 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocke
 struct rocketnet_server_transport_t;
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
-// the shape with no keys -- create refuses it until keys are supplied,
-// because default keys are how every deployment of a protocol ends up
-// sharing one identity. rocketnet_server_transport_dev_config fills the published
-// development keys and test filter for local work, loudly. num_xdp_queues
-// is the staged driver's queue count whichever staged driver is compiled --
-// XDP queues on the XDP build, reuseport sockets on the GSO build -- kept
-// under its historic name for ABI stability with the language bindings;
-// num_os_cpus configures the XDP transport's core layout. zero means the
-// transport default, and the portable build ignores both.
+// the shape with no keys -- create refuses it until keys are supplied
+// (through the struct or through the env surface), because default keys are
+// how every deployment of a protocol ends up sharing one identity.
+// rocketnet_server_transport_dev_config fills the published
+// development keys and test filter for local work, loudly. NULL config is
+// the default shape. num_xdp_queues
+// is the staged drivers' queue count -- XDP queues on the xdp driver,
+// reuseport sockets on the gso driver -- kept under its historic name for
+// ABI stability with the language bindings; num_os_cpus configures the XDP
+// driver's core layout. zero means the driver default, and the portable
+// driver ignores both.
+//
+// The fragmentation shape rides max_payload_bytes and
+// num_reassembly_slots: the largest payload this server sends and
+// reassembles, and the per-client reassembly slot count. zero means the
+// defaults. budget arithmetic, all spent once at create, approximately --
+// slot records ride along: the reassembly arena is max_clients x slots x
+// (max payload + 1387 staging) per the standard; this implementation's
+// delivered mirror of slots x max payload per client -- the per-update
+// home of completed payloads, sized to the receive drain's completion
+// bound so a completed payload always has a home; and the ack endpoints'
+// fragment aggregate rings, about 48KB per client slot.
+//
+// The server transport config table -- the single declaration everything
+// derives from, per the config system comment above. num_xdp_queues' upper
+// bound is the gso driver's ROCKETNET_GSO_MAX_QUEUES, the tighter of the
+// staged drivers' geometries, refused loudly rather than clamped.
+
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+    UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
+    INT_FIELD(    max_clients,          64,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
+    BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
+    BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
+    BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
+    BYTES_FIELD(  server_secret_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          ROCKETNET_CONFIG_SECRET )    \
+    INT_FIELD(    num_xdp_queues,        0,                              1, 32,                                                ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_os_cpus,           0,                              1, 256,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
+                                                                         ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
 
 struct rocketnet_server_transport_config_t
 {
-    uint64_t protocol_id;
-    int max_clients;
-    uint8_t filter_value[4];
-    uint8_t backend_public_key[32];
-    uint8_t server_public_key[32];
-    uint8_t server_secret_key[32];
-    int num_xdp_queues;
-    int num_os_cpus;
-
-    // the fragmentation shape: the largest payload this server sends and
-    // reassembles, and the per-client reassembly slot count. zero means
-    // the defaults. budget arithmetic, all spent once at create,
-    // approximately -- slot records ride along: the reassembly arena is
-    // max_clients x slots x (max payload + 1387 staging) per the
-    // standard; this implementation's delivered mirror of slots x max
-    // payload per client -- the per-update home of completed payloads,
-    // sized to the receive drain's completion bound so a completed
-    // payload always has a home; and the ack endpoints' fragment
-    // aggregate rings, about 48KB per client slot.
-    int max_payload_bytes;
-    int num_reassembly_slots;
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
 };
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config );
@@ -606,6 +695,14 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_ser
 // GSO driver property; the XDP driver binds the port it is given.)
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
+
+// the granted driver, request-vs-granted style: the name of the candidate
+// that won the ladder at create ("xdp", "gso", "msgx", "portable"), never
+// the requested list. the 1000s-of-players claims attach to the granted
+// tier this returns, not the requested one -- one log line at create names
+// the same grant and why every earlier candidate refused.
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct rocketnet_server_transport_t * server_transport );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 

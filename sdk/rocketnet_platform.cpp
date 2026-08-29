@@ -3052,3 +3052,58 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 }
 
 #endif // #if !defined( ROCKETNET_PLATFORM_HAS_BATCH_PUMP )
+
+// ----------------------------------------------------------------
+
+// pump-request socket create (#106): the driver ladder's entry into the
+// platform pump selection. pump NULL or "auto" is the pre-existing
+// behavior -- probe where the platform has a batch pump, honoring the
+// ROCKETNET_PUMP override. "portable" forces the portable pump: the
+// request wins and no probe result matters. "msgx" REQUIRES the darwin
+// batch pump: refused probes (and the ROCKETNET_PUMP=portable override,
+// the pre-#106 surface this system absorbs) fail loudly here so a pinned
+// rung refuses rather than silently degrading; the granted pump's own
+// live-refusal pause-and-reprobe discipline (#102) remains the driver's
+// internal behavior below the ladder.
+
+rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump )
+{
+    const bool require_msgx = pump && strcmp( pump, "msgx" ) == 0;
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
+
+    if ( require_msgx )
+    {
+        rocketnet_error( "msgx pump is not available on this platform" );
+        return NULL;
+    }
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC
+
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size );
+    if ( !socket )
+        return NULL;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+
+    const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
+
+    if ( force_portable )
+    {
+        socket->msgx = false;
+    }
+    else if ( require_msgx && !socket->msgx )
+    {
+        const char * pump_override = rocketnet_platform_getenv( "ROCKETNET_PUMP" );
+        if ( pump_override && strcmp( pump_override, "portable" ) == 0 )
+            rocketnet_error( "msgx pump refused: ROCKETNET_PUMP=portable (the pre-#106 override; ROCKETNET_DRIVER=portable is the successor)" );
+        else
+            rocketnet_error( "msgx pump refused by the probe" );
+        rocketnet_platform_socket_destroy( socket );
+        return NULL;
+    }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+
+    return socket;
+}

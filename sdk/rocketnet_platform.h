@@ -54,6 +54,13 @@ ROCKETNET_EXPORT_FUNC bool rocketnet_platform_client_dual_stack();
 
 ROCKETNET_EXPORT_FUNC struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
 
+// pump-request create (#106): the driver ladder's entry into pump
+// selection. pump NULL/"auto" behaves exactly like the plain create above
+// (probe, honoring ROCKETNET_PUMP); "portable" forces the portable pump;
+// "msgx" requires the darwin batch pump or returns NULL loudly.
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
+
 ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to, const void * packet_data, int packet_bytes );
