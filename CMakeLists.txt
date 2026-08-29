@@ -14,23 +14,6 @@ if(ROCKETNET_SERVER_GSO)
     add_compile_definitions(ROCKETNET_SERVER_GSO=1)
 endif()
 
-# strict floating point. Estate policy for mas-bandwidth network libraries: "generally
-# speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
-#   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
-#     -ffp-contract=fast, which contracts across statements, and clang's default =on still
-#     fuses within a single expression.
-#   - MSVC: /fp:precise, which since VS 2022 does not imply contraction.
-# rocketnet's float wire encoding is a bit copy (memcpy of the bits), so
-# this is the family floor rather than a wire fix: the float arithmetic here is the RTT,
-# jitter and bandwidth tracking. Contraction is architecture-dependent (FMA is in the
-# aarch64 baseline and absent from the x86-64 one), so any float arithmetic that ever
-# nears the wire diverges bit-wise between architectures without it. Set globally, so
-# every target in this file -- C and C++ -- builds with it; CI builds through this file.
-if(MSVC)
-    add_compile_options(/fp:precise)
-else()
-    add_compile_options(-ffp-contract=off)
-endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
@@ -65,6 +48,29 @@ endif()
 
 project(rocketnet)
 enable_language(CXX)
+
+# strict floating point. Estate policy for mas-bandwidth network libraries: "generally
+# speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
+#   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
+#     -ffp-contract=fast, which contracts across statements, and clang's default =on still
+#     fuses within a single expression.
+#   - MSVC: /fp:precise, which since VS 2022 does not imply contraction.
+# rocketnet's float wire encoding is a bit copy (memcpy of the bits), so
+# this is the family floor rather than a wire fix: the float arithmetic here is the RTT,
+# jitter and bandwidth tracking. Contraction is architecture-dependent (FMA is in the
+# aarch64 baseline and absent from the x86-64 one), so any float arithmetic that ever
+# nears the wire diverges bit-wise between architectures without it. Set here, directly
+# after the first project() call -- the MSVC variable is undefined before the compiler
+# is detected, and testing it earlier silently handed every compiler the gcc/clang
+# branch (the windows leg's D9002 "ignoring unknown option -ffp-contract=off" caught
+# it). Every target in this file -- C and C++ -- is created after this line, so all
+# of them build with the floor; CI builds through this file.
+if(MSVC)
+    add_compile_options(/fp:precise)
+else()
+    add_compile_options(-ffp-contract=off)
+endif()
+
 file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)

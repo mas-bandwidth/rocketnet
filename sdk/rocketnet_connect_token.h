@@ -9,6 +9,7 @@
 #define ROCKETNET_CONNECT_TOKEN_H
 
 #include <stdint.h>
+#include "rocketnet.h"
 
 // The connect token, per STANDARD.md. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
@@ -146,11 +147,15 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 // address that does not parse.
 
 // C linkage: this one is also the public dev helper on the rocketnet.h
-// surface, and the two declarations must agree.
+// surface, and the two declarations must agree -- via the same macro, because
+// in the shared build ROCKETNET_EXPORT_FUNC carries __declspec(dllexport) and
+// MSVC hard-errors (C2375) on a plain extern "C" redeclaration of it. gcc and
+// clang merge the two silently, which is how this shipped unnoticed until the
+// first windows build.
 
-extern "C" int rocketnet_write_dev_connect_token( const char * server_address_string,
-                                                  uint64_t client_id,
-                                                  uint64_t current_timestamp,
-                                                  uint8_t * connect_token );
+ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string,
+                                                             uint64_t client_id,
+                                                             uint64_t current_timestamp,
+                                                             uint8_t * connect_token );
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H
