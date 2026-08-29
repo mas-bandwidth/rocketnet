@@ -45,6 +45,29 @@ jobs:
       - name: Run tests
         run: ./bin/test
 
+  # The GSO driver leg (#97): the same suite, byte-identical above the seam,
+  # against the server transport built on the non-root GSO driver --
+  # SO_REUSEPORT sharding, sendmmsg/recvmmsg, UDP GSO/GRO with runtime
+  # probing. Linux only, unprivileged by design, so it runs wherever the
+  # portable leg runs. The matrix is the test of the abstraction.
+
+  build-and-test-gso:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Build (GSO driver)
+        run: make build-gso
+
+      - name: Run tests (GSO driver)
+        run: ./bin/test
+
   # The C# binding smoke: build the shared library (the target the binding
   # loads at runtime), build the binding and its smoke test with the .NET 8
   # SDK (the binding's TFM floor), and run the smoke against the built

@@ -64,41 +64,6 @@
 #define UDP_GRO 104
 #endif
 
-#ifndef ROCKETNET_GSO_DEFAULT_QUEUES
-#define ROCKETNET_GSO_DEFAULT_QUEUES                                         4
-#endif
-
-#define ROCKETNET_GSO_MAX_QUEUES                                            32
-
-// send staging: one phase's worth of slots, the same budget as the xdp
-// driver's send queue. each slot is a frame-stride wire packet.
-
-#define ROCKETNET_GSO_SEND_QUEUE_SIZE                             ( 4096 * 4 )
-
-// receive staging per queue per buffer: half the process array, so two
-// queues at full tilt cover a whole drain and a single flooded queue fills
-// its pair between drains and drops counted -- correct behaviour under
-// flood, ample at design load where the reuseport hash spreads flows
-
-#define ROCKETNET_GSO_RECV_QUEUE_SIZE                                     8192
-
-// recvmmsg geometry: how many kernel messages one call drains, and how big
-// one message's buffer is. with GRO on, one message is a coalesced run of
-// same-flow segments up to the kernel's coalescing budget (~64KB), so the
-// buffer takes the maximum; without GRO a message is one datagram and the
-// same buffer is simply generous.
-
-#define ROCKETNET_GSO_RECV_BATCH                                            64
-#define ROCKETNET_GSO_RECV_BUFFER_BYTES                                  65536
-
-// send batching geometry: sendmmsg messages per call, GSO segments per
-// super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
-// cap keeping every super-datagram inside the 16-bit UDP payload space
-
-#define ROCKETNET_GSO_SEND_BATCH                                           128
-#define ROCKETNET_GSO_MAX_SEGMENTS                                          64
-#define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
-
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing,
 // exactly as in the xdp driver: each field between walls is touched by a
 // different thread, and without the walls those fields would share cache
@@ -425,11 +390,16 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    int df = 1;
     if ( ipv6 )
+    {
+        int df = 1;
         setsockopt( fd, IPPROTO_IPV6, IPV6_DONTFRAG, &df, sizeof(df) );
+    }
     else
-        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &( int { IP_PMTUDISC_DO } ), sizeof(int) );
+    {
+        int pmtud = IP_PMTUDISC_DO;
+        setsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, sizeof(pmtud) );
+    }
 
     return fd;
 }
@@ -840,6 +810,12 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
 
         while ( batch_end < num_slots && num_messages < ROCKETNET_GSO_SEND_BATCH )
         {
+            // close the batch while a full run still fits the iovec array:
+            // the run builder below may take up to MAX_SEGMENTS entries
+
+            if ( num_iovecs + ROCKETNET_GSO_MAX_SEGMENTS > ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS )
+                break;
+
             struct rocketnet_server_gso_send_info_t * info = &gso->send.info[batch_end];
 
             if ( info->packet_bytes <= 0 )
@@ -897,7 +873,6 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
             {
                 // unroutable on this socket family; drop the run counted
                 gso->counter_send_dropped += (uint64_t) run_count;
-                message_first_slot[num_messages] = run_first;       // slot bookkeeping not needed for drops
                 continue;
             }
 

@@ -862,19 +862,29 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     acks->update_count++;
 
-    // flush. the portable response ring sends inline here; the staged
-    // drivers are flushed by rocketnet_server_transport_send_packets -- the xdp
-    // buffer flip retargets the drain and zeroes the buffers behind it, so
-    // flipping with nothing staged would destroy in-flight packets. update
-    // marks itself staged (responses and keep-alives ride the same buffers)
-    // and the flush below flips only when something has staged since the
-    // last flip, which makes a redundant send_packets call a no-op instead
-    // of the failure this machinery produced live. the gso flush is
-    // naturally idempotent but rides the same guard.
+    // flush. the portable response ring sends inline here, and the xdp
+    // worker drains its staging continuously off-thread, so on both of
+    // those drivers update's own responses and keep-alives reach the wire
+    // whether or not the application ever calls
+    // rocketnet_server_transport_send_packets -- a seam property the call sites
+    // rely on. the xdp buffer flip in send_packets retargets the drain and
+    // zeroes the buffers behind it, so flipping with nothing staged would
+    // destroy in-flight packets: update marks itself staged and the flush
+    // below flips only when something has staged since the last flip. the
+    // gso driver has no off-thread sender, so it preserves the same
+    // property by flushing update's own staging inline right here -- the
+    // flush is main-thread and idempotent -- and send_flushed advances with
+    // it so send_packets flips only for what the fill phase stages after
+    // this point.
 
 #if ROCKETNET_SERVER_STAGED
 
     server_transport->send_staged++;
+
+#if ROCKETNET_SERVER_GSO
+    server_transport->send_flushed = server_transport->send_staged;
+    rocketnet_server_driver_send_packets( server_transport->driver_socket );
+#endif // #if ROCKETNET_SERVER_GSO
 
 #else // #if ROCKETNET_SERVER_STAGED
 

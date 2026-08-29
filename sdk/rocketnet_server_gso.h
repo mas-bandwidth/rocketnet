@@ -32,6 +32,43 @@
 
 struct rocketnet_server_gso_t;
 
+// the driver's geometry, all compile time:
+
+#ifndef ROCKETNET_GSO_DEFAULT_QUEUES
+#define ROCKETNET_GSO_DEFAULT_QUEUES                                         4
+#endif
+
+#define ROCKETNET_GSO_MAX_QUEUES                                            32
+
+// send staging: one phase's worth of slots, the same budget as the xdp
+// driver's send queue. each slot is a frame-stride wire packet.
+
+#define ROCKETNET_GSO_SEND_QUEUE_SIZE                             ( 4096 * 4 )
+
+// receive staging per queue per buffer: half the process array, so two
+// queues at full tilt cover a whole drain and a single flooded queue fills
+// its pair between drains and drops counted -- correct behaviour under
+// flood, ample at design load where the reuseport hash spreads flows
+
+#define ROCKETNET_GSO_RECV_QUEUE_SIZE                                     8192
+
+// recvmmsg geometry: how many kernel messages one call drains, and how big
+// one message's buffer is. with GRO on, one message is a coalesced run of
+// same-flow segments up to the kernel's coalescing budget (~64KB), so the
+// buffer takes the maximum; without GRO a message is one datagram and the
+// same buffer is simply generous.
+
+#define ROCKETNET_GSO_RECV_BATCH                                            64
+#define ROCKETNET_GSO_RECV_BUFFER_BYTES                                  65536
+
+// send batching geometry: sendmmsg messages per call, GSO segments per
+// super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
+// cap keeping every super-datagram inside the 16-bit UDP payload space
+
+#define ROCKETNET_GSO_SEND_BATCH                                           128
+#define ROCKETNET_GSO_MAX_SEGMENTS                                          64
+#define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
+
 // feature bits reported by rocketnet_server_gso_features: what the runtime
 // probe found and the driver is actually using
 
