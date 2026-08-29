@@ -5509,6 +5509,16 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
     }
     rocketnet_check( received == 3 );
 
+    // the pump is still the expected one AFTER the exchange, not merely at
+    // create. the create-time assertion pins only the probe (which
+    // exercises recvmsg_x alone); a send-half-only breakage -- the
+    // realistic ABI-drift regression -- would pause the pump mid-exchange
+    // and finish portable, and the review demonstrated the whole suite
+    // greening over exactly that. the pause outlives any test by design
+    // (60 s), so a mid-exchange degradation cannot hide from this line.
+
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), expected_pump ) == 0 );
+
     rocketnet_platform_socket_destroy( socket );
 }
 
@@ -5565,6 +5575,8 @@ static void rocketnet_test_pump_chaff_exchange( void )
     rocketnet_address_parse( &bind_address, "0.0.0.0" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( socket );
+
+    const char * pump_at_create = rocketnet_platform_socket_pump( socket );
 
     int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     rocketnet_check( injector >= 0 );
@@ -5678,6 +5690,11 @@ static void rocketnet_test_pump_chaff_exchange( void )
     for ( int j = 0; j < single_bytes; j++ )
         rocketnet_check( single_received[j] == 0x5a );
 
+    // chaff exercised the pump it claims to have exercised: no silent
+    // mid-run degradation
+
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_at_create ) == 0 );
+
     close( injector );
     rocketnet_platform_socket_destroy( socket );
 }
@@ -5745,6 +5762,11 @@ void rocketnet_test_platform_batch_pump_refused_destination()
     }
 
     rocketnet_check( distinct == num_packets - 1 );
+
+    // the refused destination is weather, never a pause: the pump must
+    // still be the platform's expected one after the error path ran
+
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), ROCKETNET_TEST_EXPECTED_PUMP ) == 0 );
 
     rocketnet_platform_socket_destroy( socket );
 }
