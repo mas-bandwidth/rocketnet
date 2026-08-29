@@ -473,13 +473,23 @@ if [ "$MODE" = "selftest" ]; then
     # the watchdog: a mutation that HANGS instead of failing must still
     # end red -- the killer fires only if the selftest overruns its bound
 
-    # stdout is DETACHED (</dev/null >/dev/null): the sleep child inherits
-    # the subshell's descriptors, and an inherited stdout pipe would make
-    # every command-substitution caller -- CI runners included -- wait the
-    # full 120s on the PASS path (measured: 1s to a file, 120s captured).
-    # the timeout message rides stderr, which timeout diagnosis owns.
+    # ALL THREE descriptors are DETACHED (</dev/null >/dev/null 2>&1): the
+    # sleep child inherits the subshell's descriptors, and ANY inherited
+    # pipe -- stdout or stderr -- makes a capturing caller (CI runners,
+    # 2>&1 harnesses) wait the full 120s on the PASS path (measured: 1s to
+    # a file, 120s captured via 2>&1 when only stdout was detached). the
+    # timeout message therefore comes from the MAIN process's TERM trap,
+    # whose stderr is legitimately attached and closes at exit; a marker
+    # file distinguishes watchdog fire from an external TERM. bash DEFERS
+    # trap execution until the foreground command completes, so a hang
+    # INSIDE a command would outlive TERM alone -- the KILL backstop five
+    # seconds later cannot be trapped or deferred, and a KILLed selftest
+    # exits 137: message lost, redness kept (the contract is that a hang
+    # ends red; the message is best-effort).
 
-    ( sleep 120 && echo "selftest FAIL: watchdog timeout (120s)" >&2 && kill -TERM $$ ) </dev/null >/dev/null &
+    WATCHDOG_MARK="$(mktemp)" || WATCHDOG_MARK=""
+    trap 'if [ -n "$WATCHDOG_MARK" ] && [ -f "$WATCHDOG_MARK.fired" ]; then echo "selftest FAIL: watchdog timeout (120s)" >&2; else echo "selftest FAIL: terminated" >&2; fi; exit 124' TERM
+    ( sleep 120; [ -n "$WATCHDOG_MARK" ] && touch "$WATCHDOG_MARK.fired"; kill -TERM $$; sleep 5; kill -KILL $$ ) </dev/null >/dev/null 2>&1 &
     WATCHDOG_PID=$!
 
     expect_match()
@@ -519,10 +529,11 @@ if [ "$MODE" = "selftest" ]; then
     # read-back mismatch, precision of the no-channel discriminator, and
     # the injected outside-set arms -- the fail-site
     # enumeration receipt on the PR pairs each site with its case, so the
-    # coverage claim is a checkable list, not an adjective. the stubs
-    # REPLAY REAL OUTPUT
-    # captured from xdp-tools 1.6.2 on the lima VM (see the grader's
-    # derivation comment), carry a second interface with a program attached
+    # coverage claim is a checkable list, not an adjective. the xdp-loader stub
+    # REPLAYS REAL OUTPUT captured from xdp-tools 1.6.2 on the lima VM
+    # (see the grader's derivation comment); the ethtool stub emits
+    # real-shaped output (the exact "Combined:" table layout ethtool
+    # prints, not a byte capture). both carry a second interface with a program attached
     # so the interface argument is load-bearing, and ASSERT their arguments
     # -- a stub invoked with a missing or unknown interface exits 99, so
     # wiring drift becomes a loud query failure, never a silent pass. the
@@ -534,6 +545,8 @@ if [ "$MODE" = "selftest" ]; then
     if [ -z "$STUB_DIR" ]; then
         echo "selftest FAIL: could not create a private temp dir for the stubs"
         kill "$WATCHDOG_PID" 2>/dev/null
+        trap - TERM
+        rm -f "$WATCHDOG_MARK" "$WATCHDOG_MARK.fired" 2>/dev/null
         exit 1
     fi
     # (a noexec TMPDIR surfaces below as the first enforcement case failing
@@ -553,7 +566,7 @@ case "$1" in
     status)
         IFACE="$2"
         [ -n "$IFACE" ] || { echo "stub: status invoked without an interface" >&2; exit 99; }
-        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '"'"'$IFACE'"'"'" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
         [ -f "$STUB_STATE_DIR/query_broken" ] && { echo "stub: status now failing (post-act failure mode)" >&2; exit 1; }
         STATE="$(cat "$STUB_STATE_DIR/state.$IFACE")"
         echo "$BANNER"
@@ -619,7 +632,7 @@ case "$1" in
     -L)
         IFACE="$2"
         [ -n "$IFACE" ] || { echo "stub: -L without an interface" >&2; exit 99; }
-        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "stub: -L on unknown interface '"'"'$IFACE'"'"'" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "stub: -L on unknown interface '$IFACE'" >&2; exit 99; }
         [ "$3" = "combined" ] || { echo "stub: unexpected -L form $*" >&2; exit 99; }
         case "$(cat "$STUB_STATE_DIR/setl_mode")" in
             works) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
@@ -921,6 +934,8 @@ exit 0'
 
     kill "$WATCHDOG_PID" 2>/dev/null
     wait "$WATCHDOG_PID" 2>/dev/null
+    trap - TERM
+    rm -f "$WATCHDOG_MARK" "$WATCHDOG_MARK.fired" 2>/dev/null
 
     if [ $PASS -eq 1 ]; then
         echo "rocketnet-provision selftest passed"
