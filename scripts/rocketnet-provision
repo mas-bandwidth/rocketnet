@@ -299,7 +299,7 @@ r3_enforce()
         # text is fetched by a second read-only query only on the failure path
 
         XDP_GRADE="$(r3_query_and_grade "$INTERFACE")"
-        XDP_GRADE_RC=$?
+        XDP_GRADE_RC=$?      # belt: the explicit token case below re-guards what this rc already gates
 
         if [ $XDP_GRADE_RC -ne 0 ]; then
             # the second query can race a change on the NIC; its staleness
@@ -469,12 +469,19 @@ if [ "$MODE" = "selftest" ]; then
     expect_match "eth0"     " 34:  0 0 PCI-MSI 2097156-edge      xeth0-TxRx-0" "no"
     expect_match "ens1f0"   " 35:  0 0 IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0" "no"
 
-    # THE OUTCOME AND ENFORCEMENT PINS (rounds eleven and twelve): every
-    # outcome of the graded functions is driven through the REAL functions,
-    # and the CONSUMERS are driven too -- r3_enforce and r7_enforce run end
-    # to end, verify and provision modes alike, against stub environments,
-    # with the exit state asserting the UNMET/say distinction (a fail
-    # turned into a say goes red here). the stubs REPLAY REAL OUTPUT
+    # THE OUTCOME AND ENFORCEMENT PINS (rounds eleven through thirteen):
+    # every outcome of the graded functions is driven through the REAL
+    # functions, and the CONSUMERS are driven too -- r3_enforce and
+    # r7_enforce run end to end, verify and provision modes alike, against
+    # stub environments, with the exit state asserting the UNMET/say
+    # distinction (a fail turned into a say goes red here), and EVERY fail
+    # site in both enforcement functions has a driving case: tool absence,
+    # query failure, occupied in verify, act refused, act lied, post-act
+    # query failure, read-back mismatch, precision of the no-channel
+    # discriminator, and the injected outside-set arms -- the fail-site
+    # enumeration receipt on the PR pairs each site with its case, so the
+    # coverage claim is a checkable list, not an adjective. the stubs
+    # REPLAY REAL OUTPUT
     # captured from xdp-tools 1.6.2 on the lima VM (see the grader's
     # derivation comment), carry a second interface with a program attached
     # so the interface argument is load-bearing, and ASSERT their arguments
@@ -504,6 +511,7 @@ case "$1" in
     status)
         IFACE="$2"
         [ -n "$IFACE" ] || { echo "stub: status invoked without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/query_broken" ] && { echo "stub: status now failing (post-act failure mode)" >&2; exit 1; }
         [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
         STATE="$(cat "$STUB_STATE_DIR/state.$IFACE")"
         echo "$BANNER"
@@ -530,6 +538,7 @@ case "$1" in
             works) echo clean > "$STUB_STATE_DIR/state.$IFACE"; exit 0 ;;
             fails) echo "stub: unload refused" >&2; exit 1 ;;
             lies)  exit 0 ;;
+            works_then_query_fails) echo clean > "$STUB_STATE_DIR/state.$IFACE"; touch "$STUB_STATE_DIR/query_broken"; exit 0 ;;
         esac
         ;;
 esac
@@ -547,8 +556,13 @@ case "$1" in
     -l)
         IFACE="$2"
         [ -n "$IFACE" ] || { echo "stub: -l without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/l_broken" ] && { echo "stub: -l now failing (post-act failure mode)" >&2; exit 1; }
         [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "netlink error: no device matches name (offset 24)" >&2; exit 1; }
         COUNT="$(cat "$STUB_STATE_DIR/combined.$IFACE")"
+        if [ "$COUNT" = "vanished" ]; then
+            echo "Cannot get device channel parameters: No such device" >&2
+            exit 1
+        fi
         if [ "$COUNT" = "nochannels" ]; then
             echo "netlink error: Operation not supported" >&2
             exit 1
@@ -567,6 +581,7 @@ case "$1" in
             works) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
             fails) echo "stub: -L refused" >&2; exit 1 ;;
             lies)  exit 0 ;;
+            works_then_l_fails) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; touch "$STUB_STATE_DIR/l_broken"; exit 0 ;;
         esac
         ;;
 esac
@@ -591,7 +606,7 @@ STUB
           r7_enforce; exit $UNMET ) 2>&1
     }
 
-    expect_case()   # $1 name  $2 got-rc  $3 want-rc  $4 output  $5 required-substring  [$6 required-UNMET-count]
+    expect_case()   # $1 name  $2 got-rc  $3 want-rc  $4 output  $5 required-substring  [$6 required-UNMET-count]  [$7 forbidden-substring]
     {
         if [ "$2" != "$3" ]; then
             echo "selftest FAIL: $1: exit $2, want $3"; PASS=0
@@ -599,6 +614,8 @@ STUB
             echo "selftest FAIL: $1: output lacks: $5"; PASS=0
         elif [ -n "${6:-}" ] && [ "$(printf '%s\n' "$4" | grep -c UNMET)" != "$6" ]; then
             echo "selftest FAIL: $1: UNMET count $(printf '%s\n' "$4" | grep -c UNMET), want $6"; PASS=0
+        elif [ -n "${7:-}" ] && printf '%s\n' "$4" | grep -q "$7"; then
+            echo "selftest FAIL: $1: output must not contain: $7"; PASS=0
         fi
     }
 
@@ -660,6 +677,45 @@ STUB
     echo 4 > "$STUB_STATE_DIR/combined.q4"; echo lies > "$STUB_STATE_DIR/setl_mode"
     OUT="$(run_r7 0 q4 7)"; expect_case "r7 provision set-lies" $? 1 "$OUT" "reads back 4" 1
 
+    # --- post-act failures: the act succeeds and THEN the world stops
+    # answering -- the re-check's own failure arm must be UNMET, not a
+    # silent success ride-along ---
+
+    echo foreign > "$STUB_STATE_DIR/state.p3"; echo works_then_query_fails > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p3)"; expect_case "r3 provision post-unload query-fails" $? 1 "$OUT" "could not re-query" 1
+    rm -f "$STUB_STATE_DIR/query_broken"
+
+    echo 4 > "$STUB_STATE_DIR/combined.q6"; echo works_then_l_fails > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q6 7)"; expect_case "r7 provision post-set read-fails" $? 1 "$OUT" "could not re-read" 1
+    rm -f "$STUB_STATE_DIR/l_broken"
+
+    # --- precision of the no-channel discriminator: a vanished device in
+    # the ioctl-era spelling must be UNMET, never a no-channel pass (a
+    # widened signature match live-passes exactly this) ---
+
+    echo vanished > "$STUB_STATE_DIR/combined.q7"
+    OUT="$(run_r7 1 q7 7)"; expect_case "r7 verify vanished-device precision" $? 1 "$OUT" "cannot verify the queue count" 1 "no channel surface"
+
+    # --- tool absence: the most reachable live failure arms in the file.
+    # the curated PATH carries only the utilities the enforcement needs,
+    # and not the tool under test ---
+
+    TOOLS_DIR="$STUB_DIR/tools"
+    mkdir -p "$TOOLS_DIR"
+    for TOOL in grep awk cat; do
+        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null || true
+    done
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; PATH="$TOOLS_DIR"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 tool-absent" $RC 1 "$OUT" "install xdp-tools" 1
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; NUM_QUEUES=7; PATH="$TOOLS_DIR"
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r7 tool-absent" $RC 1 "$OUT" "install ethtool" 1
+
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---
 
@@ -671,16 +727,22 @@ STUB
         echo "selftest FAIL: the current-settings Combined must parse to 7 (got rc $STUB_RC, count \"$STUB_COUNT\")"; PASS=0
     fi
 
+    # noise stubs live in their own directory: they must never overwrite
+    # the argument-asserting replay stubs other cases still depend on
+
+    NOISE_DIR="$STUB_DIR/noise"
+    mkdir -p "$NOISE_DIR"
+
     make_noise_stub()
     {
-        printf '#!/bin/sh\n%s\n' "$2" > "$STUB_DIR/$1"
-        chmod +x "$STUB_DIR/$1"
+        printf '#!/bin/sh\n%s\n' "$2" > "$NOISE_DIR/$1"
+        chmod +x "$NOISE_DIR/$1"
     }
 
     make_noise_stub ethtool 'echo "Current hardware settings:" >&2
 echo "Combined:       9" >&2
 exit 0'
-    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" query_combined_stdout ignored0)"
+    STUB_STDOUT="$(PATH="$NOISE_DIR:$PATH" query_combined_stdout ignored0)"
     STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
     if [ "$STUB_COUNT" = "9" ]; then
         echo "selftest FAIL: a Combined on stderr reached the parser -- the captures are merged"; PASS=0
@@ -699,7 +761,7 @@ echo "Interface        Prio  Program name      Mode     ID   Tag               C
 echo "--------------------------------------------------------------------------------------"
 echo "noisy0                 xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
 exit 0'
-    STUB_GRADE="$(PATH="$STUB_DIR:$PATH" r3_query_and_grade noisy0)"
+    STUB_GRADE="$(PATH="$NOISE_DIR:$PATH" r3_query_and_grade noisy0)"
     STUB_RC=$?
     if [ $STUB_RC -ne 0 ] || [ "$STUB_GRADE" != "occupied" ]; then
         echo "selftest FAIL: clean-marker noise on stderr flipped the grade (got rc $STUB_RC, grade \"$STUB_GRADE\") -- the captures are merged"; PASS=0
