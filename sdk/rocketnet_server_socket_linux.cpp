@@ -664,6 +664,10 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             // silence must never verify: an unanswerable exclusivity query
             // is an unmet condition, not a pass
 
+            // -errno is libbpf 1.0's uniform error convention, which is
+            // the tree's documented floor (BUILDING.md) -- pre-1.0 libbpf
+            // returned -1 with errno set and would misreport here
+
             rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
             provisioned = false;
         }
@@ -692,7 +696,11 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         for ( int i = 0; i < 2; i++ )
         {
             // left-bounded like every other token: "xisolcpus=1-7" is not
-            // the parameter
+            // the parameter. accepted-unreachable divergence, recorded: a
+            // command line carrying the same token twice (one valid, one
+            // malformed) can grade differently here than in the script --
+            // this check takes the first left-bounded occurrence, the
+            // script's shell pattern answers for the line as a whole.
 
             const char * token = strstr( value, ranged_tokens[i] );
             while ( token && token != value && token[-1] != ' ' )

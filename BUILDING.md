@@ -120,8 +120,10 @@ Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
 binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
 installs a commit barrier by design — so that tier's claims rest on the space
 game's provisioned server, where this configuration was measured. The pre-flight
-also sets the tree's libbpf floor at 0.8 (`bpf_xdp_query_id`); Ubuntu 22.04's
-libbpf 0.5 is below it, 24.04's is comfortably above.
+also sets the tree's libbpf floor at 1.0 — `bpf_xdp_query_id` plus the uniform
+negative-errno error convention the pre-flight's error reporting assumes
+(pre-1.0 libbpf returned -1 with errno set and would misreport there); Ubuntu
+22.04's libbpf 0.5 is below the floor, 24.04's 1.x is comfortably above.
 
 ## Floating point: rocketnet builds with -ffp-contract=off
 

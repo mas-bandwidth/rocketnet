@@ -91,7 +91,7 @@
 #                             checkable from shell, and nothing to perform.
 #
 # usage:
-#   rocketnet-provision <interface> <num_queues> [verify|sweep] [isolated-range]
+#   rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]
 #
 #     provision (default): perform the runtime tier idempotently, verify the
 #                          boot tier, loud either way
@@ -206,6 +206,11 @@ irq_lines_for_interface()
 # of the one boundary definition provably agree -- including the case that
 # caught round five's escaping bug: eth0.100 must never match eth0x100.
 # runs anywhere, needs nothing, mutates nothing. CI runs it on every push.
+# (the fixture BYTES differ from the C test's deliberately in ways outside
+# the boundary logic: single spaces where the C strings carry doubles, and
+# no trailing newline -- awk strips the newline the C matcher sees, which
+# is exactly why the C after-set carries '\n' and the awk after-set covers
+# end-of-line with the empty string.)
 
 if [ "$MODE" = "selftest" ]; then
     PASS=1
@@ -327,7 +332,13 @@ case " $CMDLINE " in
 esac
 
 for TOKEN in isolcpus nohz_full; do
-    # left-bounded like irqaffinity: "xisolcpus=" is not the parameter
+    # left-bounded like irqaffinity: "xisolcpus=" is not the parameter.
+    # ACCEPTED-UNREACHABLE divergences from the C checker, recorded rather
+    # than chased: a kernel command line with the same token duplicated
+    # (one valid, one malformed) can grade differently between the two
+    # checkers, and an empty interface name never reaches either matcher
+    # (the script refuses empty arguments at the door; the C pre-flight
+    # runs after interface discovery, which cannot return an empty name).
     case " $CMDLINE" in
         *" $TOKEN="[!\ ]*) say "kernel command line carries $TOKEN=<range> (B1)" ;;
         *) fail "kernel command line lacks $TOKEN=<range> (B1): $B1_GUIDANCE" ;;
