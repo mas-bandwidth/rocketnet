@@ -9893,7 +9893,9 @@ void rocketnet_test_server_driver_pin_xdp()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "xdp" );
 
+    rocketnet_test_expect_refusals( true );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_test_expect_refusals( false );
     if ( server )
     {
         rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
@@ -9920,7 +9922,9 @@ void rocketnet_test_server_driver_ladder_fall()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "xdp" );
 
+    rocketnet_test_expect_refusals( true );
     struct rocketnet_server_transport_t * probe = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_test_expect_refusals( false );
     const bool xdp_grants = probe != NULL;
     if ( probe )
     {
