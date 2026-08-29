@@ -654,9 +654,15 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // of game threads strictly between an update and the following
 // send_packets, and the handoff between fill and flush must be a
 // synchronizing operation (a join or a barrier), not a wall-clock wait.
-// send_packets is required once per frame, after update: packets are never
-// sent without it. Calling it again in the same frame is a no-op. The
-// fields of the context are read-only to the caller.
+// send_packets is required once per frame, after update. When staged
+// packets actually leave is per driver, and a caller owns only the
+// guarantee: everything staged before send_packets is sent by it, and
+// nothing is guaranteed sent without it. The portable and GSO drivers
+// also flush update's own staging -- protocol responses and keep-alives
+// -- inline in update; the XDP driver sends nothing until send_packets.
+// Code against the guarantee, not a driver's eagerness. Calling
+// send_packets again in the same frame is a no-op. The fields of the
+// context are read-only to the caller.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
 // dropped instead (payload out of range, or the connection gone) -- the
