@@ -35,11 +35,14 @@ int main()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:40891", &server_config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_time() );
     check( server );
 
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40891", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+    check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_time() );
     check( client );

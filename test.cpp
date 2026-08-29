@@ -11,7 +11,12 @@
 
 int main()
 {
-    rocketnet_quiet( true );
+    // quiet the info chatter, never the errors: a create that returns NULL
+    // explains itself through rocketnet_error, and a test binary that
+    // swallows that explanation fails with a bare check line and no cause
+    // (the port-collision flake of #107 hid exactly that way)
+
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     if ( !rocketnet_init() )
     {

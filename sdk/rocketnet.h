@@ -590,6 +590,17 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stop( struct rocketnet_ser
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport );
 
+// The port the transport actually bound. A public address string carrying
+// port zero asks the kernel for an ephemeral port at create; the granted
+// port is adopted into the advertised address -- so connect tokens minted
+// for it validate -- and this reads it back. Tests and single-box tools
+// build their token address from it instead of hardcoding a port and
+// racing every other process on the machine; production servers know
+// their public address already. (Port-zero discovery is a portable and
+// GSO driver property; the XDP driver binds the port it is given.)
+
+ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
+
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 
 // The payloads delivered by the last update, valid until the next update.

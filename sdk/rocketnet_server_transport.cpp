@@ -474,6 +474,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
 #endif // #if ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
 
+    // a public address created with port zero adopts the granted bind
+    // port, so the advertised address -- the one connect tokens are minted
+    // for and validated against -- is the real one, and
+    // rocketnet_server_transport_port reads it back
+
+    if ( public_address.port == 0 )
+        public_address.port = bind_address.port;
+
     server_transport->bind_address = bind_address;
     server_transport->public_address = public_address;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_RUNNING;
@@ -601,6 +609,12 @@ int rocketnet_server_transport_state( struct rocketnet_server_transport_t * serv
 {
     rocketnet_assert( server_transport );
     return server_transport->state;
+}
+
+uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->bind_address.port;
 }
 
 // process the previous stats frames into published per-second numbers, then
