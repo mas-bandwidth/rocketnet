@@ -658,7 +658,16 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
     {
         unsigned int attached_program_id = 0;
-        if ( bpf_xdp_query_id( (int) interface_index, 0, &attached_program_id ) == 0 && attached_program_id != 0 )
+        const int query_result = bpf_xdp_query_id( (int) interface_index, 0, &attached_program_id );
+        if ( query_result != 0 )
+        {
+            // silence must never verify: an unanswerable exclusivity query
+            // is an unmet condition, not a pass
+
+            rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
+            provisioned = false;
+        }
+        else if ( attached_program_id != 0 )
         {
             rocketnet_warn( "xdp pre-flight: an XDP program (id %u) is already attached to %s (R3): run scripts/rocketnet-provision %s %d", attached_program_id, interface_name, interface_name, num_queues );
             provisioned = false;
@@ -682,7 +691,13 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         const char * ranged_tokens[2] = { "isolcpus=", "nohz_full=" };
         for ( int i = 0; i < 2; i++ )
         {
+            // left-bounded like every other token: "xisolcpus=1-7" is not
+            // the parameter
+
             const char * token = strstr( value, ranged_tokens[i] );
+            while ( token && token != value && token[-1] != ' ' )
+                token = strstr( token + 1, ranged_tokens[i] );
+
             if ( !token || token[strlen( ranged_tokens[i] )] == '\0' || token[strlen( ranged_tokens[i] )] == ' ' )
             {
                 rocketnet_warn( "xdp pre-flight: kernel command line lacks %s<range> (B1): grub + reboot, per scripts/rocketnet-provision", ranged_tokens[i] );
@@ -857,7 +872,14 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
     {
         int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
-        if ( probe_fd >= 0 )
+        if ( probe_fd < 0 )
+        {
+            // silence must never verify
+
+            rocketnet_warn( "xdp pre-flight: could not open a probe socket for the channel query (%s) (R7)", strerror( errno ) );
+            provisioned = false;
+        }
+        else
         {
             struct ethtool_channels channels;
             memset( &channels, 0, sizeof(channels) );
@@ -868,7 +890,13 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             strncpy( ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1 );
             ifr.ifr_data = (char*) &channels;
 
-            if ( ioctl( probe_fd, SIOCETHTOOL, &ifr ) == 0 )
+            const int ethtool_result = ioctl( probe_fd, SIOCETHTOOL, &ifr );
+            if ( ethtool_result != 0 && errno != EOPNOTSUPP && errno != ENOTSUP )
+            {
+                rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, strerror( errno ) );
+                provisioned = false;
+            }
+            else if ( ethtool_result == 0 )
             {
                 if ( (int) channels.combined_count != num_queues )
                 {
@@ -1254,10 +1282,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // get file descriptors for maps so we can communicate with the server_xdp
     // program running in kernel space -- under this instance's own pin root
 
-    char pin_path[128];
+    // the SAME recorded paths destroy will unlink: one construction, one
+    // bound, no re-derivation to drift
 
-    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_config_map", server_socket->pin_root );
-    server_socket->config_map_fd = bpf_obj_get( pin_path );
+    server_socket->config_map_fd = bpf_obj_get( server_socket->pinned_paths[0] );
     if ( server_socket->config_map_fd <= 0 )
     {
         rocketnet_error( "server could not get config map: %s", strerror(errno) );
@@ -1265,8 +1293,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_socket_map", server_socket->pin_root );
-    server_socket->socket_map_fd = bpf_obj_get( pin_path );
+    server_socket->socket_map_fd = bpf_obj_get( server_socket->pinned_paths[1] );
     if ( server_socket->socket_map_fd <= 0 )
     {
         rocketnet_error( "server could not get socket map: %s", strerror(errno) );
@@ -1274,8 +1301,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_stats_map", server_socket->pin_root );
-    server_socket->stats_map_fd = bpf_obj_get( pin_path );
+    server_socket->stats_map_fd = bpf_obj_get( server_socket->pinned_paths[2] );
     if ( server_socket->stats_map_fd <= 0 )
     {
         rocketnet_error( "server could not get stats map: %s", strerror(errno) );

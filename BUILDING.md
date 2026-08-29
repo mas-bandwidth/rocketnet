@@ -10,7 +10,7 @@ Binaries and libraries land in `bin/`. Run the test suite with:
 
 On Linux the build links the XDP dataplane, so it needs the dev packages CI installs:
 
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+    sudo apt install cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
@@ -77,6 +77,25 @@ Cold, on a fresh box, as root:
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
     #    auto ladder falls to gso with the reason named where it is not.
+
+    # 5. AFTER A CRASH (a server that died without destroy): each instance
+    #    leaves a bpffs pin root named for the instance --
+    #    /sys/fs/bpf/rocketnet_xdp_<token>_<pid>_<starttime>_<bootid> -- and
+    #    the library never adopts or removes state it did not create this
+    #    run, so crash leftovers are removed DELIBERATELY:
+    scripts/rocketnet-provision sweep
+    #    The sweep judges staleness by the metadata in each root's name
+    #    (foreign boot id, dead pid, or recycled pid sweeps; a live matching
+    #    instance is left; an unparseable name is left and named for manual
+    #    judgment) and prints its container caveat before acting: with bpffs
+    #    shared across pid namespaces, sweep from the namespace that owns
+    #    the servers. Leftovers are inert -- a colliding create refuses
+    #    loudly and names this sweep.
+
+    # (scripts/rocketnet-provision selftest runs the script's IRQ-name
+    #  matcher against the same fixture lines the C test uses -- CI runs it
+    #  on every push, so the two halves of the one boundary definition
+    #  cannot drift apart silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
 the busy-poll pair — is the 10 Gbps point, as measured on the space game's Linux

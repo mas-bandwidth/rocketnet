@@ -60,6 +60,15 @@ jobs:
       - name: Run tests (portable rung pinned by env)
         run: ROCKETNET_DRIVER=portable ./bin/test
 
+      # the provisioning script's matcher selftest: the script's awk matcher
+      # and the C matcher implement ONE boundary definition; this holds the
+      # script's half to the same fixtures the C test holds its half to
+      # (round five's awk-escaping bug is the case it exists to catch)
+
+      - name: Provisioning script matcher selftest
+        if: runner.os == 'Linux'
+        run: bash scripts/rocketnet-provision selftest
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from

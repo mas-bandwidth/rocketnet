@@ -9508,7 +9508,11 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_STRING:
             {
-                snprintf( value_string, sizeof(value_string), "portable" );
+                // a value valid for the field under test: the driver field
+                // must parse as a candidate list; other strings only need
+                // to be strings
+
+                snprintf( value_string, sizeof(value_string), "%s", strcmp( field->name, "driver" ) == 0 ? "portable" : "value-under-test" );
             }
             break;
 
@@ -9552,7 +9556,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
             case ROCKETNET_CONFIG_KIND_STRING:
             {
-                rocketnet_check( strcmp( (const char*) base, "portable" ) == 0 );
+                rocketnet_check( strcmp( (const char*) base, value_string ) == 0 );
             }
             break;
         }
@@ -10051,12 +10055,14 @@ void rocketnet_test_server_driver_ladder_fall()
 
 void rocketnet_test_xdp_interrupt_matcher()
 {
-    // REAL lines only, per the round-five ruling: these shapes are taken
-    // from actual /proc/interrupts output of the named drivers. drivers
-    // whose IRQ names embed the netdev name match; the honest limit is
-    // also pinned: mlx5's completion vectors (mlx5_comp0@pci:...) carry
-    // NO netdev name, so no netdev can match them -- the pre-flight
-    // states that limit instead of claiming there is nothing to pin.
+    // real driver lines (i40e, ice, ixgbe-style, virtio, and a real mlx5
+    // completion vector) plus CONSTRUCTED trap lines -- the VLAN pair and
+    // the substring traps are synthetic by design, they exist to pin the
+    // boundary rule, and this comment says so rather than calling them
+    // real. the honest limit is also pinned: mlx5's completion vectors
+    // carry NO netdev name, so no netdev can match them -- the pre-flight
+    // states that limit instead of claiming there is nothing to pin. the
+    // script's selftest mode holds its awk matcher to these same lines.
 
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 24:  0  0  IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0\n", "ens1f0" ) );
@@ -10077,6 +10083,8 @@ void rocketnet_test_xdp_interrupt_matcher()
         " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0" ) );
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0.100" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 30:  0  0  PCI-MSI 49154-edge      eth0x100-TxRx-0\n", "eth0.100" ) );
 
     // the substring traps stay traps
 
