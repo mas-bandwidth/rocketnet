@@ -491,10 +491,11 @@ if [ "$MODE" = "selftest" ]; then
     # r7_enforce run end to end, verify and provision modes alike, against
     # stub environments, with the exit state asserting the UNMET/say
     # distinction (a fail turned into a say goes red here), and EVERY fail
-    # site in both enforcement functions has a driving case: tool absence,
-    # query failure, occupied in verify, act refused, act lied, post-act
-    # query failure, read-back mismatch, precision of the no-channel
-    # discriminator, and the injected outside-set arms -- the fail-site
+    # site in both enforcement functions has a driving case: the env
+    # contract, tool absence, query failure, occupied in verify, count
+    # mismatch in verify, act refused, act lied, post-act query failure,
+    # read-back mismatch, precision of the no-channel discriminator, and
+    # the injected outside-set arms -- the fail-site
     # enumeration receipt on the PR pairs each site with its case, so the
     # coverage claim is a checkable list, not an adjective. the stubs
     # REPLAY REAL OUTPUT
@@ -529,8 +530,8 @@ case "$1" in
     status)
         IFACE="$2"
         [ -n "$IFACE" ] || { echo "stub: status invoked without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '"'"'$IFACE'"'"'" >&2; exit 99; }
         [ -f "$STUB_STATE_DIR/query_broken" ] && { echo "stub: status now failing (post-act failure mode)" >&2; exit 1; }
-        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
         STATE="$(cat "$STUB_STATE_DIR/state.$IFACE")"
         echo "$BANNER"
         case "$STATE" in
@@ -677,17 +678,19 @@ STUB
     echo 7 > "$STUB_STATE_DIR/combined.q0"
     OUT="$(run_r7 1 q0 7)"; expect_case "r7 verify match" $? 0 "$OUT" "already"
 
-    OUT="$(run_r7 1 q0 8)"; expect_case "r7 verify mismatch" $? 1 "$OUT" "combined queue count is" 1
+    OUT="$(run_r7 1 q0 9)"; expect_case "r7 verify mismatch" $? 1 "$OUT" "combined queue count is 7, want 9" 1
 
     echo nochannels > "$STUB_STATE_DIR/combined.q1"
     OUT="$(run_r7 1 q1 7)"; expect_case "r7 verify no-channel-surface" $? 0 "$OUT" "no channel surface"
 
     OUT="$(run_r7 1 ghostq 7)"; expect_case "r7 verify other-failure" $? 1 "$OUT" "cannot verify the queue count" 1
 
-    # --- r7, provision mode ---
+    # --- r7, provision mode --- (the target counts VARY across cases --
+    # 8, 7, 6 -- so a comparison hardcoded to any fixture constant cannot
+    # ship green: fixture-constant coupling is a demonstrated mutant class)
 
     echo 4 > "$STUB_STATE_DIR/combined.q2"; echo works > "$STUB_STATE_DIR/setl_mode"
-    OUT="$(run_r7 0 q2 7)"; expect_case "r7 provision set-works" $? 0 "$OUT" "confirmed at 7"
+    OUT="$(run_r7 0 q2 8)"; expect_case "r7 provision set-works" $? 0 "$OUT" "confirmed at 8"
 
     echo 4 > "$STUB_STATE_DIR/combined.q3"; echo fails > "$STUB_STATE_DIR/setl_mode"
     OUT="$(run_r7 0 q3 7)"; expect_case "r7 provision set-fails" $? 1 "$OUT" "refused combined 7" 1
@@ -704,7 +707,7 @@ STUB
     rm -f "$STUB_STATE_DIR/query_broken"
 
     echo 4 > "$STUB_STATE_DIR/combined.q6"; echo works_then_l_fails > "$STUB_STATE_DIR/setl_mode"
-    OUT="$(run_r7 0 q6 7)"; expect_case "r7 provision post-set read-fails" $? 1 "$OUT" "could not re-read" 1
+    OUT="$(run_r7 0 q6 6)"; expect_case "r7 provision post-set read-fails" $? 1 "$OUT" "could not re-read" 1
     rm -f "$STUB_STATE_DIR/l_broken"
 
     # --- precision of the no-channel discriminator: a vanished device in
@@ -715,8 +718,10 @@ STUB
     OUT="$(run_r7 1 q7 7)"; expect_case "r7 verify vanished-device precision" $? 1 "$OUT" "cannot verify the queue count" 1 "no channel surface"
 
     # --- tool absence: the most reachable live failure arms in the file.
-    # the curated PATH carries only the utilities the enforcement needs,
-    # and not the tool under test ---
+    # the curated PATH exists to EXCLUDE the tool under test; today's
+    # absence arms use only shell builtins (command -v, echo), so the
+    # utility symlinks below are belt for any future arm that shells out,
+    # not load-bearing -- stated so the mechanism is not overread ---
 
     TOOLS_DIR="$STUB_DIR/tools"
     mkdir -p "$TOOLS_DIR"

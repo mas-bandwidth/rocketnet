@@ -95,7 +95,8 @@ Cold, on a fresh box, as root:
     # (scripts/rocketnet-provision selftest holds the script's IRQ-name
     #  matcher to the C test's case set AND drives the R3/R7 enforcement
     #  functions end to end, both modes, against stubs replaying captured
-    #  xdp-tools output -- every fail site in both functions has a driving
+    #  xdp-tools output (R3) and real-shaped ethtool output (R7) -- every
+    #  fail site in both functions has a driving
     #  case, paired in the fail-site enumeration receipt on PR #110. it
     #  needs no root and touches only a private temp dir it creates and
     #  removes. CI runs it on every push, so neither the matcher halves nor
