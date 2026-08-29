@@ -5390,6 +5390,140 @@ void rocketnet_test_platform_socket()
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
+// the batch pump seam (#100): every platform serves it -- portable loops
+// underneath on most, darwin's batched syscalls when the runtime probe
+// admits them -- and these tests pin the seam contract itself, so they run
+// identically over either implementation. packets are verified by content
+// (index and pattern), never by arrival order.
+
+#define ROCKETNET_TEST_PUMP_PACKETS 100         // several pump chunks, with a short final chunk
+#define ROCKETNET_TEST_PUMP_STRIDE  1426        // the transport's own receive ceiling
+
+static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, bind_string );
+    rocketnet_address_parse( &local_address, local_string );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+    local_address.port = bind_address.port;
+
+    // batch send: varied sizes, a content pattern keyed by index
+
+    static uint8_t send_data[ROCKETNET_TEST_PUMP_PACKETS][512];
+    struct rocketnet_platform_send_t sends[ROCKETNET_TEST_PUMP_PACKETS];
+    for ( int i = 0; i < ROCKETNET_TEST_PUMP_PACKETS; i++ )
+    {
+        const int bytes = 32 + i * 4;
+        send_data[i][0] = (uint8_t) i;
+        for ( int j = 1; j < bytes; j++ )
+            send_data[i][j] = (uint8_t) ( i + j );
+        sends[i].to = &local_address;
+        sends[i].packet_data = send_data[i];
+        sends[i].packet_bytes = bytes;
+    }
+    rocketnet_platform_socket_send_packets( socket, sends, ROCKETNET_TEST_PUMP_PACKETS );
+
+    // batch receive: drain until everything sent has arrived. loopback
+    // delivery can trickle, so poll under a deadline rather than assume
+    // one call sees the batch whole.
+
+    static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
+    static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
+    static uint8_t receive_data[ROCKETNET_TEST_PUMP_PACKETS*ROCKETNET_TEST_PUMP_STRIDE];
+
+    int received = 0;
+    double start_time = rocketnet_platform_time();
+    while ( received < ROCKETNET_TEST_PUMP_PACKETS && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        received += rocketnet_platform_socket_receive_packets( socket,
+                                                               from + received,
+                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
+                                                               ROCKETNET_TEST_PUMP_STRIDE,
+                                                               packet_bytes + received,
+                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
+    }
+    rocketnet_check( received == ROCKETNET_TEST_PUMP_PACKETS );
+
+    // every packet arrived whole, correctly sized, correctly attributed --
+    // and exactly once
+
+    bool seen[ROCKETNET_TEST_PUMP_PACKETS];
+    memset( seen, 0, sizeof(seen) );
+    for ( int i = 0; i < ROCKETNET_TEST_PUMP_PACKETS; i++ )
+    {
+        rocketnet_check( rocketnet_address_equal( &from[i], &local_address ) );
+        const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_TEST_PUMP_STRIDE;
+        const int index = packet[0];
+        rocketnet_check( index < ROCKETNET_TEST_PUMP_PACKETS );
+        rocketnet_check( !seen[index] );
+        seen[index] = true;
+        rocketnet_check( packet_bytes[i] == 32 + index * 4 );
+        for ( int j = 1; j < packet_bytes[i]; j++ )
+            rocketnet_check( packet[j] == (uint8_t) ( index + j ) );
+    }
+
+    // a drained socket returns zero
+
+    rocketnet_check( rocketnet_platform_socket_receive_packets( socket, from, receive_data, ROCKETNET_TEST_PUMP_STRIDE, packet_bytes, ROCKETNET_TEST_PUMP_PACKETS ) == 0 );
+
+    // a partial batch returns short without blocking: send 3, ask for many
+
+    for ( int i = 0; i < 3; i++ )
+        rocketnet_platform_socket_send_packet( socket, &local_address, send_data[i], 32 + i * 4 );
+
+    received = 0;
+    start_time = rocketnet_platform_time();
+    while ( received < 3 && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        received += rocketnet_platform_socket_receive_packets( socket,
+                                                               from + received,
+                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
+                                                               ROCKETNET_TEST_PUMP_STRIDE,
+                                                               packet_bytes + received,
+                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
+    }
+    rocketnet_check( received == 3 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+void rocketnet_test_platform_batch_pump()
+{
+    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1" );
+
+#if ROCKETNET_PLATFORM_HAS_IPV6
+    rocketnet_test_pump_exchange( "[::]", "[::1]" );
+#endif // #if ROCKETNET_PLATFORM_HAS_IPV6
+}
+
+void rocketnet_test_platform_batch_pump_degraded()
+{
+    // ROCKETNET_PUMP=portable pins the degradation contract: the forced
+    // portable pump answers the same seam with the same behavior, so a
+    // darwin machine runs this test over the exact code path a runtime
+    // refusal would degrade to. on platforms whose pump is portable
+    // already, the override is a no-op and the exchange still holds.
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    setenv( "ROCKETNET_PUMP", "portable", 1 );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
+    rocketnet_platform_socket_destroy( socket );
+
+    rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1" );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    unsetenv( "ROCKETNET_PUMP" );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+}
+
 static bool threads_work = false;
 
 static void test_thread_function(void*)
@@ -9424,6 +9558,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_replay_protection );
         RUN_TEST( test_client_slots );
         RUN_TEST( test_platform_socket );
+        RUN_TEST( test_platform_batch_pump );
+        RUN_TEST( test_platform_batch_pump_degraded );
         RUN_TEST( test_platform_thread );
         RUN_TEST( test_platform_mutex );
         RUN_TEST( test_value_tracker );

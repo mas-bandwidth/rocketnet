@@ -62,6 +62,41 @@ ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packet( struct rocke
 
 // ----------------------------------------------------------------
 
+// The batch pump seam (#100, per #81's matrix): move a batch of packets in
+// as few syscalls as the platform allows. Every platform implements these --
+// the portable implementation loops the per-packet calls above, so the
+// baseline doctrine holds and a call site never carries an #ifdef -- and a
+// platform with batch syscalls overrides them behind the same signatures.
+// Whether a faster path is live is decided inside the platform layer at
+// socket create (runtime probe, environment override ROCKETNET_PUMP=portable),
+// and degradation at any point is invisible above this seam.
+//
+// send_packets sends every entry; per-packet failures are dropped exactly as
+// the per-packet call drops them (UDP semantics, counted by the layer above
+// through its own accounting). receive_packets drains up to max_packets into
+// caller storage -- from[i], packet_bytes[i], and the packet bytes at
+// packet_data + i * packet_stride -- and returns the number received; zero
+// means drained. packet_stride is the caller's slot size and the per-packet
+// receive ceiling.
+
+struct rocketnet_platform_send_t
+{
+    const struct rocketnet_address_t * to;
+    const uint8_t * packet_data;
+    int packet_bytes;
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_platform_socket_send_packets( struct rocketnet_platform_socket_t * socket, const struct rocketnet_platform_send_t * sends, int num_packets );
+
+ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packets( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+
+// the name of the pump path live behind the seam ("portable", "msgx"), for
+// logging and for tests that pin the degradation contract
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
+
+// ----------------------------------------------------------------
+
 ROCKETNET_EXPORT_FUNC struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );
@@ -184,6 +219,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     {
         void * context;
         bool ipv6;
+        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is live (probed at create, macOS only, degradable)
         rocketnet_platform_socket_handle_t handle;
     };
 

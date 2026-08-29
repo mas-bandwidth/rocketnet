@@ -1073,10 +1073,56 @@ static int get_connection_type()
 #include <mach/mach_time.h>
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <TargetConditionals.h>
+#include <dlfcn.h>
 
 extern void * rocketnet_malloc( void * context, size_t bytes );
 
 extern void rocketnet_free( void * context, void * p );
+
+// ---------------------------------------------------
+
+// The darwin batch pump (#100): sendmsg_x/recvmsg_x, Darwin's batch UDP
+// syscalls -- private but stable, used by shipping engines, and measured on
+// the Studio (see bench/probe_darwin.c) to support the exact server-pump
+// shape: unconnected sockets, a per-message destination on send, source
+// address and received length filled per message on receive.
+//
+// The private-API risk is handled by never depending on them: the symbols
+// are resolved by dlsym at init (no link-time reference at all -- weaker
+// even than a weak import), each socket runs a functional probe at create,
+// any refusal at runtime degrades that socket to the portable per-packet
+// loop mid-flight without losing a packet, and ROCKETNET_PUMP=portable
+// forces the degraded path outright. iOS never resolves them: dlsym of a
+// private symbol is an App Store review finding, so the probe is compiled
+// out and iOS is portable by construction.
+//
+// struct msghdr_x is from xnu bsd/sys/socket_private.h, defined locally
+// because no public SDK header carries it; the layout is the syscall ABI.
+
+struct rocketnet_msghdr_x_t
+{
+    void *          msg_name;
+    socklen_t       msg_namelen;
+    struct iovec *  msg_iov;
+    int             msg_iovlen;
+    void *          msg_control;
+    socklen_t       msg_controllen;
+    int             msg_flags;
+    size_t          msg_datalen;
+};
+
+typedef ssize_t (*rocketnet_sendmsg_x_fn)( int s, const struct rocketnet_msghdr_x_t * msgp, u_int cnt, int flags );
+typedef ssize_t (*rocketnet_recvmsg_x_fn)( int s, struct rocketnet_msghdr_x_t * msgp, u_int cnt, int flags );
+
+static rocketnet_sendmsg_x_fn rocketnet_sendmsg_x = NULL;
+static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
+
+// the seam batch: how many messages one syscall carries. matches the
+// transport's own batch shape; chunking inside the pump keeps the stack
+// arrays small and bounded.
+
+#define ROCKETNET_MSGX_BATCH 32
 
 // ---------------------------------------------------
 
@@ -1091,6 +1137,13 @@ bool rocketnet_platform_init()
     mach_timebase_info( &timebase_info );
 
     time_start = mach_absolute_time();
+
+#if TARGET_OS_OSX
+    // resolve the batch pump syscalls once. absence is not an error: every
+    // socket that fails this resolution simply runs the portable pump.
+    rocketnet_sendmsg_x = (rocketnet_sendmsg_x_fn) dlsym( RTLD_DEFAULT, "sendmsg_x" );
+    rocketnet_recvmsg_x = (rocketnet_recvmsg_x_fn) dlsym( RTLD_DEFAULT, "recvmsg_x" );
+#endif // #if TARGET_OS_OSX
 
     connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
 
@@ -1275,6 +1328,8 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 
+    socket->msgx = false;
+
     // create socket
 
     socket->handle = ::socket( ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -1426,6 +1481,47 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         setsockopt( socket->handle, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val) );
     }
 
+#if TARGET_OS_OSX
+
+    // the batch pump probe: resolved symbols, a non-blocking socket (the
+    // pump's spin discipline assumes it), no environment override, and one
+    // real recvmsg_x against the freshly bound empty socket -- a live
+    // syscall must answer EAGAIN, and anything else (ENOSYS on a kernel
+    // that dropped it, EOPNOTSUPP, EINVAL on an ABI drift) leaves the
+    // socket on the portable pump. degradation is silent above the seam.
+
+    if ( rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING )
+    {
+        const char * pump_override = getenv( "ROCKETNET_PUMP" );
+        if ( !pump_override || strcmp( pump_override, "portable" ) != 0 )
+        {
+            uint8_t probe_data[64];
+            struct sockaddr_storage probe_name;
+            struct iovec probe_iov;
+            probe_iov.iov_base = probe_data;
+            probe_iov.iov_len = sizeof(probe_data);
+            struct rocketnet_msghdr_x_t probe_msg;
+            memset( &probe_msg, 0, sizeof(probe_msg) );
+            probe_msg.msg_name = &probe_name;
+            probe_msg.msg_namelen = sizeof(probe_name);
+            probe_msg.msg_iov = &probe_iov;
+            probe_msg.msg_iovlen = 1;
+
+            errno = 0;
+            ssize_t probe_result = rocketnet_recvmsg_x( socket->handle, &probe_msg, 1, 0 );
+            if ( probe_result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK )
+            {
+                socket->msgx = true;
+            }
+            else
+            {
+                rocketnet_debug( "recvmsg_x probe refused (%s). socket pump is portable", strerror( errno ) );
+            }
+        }
+    }
+
+#endif // #if TARGET_OS_OSX
+
     return socket;
 }
 
@@ -1563,6 +1659,298 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( result >= 0 );
 
     return result;
+}
+
+// ---------------------------------------------------
+
+// the darwin batch pump (#100). the portable per-packet functions above
+// stay the degradation target: every path through these either moves the
+// batch through sendmsg_x/recvmsg_x or hands the remainder to the
+// per-packet loop, so a packet is never lost to a refusal -- it is sent
+// or dropped exactly where the portable pump would have sent or dropped
+// it. on iOS the msgx flag is never set and these ARE the portable loop.
+
+#define ROCKETNET_PLATFORM_HAS_BATCH_PUMP 1
+
+const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+    return socket->msgx ? "msgx" : "portable";
+}
+
+// fill a sockaddr for one destination, mirroring send_packet's dual-stack
+// conversion. returns the sockaddr length, or 0 for an address the socket
+// cannot carry (logged exactly as the per-packet path logs it).
+
+static socklen_t rocketnet_msgx_fill_sockaddr( rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, sockaddr_storage * storage )
+{
+    rocketnet_address_t to = *input_to;
+
+    if ( socket->ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        }
+
+        sockaddr_in6 * socket_address = (sockaddr_in6*) storage;
+        memset( socket_address, 0, sizeof(sockaddr_in6) );
+        socket_address->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; ++i )
+        {
+            ( (uint16_t*) &socket_address->sin6_addr ) [i] = rocketnet_platform_htons( to.data.ipv6[i] );
+        }
+        socket_address->sin6_port = rocketnet_platform_htons( to.port );
+        return sizeof(sockaddr_in6);
+    }
+
+    if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_error( "invalid address. could not send packet" );
+        return 0;
+    }
+
+    sockaddr_in * socket_address = (sockaddr_in*) storage;
+    memset( socket_address, 0, sizeof(sockaddr_in) );
+    socket_address->sin_family = AF_INET;
+    socket_address->sin_addr.s_addr = ( ( (uint32_t) to.data.ipv4[0] ) )       |
+                                      ( ( (uint32_t) to.data.ipv4[1] ) << 8 )  |
+                                      ( ( (uint32_t) to.data.ipv4[2] ) << 16 ) |
+                                      ( ( (uint32_t) to.data.ipv4[3] ) << 24 );
+    socket_address->sin_port = rocketnet_platform_htons( to.port );
+    return sizeof(sockaddr_in);
+}
+
+// convert one received sockaddr, mirroring receive_packet's mapped-address
+// normalization. returns false for a family the transport does not speak.
+
+static bool rocketnet_msgx_read_sockaddr( rocketnet_platform_socket_t * socket, const sockaddr_storage * storage, rocketnet_address_t * from )
+{
+    if ( storage->ss_family == AF_INET6 )
+    {
+        const sockaddr_in6 * addr_ipv6 = (const sockaddr_in6*) storage;
+        from->type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; ++i )
+        {
+            from->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t*) &addr_ipv6->sin6_addr ) [i] );
+        }
+        from->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
+        if ( socket->ipv6 && rocketnet_address_is_ipv4_in_ipv6( from ) )
+        {
+            rocketnet_address_convert_ipv6_to_ipv4( from );
+        }
+        return true;
+    }
+
+    if ( storage->ss_family == AF_INET )
+    {
+        const sockaddr_in * addr_ipv4 = (const sockaddr_in*) storage;
+        from->type = ROCKETNET_ADDRESS_IPV4;
+        from->data.ipv4[0] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x000000FF ) );
+        from->data.ipv4[1] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
+        from->data.ipv4[2] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
+        from->data.ipv4[3] = (uint8_t) ( ( addr_ipv4->sin_addr.s_addr & 0xFF000000 ) >> 24 );
+        from->port = rocketnet_platform_ntohs( addr_ipv4->sin_port );
+        return true;
+    }
+
+    return false;
+}
+
+void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( sends || num_packets == 0 );
+
+    if ( !socket->msgx )
+    {
+        for ( int i = 0; i < num_packets; i++ )
+        {
+            rocketnet_platform_socket_send_packet( socket, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+        }
+        return;
+    }
+
+    int base = 0;
+    while ( base < num_packets )
+    {
+        // build one chunk. an address the socket cannot carry is skipped
+        // here, already logged by the fill -- the same drop the per-packet
+        // path takes. map[] remembers each chunk entry's index in sends,
+        // so a mid-chunk degradation can replay the exact unsent tail.
+
+        sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
+        struct iovec iov[ROCKETNET_MSGX_BATCH];
+        struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
+        int map[ROCKETNET_MSGX_BATCH];
+        memset( msg, 0, sizeof(msg) );
+
+        int count = 0;
+        int scanned = 0;
+        while ( base + scanned < num_packets && count < ROCKETNET_MSGX_BATCH )
+        {
+            const rocketnet_platform_send_t * send = &sends[base + scanned];
+            rocketnet_assert( send->to );
+            rocketnet_assert( send->packet_data );
+            rocketnet_assert( send->packet_bytes > 0 );
+
+            socklen_t sockaddr_bytes = rocketnet_msgx_fill_sockaddr( socket, send->to, &addresses[count] );
+            if ( sockaddr_bytes != 0 )
+            {
+                iov[count].iov_base = (void*) send->packet_data;
+                iov[count].iov_len = (size_t) send->packet_bytes;
+                msg[count].msg_name = &addresses[count];
+                msg[count].msg_namelen = sockaddr_bytes;
+                msg[count].msg_iov = &iov[count];
+                msg[count].msg_iovlen = 1;
+                map[count] = base + scanned;
+                count++;
+            }
+            scanned++;
+        }
+
+        int offset = 0;
+        while ( offset < count )
+        {
+            errno = 0;
+            ssize_t result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
+            if ( result > 0 )
+            {
+                offset += (int) result;
+                continue;
+            }
+
+            if ( errno == EINTR )
+                continue;
+
+            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH || errno == EMSGSIZE )
+            {
+                // the head message is refused for a reason the per-packet
+                // path also drops on: drop it alone and keep sending. at
+                // most one extra syscall per dropped packet, the portable
+                // pump's own cost shape.
+                rocketnet_debug( "sendmsg_x dropped a packet: %s", strerror( errno ) );
+                offset++;
+                continue;
+            }
+
+            // an errno outside UDP's ordinary weather (ENOSYS from a kernel
+            // that dropped the syscall, EOPNOTSUPP, EINVAL on ABI drift):
+            // degrade this socket to the portable pump for good and hand it
+            // the remainder, in order, so nothing is lost to the refusal.
+
+            rocketnet_warn( "sendmsg_x refused (%s). socket pump degrades to portable", strerror( errno ) );
+            socket->msgx = false;
+            for ( int i = offset; i < count; i++ )
+            {
+                const rocketnet_platform_send_t * send = &sends[map[i]];
+                rocketnet_platform_socket_send_packet( socket, send->to, send->packet_data, send->packet_bytes );
+            }
+            for ( int i = base + scanned; i < num_packets; i++ )
+            {
+                rocketnet_platform_socket_send_packet( socket, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+            }
+            return;
+        }
+
+        base += scanned;
+    }
+}
+
+int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( from );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_stride > 0 );
+    rocketnet_assert( packet_bytes );
+    rocketnet_assert( max_packets > 0 );
+
+    if ( !socket->msgx )
+    {
+        int num_packets = 0;
+        while ( num_packets < max_packets )
+        {
+            int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
+            if ( bytes == 0 )
+                break;
+            packet_bytes[num_packets] = bytes;
+            num_packets++;
+        }
+        return num_packets;
+    }
+
+    int total = 0;
+    while ( total < max_packets )
+    {
+        int want = max_packets - total;
+        if ( want > ROCKETNET_MSGX_BATCH )
+            want = ROCKETNET_MSGX_BATCH;
+
+        const int chunk_base = total;
+
+        sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
+        struct iovec iov[ROCKETNET_MSGX_BATCH];
+        struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
+        memset( msg, 0, sizeof(msg) );
+        for ( int i = 0; i < want; i++ )
+        {
+            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            iov[i].iov_len = (size_t) packet_stride;
+            msg[i].msg_name = &addresses[i];
+            msg[i].msg_namelen = sizeof(addresses[i]);
+            msg[i].msg_iov = &iov[i];
+            msg[i].msg_iovlen = 1;
+        }
+
+        errno = 0;
+        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        if ( result < 0 )
+        {
+            if ( errno == EINTR )
+                continue;
+            if ( errno == EAGAIN || errno == EWOULDBLOCK )
+                break;
+
+            // outside ordinary weather: degrade for good. what earlier
+            // chunks already drained is delivered; the portable pump takes
+            // over from the next call on.
+
+            rocketnet_warn( "recvmsg_x refused (%s). socket pump degrades to portable", strerror( errno ) );
+            socket->msgx = false;
+            break;
+        }
+
+        if ( result == 0 )
+            break;
+
+        // walk the chunk in place. a zero-length datagram or a family the
+        // transport does not speak (the per-packet path delivers neither)
+        // is compacted out: the next kept message's bytes move down to the
+        // gap. rare by nature -- attack chaff -- and bounded by the chunk.
+
+        for ( ssize_t i = 0; i < result; i++ )
+        {
+            int bytes = (int) msg[i].msg_datalen;
+            rocketnet_address_t parsed;
+            if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
+                continue;
+            uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
+            uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
+            if ( target != written )
+            {
+                memmove( target, written, (size_t) bytes );
+            }
+            from[total] = parsed;
+            packet_bytes[total] = bytes;
+            total++;
+        }
+
+        if ( result < want )
+            break;
+    }
+
+    return total;
 }
 
 // ---------------------------------------------------
@@ -2393,3 +2781,54 @@ static int get_connection_type()
 #endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// ----------------------------------------------------------------
+
+// the batch pump seam's portable implementation (#100): a platform without
+// a batch override loops the per-packet calls, so every platform serves the
+// seam on day zero (#81's baseline doctrine) and a call site never carries
+// an #ifdef. a platform that defines ROCKETNET_PLATFORM_HAS_BATCH_PUMP in
+// its own section above supplies all three functions itself.
+
+#if !defined( ROCKETNET_PLATFORM_HAS_BATCH_PUMP )
+
+const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+    (void) socket;
+    return "portable";
+}
+
+void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( sends || num_packets == 0 );
+
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        rocketnet_platform_socket_send_packet( socket, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
+    }
+}
+
+int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_assert( socket );
+    rocketnet_assert( from );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_stride > 0 );
+    rocketnet_assert( packet_bytes );
+    rocketnet_assert( max_packets > 0 );
+
+    int num_packets = 0;
+    while ( num_packets < max_packets )
+    {
+        int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
+        if ( bytes == 0 )
+            break;
+        packet_bytes[num_packets] = bytes;
+        num_packets++;
+    }
+    return num_packets;
+}
+
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_BATCH_PUMP )
