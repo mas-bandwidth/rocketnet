@@ -16,7 +16,7 @@
 
 #include "bench_common.h"
 
-static void run_receiver( int port, double warmup, double window, int windows )
+static void run_receiver( int port, double warmup, double window, int windows, int poll_usec )
 {
     int fd = bench_udp_socket();
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
@@ -61,6 +61,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
 
         if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold ) )
             break;
+
+        if ( poll_usec > 0 && batch_packets == 0 )
+            usleep( (useconds_t) poll_usec );
     }
 
     close( fd );
@@ -119,12 +122,12 @@ int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
-        run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
+        run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ), bench_parse_poll_usec( argc, argv, 6 ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )
         run_sender( argv[2], atoi( argv[3] ), atof( argv[4] ), bench_parse_sender_options( argc, argv, 5 ) );
     else
     {
-        fprintf( stderr, "usage: bench_portable recv <port> <warmup> <window> <windows>\n"
+        fprintf( stderr, "usage: bench_portable recv <port> <warmup> <window> <windows> [poll=<usec>]\n"
                          "       bench_portable send <ip> <port> <seconds> [drop-half] [pace=<pps>]\n" );
         return 1;
     }
