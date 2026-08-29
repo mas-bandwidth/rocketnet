@@ -188,33 +188,32 @@ void rocketnet_test_base64()
     rocketnet_check( rocketnet_base64_decode_data( "=", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "zzzzz", bytes, sizeof(bytes) ) == 0 );
 
-    // valid forms still decode, url-safe aliases included
-
-    rocketnet_check( rocketnet_base64_decode_data( "AAECAw==", bytes, sizeof(bytes) ) == 4 );
-    rocketnet_check( bytes[0] == 0x00 && bytes[1] == 0x01 && bytes[2] == 0x02 && bytes[3] == 0x03 );
-
     // a bare invalid character inside a well-formed length
 
     rocketnet_check( rocketnet_base64_decode_data( "AA!A", bytes, sizeof(bytes) ) == 0 );
 
-    // canonical tails only: "AB" and "AC" used to both decode to 0x00 --
-    // two distinct strings must never yield the same bytes, so nonzero
-    // leftover bits refuse ("AB==" likewise, against canonical "AQ==")
+    // ONE SPELLING PER KEY, now a real property of the decoder: padding
+    // is required (unpadded "AA" refuses beside "AA=="), the alphabet is
+    // the standard one alone (the url-safe aliases refuse), and
+    // non-canonical tails refuse ("AB==" against the canonical "AQ==") --
+    // so every byte string has exactly one accepted encoding
 
-    rocketnet_check( rocketnet_base64_decode_data( "AA", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( rocketnet_base64_decode_data( "AAECAw==", bytes, sizeof(bytes) ) == 4 );
+    rocketnet_check( bytes[0] == 0x00 && bytes[1] == 0x01 && bytes[2] == 0x02 && bytes[3] == 0x03 );
+
+    rocketnet_check( rocketnet_base64_decode_data( "AA==", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0x00 );
+    rocketnet_check( rocketnet_base64_decode_data( "AA", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "AB", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "AB==", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "AQ==", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0x01 );
 
-    // one alphabet, the standard one: the url-safe aliases are refused,
-    // so no two spellings share a decoding ("+w" is the only 0xFB)
-
-    rocketnet_check( rocketnet_base64_decode_data( "+w", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( rocketnet_base64_decode_data( "+w==", bytes, sizeof(bytes) ) == 1 );
     rocketnet_check( bytes[0] == 0xFB );
-    rocketnet_check( rocketnet_base64_decode_data( "-w", bytes, sizeof(bytes) ) == 0 );
-    rocketnet_check( rocketnet_base64_decode_data( "-_", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "+w", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "-w==", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "-_==", bytes, sizeof(bytes) ) == 0 );
     rocketnet_check( rocketnet_base64_decode_data( "A_==", bytes, sizeof(bytes) ) == 0 );
 }
 
@@ -10052,33 +10051,52 @@ void rocketnet_test_server_driver_ladder_fall()
 
 void rocketnet_test_xdp_interrupt_matcher()
 {
-    // driver-prefixed and bare queue names match their interface
+    // REAL lines only, per the round-five ruling: these shapes are taken
+    // from actual /proc/interrupts output of the named drivers. drivers
+    // whose IRQ names embed the netdev name match; the honest limit is
+    // also pinned: mlx5's completion vectors (mlx5_comp0@pci:...) carry
+    // NO netdev name, so no netdev can match them -- the pre-flight
+    // states that limit instead of claiming there is nothing to pin.
 
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 24:  0  0  IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0\n", "ens1f0" ) );
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 25:  0  0  IR-PCI-MSI 524289-edge      ice-ens1f0-TxRx-1\n", "ens1f0" ) );
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
-        " 26:  0  0  PCI-MSI 1048576-edge      ens1f0-rx-3\n", "ens1f0" ) );
+        " 26:  0  0  PCI-MSI 49152-edge      eth0-TxRx-0\n", "eth0" ) );
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
         " 27:  0  0  PCI-MSI 1048577-edge      eth0\n", "eth0" ) );
     rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
-        " 28:  0  0  PCI-MSI 1048578-edge      mlx5_async@pci:0000:03:00.0\n", "mlx5_async" ) );
+        " 28:  0  0  PCI-MSI 65536-edge      virtio0-input.0\n", "virtio0" ) );
+
+    // vlan sub-interfaces are their own names: the parent must not claim
+    // the child's lines and the child matches its own literally (the dot
+    // is a character, never a wildcard)
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0.100" ) );
 
     // the substring traps stay traps
 
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
-        " 29:  0  0  PCI-MSI 2097152-edge      velocity0-tx\n", "lo" ) );
+        " 30:  0  0  PCI-MSI 2097152-edge      velocity0-tx\n", "lo" ) );
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
         "LOC:  12345  67890   Local timer interrupts\n", "lo" ) );
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
-        " 30:  0  0  PCI-MSI 2097153-edge      ens1f10-TxRx-0\n", "ens1f0" ) );
+        " 31:  0  0  PCI-MSI 2097153-edge      ens1f10-TxRx-0\n", "ens1f0" ) );
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
-        " 31:  0  0  PCI-MSI 2097154-edge      eth00\n", "eth0" ) );
-    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
-        " 32:  0  0  PCI-MSI 2097155-edge      i40e-lol-x\n", "lo" ) );
+        " 32:  0  0  PCI-MSI 2097154-edge      eth00\n", "eth0" ) );
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
         " 33:  0  0  PCI-MSI 2097156-edge      xeth0-TxRx-0\n", "eth0" ) );
+
+    // the honest limit: a real mlx5 completion vector line names no
+    // netdev, so no netdev matches it -- R4 for that class is stated
+    // unverifiable-by-name, never silently passed as nothing-to-pin
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

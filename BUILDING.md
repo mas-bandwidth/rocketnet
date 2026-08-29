@@ -90,6 +90,13 @@ only verifies the boot tier. The config's `num_os_cpus` names the first core the
 xdp workers pin from: workers occupy `num_os_cpus + queue`, so it should point
 at the isolated range.
 
+Two honest limits of the IRQ-pinning check: drivers whose interrupt names do not
+embed the interface name (mlx5-class) cannot be checked by name — both the
+script and the pre-flight state that rather than passing it off as
+nothing-to-pin — and drivers that add a misc interrupt carrying the bare
+interface name (ixgbe-class) count one line beyond the queue count, so size the
+isolated range for queues plus one there.
+
 Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
 binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
 installs a commit barrier by design — so that tier's claims rest on the space

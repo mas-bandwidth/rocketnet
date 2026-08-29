@@ -12,6 +12,7 @@
 #include "rocketnet_config.h"
 
 #include <sodium.h>
+#include <atomic>
 #include <memory.h>
 #include <string.h>
 #include <stdio.h>
@@ -506,20 +507,30 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // layer's version of it is first-create-consumes, per the scope note
     // above.
 
+    // the env override's consumption flag: atomic because two transports
+    // in one process is a blessed case and nothing serializes creates, and
+    // CONSUMED ONLY AFTER A FULLY SUCCESSFUL CREATE -- a first create that
+    // refuses (bad keys, exhausted ladder) must not eat the deployed
+    // binary's redirect on the retry. two concurrent first creates racing
+    // the same override is unsupported and stated: creates are setup acts,
+    // not fill-phase acts.
+
+    static std::atomic<bool> env_public_address_consumed( false );
+
+    bool consuming_env_public_address = false;
+
     if ( strncmp( effective_config.public_address, struct_public_address, sizeof(struct_public_address) ) != 0 )
     {
         // the env layer (or its deprecated alias) set it
 
-        static bool env_public_address_consumed = false;
-
-        if ( env_public_address_consumed )
+        if ( env_public_address_consumed.load() )
         {
             rocketnet_info( "the public_address env override was consumed by an earlier server create in this process. using the create parameters" );
             memcpy( effective_config.public_address, struct_public_address, sizeof(struct_public_address) );
         }
         else
         {
-            env_public_address_consumed = true;
+            consuming_env_public_address = true;
         }
     }
 
@@ -792,6 +803,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( rocketnet_server_transport_staged( server_transport ) )
         server_transport->next_packet_id = 1ULL << 63;
 #endif // #if ROCKETNET_SERVER_HAS_STAGED
+
+    // the env public_address is consumed only now, with the create whole
+
+    if ( consuming_env_public_address )
+    {
+        bool expected = false;
+        env_public_address_consumed.compare_exchange_strong( expected, true );
+    }
 
     return server_transport;
 }

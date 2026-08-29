@@ -94,8 +94,14 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
 
     const size_t input_length = strlen( input );
 
-    // padding is only valid as one or two trailing '=' completing a
-    // four-character group
+    // padding is REQUIRED (ruled on the #110 gate, round five): every
+    // input is whole four-character groups, with one or two trailing '='
+    // completing the last -- so each byte length has exactly one valid
+    // spelling and the no-two-spellings-one-key property is real, not
+    // aspirational ("AA" no longer decodes beside "AA==")
+
+    if ( ( input_length % 4 ) != 0 )
+        return 0;
 
     size_t data_length = input_length;
     int pad_chars = 0;
@@ -106,14 +112,6 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
     }
 
     if ( pad_chars > 2 )
-        return 0;
-
-    if ( pad_chars > 0 && ( input_length % 4 ) != 0 )
-        return 0;
-
-    // a group of one base64 character encodes nothing
-
-    if ( ( data_length % 4 ) == 1 )
         return 0;
 
     size_t output_length = ( data_length / 4 ) * 3;

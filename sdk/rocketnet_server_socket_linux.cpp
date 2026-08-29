@@ -167,10 +167,10 @@ struct rocketnet_server_socket_t
     struct xdp_program * program;
     bool attached_native;
     bool attached_skb;
-    char pin_root[64];                  // this INSTANCE's own bpffs directory (pid + per-process sequence): created by this create, adopted never
+    char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
     bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
-    int num_pinned;                     // the pins this instance OBSERVED under its root -- destroy unlinks exactly these, never fixed names
-    char pinned_paths[3][160];
+    int num_pinned;                     // the pin paths recorded BY CONSTRUCTION at mkdir (their names are deterministic) -- destroy unlinks exactly these
+    char pinned_paths[3][200];
     int config_map_fd;
     int socket_map_fd;
     int stats_map_fd;
@@ -729,8 +729,18 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
     {
         FILE * interrupts = fopen( "/proc/interrupts", "r" );
-        if ( interrupts )
+        if ( !interrupts )
         {
+            // silence must never verify: an unreadable interrupt table is
+            // an unmet condition, not a pass
+
+            rocketnet_warn( "xdp pre-flight: /proc/interrupts is unreadable (R4): cannot verify irq pinning" );
+            provisioned = false;
+        }
+        else
+        {
+            int matched_irqs = 0;
+
             uint8_t cpu_seen[1024];
             memset( cpu_seen, 0, sizeof(cpu_seen) );
 
@@ -744,12 +754,18 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 if ( sscanf( line, " %d:", &irq ) != 1 )
                     continue;
 
+                matched_irqs++;
+
                 char affinity_path[256];
                 snprintf( affinity_path, sizeof(affinity_path), "/proc/irq/%d/smp_affinity_list", irq );
 
                 char affinity[256];
                 if ( !rocketnet_server_socket_read_sysfs( affinity_path, affinity, sizeof(affinity) ) )
+                {
+                    rocketnet_warn( "xdp pre-flight: irq %d affinity is unreadable (R4): cannot verify its pin", irq );
+                    provisioned = false;
                     continue;
+                }
 
                 if ( strchr( affinity, '-' ) || strchr( affinity, ',' ) )
                 {
@@ -785,6 +801,26 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 }
             }
             fclose( interrupts );
+
+            if ( matched_irqs == 0 )
+            {
+                // HONESTY over a false rationale: some drivers' IRQ names
+                // never carry the netdev name (mlx5-class), and VMs may
+                // have no per-queue vectors at all -- R4 cannot be
+                // verified BY NAME here, and saying so is different from
+                // claiming there is nothing to pin
+
+                rocketnet_info( "xdp pre-flight: no /proc/interrupts line names %s (R4): either this NIC has no per-queue vectors, or its driver's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be verified by name here; pin and verify via the NIC driver's own tooling", interface_name );
+            }
+            else if ( have_isolated && matched_irqs > rocketnet_server_socket_count_cpu_list( isolated ) )
+            {
+                // the same refusal the script gives a round robin that
+                // would wrap: more queue irqs than isolated cores IS the
+                // doubling
+
+                rocketnet_warn( "xdp pre-flight: %d of %s's IRQs but only %d isolated cpus (R4): one queue, one core -- grow the isolated range or shrink the queue count", matched_irqs, interface_name, rocketnet_server_socket_count_cpu_list( isolated ) );
+                provisioned = false;
+            }
         }
     }
 
@@ -998,36 +1034,95 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         server_socket->gateway_ethernet_address[5] 
     );
 
-    // STATE IDENTITY (ruled on the #110 gate, round four): every piece of
-    // bpffs state this instance touches is named for the INSTANCE -- pid
-    // plus a per-process sequence, because two instances in one process is
-    // a supported case (#106: "two servers in one process can pin
-    // different drivers and sizes") -- created by THIS create's own mkdir,
-    // and never adopted: a root that already exists (a crashed process
-    // whose pid was later recycled) is refused loudly, never reused,
-    // because libbpf's LIBBPF_PIN_BY_NAME would silently REUSE a
-    // compatible existing pin and hand this instance another instance's
-    // live kernel state. destroy unlinks only the pins this instance
-    // OBSERVED (recorded at bpf_obj_get) and removes only the directory
-    // it made. sweeping crash leftovers is the operator's deliberate act:
-    // scripts/rocketnet-provision sweep.
+    // STATE IDENTITY (re-derived twice on the #110 gate): the identity
+    // input contains NOTHING process-derived -- a random 64-bit token
+    // names the root, because pid+sequence fails deterministically in
+    // containers (pid 1 always, the sequence resetting every restart).
+    // the root's NAME carries the instance metadata a sweep needs to
+    // judge staleness -- pid, process start time, and the host boot id --
+    // because bpffs holds no regular files, and a directory name is
+    // atomic with the mkdir that claims it:
+    //
+    //     rocketnet_xdp_<token16>_<pid>_<starttime>_<bootid32>
+    //
+    // (underscore-delimited: bpffs refuses '.' in names)
+    //
+    // the root is created by THIS create's own mkdir and never adopted
+    // (an existing path -- astronomically unlikely under a random token --
+    // refuses loudly rather than letting LIBBPF_PIN_BY_NAME resurrect
+    // someone else's state). the three pin paths under it are recorded BY
+    // CONSTRUCTION here, at mkdir, since their names are deterministic:
+    // every failure path from here on unlinks exactly the recorded paths
+    // and removes the root, so no create outcome -- grant, refusal, or
+    // mid-create failure -- leaves state behind. only a crash can, and
+    // the operator's deliberate sweep judges those by the metadata in the
+    // name.
 
     {
-        static std::atomic<uint32_t> instance_counter( 0 );
-        const uint32_t instance = instance_counter.fetch_add( 1 );
+        const uint64_t token = rocketnet_random_uint64();
 
-        snprintf( server_socket->pin_root, sizeof(server_socket->pin_root), "/sys/fs/bpf/rocketnet_xdp_%d_%u", (int) getpid(), instance );
+        char boot_id[64] = "unknown";
+        {
+            char raw[128];
+            if ( rocketnet_server_socket_read_sysfs( "/proc/sys/kernel/random/boot_id", raw, sizeof(raw) ) )
+            {
+                int j = 0;
+                for ( int i = 0; raw[i] != '\0' && j < (int) sizeof(boot_id) - 1; i++ )
+                    if ( raw[i] != '-' )
+                        boot_id[j++] = raw[i];
+                boot_id[j] = '\0';
+            }
+        }
+
+        uint64_t start_time = 0;
+        {
+            char stat_line[1024];
+            if ( rocketnet_server_socket_read_sysfs( "/proc/self/stat", stat_line, sizeof(stat_line) ) )
+            {
+                const char * cursor = strrchr( stat_line, ')' );        // comm may contain spaces; fields resume after the last ')'
+                if ( cursor )
+                {
+                    cursor++;
+                    for ( int field = 0; field < 19 && cursor; field++ )        // state is field 3 overall; starttime is field 22 = 19 fields later
+                        cursor = strchr( cursor + 1, ' ' );
+                    if ( cursor )
+                        start_time = strtoull( cursor + 1, NULL, 10 );
+                }
+            }
+        }
+
+        snprintf( server_socket->pin_root, sizeof(server_socket->pin_root), "/sys/fs/bpf/rocketnet_xdp_%016" PRIx64 "_%d_%" PRIu64 "_%s",
+                  token, (int) getpid(), start_time, boot_id );
     }
 
     if ( mkdir( server_socket->pin_root, 0700 ) != 0 )
     {
-        rocketnet_error( "pin root %s already exists or cannot be created (%s): stale state from a crashed instance is never adopted -- sweep deliberately with scripts/rocketnet-provision <interface> <num_queues> sweep, or remove it by hand", server_socket->pin_root, strerror( errno ) );
+        // each errno is its own operator errand, named as one
+
+        if ( errno == EEXIST )
+            rocketnet_error( "pin root %s already exists: stale state is never adopted -- sweep deliberately with scripts/rocketnet-provision sweep, or remove it by hand", server_socket->pin_root );
+        else if ( errno == ENOENT )
+            rocketnet_error( "could not create pin root %s: bpffs is not mounted (mount -t bpf bpf /sys/fs/bpf)", server_socket->pin_root );
+        else
+            rocketnet_error( "could not create pin root %s (%s)", server_socket->pin_root, strerror( errno ) );
+
         server_socket->pin_root[0] = '\0';
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
 
     server_socket->pin_root_created = true;
+
+    // the pins recorded by construction, at the moment the root exists
+
+    {
+        static const char * pinned_map_names[3] = { "server_xdp_config_map", "server_xdp_socket_map", "server_xdp_stats_map" };
+        for ( int i = 0; i < 3; i++ )
+        {
+            snprintf( server_socket->pinned_paths[i], sizeof(server_socket->pinned_paths[0]), "%s/%s", server_socket->pin_root, pinned_map_names[i] );
+        }
+        server_socket->num_pinned = 3;
+    }
 
     // Build the server_xdp program in a PRIVATE directory.
     //
@@ -1169,8 +1264,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
-    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
-    server_socket->num_pinned++;
 
     snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_socket_map", server_socket->pin_root );
     server_socket->socket_map_fd = bpf_obj_get( pin_path );
@@ -1180,8 +1273,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
-    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
-    server_socket->num_pinned++;
 
     snprintf( pin_path, sizeof(pin_path), "%s/server_xdp_stats_map", server_socket->pin_root );
     server_socket->stats_map_fd = bpf_obj_get( pin_path );
@@ -1191,8 +1282,6 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         rocketnet_server_socket_destroy( server_socket );
         return NULL;
     }
-    snprintf( server_socket->pinned_paths[server_socket->num_pinned], sizeof(server_socket->pinned_paths[0]), "%s", pin_path );
-    server_socket->num_pinned++;
 
     // save the server public address and port in network order (big endian)
 
@@ -1429,19 +1518,18 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     if ( server_socket->stats_map_fd > 0 )
         close( server_socket->stats_map_fd );
 
-    // this instance's bpffs state goes with it: exactly the pins THIS
-    // instance recorded when it observed them -- never fixed names -- and
-    // only the directory THIS instance's mkdir made. a create that failed
-    // between load and observation leaves unrecorded pins behind; that is
-    // crash-class state, and crash-class state belongs to the operator's
-    // deliberate sweep (scripts/rocketnet-provision sweep), never to a
-    // destroy that might be running beside a live sibling.
+    // this instance's bpffs state goes with it: the paths recorded by
+    // construction at mkdir -- so EVERY create outcome that reaches
+    // destroy, mid-create failures included, unlinks them all (a pin that
+    // never came to exist unlinks as a harmless ENOENT) -- and only the
+    // directory this instance's own mkdir made. a directory that will not
+    // empty is refused loudly, naming the operator's sweep.
 
     for ( int i = 0; i < server_socket->num_pinned; i++ )
         unlink( server_socket->pinned_paths[i] );
 
-    if ( server_socket->pin_root_created )
-        rmdir( server_socket->pin_root );       // refuses politely when unrecorded leftovers remain
+    if ( server_socket->pin_root_created && rmdir( server_socket->pin_root ) != 0 )
+        rocketnet_warn( "could not remove pin root %s (%s): sweep deliberately with scripts/rocketnet-provision sweep", server_socket->pin_root, strerror( errno ) );
 
     // the queue array is allocated late in create, so a create that failed
     // before it exists reaches here with num_queues already set and the
