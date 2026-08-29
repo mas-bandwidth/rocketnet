@@ -69,11 +69,21 @@
 // different thread, and without the walls those fields would share cache
 // lines. Nothing goes wrong if you remove them -- it just gets slow.
 
-struct alignas(64) rocketnet_server_gso_send_info_t
+// one slot's info per 64-byte line by explicit padding rather than
+// alignas: the allocation comes from rocketnet_malloc, which guarantees
+// only max_align_t alignment, and an over-aligned type on a plain malloc
+// is the known defect CLAUDE.md already records against the xdp driver --
+// not repeated here. concurrent finishes on adjacent slots still never
+// share a line, which is all the padding is for.
+
+struct rocketnet_server_gso_send_info_t
 {
     rocketnet_address_t to;
     int packet_bytes;
+    uint8_t padding[64 - sizeof(rocketnet_address_t) - sizeof(int)];
 };
+
+static_assert( sizeof(rocketnet_server_gso_send_info_t) == 64, "one send info per cache line" );
 
 struct rocketnet_server_gso_send_buffer_t
 {
@@ -99,6 +109,7 @@ struct rocketnet_server_gso_recv_buffer_t
     uint32_t num_packets;
     uint64_t dropped_size;
     uint64_t dropped_overflow;
+    uint64_t dropped_source;
     uint64_t gro_batches;
     uint64_t syscalls;
     rocketnet_address_t from[ROCKETNET_GSO_RECV_QUEUE_SIZE];
@@ -158,6 +169,8 @@ struct rocketnet_server_gso_t
 
     std::atomic<uint64_t> packet_id;
 
+    uint64_t send_rotation;                     // main thread only: rotates transmit batches across the group's sockets
+
     struct rocketnet_server_gso_send_buffer_t send;
 
     // main-thread flush scratch: sendmmsg headers, gather iovecs (up to a
@@ -179,6 +192,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_syscalls;
     uint64_t counter_receive_dropped_size;
     uint64_t counter_receive_dropped_overflow;
+    uint64_t counter_receive_dropped_source;
     uint64_t counter_gro_batches;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
@@ -383,7 +397,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         *bound_port = bound_address.port;
     }
 
-    if ( fcntl( fd, F_SETFL, O_NONBLOCK, 1 ) == -1 )
+    if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
         rocketnet_error( "gso driver: failed to set socket non-blocking: %s", strerror( errno ) );
         close( fd );
@@ -450,18 +464,41 @@ static void rocketnet_server_gso_worker( void * data )
             }
 
             int count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
-            if ( count <= 0 )
-                break;
+
+            // every recvmmsg counts, empty ones included -- an instrument
+            // that hides the misses cannot argue the syscall win. the 1ms
+            // poll wakeups are not counted; they are the worker's idle
+            // heartbeat, not the receive path.
 
             buffer->syscalls++;
+
+            if ( count <= 0 )
+                break;
 
             for ( int i = 0; i < count; i++ )
             {
                 const int message_bytes = (int) queue->messages[i].msg_len;
 
+                // a truncated message would split into a plausible but
+                // short final segment -- corruption, not loss -- so it is
+                // dropped whole and counted. the buffer holds any UDP
+                // payload, so this fires only if a future kernel coalesces
+                // past 64KB.
+
+                if ( queue->messages[i].msg_hdr.msg_flags & MSG_TRUNC )
+                {
+                    buffer->dropped_size++;
+                    continue;
+                }
+
                 rocketnet_address_t from;
                 if ( !rocketnet_server_gso_sockaddr_to_address( &queue->names[i], queue->ipv6, &from ) )
+                {
+                    // a source family the boundary cannot express is dropped
+                    // counted, never silently
+                    buffer->dropped_source++;
                     continue;
+                }
 
                 // the GRO segment stride: absent, the message is one
                 // datagram and the stride is its whole length
@@ -607,6 +644,17 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         {
             gso->features |= ROCKETNET_SERVER_GSO_FEATURE_GRO;
         }
+        else
+        {
+            // all or nothing: a partial enable would leave socket state the
+            // reported tier denies, so the ones that accepted roll back
+
+            for ( int i = 0; i < num_queues; i++ )
+            {
+                int zero = 0;
+                setsockopt( gso->queues[i].fd, IPPROTO_UDP, UDP_GRO, &zero, sizeof(zero) );
+            }
+        }
     }
 
     rocketnet_info( "gso driver: %d queue reuseport group on port %d, UDP_SEGMENT %s, UDP_GRO %s",
@@ -710,6 +758,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] = gso->counter_receive_dropped_size;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
 }
 
 // ---------------------------------------------------------------------------
@@ -792,8 +841,6 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
 static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int first_slot, int num_slots, bool * disable_gso )
 {
     const bool use_gso = ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0;
-
-    const int fd = gso->queues[0].fd;
 
     int slot = first_slot;
 
@@ -882,19 +929,24 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
             hdr->msg_iov = &gso->send_iovecs[num_iovecs];
             hdr->msg_iovlen = (size_t) run_count;
 
-            int iovec_slot = run_first;
-            for ( int i = 0; i < run_count; iovec_slot++ )
+            // the run is contiguous slots [run_first, run_first + run_count)
+            // with every packet_bytes positive, by construction of the run
+            // builder above -- so the fill is bounded by run_count and never
+            // walks the arrays. a concurrent mutation of a slot's bytes here
+            // would be a fill-contract violation; the loop stays inside the
+            // run regardless, fail closed, never out of bounds.
+
+            for ( int i = 0; i < run_count; i++ )
             {
-                if ( gso->send.info[iovec_slot].packet_bytes <= 0 )
-                    continue;
+                const int iovec_slot = run_first + i;
                 gso->send_iovecs[num_iovecs + i].iov_base = gso->send.data[iovec_slot] + ROCKETNET_FRAME_WIRE_OFFSET;
                 gso->send_iovecs[num_iovecs + i].iov_len = (size_t) gso->send.info[iovec_slot].packet_bytes;
-                i++;
             }
             num_iovecs += run_count;
 
             if ( run_count > 1 )
             {
+                memset( gso->send_controls[num_messages], 0, sizeof(gso->send_controls[num_messages]) );
                 hdr->msg_control = gso->send_controls[num_messages];
                 hdr->msg_controllen = CMSG_SPACE( sizeof(uint16_t) );
                 struct cmsghdr * cmsg = CMSG_FIRSTHDR( hdr );
@@ -916,6 +968,17 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
             slot = batch_end;
             continue;
         }
+
+        // transmit rotates across the group's sockets, one per batch: every
+        // socket shares the same bound address and port, so replies carry
+        // the same 4-tuple whichever socket sent them, and the group's send
+        // buffer headroom adds up instead of funneling through one socket.
+        // the deeper TX property the xdp driver has -- per-queue sender
+        // threads -- is deliberately not reproduced here: transmit is
+        // main-thread by the phase contract, and this driver is the middle
+        // tier, not parity.
+
+        const int fd = gso->queues[gso->send_rotation++ % (uint64_t) gso->num_queues].fd;
 
         int sent = 0;
         while ( sent < num_messages )
@@ -1021,10 +1084,12 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         gso->counter_receive_syscalls += buffer->syscalls;
         gso->counter_receive_dropped_size += buffer->dropped_size;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
+        gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_gro_batches += buffer->gro_batches;
         buffer->syscalls = 0;
         buffer->dropped_size = 0;
         buffer->dropped_overflow = 0;
+        buffer->dropped_source = 0;
         buffer->gro_batches = 0;
 
         for ( uint32_t i = 0; i < buffer->num_packets; i++ )

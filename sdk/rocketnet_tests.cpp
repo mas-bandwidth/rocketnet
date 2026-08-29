@@ -4380,36 +4380,56 @@ void rocketnet_test_transport_ring_exhaustion()
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    // the ring capacity is the driver's own -- 256 on the portable payload
-    // ring, 16384 on the staged drivers -- so the test asserts the seam
-    // property rather than a driver magnitude: starts are accepted up to
-    // capacity, then every start refuses with the counter naming the
-    // reason, and the next frame after the flush is whole again.
+    // fill to capacity. the ring's capacity is the driver's own -- 256 on
+    // the portable payload ring, 16384 on the staged drivers -- so it is
+    // MEASURED here rather than asserted against one driver's constant,
+    // then proven exact twice over: every driver must provide at least the
+    // portable ring's 256, and a second fill after the flush accepts
+    // exactly the same number, so the capacity is a stable fact of the
+    // driver and the flush reclaims the whole ring.
 
-    int accepted = 0;
-    int refused = 0;
-    for ( int i = 0; i < 20000 && refused < 44; i++ )
+    int capacity = 0;
+    for ( int i = 0; i < 20000; i++ )
     {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-        if ( frame )
-        {
-            // once the ring has refused, it must refuse until the flush --
-            // an accept after a refusal would mean the overflow tore a hole
-
-            rocketnet_check( refused == 0 );
-            frame[context.payload_index] = (uint8_t) i;
-            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
-            accepted++;
-        }
-        else
-        {
-            refused++;
-        }
+        if ( !frame )
+            break;
+        frame[context.payload_index] = (uint8_t) i;
+        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
+        capacity++;
     }
-    rocketnet_check( accepted > 0 );
-    rocketnet_check( refused == 44 );
-    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == 44 );
+    rocketnet_check( capacity >= 256 );
+    rocketnet_check( capacity < 20000 );
+
+    // refusal holds until the flush -- 44 more starts all refuse, and the
+    // counter attributes every refusal exactly (the break above already
+    // cost one refusal, so the baseline is read here)
+
+    const uint64_t ring_full_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    for ( int i = 0; i < 44; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context ) == NULL );
+    }
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 44 );
+
+    rocketnet_server_transport_send_packets( server );
+
+    // the second fill accepts exactly the measured capacity
+
+    int refill = 0;
+    for ( int i = 0; i < 20000; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        if ( !frame )
+            break;
+        frame[context.payload_index] = (uint8_t) i;
+        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
+        refill++;
+    }
+    rocketnet_check( refill == capacity );
 
     rocketnet_server_transport_send_packets( server );
 
@@ -8920,6 +8940,14 @@ void rocketnet_test_transport_ipv6_loopback()
 
 #include "rocketnet_server_gso.h"
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/udp.h>
+
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
+
 void rocketnet_test_server_gso_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -9088,17 +9116,22 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
     if ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT )
         rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] > 0 );
 
-    // a runt and an oversize packet die at the driver's size pass, counted,
-    // never surfaced
+    // a runt and an oversize packet die at the driver's size pass -- one
+    // below the smallest packet a server reads, one above the receive
+    // ceiling, the pair covering both bounds of the check that guards the
+    // staging memcpy -- counted, never surfaced
 
     const uint64_t dropped_before = counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE];
     uint8_t runt[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1];
     memset( runt, 0xEE, sizeof(runt) );
     rocketnet_platform_socket_send_packet( peer, &server_address, runt, (int) sizeof(runt) );
+    uint8_t oversize[ROCKETNET_RECEIVE_CEILING + 74];
+    memset( oversize, 0xEF, sizeof(oversize) );
+    rocketnet_platform_socket_send_packet( peer, &server_address, oversize, (int) sizeof(oversize) );
 
     start = rocketnet_platform_time();
     uint64_t dropped_after = dropped_before;
-    while ( rocketnet_platform_time() - start < 5.0 && dropped_after == dropped_before )
+    while ( rocketnet_platform_time() - start < 5.0 && dropped_after < dropped_before + 2 )
     {
         rocketnet_server_gso_receive_packets( gso );
         rocketnet_check( rocketnet_server_gso_process_packets( gso )->num_packets == 0 );
@@ -9106,7 +9139,95 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
         dropped_after = counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE];
         rocketnet_platform_sleep( 0.001 );
     }
-    rocketnet_check( dropped_after == dropped_before + 1 );
+    rocketnet_check( dropped_after == dropped_before + 2 );
+
+    // provoke GRO for real: the peer sends one UDP_SEGMENT super-datagram,
+    // which loopback segments and the driver's UDP_GRO socket receives
+    // coalesced -- the multi-segment split path runs, proven by the
+    // GRO_BATCHES counter, and every segment surfaces byte-exact. the
+    // suite's ordinary traffic never repeats a size back to back, so
+    // without this phase the split loop would never execute under test.
+    // ipv4 peers only (the sockaddr is built inline), which covers every
+    // tier this helper runs.
+
+    if ( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) &&
+         ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) &&
+         server_address.type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        const int gro_segments = 8;
+        const int gro_segment_bytes = 100;
+
+        uint8_t super[gro_segments * gro_segment_bytes];
+        for ( int i = 0; i < gro_segments; i++ )
+        {
+            super[i * gro_segment_bytes] = (uint8_t) ( 200 + i );
+            for ( int j = 1; j < gro_segment_bytes; j++ )
+                super[i * gro_segment_bytes + j] = (uint8_t) ( ( 200 + i ) * 13 + j );
+        }
+
+        struct sockaddr_in to;
+        memset( &to, 0, sizeof(to) );
+        to.sin_family = AF_INET;
+        to.sin_addr.s_addr = ( ( (uint32_t) server_address.data.ipv4[0] ) )       |
+                             ( ( (uint32_t) server_address.data.ipv4[1] ) << 8 )  |
+                             ( ( (uint32_t) server_address.data.ipv4[2] ) << 16 ) |
+                             ( ( (uint32_t) server_address.data.ipv4[3] ) << 24 );
+        to.sin_port = rocketnet_platform_htons( server_address.port );
+
+        struct iovec iov = { super, sizeof(super) };
+        char control[CMSG_SPACE(sizeof(uint16_t))];
+        memset( control, 0, sizeof(control) );
+        struct msghdr msg;
+        memset( &msg, 0, sizeof(msg) );
+        msg.msg_name = &to;
+        msg.msg_namelen = sizeof(to);
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_SEGMENT;
+        cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+        uint16_t stride = (uint16_t) gro_segment_bytes;
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+
+        rocketnet_check( sendmsg( peer->handle, &msg, 0 ) == (ssize_t) sizeof(super) );
+
+        rocketnet_server_gso_counters( gso, counters );
+        const uint64_t gro_before = counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES];
+
+        bool segment_seen[gro_segments];
+        memset( segment_seen, 0, sizeof(segment_seen) );
+        int num_segments_seen = 0;
+
+        start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 5.0 && num_segments_seen < gro_segments )
+        {
+            rocketnet_server_gso_receive_packets( gso );
+            struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_gso_process_packets( gso );
+            for ( int i = 0; i < received->num_packets; i++ )
+            {
+                const int tag = received->packet_data[i][0] - 200;
+                rocketnet_check( tag >= 0 && tag < gro_segments );
+                rocketnet_check( !segment_seen[tag] );
+                rocketnet_check( received->packet_bytes[i] == gro_segment_bytes );
+                for ( int j = 1; j < gro_segment_bytes; j++ )
+                    rocketnet_check( received->packet_data[i][j] == (uint8_t) ( ( 200 + tag ) * 13 + j ) );
+                rocketnet_check( received->from[i].port == peer_address.port );
+                segment_seen[tag] = true;
+                num_segments_seen++;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( num_segments_seen == gro_segments );
+
+        // the counter is the proof the coalesced path ran -- eight distinct
+        // arrivals alone would also be produced by uncoalesced delivery
+
+        rocketnet_server_gso_counters( gso, counters );
+        rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] > gro_before );
+    }
 
     rocketnet_platform_socket_destroy( peer );
     rocketnet_server_gso_destroy( gso );

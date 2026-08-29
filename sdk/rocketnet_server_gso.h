@@ -14,11 +14,14 @@
 #include "rocketnet_server_socket.h"        // rocketnet_server_socket_process_packets_t: the process batch shape both staged drivers hand the transport
 
 // The GSO transport driver (#97): the best non-root path Linux has, per the
-// #81 measurements -- an SO_REUSEPORT socket group with one pinned worker
-// thread per socket, the kernel's 4-tuple flow hash sharding receives across
-// them with zero shared state between queues, recvmmsg/sendmmsg batching on
-// both sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
-// traverses the kernel's UDP path once instead of per packet.
+// #81 measurements -- an SO_REUSEPORT socket group with one worker thread
+// per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
+// with zero shared state between queues, recvmmsg/sendmmsg batching on both
+// sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
+// traverses the kernel's UDP path once instead of per packet. Transmit is
+// main-thread by the transport's phase contract, rotated across the group's
+// sockets for send-buffer headroom -- the xdp driver's per-queue sender
+// threads are deliberately not reproduced here.
 //
 // Every kernel feature is probed at create and degrades gracefully: no
 // UDP_SEGMENT means plain sendmmsg batching, no UDP_GRO means plain recvmmsg,
@@ -95,7 +98,8 @@ struct rocketnet_server_gso_t;
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // staging full: the queue could not keep up
 #define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
 #define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                           9
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          10
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6

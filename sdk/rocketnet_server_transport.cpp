@@ -862,20 +862,21 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     acks->update_count++;
 
-    // flush. the portable response ring sends inline here, and the xdp
-    // worker drains its staging continuously off-thread, so on both of
-    // those drivers update's own responses and keep-alives reach the wire
-    // whether or not the application ever calls
-    // rocketnet_server_transport_send_packets -- a seam property the call sites
-    // rely on. the xdp buffer flip in send_packets retargets the drain and
-    // zeroes the buffers behind it, so flipping with nothing staged would
-    // destroy in-flight packets: update marks itself staged and the flush
-    // below flips only when something has staged since the last flip. the
-    // gso driver has no off-thread sender, so it preserves the same
-    // property by flushing update's own staging inline right here -- the
-    // flush is main-thread and idempotent -- and send_flushed advances with
-    // it so send_packets flips only for what the fill phase stages after
-    // this point.
+    // flush. the caller's contract (rocketnet.h) is send_packets once per
+    // frame after update -- but the portable driver has always ALSO sent
+    // update's own responses and keep-alives inline right here, and much of
+    // the test suite's pump loops lean on that without ever calling
+    // send_packets. the xdp driver does not have that property: its worker
+    // drains only the off buffer, so nothing staged by update leaves until
+    // the send_packets flip retargets the buffers -- a divergence the suite
+    // has never observed because it has never run against xdp (no root in
+    // CI), recorded here so nobody rediscovers it. the gso driver sides
+    // with the portable behavior: update's own staging flushes inline on
+    // the main thread -- the flush is idempotent -- and send_flushed
+    // advances with it, so send_packets flips only for what the fill phase
+    // stages after this point. the xdp flip is destructive to run twice on
+    // one staging generation, which is what the staged/flushed guard below
+    // protects.
 
 #if ROCKETNET_SERVER_STAGED
 

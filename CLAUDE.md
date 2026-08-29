@@ -210,7 +210,10 @@ measurements (GSO/GRO 11.62x over portable standalone on the space box's
 loopback; io_uring 1.13x, not worth its complexity): an `SO_REUSEPORT` group
 with one socket per worker thread, kernel 4-tuple hash sharding receives with
 zero shared state between queues, `recvmmsg`/`sendmmsg` batching, and
-`UDP_SEGMENT`/`UDP_GRO` so a batch traverses the kernel's UDP path once. The
+`UDP_SEGMENT`/`UDP_GRO` so a batch traverses the kernel's UDP path once.
+Transmit is main-thread (the phase contract), rotated across the group's
+sockets for buffer headroom — the XDP path's per-queue sender threads are
+not reproduced, deliberately. The
 driver probes every feature at create and degrades to plain mmsg batching
 where a kernel says no; a live GSO refusal mid-flush flips the tier and
 resends plain, lossless. It recovers the syscall win and the single-traversal
