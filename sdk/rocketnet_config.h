@@ -125,6 +125,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 //   macOS       msgx, portable          msgx, portable
 //   iOS         portable                portable
 //   windows     portable                portable
+//   BSDs        portable                portable
 //
 // (the staged linux drivers are server-side machinery; the client is the
 // platform socket everywhere, with the darwin batch pump where granted)

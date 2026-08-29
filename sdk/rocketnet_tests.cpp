@@ -60,6 +60,20 @@
 #include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// setenv/unsetenv are posix-only names: the MSVC CRT spells both
+// _putenv_s -- a value of "" REMOVES the variable, and getenv sees the
+// change because the suite and the sdk read the same CRT environment --
+// so the #106 config and driver tests RUN on windows instead of being
+// compiled out (a skipped test is named and logged, never silent; a
+// runnable test is run)
+
+static int setenv( const char * name, const char * value, int overwrite ) { (void) overwrite; return _putenv_s( name, value ); }
+static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 static void rocketnet_check_handler( const char * condition,
                                 const char * function,
                                 const char * file,
@@ -5616,9 +5630,7 @@ void rocketnet_test_platform_batch_pump_degraded()
     // refusal would degrade to. on platforms whose pump is portable
     // already, the override is a no-op and the exchange still holds.
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     setenv( "ROCKETNET_PUMP", "portable", 1 );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, "0.0.0.0" );
@@ -5629,9 +5641,7 @@ void rocketnet_test_platform_batch_pump_degraded()
 
     rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", "portable" );
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     unsetenv( "ROCKETNET_PUMP" );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 }
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -9434,8 +9444,6 @@ static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, 
         snprintf( guard->saved, sizeof(guard->saved), "%s", value );
 }
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
 static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     rocketnet_test_env_save( guard, name );
@@ -10417,8 +10425,6 @@ void rocketnet_test_client_driver()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // The GSO driver's own tests (#97), linux only, run on every linux build
@@ -10972,8 +10978,6 @@ void rocketnet_run_tests()
 
     rocketnet_forbid_xdp_commit();
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-
     // ambient address overrides would redirect the suite's first create
     // (their designed scope) at whatever test happens to run first: the
     // suite owns its process environment, so they are cleared here rather
@@ -10981,8 +10985,6 @@ void rocketnet_run_tests()
 
     unsetenv( "ROCKETNET_PUBLIC_ADDRESS" );
     unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
-
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     // while ( true )
     {
@@ -11069,8 +11071,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_platform_pump_zero_length_chaff );
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         // a skipped test is named and logged, never silent: both drive the
-        // posix raw-socket injector beside the platform socket, which has no
-        // windows arm (and the chaff test also leans on setenv)
+        // posix raw-socket injector beside the platform socket, which has
+        // no windows arm
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_batch_pump_refused_destination [SKIPPED on windows: posix raw-socket injector]" );
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_pump_zero_length_chaff [SKIPPED on windows: posix raw-socket injector]" );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -11122,7 +11124,6 @@ void rocketnet_run_tests()
 
         // the config table and the driver ladder (#106)
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         RUN_TEST( test_config_env_round_trip );
         RUN_TEST( test_config_validation );
         RUN_TEST( test_driver_ladder_parse );
@@ -11142,7 +11143,6 @@ void rocketnet_run_tests()
         RUN_TEST( test_config_override_logging );
         RUN_TEST( test_config_env_aliases );
         RUN_TEST( test_client_driver );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         RUN_TEST( test_server_gso_probe );
         RUN_TEST( test_server_gso_wire_ipv4 );

@@ -527,7 +527,8 @@ if [ "$MODE" = "selftest" ]; then
     # contract, tool absence, query failure, occupied in verify, count
     # mismatch in verify, act refused, act lied, post-act query failure,
     # read-back mismatch, precision of the no-channel discriminator, and
-    # the injected outside-set arms -- the fail-site
+    # the injected outside-set arms and the r7 query-function
+    # injections -- the fail-site
     # enumeration receipt on the PR pairs each site with its case, so the
     # coverage claim is a checkable list, not an adjective. the xdp-loader stub
     # REPLAYS REAL OUTPUT captured from xdp-tools 1.6.2 on the lima VM
@@ -622,6 +623,16 @@ case "$1" in
             echo "netlink error: Operation not supported" >&2
             exit 1
         fi
+        if [ "$COUNT" = "rxonly" ]; then
+            echo "Channel parameters for $IFACE:"
+            echo "Pre-set maximums:"
+            echo "RX:             8"
+            echo "TX:             8"
+            echo "Current hardware settings:"
+            echo "RX:             4"
+            echo "TX:             4"
+            exit 0
+        fi
         echo "Channel parameters for $IFACE:"
         echo "Pre-set maximums:"
         echo "Combined:       32"
@@ -639,6 +650,7 @@ case "$1" in
             fails) echo "stub: -L refused" >&2; exit 1 ;;
             lies)  exit 0 ;;
             works_then_l_fails) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; touch "$STUB_STATE_DIR/l_broken"; exit 0 ;;
+            works_then_unparseable) echo rxonly > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
         esac
         ;;
 esac
@@ -754,6 +766,36 @@ STUB
 
     echo vanished > "$STUB_STATE_DIR/combined.q7"
     OUT="$(run_r7 1 q7 7)"; expect_case "r7 verify vanished-device precision" $? 1 "$OUT" "cannot verify the queue count" 1 "no channel surface"
+
+    # --- rc-0-but-unparseable: a zero-rc ethtool whose table carries no
+    # Combined row (rx/tx-only channel NICs are real) must fail closed as
+    # unknown at BOTH parse sites -- emptiness is not agreement ---
+
+    echo rxonly > "$STUB_STATE_DIR/combined.q8"
+    OUT="$(run_r7 1 q8 7)"; expect_case "r7 verify unparseable-count fails closed" $? 1 "$OUT" "combined queue count is unknown, want 7" 1
+
+    echo 4 > "$STUB_STATE_DIR/combined.q9"; echo works_then_unparseable > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q9 7)"; expect_case "r7 provision reads-back-unparseable fails closed" $? 1 "$OUT" "reads back unknown" 1
+
+    # --- the r7 mirror of r3's outside-set injections: r7_enforce must
+    # consume the ONE query function at BOTH call sites, so overriding it
+    # in the subshell must change r7's behavior -- a call-site bypass
+    # (running ethtool directly) cannot ship green here ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.qi0"
+    OUT="$( ( query_combined_stdout() { echo "injected: not a channel table"; return 5; }
+              UNMET=0; VERIFY=1; INTERFACE=qi0; NUM_QUEUES=7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    expect_case "r7 injected initial-query failure" $? 1 "$OUT" "cannot verify the queue count" 1 "already"
+
+    echo 4 > "$STUB_STATE_DIR/combined.qi1"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$( ( query_combined_stdout() { if [ -f "$STUB_STATE_DIR/qi1_second" ]; then return 6; fi
+                                        touch "$STUB_STATE_DIR/qi1_second"
+                                        printf 'Current hardware settings:\nCombined:       4\n'; return 0; }
+              UNMET=0; VERIFY=0; INTERFACE=qi1; NUM_QUEUES=9; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    expect_case "r7 injected re-read failure" $? 1 "$OUT" "could not re-read" 1 "confirmed"
+    rm -f "$STUB_STATE_DIR/qi1_second"
 
     # --- tool absence: the most reachable live failure arms in the file.
     # the curated PATH exists to EXCLUDE the tool under test; today's
