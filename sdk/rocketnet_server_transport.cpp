@@ -609,11 +609,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char refused_names[128];
     refused_names[0] = '\0';
 
-    // #109: whether any rung was refused by the port-zero rule, so an
-    // exhausted ladder can restate the rule at the level the failure
-    // itself is reported. see the error below.
+    // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
+    // can restate the rule at the level the failure itself is reported.
+    // The names are collected rather than a bare flag because a mixed list
+    // -- say "xdp,gso" where gso refused for its own queue geometry --
+    // would make "no driver here can discover a port" a lie about gso. The
+    // error names the rungs the rule actually refused, and nothing else.
 
-    bool port_zero_refusal = false;
+    char port_zero_refused_names[128];
+    port_zero_refused_names[0] = '\0';
 
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
@@ -639,7 +643,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
         if ( public_address.port == 0 && !rocketnet_driver_discovers_bound_port( candidate ) )
         {
-            port_zero_refusal = true;
+            const size_t used = strlen( port_zero_refused_names );
+            snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+
             rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
         }
@@ -749,9 +755,10 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         // reported -- on the fall it stays a warn, because a fall is not a
         // failure and an error line would be a lie about the outcome.
 
-        if ( port_zero_refusal )
+        if ( port_zero_refused_names[0] != '\0' )
         {
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: no driver in this list can discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or include a driver that discovers one (portable, msgx, gso)" );
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or include a driver that discovers one (portable, msgx, gso)",
+                             port_zero_refused_names );
         }
 
         rocketnet_server_transport_destroy( server_transport );

@@ -10145,7 +10145,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         rocketnet_log_function( NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "no driver in this list can discover the port it was granted" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
 
         // and at a level that shows warns, the RUNG's own refusal names
         // the rule and the driver together -- matched as one phrase, since
