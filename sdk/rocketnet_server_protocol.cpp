@@ -435,6 +435,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         mapping->timeout_seconds = timeout_seconds;
         mapping->last_receive_time = current_time;
         mapping->last_send_time = current_time;
+        mapping->last_keep_alive_send_time = current_time;
 
         sodium_memzero( &keys, sizeof(keys) );
 
@@ -1129,6 +1130,12 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
 
     rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
+    // the keep-alive's own clock, which only keep-alives move. it is what
+    // paces generation to an unconfirmed client, where ordinary traffic
+    // must not suppress -- see the due predicate below.
+
+    mapping->last_keep_alive_send_time = current_time;
+
     rocketnet_spam( "server sent keep alive to client %d", client_index );
 
     return bytes;
@@ -1173,8 +1180,37 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     if ( !mapping )
         return 0;
 
+    // Which clock the suppression reads is the whole of this rule, and it
+    // turns on the confirmed flag.
+    //
+    // While the client is UNCONFIRMED the server has not observed that the
+    // client received a keep-alive, so it has not observed that the client
+    // knows its own index -- and the keep-alive is the only packet that
+    // carries it. Generation there is driven by elapsed time alone, off the
+    // keep-alive's own clock, and ordinary traffic does not suppress it.
+    // Reading last_send_time in that state is what let a continuous payload
+    // stream starve confirmation forever (#90): every payload restamped the
+    // clock the repair was waiting on, and the loss walkthrough's "the next
+    // one is at most a send interval away" became false.
+    //
+    // ONCE CONFIRMED the client is known to be connected -- confirmation
+    // takes a sealed packet, and a client sends nothing sealed before it is
+    // connected -- so nothing is waiting on a keep-alive any more and
+    // ordinary traffic is the keep-alive, off last_send_time as before.
+    //
+    // The unconfirmed window is one round trip in the ordinary case and
+    // bounded by the connection timeout in the worst, so the unsuppressed
+    // rate is bounded by the send rate for a bounded time. This is netcode's
+    // unsuppressed-while-unconfirmed rule, recovered without reintroducing
+    // the payload prefixing that _Connected Clients_ deliberately subtracts.
+
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
-    if ( current_time - mapping->last_send_time < 1.0 / send_rate )
+
+    double last = rocketnet_client_slots_confirmed( server->client_slots, client_index )
+                    ? mapping->last_send_time
+                    : mapping->last_keep_alive_send_time;
+
+    if ( current_time - last < 1.0 / send_rate )
         return 0;
 
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );

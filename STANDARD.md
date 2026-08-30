@@ -1960,7 +1960,7 @@ application update.
 
 | Value | Default | Applies to |
 |---|---|---|
-| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection |
+| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (suppressed by ordinary traffic only once the client is confirmed — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
@@ -2204,7 +2204,12 @@ retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
 answering. A lost keep-alive: the next one is at most a send interval away, in
-both directions, forever. A lost ack: every later block restates the same
+both directions, forever — and to an unconfirmed client that bound holds
+against a continuous payload stream, because _Keep-alive generation_ forbids
+traffic from suppressing a keep-alive to a client that has not been observed to
+hold its index. The establishment keep-alive is the packet this clause exists
+for: it is the only one carrying the client index, and its loss is the only
+loss the receiving end cannot re-provoke by retransmitting. A lost ack: every later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
 and nothing waits for it — the abandoned counter records it and the connection
@@ -2573,7 +2578,8 @@ only data already verified.
 * Assign a slot, copy the user data from the encryption mapping into it, mark
   the client unconfirmed, and respond with a _connection keep-alive packet_. If
   this keep-alive is lost, the ones generated at the send rate repeat the
-  answer.
+  answer — and per _Keep-alive generation_ they are not suppressed by whatever
+  else the server sends this client, because the client is unconfirmed.
 
 ### Processing session packets at the server
 
@@ -2613,6 +2619,12 @@ exists because the
 server has not yet observed that the client received its keep-alive, so it does
 not yet know the client considers itself connected.
 
+The flag is exact in both directions, which is why _Keep-alive generation_ is
+allowed to hang a MUST on it. A client sends nothing sealed before it reaches
+_connected_ — every sealed send on the client is gated on that state — so a
+sealed packet arriving on a slot proves the client is connected, and an
+unconfirmed slot means the server has no such proof.
+
 **There is no keep-alive prefixing for unconfirmed clients, and the
 subtraction is deliberate.** netcode prefixed every payload to an unconfirmed
 client with a keep-alive because its client could not interpret payloads
@@ -2624,11 +2636,43 @@ keep-alive still carries the client index and the slot count, and receiving
 the first one is still what moves the client to _connected_; payloads simply
 do not wait for it.
 
-**Keep-alive generation.** The server sends a keep-alive to every connected
-client whenever the send rate interval has elapsed since it last sent that
-client anything. The client does the same toward the server once connected.
-Keep-alives are therefore suppressed by ordinary traffic and appear only when a
-connection is otherwise idle.
+**Keep-alive generation, and what suppression is allowed to read.** The rule
+turns on the confirmed flag, because the flag is exactly the server's knowledge
+of whether the client has its index yet.
+
+* **To a CONFIRMED client**, the server sends a keep-alive whenever the send
+  rate interval has elapsed since it last sent that client *anything*.
+  Keep-alives are suppressed by ordinary traffic there and appear only when the
+  connection is otherwise idle. The client does the same toward the server once
+  connected, on the same reading.
+* **To an UNCONFIRMED client**, the server sends a keep-alive whenever the send
+  rate interval has elapsed since it last sent that client *a keep-alive*.
+  Ordinary traffic MUST NOT suppress it. Generation there is driven by elapsed
+  time and nothing else, exactly as _Timing_ requires of every retransmission.
+
+**Why the carve-out is mandatory, not an optimization.** The keep-alive is the
+only packet that carries the client index, and receiving one is the only thing
+that moves a client from _sending connection response_ to _connected_. A client
+that has not received one sends nothing sealed — its only outbound packet is
+the retransmitted connection response, which the server ignores as already
+connected — so the client cannot repair a lost establishment keep-alive, and
+the slot stays unconfirmed. The repair can only come from the server's own
+pacing. If suppression read the last send of anything in that state, a server
+application sending payloads continuously would restamp the clock the repair
+waits on, every keep-alive after the lost one would be suppressed, and the
+client would be stranded until its total connect deadline failed an attempt
+that was carrying payloads the whole time. That is the case the loss
+walkthrough's invariant forbids, and this is the sentence that keeps the
+walkthrough's "the next one is at most a send interval away" true.
+
+**What it costs.** An unconfirmed client receives keep-alives at the send rate
+in addition to whatever the application sends it. The window is one round trip
+in the ordinary case and is bounded above by the handshake deadline and the
+connection timeout in the worst, so the unsuppressed rate is bounded by the
+send rate for a bounded time, on a slot that is already committed. This is the
+unsuppressed-while-unconfirmed rule netcode carried on its payload prefixing,
+recovered here without the prefixing that the subtraction above deliberately
+removes.
 
 **Establishment on the client.** A client transitions to _connected_ on the
 first keep-alive it receives, taking its client index and the slot count from

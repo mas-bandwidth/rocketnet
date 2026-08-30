@@ -3241,19 +3241,32 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
 
-    // the first keep-alive at the response stamped the send at 100.0, so
-    // nothing is due until the interval elapses -- keep-alives appear only
-    // when the connection is otherwise idle
+    // the first keep-alive at the response stamped the keep-alive clock at
+    // 100.0, so nothing is due until the interval elapses -- the rate is the
+    // rate in either regime
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.05, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.11, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
-    // a payload send suppresses the next keep-alive: ordinary traffic is
-    // the keep-alive
+    // UNCONFIRMED: a payload send does NOT suppress the next keep-alive.
+    // The client has not been observed to hold its index yet, and the
+    // keep-alive is the only packet that carries it, so generation runs off
+    // elapsed time alone -- the payload at 100.15 changes nothing, and the
+    // keep-alive is due one interval after the last keep-alive at 100.11.
     const uint8_t data[4] = { 1, 2, 3, 4 };
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.15, packet ) > 0 );
-    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.22, packet ) == 0 );
-    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.26, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.16, packet ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.22, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+
+    // CONFIRMED: suppression begins. The server has now seen a sealed packet
+    // from this client, which it can only have sent from _connected_, so
+    // nothing is waiting on a keep-alive and ordinary traffic is the
+    // keep-alive.
+    rocketnet_client_slots_confirm( test.server.client_slots, 0 );
+    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.25, packet ) > 0 );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.32, packet ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.36, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // a disconnected index degrades to zero, never an assert
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 3, 200.0, packet ) == 0 );
