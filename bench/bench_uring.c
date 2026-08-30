@@ -82,6 +82,9 @@ static void resubmit_multishot( struct io_uring * ring, int fd )
     sqe->buf_group = URING_BUF_GROUP;
 }
 
+/* the buffer ring running dry: expected under load, and the re-arm handles it */
+static const int uring_recv_tolerated[] = { ENOBUFS };
+
 static void run_receiver( int port, double warmup, double window, int windows )
 {
     int fd = bench_udp_socket();
@@ -130,14 +133,30 @@ static void run_receiver( int port, double warmup, double window, int windows )
             batch_syscalls++;
             count = io_uring_peek_batch_cqe( &ring, cqes, URING_CQE_BATCH );
             if ( count == 0 )
+            {
+                /* an empty completion queue is the ordinary idle state, and it
+                   is where the shared rule is reached on every drain so the
+                   fault switch has a healthy run to break (#98 item 5) */
+                bench_receive_refused_or_empty( "io_uring multishot recv", EAGAIN );
                 batch_empty++;
+            }
         }
 
         int need_resubmit = 0;
         for ( unsigned i = 0; i < count; i++ )
         {
             struct io_uring_cqe * cqe = cqes[i];
-            if ( cqe->res > 0 && ( cqe->flags & IORING_CQE_F_BUFFER ) )
+            if ( cqe->res < 0 )
+            {
+                /* the multishot receive itself failed. ENOBUFS is the buffer
+                   ring running dry, which the re-arm below handles and which
+                   is ordinary under load; anything else is a receiver that has
+                   stopped receiving, and used to be stepped straight over. */
+                bench_receive_refused_or_empty_except( "io_uring multishot recv", -cqe->res,
+                                                       uring_recv_tolerated,
+                                                       (int) ( sizeof(uring_recv_tolerated) / sizeof(uring_recv_tolerated[0]) ) );
+            }
+            else if ( cqe->res > 0 && ( cqe->flags & IORING_CQE_F_BUFFER ) )
             {
                 int buffer_id = (int) ( cqe->flags >> IORING_CQE_BUFFER_SHIFT );
                 uint8_t * packet = buffer_memory + buffer_id * URING_BUFFER_SIZE;
@@ -194,6 +213,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     static uint8_t buffers[BENCH_BATCH_SIZE][BENCH_MAX_PACKET];
 
+    struct bench_send_health_t health;
+    memset( &health, 0, sizeof(health) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -229,7 +250,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             result = io_uring_submit_and_wait( &ring, BENCH_BATCH_SIZE );
             syscalls++;
             if ( result < 0 )
+            {
+                /* a refused submission used to be stepped over in silence,
+                   so a ring that never accepted anything reported pps=0 */
+                bench_send_refused( &health, "io_uring_submit_and_wait", -result );
                 continue;
+            }
+            bench_send_ok( &health, "io_uring_submit_and_wait" );
 
             /* reap: for send_zc each send posts a completion and later a notification */
             struct io_uring_cqe * cqe;
@@ -244,6 +271,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                     completed++;
                     if ( cqe->res > 0 )
                         sent++;
+                    else if ( cqe->res < 0 )
+                        bench_send_refused( &health, "io_uring send completion", -cqe->res );
                 }
             }
             io_uring_cq_advance( &ring, reaped );
@@ -270,8 +299,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed, (unsigned long long) syscalls );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
 
     io_uring_queue_exit( &ring );
     close( fd );

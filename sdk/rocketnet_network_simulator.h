@@ -87,7 +87,7 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
 // while leaving it occupied. Nothing crashes and nothing logs -- the packet is
 // simply never delivered again, which is exactly the silent mis-measurement an
 // index can introduce. With the audit on, this must go red immediately; if it
-// does not, the audit is decoration. scripts/soak-sim-audit-selftest runs both
+// does not, the audit is decoration. scripts/soak-sim-selftest runs both
 // legs and is the receipt.
 
 void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_simulator_t * simulator );

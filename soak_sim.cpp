@@ -242,22 +242,30 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
         return 1;
     }
 
-    int refused = 0;
+    int unsupportable = 0;
     for ( int i = 0; i < SOAK_PROFILE_BUCKETS; i++ )
     {
         const double instrument = soak_profile_timer_cost * (double) soak_profile_regions[i];
+        const double gross = 100.0 * soak_profile_seconds[i] / total_seconds;
+        const double net = 100.0 * ( soak_profile_seconds[i] - instrument ) / total_seconds;
+
+        printf( "  %-50s %8.3f s  %5.1f%% gross  %5.1f%% net of its own %.3f s of timer\n",
+                soak_profile_bucket_name[i], soak_profile_seconds[i], gross, net, instrument );
+
+        // The number is always printed. Withholding it would be its own kind
+        // of dishonesty -- a refusal that happens to sit where the flattering
+        // reading is -- so what gets withheld is the CONFIDENCE, stated in the
+        // same breath as the figure it qualifies.
+
         if ( soak_profile_seconds[i] < instrument * 4.0 )
         {
-            printf( "  %-50s %8.3f s   NOT MEASURABLE: within 4x of the %.3f s its own timer cost\n",
-                    soak_profile_bucket_name[i], soak_profile_seconds[i], instrument );
-            refused = 1;
-            continue;
+            printf( "  %-50s   ^ NOT SUPPORTABLE: the net figure is a difference of two numbers within 4x\n"
+                    "  %-50s     of each other, so its error bars are the same size as itself. Read the\n"
+                    "  %-50s     gross %.1f%% as an upper bound and the net %.1f%% as an estimate, not a\n"
+                    "  %-50s     measurement. The bucket has become too cheap for this timer to divide.\n",
+                    "", "", "", gross, net, "" );
+            unsupportable = 1;
         }
-        printf( "  %-50s %8.3f s  %5.1f%%   (of which %.3f s is the timer: share is %.1f%% net)\n",
-                soak_profile_bucket_name[i], soak_profile_seconds[i],
-                100.0 * soak_profile_seconds[i] / total_seconds,
-                instrument,
-                100.0 * ( soak_profile_seconds[i] - instrument ) / total_seconds );
     }
 
     printf( "  %-50s %8.3f s  %5.1f%%\n",
@@ -265,9 +273,22 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
             total_seconds - accounted,
             100.0 * ( total_seconds - accounted ) / total_seconds );
 
-    if ( refused )
-        printf( "\nOne or more buckets are at the level of the instrument measuring them and were not\n"
-                "reported as shares. That is the honest answer, not a smaller number.\n" );
+    // What the accounting check above can and cannot see, said here rather
+    // than left for a reader to assume. It compares the SUM against the wall
+    // clock, so it catches double-charging and a clock that ran backwards. It
+    // cannot see a single bucket charged with work that belongs to another
+    // one: that moves time between buckets and leaves the sum untouched. The
+    // guard against THAT is not arithmetic, it is that each bucket's contents
+    // are a short explicit list of calls in this file.
+
+    printf( "\n  The parts-within-the-whole check passed. It compares the sum against the wall clock,\n"
+            "  so it sees double-charging and a clock that went backwards. It CANNOT see time charged\n"
+            "  to the wrong bucket, which leaves the sum unchanged -- only reading the wrapped call\n"
+            "  sites in soak_sim.cpp can rule that out.\n" );
+
+    if ( unsupportable )
+        printf( "\n  One or more buckets is at the level of the instrument measuring it. The figures are\n"
+                "  printed with that said, rather than withheld.\n" );
 
     fflush( stdout );
     return 0;

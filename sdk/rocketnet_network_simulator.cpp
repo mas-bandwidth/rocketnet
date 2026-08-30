@@ -78,7 +78,7 @@
     And the audit has its own negative control: rocketnet_network_simulator_
     inject_index_fault() deliberately corrupts the index in the one way that
     matters, so the audit can be watched failing on demand rather than
-    trusted. scripts/soak-sim-audit-selftest runs both legs.
+    trusted. scripts/soak-sim-selftest runs both legs.
 */
 
 #define ROCKETNET_SIMULATOR_NO_SLOT (-1)
@@ -296,21 +296,85 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
 // --------------------------------------------------------------------------
 // the index
 
+/*
+    Linking keeps each shard in ascending slot order, and finding the position
+    is the one operation here that is NOT constant time.
+
+    An earlier version of this function walked back from the tail and claimed
+    both common shapes were short. Half of that was wrong, and wrong in the
+    expensive direction: send() takes the LOWEST free slot, so the shape where
+    a low slot is vacated and immediately refilled puts the new entry at the
+    FRONT of the list, which is the farthest point from the tail.
+
+    So the walk picks its end. A slot below the head is a prepend and a slot
+    above the tail is an append, both constant time, and those are the two
+    shapes that actually occur; anything landing in the interior walks from
+    whichever end is nearer in index space, so the worst case is half the list
+    rather than all of it.
+
+    Measured, Apple M3 Ultra (Mac Studio), one destination, the lowest slot
+    vacated and refilled 20,000 times, nanoseconds per receive+send pair:
+
+        occupancy                    500      1000      4000
+        the array scan this replaced  17         8         8
+        index, walking from the tail 943      1029      3757
+        index, walk picks its end     19        18        18
+
+    At 4000 that is 470x the array scan before and 2.25x after.
+
+    WHERE THIS INDEX IS STILL SLOWER THAN THE SCAN IT REPLACED, which is a
+    real property and not a rounding error. Finding a due packet costs one
+    list step per entry the walk passes, and a list step chases a pointer and
+    then reads delivery_time at a random index; the array scan read a
+    contiguous used[] array and was much cheaper PER ENTRY. The index wins
+    whenever it visits fewer entries, which is every shape the soak produces.
+    It loses when it must visit all of them anyway -- a shard whose head is a
+    long run of not-yet-due entries with the due one at the far end:
+
+        occupancy                    1000      4000
+        the array scan this replaced  664      2529
+        this index                   1635      5955
+
+    2.35x slower at 4000. soak_sim runs about 400 packets in flight over nine
+    destinations, so its lists are tens of entries and it is nowhere near
+    either of these shapes -- its measured gain is 1.34x overall. The numbers
+    are here because this file ships inside librocketnet and the functional
+    tests use it, so a caller with a different shape should meet them rather
+    than discover them.
+*/
+
 static void rocketnet_simulator_link( struct rocketnet_network_simulator_t * simulator, int slot )
 {
     const int shard = rocketnet_simulator_shard( simulator, &simulator->to[slot] );
+    const int head = simulator->shard_head[shard];
+    const int tail = simulator->shard_tail[shard];
 
-    // ascending slot order. walking back from the tail is the short path in
-    // both of the shapes that occur: appending above every current entry
-    // (the wire filling upward), and dropping into a hole just vacated.
+    int after;                                  // the last entry below slot, or NO_SLOT to prepend
 
-    int after = simulator->shard_tail[shard];
-    while ( after != ROCKETNET_SIMULATOR_NO_SLOT && after > slot )
-        after = simulator->prev_in_shard[after];
+    if ( head == ROCKETNET_SIMULATOR_NO_SLOT || slot < head )
+    {
+        after = ROCKETNET_SIMULATOR_NO_SLOT;    // empty list, or a new lowest entry
+    }
+    else if ( slot > tail )
+    {
+        after = tail;                           // a new highest entry
+    }
+    else if ( slot - head <= tail - slot )
+    {
+        after = head;                           // nearer the head: walk forward
+        while ( simulator->next_in_shard[after] != ROCKETNET_SIMULATOR_NO_SLOT &&
+                simulator->next_in_shard[after] < slot )
+            after = simulator->next_in_shard[after];
+    }
+    else
+    {
+        after = tail;                           // nearer the tail: walk back
+        while ( after != ROCKETNET_SIMULATOR_NO_SLOT && after > slot )
+            after = simulator->prev_in_shard[after];
+    }
 
     if ( after == ROCKETNET_SIMULATOR_NO_SLOT )
     {
-        const int head = simulator->shard_head[shard];
         simulator->prev_in_shard[slot] = ROCKETNET_SIMULATOR_NO_SLOT;
         simulator->next_in_shard[slot] = head;
         if ( head != ROCKETNET_SIMULATOR_NO_SLOT )

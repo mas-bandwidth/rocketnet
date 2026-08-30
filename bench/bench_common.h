@@ -25,9 +25,18 @@
     histogram (#98 item 8): a drain that ends on an empty syscall has
     that empty syscall inside its timed region, which inflates the
     quotient for every packet the batch did carry. Those batches still
-    count toward pps and bytes; they do not count toward ns. The WINDOW
-    line reports how many batches were timed, so a window whose ns
-    columns rest on nothing says so instead of printing a number.
+    count toward pps and bytes; they do not count toward ns.
+
+    That exclusion can leave the ns columns resting on very little, and
+    a small remnant is not a neutral sample -- the batches that fill
+    completely are the congested ones, so what survives is a
+    congestion-biased subsample. The WINDOW line therefore reports both
+    the number of timed batches and the SHARE OF THE WINDOW'S PACKETS
+    they cover, and any window whose ns columns cover less than
+    BENCH_TIMED_SHARE_FLOOR of its packets prints a line saying so with
+    the fraction spelled out. Zero is not the only dishonest case: one
+    batch in a million is worse, because it still prints a plausible
+    number.
 
     FAIL LOUD (#98 item 5). Every refusal a harness can meet is either a
     known back-pressure condition, counted and continued, or an abort
@@ -134,16 +143,26 @@ static inline void bench_fatal( const char * call, const char * detail )
    "the queue was simply empty" -- which is what lets the fault switch turn an
    ordinary empty drain into the refusal a broken socket would report */
 
-static inline void bench_receive_refused_or_empty( const char * call, int error )
+static inline void bench_receive_refused_or_empty_except( const char * call, int error, const int * tolerated, int tolerated_count )
 {
     if ( bench_fault( "recv-errno" ) )
         error = EBADF;
     if ( error == EAGAIN || error == EWOULDBLOCK || error == EINTR )
         return;
+    for ( int i = 0; i < tolerated_count; i++ )
+    {
+        if ( error == tolerated[i] )
+            return;
+    }
     char detail[192];
     snprintf( detail, sizeof(detail), "refused with errno %d (%s) -- this is not an empty queue, so every number below it would be a fiction",
               error, strerror( error ) );
     bench_fatal( call, detail );
+}
+
+static inline void bench_receive_refused_or_empty( const char * call, int error )
+{
+    bench_receive_refused_or_empty_except( call, error, NULL, 0 );
 }
 
 /*
@@ -203,6 +222,13 @@ static inline void bench_send_refused( struct bench_send_health_t * health, cons
     Histogram of per-packet processing times: 16 ns buckets to ~1.05 ms,
     overflow counted. Allocate max needed, reset per window.
 */
+
+/* the share of a window's packets the ns columns must cover before they are
+   reported without a warning. A quarter is a judgement call, not a derived
+   constant: below it the surviving batches are too few and too congestion-
+   selected for a p99 to mean what a reader will take it to mean. */
+
+#define BENCH_TIMED_SHARE_FLOOR 0.25
 
 #define BENCH_HIST_BUCKETS 65536
 #define BENCH_HIST_SHIFT   4                        /* 16 ns per bucket */
@@ -275,7 +301,8 @@ static inline uint64_t bench_fold_packet( const uint8_t * packet, int bytes )
     once per batch with the batch's cost; the struct advances warm-up and
     windows off the monotonic clock and prints one line per window:
 
-    WINDOW n secs=S pkts=N pps=R bytes=B p50_ns=X p99_ns=Y syscalls=C empty=E
+    WINDOW n secs=S pkts=N pps=R bytes=B p50_ns=X p99_ns=Y syscalls=C
+           empty=E timed=T timed_pkts=P fold=F
 
     "syscalls" is every syscall the harness made in the window (data path
     only), "empty" the subset that returned no data (EAGAIN spins), and
@@ -297,6 +324,7 @@ struct bench_windows_t
     uint64_t syscalls;
     uint64_t empty;
     uint64_t timed;                                 /* batches whose ns were clean enough to histogram */
+    uint64_t timed_packets;                         /* packets those batches carried */
     uint64_t fold;                                  /* payload fold, defeats dead-code elimination */
     struct bench_hist_t hist;
 };
@@ -314,7 +342,7 @@ static inline void bench_windows_init( struct bench_windows_t * w, double warmup
 static inline void bench_window_emit( struct bench_windows_t * w, uint64_t now )
 {
     double secs = (double) ( now - w->window_start_ns ) / 1e9;
-    printf( "WINDOW %d secs=%.3f pkts=%llu pps=%.0f bytes=%llu p50_ns=%llu p99_ns=%llu syscalls=%llu empty=%llu timed=%llu fold=%llx\n",
+    printf( "WINDOW %d secs=%.3f pkts=%llu pps=%.0f bytes=%llu p50_ns=%llu p99_ns=%llu syscalls=%llu empty=%llu timed=%llu timed_pkts=%llu fold=%llx\n",
             w->window_index, secs,
             (unsigned long long) w->packets,
             (double) w->packets / secs,
@@ -324,14 +352,27 @@ static inline void bench_window_emit( struct bench_windows_t * w, uint64_t now )
             (unsigned long long) w->syscalls,
             (unsigned long long) w->empty,
             (unsigned long long) w->timed,
+            (unsigned long long) w->timed_packets,
             (unsigned long long) w->fold );
 
-    /* the ns columns resting on nothing say so rather than printing zeros
-       that read like a measurement */
+    /* ns columns that rest on too little of the window say so. The floor is a
+       SHARE of the window's packets, not a nonzero check: one full batch in a
+       million still prints a plausible-looking p50 and p99, and because the
+       batches that fill completely are the congested ones, a small remnant is
+       a congestion-biased subsample rather than a thin but fair one. */
 
-    if ( w->timed == 0 && w->packets > 0 )
-        printf( "WINDOW %d NO TIMED BATCHES: %llu packets arrived but every batch ended on an empty syscall, so p50_ns/p99_ns above are not measurements. pps and bytes stand.\n",
-                w->window_index, (unsigned long long) w->packets );
+    if ( w->packets > 0 )
+    {
+        const double share = (double) w->timed_packets / (double) w->packets;
+        if ( w->timed == 0 )
+            printf( "WINDOW %d NS COLUMNS VOID: %llu packets arrived and NO batch was cleanly timed -- every one ended on an empty syscall. p50_ns/p99_ns above are not measurements. pps and bytes stand.\n",
+                    w->window_index, (unsigned long long) w->packets );
+        else if ( share < BENCH_TIMED_SHARE_FLOOR )
+            printf( "WINDOW %d NS COLUMNS UNREPRESENTATIVE: p50_ns/p99_ns rest on %llu of %llu packets (%.4f%%), in %llu fully drained batches. Fully drained batches are the congested ones, so this is a biased subsample, not a thin fair one. Do not cite the ns columns for this window. pps and bytes stand.\n",
+                    w->window_index, (unsigned long long) w->timed_packets,
+                    (unsigned long long) w->packets, share * 100.0,
+                    (unsigned long long) w->timed );
+    }
 
     fflush( stdout );
 }
@@ -359,6 +400,7 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
         {
             bench_hist_add( &w->hist, batch_ns / (uint64_t) batch_packets, (uint64_t) batch_packets );
             w->timed++;
+            w->timed_packets += (uint64_t) batch_packets;
         }
     }
     w->syscalls += batch_syscalls;
@@ -385,6 +427,7 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
     w->syscalls = 0;
     w->empty = 0;
     w->timed = 0;
+    w->timed_packets = 0;
     w->fold = 0;
     bench_hist_reset( &w->hist );
     return 0;

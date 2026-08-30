@@ -30,6 +30,35 @@
 #include <dispatch/dispatch.h>
 
 static struct bench_windows_t bench_windows;
+static struct bench_send_health_t nw_send_health;
+
+/*
+    Network.framework reports failures as an nw_error_t rather than an errno,
+    so the shared rule is reached through a translation. Everything that is
+    not the ordinary teardown of a finished connection is a receiver that has
+    stopped receiving, and a receiver that has stopped receiving reports a
+    rate of zero, which reads exactly like a slow driver (#98 item 5).
+
+    Before this, the completion handler returned on ANY error and re-armed
+    nothing, so a broken listener produced a clean-looking window of no
+    packets. That is the defect #98 filed, in the one harness whose callback
+    shape hid it.
+*/
+
+static const int nw_teardown_errors[] = { ECANCELED, ENOTCONN, ECONNRESET, ECONNABORTED };
+
+static void nw_check_error( const char * call, nw_error_t error )
+{
+    int code = EAGAIN;                          /* no error: the ordinary case */
+    if ( error != NULL )
+    {
+        code = nw_error_get_error_code( error );
+        if ( nw_error_get_error_domain( error ) != nw_error_domain_posix )
+            code = EIO;                         /* not an errno; refuse under a code never tolerated */
+    }
+    bench_receive_refused_or_empty_except( call, code, nw_teardown_errors,
+                                           (int) ( sizeof(nw_teardown_errors) / sizeof(nw_teardown_errors[0]) ) );
+}
 
 static void nw_receive_loop( nw_connection_t connection )
 {
@@ -38,8 +67,12 @@ static void nw_receive_loop( nw_connection_t connection )
         (void) context;
         (void) is_complete;
 
+        /* checked on EVERY completion, success included, so the fault switch
+           can turn a healthy run into the failure a broken listener produces */
+        nw_check_error( "nw_connection_receive_message", error );
+
         if ( error != NULL )
-            return;             /* connection torn down; the listener keeps running */
+            return;             /* a tolerated teardown; the listener keeps running */
 
         uint64_t t0 = bench_time_ns();
         __block uint64_t batch_bytes = 0;
@@ -169,7 +202,14 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 dispatch_data_t data = dispatch_data_create( packet, (size_t) size, queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT );
                 nw_connection_send( connection, data, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^( nw_error_t error )
                 {
-                    (void) error;
+                    /* a send completion that failed is not a sent packet, and
+                       a long run of them is a host that cannot do this */
+                    if ( error == NULL )
+                        bench_send_ok( &nw_send_health, "nw_connection_send" );
+                    else
+                        bench_send_refused( &nw_send_health, "nw_connection_send",
+                                            nw_error_get_error_domain( error ) == nw_error_domain_posix
+                                                ? nw_error_get_error_code( error ) : EIO );
                     dispatch_semaphore_signal( batch_done );
                 } );
                 dispatch_release( data );
@@ -181,8 +221,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=0\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=0 back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) nw_send_health.back_pressure );
     exit( 0 );
 }
 

@@ -26,6 +26,14 @@ cd "$( dirname "${BASH_SOURCE[0]}" )" || exit 1
 failures=0
 skipped=0
 
+# Every harness that calls bench_fault_init announces "FAULT ARMED -- this run
+# must abort", so every one of them owes at least one leg proving it can. The
+# coverage check at the bottom fails if a BUILT harness got neither a leg nor
+# a skip: an untested abort path is how #98 item 5 happened the first time.
+
+ALL_HARNESSES="bench_portable bench_kqueue bench_msgx bench_gso bench_uring bench_nw"
+COVERED=""
+
 fail()
 {
     echo "FAIL: $*" >&2
@@ -56,10 +64,22 @@ leg()
     if [ ! -x "./$harness" ]; then
         echo "SKIP  $harness $fault -- not built on this host ($description)"
         skipped=$(( skipped + 1 ))
+        COVERED="$COVERED $harness"
         return
     fi
+    COVERED="$COVERED $harness"
 
-    if [ "$role" = "recv" ]; then
+    # A callback-driven receiver has no drain loop to enter: it only reaches
+    # the shared rule when a datagram completion arrives, so its receive leg
+    # needs a sender. Everything else reaches it on its first empty drain.
+
+    if [ "$role" = "recv-pair" ]; then
+        # no external timeout: smoke_pair.sh is self-bounding (3 s warm-up,
+        # one 5 s window) and `timeout` is not a POSIX tool -- macOS has no
+        # such binary, and depending on one would make this leg pass by
+        # vanishing on exactly the platform bench_nw exists for
+        BENCH_FAULT="$fault" ./smoke_pair.sh "$harness" "$p" > "$out" 2>&1
+    elif [ "$role" = "recv" ]; then
         BENCH_FAULT="$fault" ./"$harness" recv "$p" 1 1 1 > "$out" 2>&1
     else
         BENCH_FAULT="$fault" ./"$harness" send 127.0.0.1 "$p" 3 > "$out" 2>&1
@@ -80,7 +100,8 @@ leg()
         tail -3 "$out" >&2
         return
     fi
-    echo "leg   $harness $role $fault: red, exit $status, $( grep -m1 'BENCH ABORTED' "$out" | cut -c1-96 )"
+    echo "leg   $harness $role $fault: red, exit $status"
+    echo "        $( grep -m1 'BENCH ABORTED' "$out" )"
 }
 
 # ---------------------------------------------------------------------------
@@ -92,7 +113,9 @@ leg bench_portable recv recv-errno recvfrom  "a receive refused for a reason tha
 leg bench_kqueue   recv recv-errno kevent    "a kqueue readiness call refused"
 leg bench_msgx     recv recv-errno recvmsg_x "a batch receive refused"
 leg bench_gso      recv recv-errno recvmmsg  "a GRO batch receive refused"
+leg bench_uring    recv recv-errno "io_uring multishot recv" "a multishot receive that failed, which used to be stepped over"
 leg bench_uring    recv sqe-exhausted io_uring_get_sqe "a full submission queue, which used to be a NULL dereference"
+leg bench_nw       recv-pair recv-errno nw_connection_receive_message "a Network.framework receive completion carrying an error, which used to be swallowed"
 
 # ---------------------------------------------------------------------------
 # senders: a persistent refusal that is not back pressure must abort rather
@@ -103,6 +126,8 @@ leg bench_portable send send-refused sendto    "a persistently refused send"
 leg bench_kqueue   send send-refused sendto    "a persistently refused send"
 leg bench_msgx     send send-refused sendmsg_x "a persistently refused batch send"
 leg bench_gso      send send-refused UDP_SEGMENT "a GSO-less host, the pps=0 case #98 named"
+leg bench_uring    send send-refused io_uring "a refused submission, which used to be a silent continue"
+leg bench_nw       send send-refused nw_connection_send "a send completion carrying an error, which used to be discarded"
 
 # ---------------------------------------------------------------------------
 # and the control on the control: with NO fault armed, a short healthy pair
@@ -122,7 +147,8 @@ if [ -x ./bench_portable ]; then
     elif grep -q 'BENCH ABORTED' "$WORK/healthy.txt"; then
         fail "a healthy bench_portable pair printed BENCH ABORTED"
     else
-        echo "leg   bench_portable healthy pair: green, $( grep -m1 '^WINDOW 0 ' "$WORK/healthy.txt" | cut -c1-96 )"
+        echo "leg   bench_portable healthy pair: green"
+        grep -E '^WINDOW 0' "$WORK/healthy.txt" | sed 's/^/        /'
     fi
 else
     echo "SKIP  bench_portable healthy pair -- not built on this host"
@@ -130,6 +156,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+
+# coverage: a built harness with no leg at all is the failure this script
+# exists to make impossible, so it is checked rather than left to the reader
+# noticing an absence.
+
+for h in $ALL_HARNESSES; do
+    case " $COVERED " in
+        *" $h "*) ;;
+        *) if [ -x "./$h" ]; then
+               fail "$h is built on this host and has NO leg in this script -- it calls bench_fault_init and announces that a fault must abort it, and nothing here checks that it can"
+           else
+               echo "SKIP  $h -- not built on this host, and no leg claims otherwise"
+               skipped=$(( skipped + 1 ))
+           fi ;;
+    esac
+done
 
 if [ "$skipped" -ne 0 ]; then
     echo "bench-selftest: $skipped leg(s) skipped for harnesses this host cannot build"
