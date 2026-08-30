@@ -1960,7 +1960,7 @@ application update.
 
 | Value | Default | Applies to |
 |---|---|---|
-| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (suppressed by ordinary traffic only once the client is confirmed — _Keep-alive generation_) |
+| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once confirmed — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
@@ -2209,7 +2209,8 @@ against a continuous payload stream, because _Keep-alive generation_ forbids
 traffic from suppressing a keep-alive to a client that has not been observed to
 hold its index. The establishment keep-alive is the packet this clause exists
 for: it is the only one carrying the client index, and its loss is the only
-loss the receiving end cannot re-provoke by retransmitting. A lost ack: every later block restates the same
+loss the receiving end cannot re-provoke by retransmitting. A lost ack: every
+later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
 and nothing waits for it — the abandoned counter records it and the connection
@@ -2614,16 +2615,38 @@ no copy to fall out of sync.
 
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
 becomes confirmed the first time the server receives any sealed packet from that
-client on that slot — a keep-alive, a payload, a fragment or an ack. The flag
+client on that slot — a keep-alive, a payload, a fragment, an ack or a
+disconnect. The flag
 exists because the
 server has not yet observed that the client received its keep-alive, so it does
 not yet know the client considers itself connected.
 
-The flag is exact in both directions, which is why _Keep-alive generation_ is
-allowed to hang a MUST on it. A client sends nothing sealed before it reaches
-_connected_ — every sealed send on the client is gated on that state — so a
-sealed packet arriving on a slot proves the client is connected, and an
-unconfirmed slot means the server has no such proof.
+**What the flag is allowed to prove, and the client obligation that makes it
+true.** _Keep-alive generation_ hangs a MUST on this flag, so what it proves
+has to be required rather than merely observed. The session keys exist from the
+challenge, so a client is *able* to seal a session packet before it is
+_connected_; nothing about the keys prevents it. The obligation is therefore
+normative:
+
+**A client MUST NOT send a sealed session packet before it reaches
+_connected_, with one exception: the disconnect burst, which it MAY send from
+_sending connection response_ to abandon an attempt.** A client that seals
+anything else from that state is not conformant.
+
+The exception is safe by construction and needs no carve-out in the generation
+rule. A disconnect releases the slot and destroys the mapping in the same
+processing pass that confirms it, and _Slot reset_ clears the confirmed flag
+with the rest of the slot, so there is no point between the confirm and the
+release at which generation runs on that slot.
+
+Given the obligation, the flag is exact on every slot a keep-alive decision is
+ever taken for: confirmed means the server has proof the client is connected,
+unconfirmed means it has none. **A client that violates the obligation strands
+only itself** — it confirms its own slot, the server switches to
+traffic-suppressed pacing, and the keep-alive carrying its index stops
+arriving. It holds the session keys for its own connection alone, so it cannot
+inflict this on any other client. That is why a conformance obligation is the
+right remedy here and no server-side check is required.
 
 **There is no keep-alive prefixing for unconfirmed clients, and the
 subtraction is deliberate.** netcode prefixed every payload to an unconfirmed
@@ -2667,9 +2690,22 @@ walkthrough's "the next one is at most a send interval away" true.
 
 **What it costs.** An unconfirmed client receives keep-alives at the send rate
 in addition to whatever the application sends it. The window is one round trip
-in the ordinary case and is bounded above by the handshake deadline and the
-connection timeout in the worst, so the unsuppressed rate is bounded by the
-send rate for a bounded time, on a slot that is already committed. This is the
+in the ordinary case. **The bound is the peer's retransmission behaviour, not
+either of the server's deadlines**, and it is worth being exact about why. The
+handshake deadline governs only a mapping that has not established, and a slot
+is assigned at establishment, so an unconfirmed slot is already past it. The
+connection timeout does not close the window on its own either: a retransmitted
+connection response refreshes the slot's last-received time even though the
+response itself is ignored as already connected. So the window lasts as long as
+the client keeps retransmitting, and for a conformant client that is its own
+total connect deadline — the token lifetime — after which it stops and the
+connection timeout fires.
+
+Inside the window the rate is bounded by the send rate, on a slot that is
+already committed, and it is the same 10 Hz an idle confirmed client already
+draws. So this is a bounded cost on a committed resource, not a new amplifier:
+a peer cannot use it to make the server send more than the send rate, and
+cannot direct it at anyone but itself. This is the
 unsuppressed-while-unconfirmed rule netcode carried on its payload prefixing,
 recovered here without the prefixing that the subtraction above deliberately
 removes.

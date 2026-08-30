@@ -1128,6 +1128,14 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
                                                        ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
                                                        keep_alive_data, 8, current_time, out_packet );
 
+    // a failed seal is not a send, and MUST NOT stamp the clock below: the
+    // assert vanishes in release, and stamping there would buy a full send
+    // interval of silence on the exact field the unconfirmed pacing depends
+    // on. same convention as write_session_packet's own zero return.
+
+    if ( bytes == 0 )
+        return 0;
+
     rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // the keep-alive's own clock, which only keep-alives move. it is what
@@ -1193,16 +1201,28 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // clock the repair was waiting on, and the loss walkthrough's "the next
     // one is at most a send interval away" became false.
     //
-    // ONCE CONFIRMED the client is known to be connected -- confirmation
-    // takes a sealed packet, and a client sends nothing sealed before it is
-    // connected -- so nothing is waiting on a keep-alive any more and
-    // ordinary traffic is the keep-alive, off last_send_time as before.
+    // ONCE CONFIRMED the client is known to be connected, so nothing is
+    // waiting on a keep-alive any more and ordinary traffic is the
+    // keep-alive, off last_send_time as before.
     //
-    // The unconfirmed window is one round trip in the ordinary case and
-    // bounded by the connection timeout in the worst, so the unsuppressed
-    // rate is bounded by the send rate for a bounded time. This is netcode's
-    // unsuppressed-while-unconfirmed rule, recovered without reintroducing
-    // the payload prefixing that _Connected Clients_ deliberately subtracts.
+    // What makes that inference sound is a CONFORMANCE OBLIGATION, not an
+    // observation: the standard requires that a client not send a sealed
+    // session packet before _connected_, the disconnect burst excepted. The
+    // keys exist from the challenge, so a client is able to seal earlier --
+    // it is simply not allowed to. The disconnect exception cannot reach
+    // this predicate, because process_packet confirms the slot and then, in
+    // the same pass, releases it and destroys the mapping, and release
+    // clears the confirmed flag. A client that violates the obligation
+    // confirms its own slot and strands only itself.
+    //
+    // The unconfirmed window lasts as long as the peer keeps retransmitting
+    // its connection response -- neither the handshake deadline (which
+    // covers only unestablished mappings, and this slot is established) nor
+    // the connection timeout (which that retransmission refreshes) closes it
+    // -- so for a conformant client it is the total connect deadline. Inside
+    // it the rate is the send rate, the same an idle confirmed client draws.
+    // This is netcode's unsuppressed-while-unconfirmed rule, recovered
+    // without the payload prefixing _Connected Clients_ subtracts.
 
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
 
