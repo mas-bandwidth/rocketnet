@@ -3276,7 +3276,7 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.05, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.11, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
-    // UNPROVEN: a payload send does NOT suppress the next keep-alive. The
+    // UNACKNOWLEDGED: a payload send does NOT suppress the next keep-alive. The
     // client has not claimed to have received a keep-alive, and the
     // keep-alive is the only packet carrying its index, so generation runs
     // off elapsed time alone -- the payload at 100.15 changes nothing, and
@@ -3331,7 +3331,7 @@ void rocketnet_test_server_keep_alive_pacing()
     for ( int i = 1; i < rocketnet_client_slots_max_clients( test.server.client_slots ); i++ )
         rocketnet_check( !test.server.acks->endpoints[i].keep_alive_acked );
 
-    // PROVEN: ordinary traffic is the keep-alive again.
+    // ACKNOWLEDGED: ordinary traffic is the keep-alive again.
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.36, packet ) > 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.44, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.47, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );

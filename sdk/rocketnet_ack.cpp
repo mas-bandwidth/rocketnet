@@ -258,6 +258,16 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     // the record must still be this sequence's: a recycled entry belongs to
     // a later packet and must not be tagged. missing the tag only delays the
     // latch to the next keep-alive, which is the safe direction.
+    //
+    // RESIDUAL, stated rather than glossed: this read-then-write is not
+    // atomic, so a concurrent record_sent recycling this entry between the
+    // compare and the store could still tag the wrong packet -- a window
+    // 4096 sequences wide, inside the pre-existing non-atomic record_sent
+    // design rather than added by it. Unreachable under the current phase
+    // contract, which is what makes it acceptable: update and the fill phase
+    // never overlap, and keep-alives are written only by update. It would
+    // become reachable the day a keep-alive is written from a fill thread,
+    // which is also the day this function needs to be made atomic.
 
     if ( record->sequence == sequence )
         record->was_keep_alive = 1;

@@ -1142,8 +1142,8 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
 
     // a failed seal is not a send, and MUST NOT stamp the clock below: the
     // assert vanishes in release, and stamping there would buy a full send
-    // interval of silence on the exact field the unconfirmed pacing depends
-    // on. same convention as write_session_packet's own zero return.
+    // interval of silence on the exact field the unacknowledged pacing
+    // depends on. same convention as write_session_packet's own zero return.
 
     if ( bytes == 0 )
         return 0;
@@ -1151,8 +1151,8 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // the keep-alive's own clock, which only keep-alives move. it is what
-    // paces generation to an unproven client, where ordinary traffic must
-    // not suppress -- see the due predicate below.
+    // paces generation to a client that has not acknowledged one, where
+    // ordinary traffic must not suppress -- see the due predicate below.
 
     mapping->last_keep_alive_send_time = current_time;
 
@@ -1209,7 +1209,9 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
         return 0;
 
     // Which clock the suppression reads is the whole of this rule, and it
-    // turns on one question: HAS THIS CLIENT RECEIVED A KEEP-ALIVE?
+    // turns on one question: HAS THIS CLIENT ACKNOWLEDGED A KEEP-ALIVE?
+    // Not whether it received one -- the server cannot know that -- but
+    // whether it has said so.
     //
     // UNTIL IT HAS, generation runs off the keep-alive's own clock and
     // ordinary traffic does not suppress it. Reading last_send_time there is
@@ -1220,9 +1222,10 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // client index, and a client that lacks its index cannot re-provoke one,
     // so this is the one repair that must not be suppressible.
     //
-    // ONCE IT HAS, the client holds its index and is connected, nothing is
-    // waiting on a keep-alive, and ordinary traffic is the keep-alive --
-    // last_send_time, as before.
+    // ONCE IT HAS, the client has claimed to hold its index and be
+    // connected. If the claim is true nothing is waiting on a keep-alive,
+    // and ordinary traffic is the keep-alive -- last_send_time, as before.
+    // What happens when it is false is the second failure direction below.
     //
     // THE SIGNAL IS THE ACK, and it is a CLAIM rather than a proof. A
     // keep-alive carries the client index, and processing a keep-alive is
@@ -1256,11 +1259,11 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // no ack bookkeeping means the claim can never be observed; fall back to
     // the unsuppressed clock, which is the safe direction
 
-    int proven = server->acks && client_index >= 0
-                    ? (int) server->acks->endpoints[client_index].keep_alive_acked
-                    : 0;
+    int acknowledged = server->acks && client_index >= 0
+                        ? (int) server->acks->endpoints[client_index].keep_alive_acked
+                        : 0;
 
-    double last = proven ? mapping->last_send_time : mapping->last_keep_alive_send_time;
+    double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
 
     if ( current_time - last < 1.0 / send_rate )
         return 0;

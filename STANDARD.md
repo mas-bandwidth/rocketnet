@@ -2723,6 +2723,13 @@ strictly from the sequences actually opened. The transport cannot detect this
 for you, because on the wire an over-claiming block is indistinguishable from
 a truthful one.
 
+**The confirming observation is on the server**, and it is the one thing the
+client author cannot infer from their own side: keep-alives to that slot
+*stop*. A client that has genuinely not received one sees the stream continue
+at the send rate; a client whose block over-claimed sees it cease at the
+moment of the claim, because the server has been told the client no longer
+needs it. If you can watch both ends, that transition is the signature.
+
 **An invariant the confirmation test depends on — stated here so it cannot be
 broken silently.** The test above is exact only because *an authentically
 opened keep-alive always reaches its state transition at the client*. That is
@@ -2793,6 +2800,12 @@ removes.
 **Establishment on the client.** A client transitions to _connected_ on the
 first keep-alive it receives, taking its client index and the slot count from
 that packet.
+
+*If a client stays in _sending connection response_ while payloads arrive
+normally, the cause is very likely its own ack block — see the failure
+directions under _Keep-alive generation_.* An over-claiming block tells the
+server the client no longer needs the keep-alive that would establish it, and
+the server stops sending it.
 
 **Payload delivery.** A payload packet carries application bytes with no
 interpretation. Payloads received on an established connection are delivered in
