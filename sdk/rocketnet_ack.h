@@ -88,7 +88,8 @@ struct rocketnet_sent_packet_record_t
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
-    uint8_t pad[2];
+    uint8_t was_keep_alive;                 // a keep-alive's ack is the peer's claim to hold its client index
+    uint8_t pad[1];
 };
 
 // A fragmented payload carries ONE application packet id, surfaced
@@ -142,6 +143,21 @@ struct rocketnet_ack_endpoint_t
     float bandwidth_acked_kbps;
     int has_rtt_sample;                         // any first-ack sample has landed
 
+    // Latched by process_block the first time a sequence recorded as a
+    // keep-alive is newly acknowledged. This is the peer's CLAIM to have
+    // received a keep-alive -- and so to hold its client index and be
+    // connected, since a keep-alive carries the index and processing one is
+    // the client's only transition to _connected_. It is a claim and not a
+    // proof: an ack block is the peer's own statement about its own receive
+    // state, and no receiver can verify it. _Acks_ requires a block to name
+    // only sequences its sender opened; a peer that violates that latches
+    // this bit without its index and strands only itself. It is what
+    // _Keep-alive generation_ flips the suppression regime on; see
+    // rocketnet_server_protocol_write_keep_alive_if_due. Cleared by reset,
+    // so a reused slot starts with no claim recorded.
+
+    uint8_t keep_alive_acked;
+
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
 
     struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
@@ -171,6 +187,13 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
                                                 uint64_t packet_id, int fragment_count );
+
+// Marks an already-recorded sent sequence as having been a keep-alive, so
+// its acknowledgment latches keep_alive_acked. Called immediately after the
+// keep-alive's record_sent; a sequence whose record has already been
+// recycled is ignored, which only delays the latch to the next keep-alive.
+
+void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence );
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time );

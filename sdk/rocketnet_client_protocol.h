@@ -153,7 +153,12 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      int * out_payload_bytes );
 
 // Builds a payload packet for the server, and stamps the send -- ordinary
-// traffic suppresses the keep-alive, on the client exactly as on the server.
+// traffic suppresses the client's own keep-alive. NOT "as on the server":
+// the server's rule splits on whether the client has acknowledged a
+// keep-alive (#90), because until then it is starving the packet that would
+// establish the connection. The client has no such split, and needs none --
+// it sends keep-alives only from _connected_, and nothing at the far end
+// waits on one, since any sealed packet confirms the slot.
 // Valid only while connected; returns the wire size, or 0 when not connected
 // or the payload does not fit.
 

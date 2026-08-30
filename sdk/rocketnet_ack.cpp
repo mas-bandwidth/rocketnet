@@ -239,12 +239,69 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     record->wire_bytes = (uint32_t) wire_bytes;
     record->acked = 0;
     record->has_packet_id = (uint8_t) ( has_packet_id != 0 );
+    record->was_keep_alive = 0;
 
     // fill-phase threads record concurrently under distinct sequences, so
     // the high-water fold is a compare-exchange max: whatever the
     // interleaving, the mark ends at the largest recorded sequence
 
     rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
+}
+
+void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( sequence != 0 );
+
+    struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+
+    // the record must still be this sequence's: a recycled entry belongs to
+    // a later packet and must not be tagged. missing the tag only delays the
+    // latch to the next keep-alive, which is the safe direction.
+    //
+    // RESIDUAL, stated rather than glossed, and the attribution matters.
+    //
+    // This read-then-write is not atomic. A concurrent record_sent for the
+    // ONE sequence that aliases to this slot -- sequence + 4096n, the ring
+    // being 4096 entries -- landing between the compare and the store would
+    // tag that packet instead. It is a single aliased sequence, not a range
+    // of them.
+    //
+    // What is pre-existing is only the non-atomic ACCESS STYLE that
+    // record_sent already uses. THE HAZARD ITSELF IS NEW TO THIS CHANGE:
+    // was_keep_alive, the writer here and the consumer in process_block all
+    // arrive with it, and before it no keep-alive mis-tag was possible
+    // because nothing carried the tag. This note must not hand its own
+    // hazard to prior art.
+    //
+    // It is unreachable under the current phase contract, which is what
+    // makes it acceptable rather than harmless. THREE conditions hold it
+    // shut:
+    //
+    //   1. update and the fill phase never overlap;
+    //   2. keep-alives are written only by update; and
+    //   3. update is single-threaded per client index -- two update threads
+    //      on the same slot would open it with (1) and (2) both intact.
+    //      This also covers the OTHER writer of record->sequence, the memset
+    //      in rocketnet_ack_endpoint_reset. It has two production routes:
+    //      the init loop in server_acks_create, before any client exists,
+    //      and rocketnet_server_acks_reset_slot from connection-response
+    //      processing when a slot is assigned -- inside update, so clause
+    //      (3) is what shuts the one that can race. (Neither route is
+    //      disconnect_client, which writes the burst, releases the slot and
+    //      removes the mapping without touching the endpoint.)
+    //
+    // Breaking AT LEAST ONE of the three is necessary to open the window --
+    // not each of them, and none of them sufficient alone: a mis-tag also
+    // needs a concurrent send to land on the one aliasing sequence inside
+    // the compare-then-store, whose width is whatever the compiler emits and
+    // is not something this comment can promise. Hold it as
+    // necessary-but-not-sufficient: the day any of the three stops being
+    // true is the day this function must be made atomic, whether or not the
+    // race has been observed.
+
+    if ( record->sequence == sequence )
+        record->was_keep_alive = 1;
 }
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
@@ -346,6 +403,13 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             {
                 record->acked = 1;
                 newly_acked++;
+
+                // the claim _Keep-alive generation_ turns on: this peer
+                // says it received a keep-alive, so it says it holds its
+                // client index. unverifiable here, and by design
+
+                if ( record->was_keep_alive )
+                    endpoint->keep_alive_acked = 1;
 
                 // the first block that acknowledges a sequence yields one
                 // rtt sample: the elapsed time between sending it and

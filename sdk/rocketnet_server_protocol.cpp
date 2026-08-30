@@ -435,6 +435,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         mapping->timeout_seconds = timeout_seconds;
         mapping->last_receive_time = current_time;
         mapping->last_send_time = current_time;
+        mapping->last_keep_alive_send_time = current_time;
 
         sodium_memzero( &keys, sizeof(keys) );
 
@@ -1065,7 +1066,8 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
                                                   const uint8_t * type_data,
                                                   int type_data_bytes,
                                                   double current_time,
-                                                  uint8_t * out_packet )
+                                                  uint8_t * out_packet,
+                                                  uint64_t * out_sequence )
 {
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
     rocketnet_assert( type_data_bytes <= 8 );
@@ -1096,6 +1098,15 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     mapping->send_sequence_session++;
     mapping->last_send_time = current_time;
 
+    // the sequence this packet actually carried, reported to the caller
+    // rather than left to be re-derived from the counter. re-reading
+    // send_sequence_session - 1 is only correct while nothing else can send
+    // on this mapping in between, which is a contract stated in another
+    // file; a caller that needs the sequence gets it from here.
+
+    if ( out_sequence )
+        *out_sequence = sequence;
+
     if ( server->acks && client_index >= 0 )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
@@ -1123,11 +1134,35 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     rocketnet_write_uint32( &p, (uint32_t) client_index );
     rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
 
+    uint64_t keep_alive_sequence = 0;
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                        ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                       keep_alive_data, 8, current_time, out_packet );
+                                                       keep_alive_data, 8, current_time, out_packet,
+                                                       &keep_alive_sequence );
+
+    // a failed seal is not a send, and MUST NOT stamp the clock below: the
+    // assert vanishes in release, and stamping there would buy a full send
+    // interval of silence on the exact field the unacknowledged pacing
+    // depends on. same convention as write_session_packet's own zero return.
+
+    if ( bytes == 0 )
+        return 0;
 
     rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+
+    // the keep-alive's own clock, which only keep-alives move. it is what
+    // paces generation to a client that has not acknowledged one, where
+    // ordinary traffic must not suppress -- see the due predicate below.
+
+    mapping->last_keep_alive_send_time = current_time;
+
+    // and the tag that makes this packet's acknowledgment mean something:
+    // write_session_packet recorded the sequence just above and reported it
+    // back, and an ack naming it is this client's claim to have received a
+    // keep-alive.
+
+    if ( server->acks && client_index >= 0 )
+        rocketnet_ack_endpoint_mark_keep_alive( &server->acks->endpoints[client_index], keep_alive_sequence );
 
     rocketnet_spam( "server sent keep alive to client %d", client_index );
 
@@ -1154,7 +1189,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                        ROCKETNET_CONNECTION_ACK_PACKET,
-                                                       NULL, 0, current_time, out_packet );
+                                                       NULL, 0, current_time, out_packet, NULL );
 
     rocketnet_spam( "server sent standalone ack to client %d", client_index );
 
@@ -1173,8 +1208,70 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     if ( !mapping )
         return 0;
 
+    // Which clock the suppression reads is the whole of this rule, and it
+    // turns on one question: HAS THIS CLIENT ACKNOWLEDGED A KEEP-ALIVE?
+    // Not whether it received one -- the server cannot know that -- but
+    // whether it has said so.
+    //
+    // UNTIL IT HAS, generation runs off the keep-alive's own clock and
+    // ordinary traffic does not suppress it. Reading last_send_time there is
+    // what let a continuous payload stream starve establishment forever
+    // (#90): every payload restamped the clock the repair was waiting on,
+    // and the loss walkthrough's recurrence guarantee became false. (That
+    // walkthrough then read "at most a send interval away"; this PR replaced
+    // the numeric bound, which the discrete check cannot support, with the
+    // recurrence the invariant actually needs.) The keep-alive is the only
+    // packet carrying the client index, and a client that lacks its index
+    // cannot re-provoke one, so this is the one repair that must not be
+    // suppressible.
+    //
+    // ONCE IT HAS, the client has claimed to hold its index and be
+    // connected. If the claim is true nothing is waiting on a keep-alive,
+    // and ordinary traffic is the keep-alive -- last_send_time, as before.
+    // What happens when it is false is the second failure direction below.
+    //
+    // THE SIGNAL IS THE ACK, and it is a CLAIM rather than a proof. A
+    // keep-alive carries the client index, and processing a keep-alive is
+    // the client's ONLY transition to _connected_, so a client that
+    // acknowledges one is claiming to have received the packet that would
+    // have connected it. The server cannot verify the claim -- an ack block
+    // is the peer's statement about its own receive state -- and does not
+    // need to; see below.
+    //
+    // WHY THIS TEST AND NOT THE CONFIRMED FLAG: the defect class is "a
+    // client that has not established is starved of the packet that would
+    // establish it", so the test must not be satisfiable by a client that is
+    // behaving correctly but has not established. The confirmed flag was: it
+    // is set by ANY sealed packet, and _Acks_ invites a client in _sending
+    // connection response_ to send a standalone ack, so a CONFORMANT client
+    // confirmed itself before it had its index and stranded itself. This
+    // test is of course satisfied by every client that acknowledges a
+    // keep-alive -- that IS the design. The restriction that matters is
+    // AMONG CLIENTS THAT HAVE NOT ESTABLISHED: there it is satisfiable only
+    // by one naming a sequence it never opened, which _Acks_ forbids when
+    // building a block. So no correct client trips it BEFORE it holds its
+    // index, which is what the confirmed flag could not promise.
+    //
+    // BOTH FAILURE DIRECTIONS. Lost or delayed acks leave the latch unset
+    // and unsuppressed keep-alives continue -- more, never fewer, bounded by
+    // the send rate. An over-claiming client satisfies the test without its
+    // index and strands ITSELF: the block rides inside a packet sealed under
+    // that connection's own session keys and applies only to that slot, so
+    // it cannot be produced by anyone else for it and no other client's
+    // pacing is affected.
+
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
-    if ( current_time - mapping->last_send_time < 1.0 / send_rate )
+
+    // no ack bookkeeping means the claim can never be observed; fall back to
+    // the unsuppressed clock, which is the safe direction
+
+    int acknowledged = server->acks && client_index >= 0
+                        ? (int) server->acks->endpoints[client_index].keep_alive_acked
+                        : 0;
+
+    double last = acknowledged ? mapping->last_send_time : mapping->last_keep_alive_send_time;
+
+    if ( current_time - last < 1.0 / send_rate )
         return 0;
 
     return rocketnet_server_write_keep_alive( server, client_index, current_time, out_packet );
@@ -1511,7 +1608,7 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
         int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                            ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                            NULL, 0, mapping->last_send_time,
-                                                           out_packets + i * ROCKETNET_SEND_BUDGET );
+                                                           out_packets + i * ROCKETNET_SEND_BUDGET, NULL );
         rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
         rocketnet_assert( i == 0 || bytes == burst_bytes );
         burst_bytes = bytes;

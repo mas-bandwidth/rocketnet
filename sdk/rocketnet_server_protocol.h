@@ -136,11 +136,22 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
                                                 double current_time,
                                                 uint8_t * out_packet );
 
-// The paced form: builds the keep-alive only when the send-rate interval has
-// elapsed since anything was last sent to this client -- keep-alives are
-// suppressed by ordinary traffic, per the standard, and appear only when a
-// connection is otherwise idle. The caller loops the client indices each
-// frame. Returns 0 when not connected or not due.
+// The paced form, and which clock it reads turns on whether this client has
+// ACKNOWLEDGED a keep-alive (#90):
+//
+//   until it has -- paced off the last keep-alive sent to it, and ordinary
+//   traffic MUST NOT suppress it. The keep-alive carries the client index and
+//   a client lacking its index cannot re-provoke one, so this is the repair
+//   that must not be suppressible.
+//
+//   once it has -- paced off the last send of anything, so ordinary traffic
+//   suppresses it and keep-alives appear only on an otherwise idle
+//   connection.
+//
+// The acknowledgment is the peer's unverifiable claim, not proof; see
+// _Keep-alive generation_ in STANDARD.md and the fuller reasoning at the
+// definition. The caller loops the client indices each frame. Returns 0 when
+// not connected or not due.
 
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
