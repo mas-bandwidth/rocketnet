@@ -29,8 +29,9 @@
                                   to in order to learn that 38.6% of the soak
                                   was harness; this makes any machine able to
                                   answer that about itself. The accounting is
-                                  self-checking and refuses to report a share
-                                  its own timer cannot support.
+                                  self-checking: it refuses the whole run if
+                                  the parts exceed the whole, and marks any
+                                  share its own timer is too coarse to support.
 
     ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING=1
                                   the profile's negative control: double-charge
@@ -78,12 +79,33 @@ static volatile int quit;
 // ---------------------------------------------------------------------------
 // where the soak's wall clock goes
 //
-// Two buckets and a remainder. WIRE is the network simulator, which is
-// harness by definition -- it inflates nothing about the library and exists
-// only to abuse it. PRODUCT is the client and server protocol objects and
-// everything under them, including the packet crypto, which is the thing the
-// soak is for. What is left over is the soak's own bookkeeping: payload
-// generation and verification, connect token construction, the watchdog.
+// Two MEASURED buckets and a remainder, and the difference matters. WIRE and
+// PRODUCT are explicit lists of wrapped calls: WIRE is the network simulator,
+// harness by definition, since it inflates nothing about the library and
+// exists only to abuse it; PRODUCT is the client and server protocol objects
+// and everything under them, including the packet crypto, which is the thing
+// the soak is for.
+//
+// The third line is not a bucket. It is total minus the two, so it holds
+// whatever was never wrapped, and it is MIXED BY CONSTRUCTION -- calling it
+// "soak bookkeeping" implied a purity a remainder can never have, which is
+// what an earlier version of this comment and its printed label both did.
+// Most of it is genuinely the soak's own work (payload generation and
+// verification, connect token field assembly, the watchdog), but it also
+// holds library calls that were never worth a timer:
+//
+//   - randombytes_buf twice per connect attempt, generating the session keys
+//     a real backend would generate. That is libsodium, so it is product
+//     code, doing a job that is the harness's in this arrangement. It has no
+//     honest side and is left here rather than assigned to one.
+//   - rocketnet_client_slots_mapping_index and rocketnet_encryption_map_
+//     address, two library lookups per keep-alive that is actually due.
+//
+// Wrapping those would shrink what this line has to confess without removing
+// the need to confess it, and would change the number of timed regions, which
+// is what an A/B against an earlier build compares. So the contents are named
+// instead. The line is 0.476 s and flat across the #99 change (0.477 before,
+// 0.476 after), so nothing in the mix moved when the wire did.
 //
 // The point of measuring it here rather than under a profiler is that a soak
 // runs on whatever box it runs on, and "how much of this is instrument" has
@@ -94,11 +116,18 @@ static volatile int quit;
 // THE FAILURE STATE. A wall-clock attribution can go wrong in one direction
 // that matters: the parts can come to more than the whole, which means the
 // buckets are double-charging and every share printed is a fiction. That is
-// checked and refused. The instrument also knows what its own clock costs --
-// it calibrates that at startup -- and it refuses to print a share for a
-// bucket whose measured time is not comfortably larger than the time its own
-// timer spent measuring it, because a bucket at the level of its instrument
-// is not a measurement, it is noise with a number attached.
+// checked, and it refuses the whole report rather than printing any of it.
+// Note what that check can and cannot see -- it compares the SUM against the
+// wall clock, so it catches double-charging and a clock that ran backwards,
+// and it cannot catch time charged to the wrong bucket, which leaves the sum
+// untouched. Only the wrapped call sites below rule that out.
+//
+// The instrument also knows what its own clock costs, calibrated at startup
+// rather than assumed. A bucket whose time is not comfortably larger than the
+// timer that collected it gets its figure printed WITH that said, not
+// withheld: an earlier version suppressed the number instead, which put a
+// refusal exactly where the flattering reading was. What is withheld is the
+// confidence, stated beside the figure it qualifies.
 
 enum { SOAK_PROFILE_WIRE, SOAK_PROFILE_PRODUCT, SOAK_PROFILE_BUCKETS };
 
@@ -269,9 +298,15 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
     }
 
     printf( "  %-50s %8.3f s  %5.1f%%\n",
-            "everything else (soak bookkeeping, unattributed)",
+            "the remainder (total minus the two above)",
             total_seconds - accounted,
             100.0 * ( total_seconds - accounted ) / total_seconds );
+    printf( "  %-50s   ^ NOT a bucket and NOT harness-only: it is whatever was never wrapped.\n"
+            "  %-50s     Mostly the soak's own work -- payload generate and verify, connect token\n"
+            "  %-50s     assembly, the watchdog -- but it also holds randombytes_buf twice per\n"
+            "  %-50s     connect attempt (libsodium, doing the backend's job here) and two library\n"
+            "  %-50s     lookups per due keep-alive. Named because a remainder cannot be pure.\n",
+            "", "", "", "", "" );
 
     // What the accounting check above can and cannot see, said here rather
     // than left for a reader to assume. It compares the SUM against the wall

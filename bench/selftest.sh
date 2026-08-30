@@ -43,7 +43,16 @@ fail()
 WORK="$( mktemp -d "${TMPDIR:-/tmp}/bench-selftest.XXXXXX" )"
 trap 'rm -rf "$WORK"' EXIT
 
-PORT_BASE=${BENCH_SELFTEST_PORT:-9701}
+# Ports are derived from the pid rather than fixed. Two runs of this script
+# overlapping -- back to back in a suite, or side by side on a busy CI box --
+# otherwise reuse the same numbers, and a sender from the earlier run reaches
+# a receiver in the later one. That does not produce a false PASS, but it
+# produces a false FAIL: the receiver finds real data, takes the recvfrom
+# path instead of the idle path, and aborts naming a different call than the
+# leg expected. A selftest that cries wolf gets ignored, which is the same
+# end state as one that never fires.
+
+PORT_BASE=${BENCH_SELFTEST_PORT:-$(( 20000 + ( $$ % 20000 ) ))}
 port()
 {
     PORT_BASE=$(( PORT_BASE + 1 ))
