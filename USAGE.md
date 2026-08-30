@@ -1,8 +1,11 @@
 # Using rocketnet
 
-The authority for the API is [sdk/rocketnet.h](sdk/rocketnet.h) — every function
-carries its contract above it. This file is the narrative the header cannot be:
-the shape of a frame, the contracts that are sharp enough to cut, and the
+The authority for the API is [sdk/rocketnet.h](sdk/rocketnet.h): where a contract
+is written down, it is written there, as a comment block above a function or
+above a group of related ones. Not every function carries one — of 84 exported
+functions, 21 have a comment block directly above them — so the header is the
+authority, not a complete reference. This file is the narrative the header cannot
+be: the shape of a frame, the contracts that are sharp enough to cut, and the
 configuration system that decides what a transport actually is at create.
 
 Build and driver-matrix instructions live in [BUILDING.md](BUILDING.md); the wire
@@ -25,11 +28,15 @@ main-thread too, and never while a fill is open.
 
 `send_packets` is required once per frame, after update. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
-sent by it, and nothing is guaranteed sent without it. Every driver except XDP —
-portable, msgx and GSO — happens to flush update's own staging (protocol
-responses, keep-alives) inline in update; the XDP driver sends nothing until
-`send_packets`. Code against the guarantee. Calling `send_packets` twice in a
-frame is a no-op.
+sent by it, and nothing is guaranteed sent without it.
+
+Driver eagerness above that floor differs, and it is a *server*-side difference:
+on the server the GSO rung flushes update's own staging — protocol responses,
+keep-alives — inline in update, and so do the portable and msgx rungs, which
+share that path; the XDP rung stages and sends nothing until `send_packets`
+(the driver fork in `rocketnet_server_transport_update`). Code against the
+guarantee, not against any of that. Calling `send_packets` twice in a frame is a
+no-op.
 
 ## Consuming what arrived
 
@@ -93,29 +100,51 @@ spent only where splitting makes it unavoidable. Either way the context's single
 batch only when every fragment has been acknowledged. A lost fragment loses the
 whole payload. The transport never resends.
 
-**Once `start_packet` has handed you a frame, the session sequence is spent.**
-It is allocated after the call's validation but *before* the frame is acquired,
-and nothing gives it back. Three ways to burn one:
+**Once `start_packet` has handed you a frame, a session sequence is spent.** It
+is allocated after the call's validation but *before* the frame is acquired:
+`rocketnet_server_transport_start_packet` calls
+`rocketnet_server_protocol_start_payload`, whose atomic add on
+`send_sequence_session` is the allocation. Nothing gives it back.
 
-- `abort_packet`;
-- a `finish_packet` that returns zero — payload out of range, or the connection
-  gone;
-- and the one that dominates under pressure: **a `start_packet` that fails to
-  acquire a frame.** The sequence is already spent by then, so a full send arena
-  (`SEND_ARENA_FULL`) or a full ring (`SEND_RING_FULL`) burns one on every
-  refused acquisition. Aborts cluster; ring-full does not have to cluster to
-  outnumber them.
-
-Not every NULL from `start_packet` burns one. The checks that run *before* the
+Not every NULL from `start_packet` spends one. The checks that run *before* the
 allocation — a transport that is not RUNNING, a `request_bytes` outside the
 configured range, a client that is not connected, a slot with no encryption
-mapping — return NULL having spent nothing. Only a failure at the acquisition
-step burns.
+mapping — return NULL having spent nothing. A failure at the *acquisition* step,
+after the allocation, spends one: a full arena (`SEND_ARENA_FULL`) or a full ring
+(`SEND_RING_FULL`).
+
+**A fragmented payload spends far more than one, and this is the number to
+reason with.** `start_packet` spends one; then `finish_packet`, on the arena
+route, reserves `fragment_count - 1` more in a block
+(`rocketnet_server_protocol_start_fragments`, called from
+`rocketnet_server_transport_finish_arena_packet`) — fragment 0 rides the sequence
+`start_packet` already spent, and the rest come from that block. So a fragmented
+payload occupies `fragment_count` consecutive sequences. At the default
+16384-byte maximum payload over a 1193-byte fragment budget, `fragment_count` is
+**14**.
+
+That matters because of where the failures are. A `finish_packet` that returns
+zero *after* the block is reserved — a seal failure inside the fragment loop —
+withdraws the whole reservation on the portable and GSO drivers (the
+`wire_bytes == 0` branch of that function's seal loop), so **one such failure
+burns all 14 at the default**, not one. On XDP, fragments already committed to the
+asynchronous staging stay committed, and the burn is the remainder. Anything that
+fails *before* the block is reserved — the plan, the frame reservations, the
+block reservation itself — burns only the single sequence `start_packet` spent.
+
+So the ways to burn, in rough order of how much they cost:
+
+- a zero-returning `finish_packet` on a **fragmented** payload, after the block
+  is reserved: up to `fragment_count` sequences;
+- a `start_packet` that fails to acquire a frame, an `abort_packet`, or a
+  zero-returning `finish_packet` on an unfragmented payload: one each.
 
 The receiver's replay window tolerates the gaps, but **receive-side loss
 statistics cannot distinguish them from real loss** — that figure is computed
-from gaps in the session sequence, so a burned sequence reads as one lost packet
-in a link that dropped nothing.
+from gaps in the session sequence, so each burned sequence reads as one lost
+packet in a link that dropped nothing. Calibrate with the counts above: a run of
+failed fragmented sends shows up as loss at 14x the rate an unfragmented one
+would, at the default payload size.
 
 Where a burn does and does not show up is worth being exact about, because the
 two surfaces disagree.
@@ -126,14 +155,24 @@ receive-side figure for the server. So server-to-client burns appear as phantom
 loss in `rocketnet_client_transport_stats`, and **client-to-server burns appear in
 no loss statistic at either end.**
 
-**In the counters, which is where to actually look:** an acquisition-failure burn
-is counted at the end that burned it — `SEND_RING_FULL` and `SEND_ARENA_FULL`, on
-both the client and the server, through
+**In the counters, which is where to actually look:** a burn caused by *ring or
+arena pressure* is counted at the end that burned it — `SEND_RING_FULL` and
+`SEND_ARENA_FULL`, on both the client and the server, through
 `rocketnet_client_transport_counters` / `rocketnet_server_transport_counters`. So
-a client-to-server burn is invisible as *loss* but perfectly visible as *pressure*,
-and that is the number to reach for. Burns from `abort_packet` and from a
-zero-returning `finish_packet` increment no counter of their own; those you have
-to know you caused.
+a client-to-server burn under pressure is invisible as *loss* but plainly visible
+as *pressure*, and that is the number to reach for.
+
+Pressure counts on more paths than the obvious one: a `finish_packet` on the
+arena route that cannot reserve a wire frame for every fragment also increments
+`SEND_RING_FULL`, from inside the reservation loop
+(`rocketnet_server_reserve_fill_frame`). So a zero-returning
+`finish_packet` is *not* uniformly counter-silent — it is silent on the
+unfragmented wire route and counted on the arena route when the ring is what
+refused it.
+
+What is genuinely counter-silent: `abort_packet`, and a `finish_packet` refused
+for a reason that is not pressure — a payload out of range, a connection gone, a
+seal failure. Those you have to know you caused.
 
 `send_packet` (the convenience form) exists on both ends. On the client it
 flushes the ring inline, which makes it main-thread only and never valid during
@@ -272,6 +311,10 @@ cannot discover refuses a port-zero address before it binds anything, naming the
 rule. It is an ordinary rung refusal — `auto` falls past it to a driver that does
 discover, logging a warning — and only a **pin** on a non-discovering driver
 refuses the create outright, where the rule is restated as an **error** so it is
-visible at the log level deployed binaries actually run at. Consequently
-`rocketnet_server_transport_port` never returns zero on a transport that was
-created.
+visible at the log level deployed binaries actually run at.
+
+So `rocketnet_server_transport_port` gives you a real port by one of two routes,
+and it is worth knowing which: either the public address carried a port, and that
+is the port — including on an XDP grant, which binds what it was given — or it
+carried zero, in which case the rule above guarantees the driver that granted was
+one that discovers.

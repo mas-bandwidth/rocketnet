@@ -723,9 +723,14 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_ser
 // "auto" ladder falls past it to a driver that does discover, and only a
 // PIN on a non-discovering driver refuses the create outright. The
 // portable, msgx and GSO drivers discover; the XDP driver does not
-// (rocketnet_driver_discovers_bound_port is the table). So a created
-// transport was granted by a driver that discovers, and this reads back a
-// real port -- asserted for every discovering driver this platform has by
+// (rocketnet_driver_discovers_bound_port is the table).
+//
+// So this returns a real port by one of two routes, not one: either the
+// public address carried a port, and that is the port -- including on an
+// XDP grant, which binds what it was given and discovers nothing -- or it
+// carried zero, in which case the rule above guarantees the granting
+// driver was one that discovers. The port-zero route is asserted for
+// every discovering driver a platform has by
 // rocketnet_test_server_port_zero_needs_a_discovering_driver.
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
