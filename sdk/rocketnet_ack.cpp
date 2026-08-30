@@ -275,16 +275,20 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     // hazard to prior art.
     //
     // It is unreachable under the current phase contract, which is what
-    // makes it acceptable rather than harmless. TWO conditions hold it shut,
-    // and breaking EITHER opens it:
+    // makes it acceptable rather than harmless. THREE conditions hold it
+    // shut:
     //
-    //   1. update and the fill phase never overlap; and
-    //   2. keep-alives are written only by update.
+    //   1. update and the fill phase never overlap;
+    //   2. keep-alives are written only by update; and
+    //   3. update is single-threaded per client index -- two update threads
+    //      on the same slot would open it with (1) and (2) both intact.
     //
-    // Letting fills run concurrently with update opens it even with (2)
-    // intact, and writing a keep-alive from a fill thread opens it even with
-    // (1) intact. Whichever goes first is the day this function must be made
-    // atomic.
+    // Breaking any one is NECESSARY to open the window, though not by itself
+    // sufficient: a mis-tag also needs a concurrent send to land on the one
+    // aliasing sequence inside the two instructions between the compare and
+    // the store. Necessary-but-not-sufficient is the right way to hold this
+    // -- the day any of the three stops being true is the day this function
+    // must be made atomic, whether or not the race has been observed.
 
     if ( record->sequence == sequence )
         record->was_keep_alive = 1;

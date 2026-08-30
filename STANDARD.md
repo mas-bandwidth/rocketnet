@@ -1830,11 +1830,15 @@ sixteen million sequences in a kilobyte, and iterating what a peer asserts
 rather than what this end retains would hand a connected attacker CPU at that
 ratio. Everything a block names below the retained window is silently ignored
 without being visited; within the window, sequences named that were never
-sent — possible through reconstruction against a hostile or badly-truncated
-block, and also from an implementation that over-claims contrary to the
-block-building rule above — are ignored; an implementation MUST NOT treat them as
+sent — possible only through reconstruction against a hostile or
+badly-truncated block — are ignored; an implementation MUST NOT treat them as
 an error that affects the connection, and counts them as
-`ACK_UNKNOWN_SEQUENCE`.
+`ACK_UNKNOWN_SEQUENCE`. Note the narrowness of this case: it covers only
+sequences *this end never sent*. A block that over-claims contrary to the
+block-building rule above, by naming a sequence this end **did** send but its
+own peer never opened, is indistinguishable from a truthful acknowledgment and
+is processed as one — which is exactly why _Keep-alive generation_ can be
+misled by it.
 
 **Round trip time rides the acks.** The first block that acknowledges a
 sequence yields one RTT sample: the elapsed time between sending that sequence
@@ -2713,10 +2717,14 @@ send rate, and never toward stranding.
 In the other direction, a client that over-claims in its ack block — naming a
 keep-alive sequence it never opened, contrary to _Acks_ — satisfies the test
 without holding its index. Keep-alives to it become suppressible by ordinary
-traffic, so **if the application is sending at or above the transport's send
-rate** they stop entirely and the client can sit in _sending connection
-response_ until its total connect deadline. Below that rate it still receives
-keep-alives and still establishes: the false claim alone is not sufficient.
+traffic, so **whenever the server's outbound stream to that slot leaves no gap
+longer than a send interval** they stop entirely, and the client can sit in
+_sending connection response_ until its total connect deadline. Where that
+stream does leave such gaps the client still receives keep-alives in them and
+still establishes: the false claim alone is not always sufficient. Note that
+the stream in question is everything the server sends that slot, the
+transport's own standalone acks included — not the application's payloads
+alone.
 **Such a client strands only itself.** The block rides inside a packet sealed
 under that connection's own session keys, applies only to that client's own
 slot, and cannot be produced by anyone else for it; no other client's pacing
@@ -2736,19 +2744,34 @@ only makes them suppressible. Before the claim they are paced off the
 keep-alive clock and appear at the send rate whatever else is going out.
 After it they are paced off the last send of *anything* — and since a
 keep-alive is itself a send, an otherwise idle server keeps emitting them at
-exactly the same send rate. The observable difference is only what the
-application's own traffic does to them: keep-alives to that slot fall roughly
-to the send rate minus the application's payload rate, reaching zero only once
-the application is sending at or above the transport's send rate.
+exactly the same send rate.
 
-**So there is no clean signature below that crossover, and this matters for
-the stranding too.** A client that over-claims while the server's payload rate
-is under its send rate still receives keep-alives, and still establishes. The
-stranding needs both the false claim *and* an application sending fast enough
-to suppress what the claim made suppressible. Do not read a continuing
-keep-alive stream as evidence that a client's blocks are honest; below the
-crossover the stream continues either way. The blocks themselves are what to
-audit.
+**The condition for total suppression is stated as a gap, not as a rate.**
+After the claim, a keep-alive is emitted only when the server has sent that
+slot *nothing at all* for a full send interval. So keep-alives stop entirely
+whenever the server's outbound stream to that slot leaves no gap **longer
+than** one send interval, and continue, in the gaps, whenever it does. That
+follows from the generation rule directly rather than from any timing
+measurement. The exactly-equal case — a stream whose gaps are precisely one
+send interval — is decided by the order in which an implementation sends and
+checks within a single update, and MUST NOT be relied on in either direction.
+
+*Do not restate this as a relationship between the keep-alive rate and the
+application's send rate.* No such relationship holds: the residual keep-alive
+rate below total suppression is a sawtooth in the ratio of the two intervals,
+it is not monotone in the application's rate, and over much of the range it
+*rises* with that rate rather than falling. It also shifts with the update
+tick, since the generation check runs once per update and the effective
+interval is the send interval rounded up to a whole tick. An implementation
+that needs a number must measure its own configuration.
+
+**What matters for the stranding is that "anything" is not just payloads.**
+The suppression clock is stamped by every session send to that slot: payloads,
+payload fragments, the keep-alives themselves, **and the transport's own
+standalone acks**, which a client eliciting enough ack debt will provoke with
+no application traffic whatever. A server whose application is sending that
+slot nothing at all can still suppress every keep-alive to it, purely from
+answering that client's own inbound stream.
 
 **An invariant the confirmation test depends on — stated here so it cannot be
 broken silently.** The test above is exact only because *an authentically
@@ -2821,16 +2844,20 @@ removes.
 first keep-alive it receives, taking its client index and the slot count from
 that packet.
 
-*If a client stays in _sending connection response_ while payloads arrive
-steadily, one candidate cause is its own ack block — see the failure
-directions under _Keep-alive generation_.* Two conditions have to hold
-together, and it is worth checking both before chasing either: the client's
-block must name a **keep-alive** sequence it never opened (over-claiming
-across payload sequences alone does nothing here — the server reads only the
-keep-alives it sent), **and** the server's application must be sending at or
-above the transport's send rate, since that is what makes the resulting
-suppression total. Below that rate this cause cannot produce the symptom, and
-the fault is elsewhere.
+*If a client stays in _sending connection response_ while other traffic
+arrives normally, a leading candidate is its own ack block — see the failure
+directions under _Keep-alive generation_.* The thing to audit is whether the
+block can name a **keep-alive** sequence the client never opened. Over-claiming
+across payload sequences alone does not produce this symptom, because the
+server reads only the keep-alives it sent; a cumulative or optimistic scheme
+whose ranges can extend over a missed keep-alive does.
+
+**Do not rule this cause out by looking at the application's send rate.** What
+suppresses the keep-alive is the server having sent that slot *anything*
+within the last send interval, and that includes the transport's own standalone
+acks, which a client's own inbound stream elicits. A server application
+sending nothing at all is entirely consistent with this fault. The blocks are
+what to audit, whatever the payload rate looks like.
 
 **Payload delivery.** A payload packet carries application bytes with no
 interpretation. Payloads received on an established connection are delivered in
