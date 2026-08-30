@@ -643,8 +643,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
         if ( public_address.port == 0 && !rocketnet_driver_discovers_bound_port( candidate ) )
         {
-            const size_t used = strlen( port_zero_refused_names );
-            snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            // named once however many times the operator listed it: the
+            // ladder parse does not deduplicate, and "xdp, xdp" in an
+            // error reads as a bug in the error rather than a repeat in
+            // the list
+
+            if ( !strstr( port_zero_refused_names, rocketnet_driver_name( candidate ) ) )
+            {
+                const size_t used = strlen( port_zero_refused_names );
+                snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
 
             rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
@@ -757,7 +765,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
         if ( port_zero_refused_names[0] != '\0' )
         {
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or include a driver that discovers one (portable, msgx, gso)",
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or list a driver that both discovers a granted port (portable, msgx, gso) and can grant here -- any refusals above say why a candidate did not",
                              port_zero_refused_names );
         }
 

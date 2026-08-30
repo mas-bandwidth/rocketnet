@@ -10169,12 +10169,12 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 
         // SCOPE, the other half of correct: the rule is about port ZERO
         // and nothing else. the same pin with a real port never meets it
-        // and goes on to the driver's own create -- which refuses at the
-        // commit barrier, since the suite never mutates a host. That
-        // refusal is asserted rather than tolerated: it is the one path in
-        // this test that still walks INTO the xdp driver, and it is what
-        // keeps the barrier exercised now that the rule short-circuits the
-        // port-zero pins that used to reach it.
+        // and goes on into the driver's own create, whose FIRST act is the
+        // commit barrier -- the suite never mutates a host. That refusal
+        // is asserted by its message rather than merely tolerated: it is
+        // the one path in this test that enters the xdp driver at all, and
+        // it is what keeps the BARRIER exercised now that the rule
+        // short-circuits the port-zero pins that used to reach it.
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
@@ -10234,22 +10234,24 @@ void rocketnet_test_server_driver_pin_gso()
 
 void rocketnet_test_server_driver_pin_xdp()
 {
-    // the pre-flight is the ONLY xdp surface the suite touches: create's
-    // committing acts (its BPF program built, loaded and attached, AF_XDP
-    // binds) must never run under a test, root box or not -- the suite
-    // never mutates a host. where the pre-flight refuses (every CI box, by
-    // the root condition at least), the xdp PIN must refuse create loudly:
-    // the pin-refuses semantic proven end to end, no machine touched. on a
-    // box the pre-flight passes whole, this test asserts nothing more --
-    // granting xdp attaches a data plane, which is not a unit test's act.
+    // the pre-flight is called DIRECTLY here, and that direct call is the
+    // only place the suite runs it: inside the xdp driver's create the
+    // pre-flight sits below the commit barrier, which the suite installs
+    // process-wide, so the in-create pre-flight has never been reachable
+    // under a test and still is not. What create refuses with, under this
+    // suite, is the BARRIER -- its first act, before the pre-flight and
+    // before any committing work. That is the refusal the pin asserts:
+    // pin-refuses proven through create, no machine touched. On a box the
+    // pre-flight passes whole, this test asserts nothing more -- granting
+    // xdp attaches a data plane, which is not a unit test's act.
     //
     // THE ADDRESS CARRIES A REAL PORT DELIBERATELY (#109). A port-zero
-    // address is now refused by the ladder's port-zero rule BEFORE the xdp
-    // rung's create runs, which would make this test pass without ever
-    // walking the path it exists to walk -- no pre-flight, no commit
-    // barrier, nothing "end to end" about it. A real port takes the rule
-    // out of the way so the refusal proven here is still the driver's own.
-    // Nothing binds it: the barrier refuses before create's first act.
+    // address is now refused by the ladder's port-zero rule before the xdp
+    // rung's create is called at all, which would make this test pass
+    // without entering the driver -- no barrier, nothing proven about the
+    // pin. A real port takes the rule out of the way so the refusal proven
+    // here is again the driver's own. Nothing binds: the barrier returns
+    // before create's first committing act.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );

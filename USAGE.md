@@ -93,18 +93,24 @@ spent only where splitting makes it unavoidable. Either way the context's single
 batch only when every fragment has been acknowledged. A lost fragment loses the
 whole payload. The transport never resends.
 
-**A started packet burns a session sequence, whatever happens next.**
-`start_packet` allocates the sequence as its *first* act, before it tries to
-acquire a frame at all, and nothing gives it back. Three ways to burn one:
+**Once `start_packet` has handed you a frame, the session sequence is spent.**
+It is allocated after the call's validation but *before* the frame is acquired,
+and nothing gives it back. Three ways to burn one:
 
 - `abort_packet`;
 - a `finish_packet` that returns zero — payload out of range, or the connection
   gone;
-- and the one that dominates under pressure: **a `start_packet` that returns
-  NULL.** The sequence is already spent by then, so a full send arena
+- and the one that dominates under pressure: **a `start_packet` that fails to
+  acquire a frame.** The sequence is already spent by then, so a full send arena
   (`SEND_ARENA_FULL`) or a full ring (`SEND_RING_FULL`) burns one on every
   refused acquisition. Aborts cluster; ring-full does not have to cluster to
   outnumber them.
+
+Not every NULL from `start_packet` burns one. The checks that run *before* the
+allocation — a transport that is not RUNNING, a `request_bytes` outside the
+configured range, a client that is not connected, a slot with no encryption
+mapping — return NULL having spent nothing. Only a failure at the acquisition
+step burns.
 
 The receiver's replay window tolerates the gaps, but **receive-side loss
 statistics cannot distinguish them from real loss** — that figure is computed
@@ -114,10 +120,9 @@ in a link that dropped nothing.
 Which end actually sees it is not symmetric, and this is the part worth getting
 right: only the **client** publishes a receive-side loss figure. The server's
 per-client `packet_loss` is send-side, so **a client's burned sequences surface
-nowhere in this API** — they are visible to the server only through its counters.
-Server-to-client burns are the ones that show up as phantom loss, in
-`rocketnet_client_transport_stats`. Read either figure with the send-side
-counters beside it.
+nowhere in this API at all.** Server-to-client burns are the ones that show up as
+phantom loss, in `rocketnet_client_transport_stats`. Read that figure with the
+send-side counters beside it.
 
 `send_packet` (the convenience form) exists on both ends. On the client it
 flushes the ring inline, which makes it main-thread only and never valid during
