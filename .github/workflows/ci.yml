@@ -35,7 +35,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev liburing-dev xxd
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -97,7 +97,7 @@ jobs:
 
       - name: Build the bench harnesses (Linux)
         if: runner.os == 'Linux'
-        run: make -C bench bench_portable bench_gso
+        run: make -C bench bench_portable bench_gso bench_uring_system
 
       - name: Build the bench harnesses (macOS)
         if: runner.os == 'macOS'

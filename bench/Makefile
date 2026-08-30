@@ -54,10 +54,17 @@ bench_gso: bench_gso.c bench_common.h
 bench_uring: bench_uring.c bench_common.h
 	$(CC) $(CFLAGS) -I$(LIBURING)/include -o bench_uring bench_uring.c $(LIBURING)/lib/liburing.a
 
+# the same harness against a DISTRIBUTION liburing (apt install liburing-dev).
+# A campaign still pins its own build -- a benched liburing version is part of
+# what is being measured -- but CI needs a way to compile this file and drive
+# its abort path, and an uncompiled harness is one nobody knows is broken.
+bench_uring_system: bench_uring.c bench_common.h
+	$(CC) $(CFLAGS) -o bench_uring bench_uring.c -luring
+
 selftest: bench_portable
 	bash selftest.sh
 
 clean:
 	rm -f probe bench_portable bench_gso bench_uring probe_darwin bench_msgx bench_kqueue bench_nw
 
-.PHONY: all clean darwin selftest
+.PHONY: all clean darwin selftest bench_uring_system
