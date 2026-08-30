@@ -259,15 +259,32 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     // a later packet and must not be tagged. missing the tag only delays the
     // latch to the next keep-alive, which is the safe direction.
     //
-    // RESIDUAL, stated rather than glossed: this read-then-write is not
-    // atomic, so a concurrent record_sent recycling this entry between the
-    // compare and the store could still tag the wrong packet -- a window
-    // 4096 sequences wide, inside the pre-existing non-atomic record_sent
-    // design rather than added by it. Unreachable under the current phase
-    // contract, which is what makes it acceptable: update and the fill phase
-    // never overlap, and keep-alives are written only by update. It would
-    // become reachable the day a keep-alive is written from a fill thread,
-    // which is also the day this function needs to be made atomic.
+    // RESIDUAL, stated rather than glossed, and the attribution matters.
+    //
+    // This read-then-write is not atomic. A concurrent record_sent for the
+    // ONE sequence that aliases to this slot -- sequence + 4096n, the ring
+    // being 4096 entries -- landing between the compare and the store would
+    // tag that packet instead. It is a single aliased sequence, not a range
+    // of them.
+    //
+    // What is pre-existing is only the non-atomic ACCESS STYLE that
+    // record_sent already uses. THE HAZARD ITSELF IS NEW TO THIS CHANGE:
+    // was_keep_alive, the writer here and the consumer in process_block all
+    // arrive with it, and before it no keep-alive mis-tag was possible
+    // because nothing carried the tag. This note must not hand its own
+    // hazard to prior art.
+    //
+    // It is unreachable under the current phase contract, which is what
+    // makes it acceptable rather than harmless. TWO conditions hold it shut,
+    // and breaking EITHER opens it:
+    //
+    //   1. update and the fill phase never overlap; and
+    //   2. keep-alives are written only by update.
+    //
+    // Letting fills run concurrently with update opens it even with (2)
+    // intact, and writing a keep-alive from a fill thread opens it even with
+    // (1) intact. Whichever goes first is the day this function must be made
+    // atomic.
 
     if ( record->sequence == sequence )
         record->was_keep_alive = 1;

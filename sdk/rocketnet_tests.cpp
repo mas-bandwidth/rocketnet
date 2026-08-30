@@ -3447,7 +3447,7 @@ void rocketnet_test_client_keep_alive_suppression()
     rocketnet_test_server_teardown( &test );
 }
 
-void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
+void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
 {
     // #90, the stranding case, driven end to end on a punched wire: the
     // establishment keep-alive -- the only packet that carries the client
@@ -3456,10 +3456,10 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     // payloads continuously from the moment the slot exists.
     //
     // No keep-alive is ever acknowledged here, because none is ever
-    // received. Nor can the client ask for one: not because the server
-    // ignores everything it sends -- a standalone ack from this state is
-    // acted on, which is what the companion test below turns on -- but
-    // because nothing it can send re-provokes a keep-alive. Its connection
+    // received. Nor does this client's own traffic carry any acknowledgment
+    // at all: the only packet it sends is the retransmitted connection
+    // response, a handshake type, and handshake packets carry no ack block.
+    // Nothing it can send re-provokes a keep-alive either. Its connection
     // response is ignored as already connected, and no session type elicits
     // one. So the repair has to come from the server's own pacing.
     //
@@ -3493,8 +3493,8 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     const double tick = 0.01;                   // ten ticks to a send interval
     double establishment_time = -1.0;           // when the lost keep-alive was written
     double connected_time = -1.0;
-    int payloads_sent_while_unconfirmed = 0;
-    int payloads_received_while_unconfirmed = 0;
+    int payloads_sent_while_unestablished = 0;
+    int payloads_received_while_unestablished = 0;
     int state_after_the_loss = -1;
 
     for ( double time = 100.0; time < 110.0 && connected_time < 0.0; time += tick )
@@ -3533,12 +3533,12 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
             int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_byte, 1, time, response );
             rocketnet_check( stream_bytes > 0 );
             if ( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) )
-                payloads_sent_while_unconfirmed++;
+                payloads_sent_while_unestablished++;
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             if ( rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, &payload_bytes ) &&
                  payload_bytes > 0 && !connected_before )
             {
-                payloads_received_while_unconfirmed++;
+                payloads_received_while_unestablished++;
             }
 
             int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, response );
@@ -3570,9 +3570,9 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     // keep-alive to slip through, so a pass here cannot be an artifact of
     // the traffic stopping
 
-    rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
-    rocketnet_check( payloads_received_while_unconfirmed >= 5 );
-    rocketnet_check( (double) payloads_sent_while_unconfirmed * tick >= connected_time - establishment_time - 2.0 * tick );
+    rocketnet_check( payloads_sent_while_unestablished >= 5 );
+    rocketnet_check( payloads_received_while_unestablished >= 5 );
+    rocketnet_check( (double) payloads_sent_while_unestablished * tick >= connected_time - establishment_time - 2.0 * tick );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -3622,7 +3622,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
     double establishment_time = -1.0;
     double connected_time = -1.0;
     int early_ack_sent = 0;
-    int payloads_sent_while_unconfirmed = 0;      // counted while the CLIENT is not yet connected
+    int payloads_sent_while_unestablished = 0;      // counted while the CLIENT is not yet connected
 
     for ( double time = 100.0; time < 110.0 && connected_time < 0.0; time += tick )
     {
@@ -3652,7 +3652,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
             int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_byte, 1, time, response );
             rocketnet_check( stream_bytes > 0 );
             if ( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-                payloads_sent_while_unconfirmed++;
+                payloads_sent_while_unestablished++;
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, &payload_bytes );
 
             // the conformant standalone ack, sealed from _sending connection
@@ -3693,7 +3693,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
     rocketnet_check( establishment_time > 0.0 );
     rocketnet_check( early_ack_sent == 1 );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_ACCEPTED] >= 1 );
-    rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
+    rocketnet_check( payloads_sent_while_unestablished >= 5 );
 
     // and the client still connects: an ack from a client that does not yet
     // hold its index MUST NOT flip the regime as though it did
@@ -11423,7 +11423,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_server_keep_alive_pacing );
         RUN_TEST( test_client_payload_before_first_keep_alive );
         RUN_TEST( test_client_keep_alive_suppression );
-        RUN_TEST( test_keep_alive_unconfirmed_under_payload_traffic );
+        RUN_TEST( test_keep_alive_unestablished_under_payload_traffic );
         RUN_TEST( test_keep_alive_pacing_survives_early_ack );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );

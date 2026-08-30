@@ -1242,9 +1242,12 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // is set by ANY sealed packet, and _Acks_ invites a client in _sending
     // connection response_ to send a standalone ack, so a CONFORMANT client
     // confirmed itself before it had its index and stranded itself. This
-    // test is satisfiable only by a client that names a sequence it never
-    // opened, which _Acks_ forbids when building a block -- unreachable for
-    // any correct implementation.
+    // test is of course satisfied by every client that acknowledges a
+    // keep-alive -- that IS the design. The restriction that matters is
+    // AMONG CLIENTS THAT HAVE NOT ESTABLISHED: there it is satisfiable only
+    // by one naming a sequence it never opened, which _Acks_ forbids when
+    // building a block. So no correct client trips it BEFORE it holds its
+    // index, which is what the confirmed flag could not promise.
     //
     // BOTH FAILURE DIRECTIONS. Lost or delayed acks leave the latch unset
     // and unsuppressed keep-alives continue -- more, never fewer, bounded by

@@ -1830,8 +1830,9 @@ sixteen million sequences in a kilobyte, and iterating what a peer asserts
 rather than what this end retains would hand a connected attacker CPU at that
 ratio. Everything a block names below the retained window is silently ignored
 without being visited; within the window, sequences named that were never
-sent — possible only through reconstruction against a hostile or
-badly-truncated block — are ignored; an implementation MUST NOT treat them as
+sent — possible through reconstruction against a hostile or badly-truncated
+block, and also from an implementation that over-claims contrary to the
+block-building rule above — are ignored; an implementation MUST NOT treat them as
 an error that affects the connection, and counts them as
 `ACK_UNKNOWN_SEQUENCE`.
 
@@ -2628,9 +2629,10 @@ no copy to fall out of sync.
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
 becomes confirmed the first time the server receives any sealed packet from that
 client on that slot — a keep-alive, a payload, a fragment, an ack or a
-disconnect. The flag exists because the server has not yet observed that the
-client received its keep-alive, so it does not yet know the client considers
-itself connected.
+disconnect. The flag exists because until such a packet arrives the server has
+heard nothing at all from this slot, and so has no basis on which to treat the
+client as reachable. It says nothing about whether the client received its
+keep-alive; the paragraph below states why it cannot.
 
 **What the flag does not decide.** The confirmed flag says a sealed packet
 arrived from this client. It does **not** say the client holds its client
@@ -2695,11 +2697,13 @@ axis, two alternatives that look adequate are not:
   busy client, whose own traffic suppresses its keep-alives, so the
   unsuppressed rate would never end for the connections that need it least.
 
-The acknowledgment test is tripped only by a client that names a sequence it
-did not open — a violation of the block-building MUST in _Acks_. It is
-therefore unreachable for any correct implementation, which is the property
-the confirmed flag lacked. It is not unreachable for an incorrect one, which
-the next paragraph addresses.
+The acknowledgment test is of course tripped by every client that acknowledges
+a keep-alive — that is the design. What matters is the restriction: **among
+clients that have not established**, it is tripped only by one that names a
+sequence it did not open, which the block-building MUST in _Acks_ forbids. So
+no correct client trips it *before* it holds its index, which is exactly the
+property the confirmed flag lacked. An incorrect one still can, which the next
+paragraph addresses.
 
 **Both failure directions.** If the client's acks are lost or delayed, the
 test stays unsatisfied and unsuppressed keep-alives continue — more
@@ -2708,8 +2712,11 @@ send rate, and never toward stranding.
 
 In the other direction, a client that over-claims in its ack block — naming a
 keep-alive sequence it never opened, contrary to _Acks_ — satisfies the test
-without holding its index. The server then suppresses keep-alives to it, and
-it can sit in _sending connection response_ until its total connect deadline.
+without holding its index. Keep-alives to it become suppressible by ordinary
+traffic, so **if the application is sending at or above the transport's send
+rate** they stop entirely and the client can sit in _sending connection
+response_ until its total connect deadline. Below that rate it still receives
+keep-alives and still establishes: the false claim alone is not sufficient.
 **Such a client strands only itself.** The block rides inside a packet sealed
 under that connection's own session keys, applies only to that client's own
 slot, and cannot be produced by anyone else for it; no other client's pacing
@@ -2723,12 +2730,25 @@ strictly from the sequences actually opened. The transport cannot detect this
 for you, because on the wire an over-claiming block is indistinguishable from
 a truthful one.
 
-**The confirming observation is on the server**, and it is the one thing the
-client author cannot infer from their own side: keep-alives to that slot
-*stop*. A client that has genuinely not received one sees the stream continue
-at the send rate; a client whose block over-claimed sees it cease at the
-moment of the claim, because the server has been told the client no longer
-needs it. If you can watch both ends, that transition is the signature.
+**What the two regimes actually look like from the server, which is less
+distinctive than it sounds.** Taking the claim does not stop keep-alives; it
+only makes them suppressible. Before the claim they are paced off the
+keep-alive clock and appear at the send rate whatever else is going out.
+After it they are paced off the last send of *anything* — and since a
+keep-alive is itself a send, an otherwise idle server keeps emitting them at
+exactly the same send rate. The observable difference is only what the
+application's own traffic does to them: keep-alives to that slot fall roughly
+to the send rate minus the application's payload rate, reaching zero only once
+the application is sending at or above the transport's send rate.
+
+**So there is no clean signature below that crossover, and this matters for
+the stranding too.** A client that over-claims while the server's payload rate
+is under its send rate still receives keep-alives, and still establishes. The
+stranding needs both the false claim *and* an application sending fast enough
+to suppress what the claim made suppressible. Do not read a continuing
+keep-alive stream as evidence that a client's blocks are honest; below the
+crossover the stream continues either way. The blocks themselves are what to
+audit.
 
 **An invariant the confirmation test depends on — stated here so it cannot be
 broken silently.** The test above is exact only because *an authentically
@@ -2793,7 +2813,7 @@ already committed, and it is the same 10 Hz an idle established client already
 draws. So this is a bounded cost on a committed resource, not a new amplifier:
 a peer cannot use it to make the server send more than the send rate, and
 cannot direct it at anyone but itself. This is the
-unsuppressed-until-established rule netcode carried on its payload prefixing,
+unsuppressed-until-acknowledged rule netcode carried on its payload prefixing,
 recovered here without the prefixing that the subtraction above deliberately
 removes.
 
@@ -2802,10 +2822,15 @@ first keep-alive it receives, taking its client index and the slot count from
 that packet.
 
 *If a client stays in _sending connection response_ while payloads arrive
-normally, the cause is very likely its own ack block — see the failure
-directions under _Keep-alive generation_.* An over-claiming block tells the
-server the client no longer needs the keep-alive that would establish it, and
-the server stops sending it.
+steadily, one candidate cause is its own ack block — see the failure
+directions under _Keep-alive generation_.* Two conditions have to hold
+together, and it is worth checking both before chasing either: the client's
+block must name a **keep-alive** sequence it never opened (over-claiming
+across payload sequences alone does nothing here — the server reads only the
+keep-alives it sent), **and** the server's application must be sending at or
+above the transport's send rate, since that is what makes the resulting
+suppression total. Below that rate this cause cannot produce the symptom, and
+the fault is elsewhere.
 
 **Payload delivery.** A payload packet carries application bytes with no
 interpretation. Payloads received on an established connection are delivered in
