@@ -38,6 +38,23 @@
                                   wall clock it is dividing up. The profile
                                   MUST refuse the run. scripts/soak-sim-selftest
                                   runs this leg and fails unless it goes red.
+
+    ROCKETNET_SOAK_SIM_AUDIT=1    cross-checks every simulator receive against
+                                  the reference full-array scan and aborts
+                                  loudly on any divergence. Slow by
+                                  construction -- it is the proof that the
+                                  indexed wire delivers the same packets in
+                                  the same order, not a mode to soak in.
+
+    ROCKETNET_SOAK_SIM_FAULT_INDEX=<n>
+                                  the audit's negative control: at iteration n,
+                                  corrupt the simulator's index on purpose.
+                                  With the audit on the run MUST die red; if it
+                                  survives, the audit proves nothing. Without
+                                  the audit it does NOT die, which is the whole
+                                  reason the audit exists -- the soak simply
+                                  loses a packet and reports success.
+                                  scripts/soak-sim-selftest runs both.
 */
 
 #include "rocketnet.h"
@@ -109,10 +126,13 @@ static inline void soak_profile_charge( int bucket, double start )
     const double elapsed = rocketnet_platform_time() - start;
     soak_profile_seconds[bucket] += elapsed;
     soak_profile_regions[bucket]++;
-    if ( soak_profile_double_charge && bucket == SOAK_PROFILE_WIRE )
+    if ( soak_profile_double_charge )
     {
-        // the negative control: charge the same elapsed time twice, so the
-        // buckets add up to more than the wall clock they are dividing.
+        // the negative control: charge every bucket twice, so the parts add up
+        // to more than the wall clock they are dividing. Every bucket and not
+        // just one, because the wire is now small enough that doubling it
+        // alone no longer breaks the sum -- a negative control has to stay
+        // able to break the thing it is controlling for.
         soak_profile_seconds[bucket] += elapsed;
     }
 }
@@ -361,6 +381,24 @@ int main( int argc, char ** argv )
     struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, simulator_seed );
     rocketnet_network_simulator_config( simulator, 0.05, 0.02, 2.0f, 2.0f );
 
+    // the wire's audit and its negative control. the audit is the wire's
+    // failure state: it re-runs the reference scan beside the index on every
+    // receive and aborts on divergence. the fault arms a deliberate index
+    // corruption so the audit can be WATCHED failing rather than assumed to.
+
+    const char * audit_string = getenv( "ROCKETNET_SOAK_SIM_AUDIT" );
+    if ( audit_string && audit_string[0] == '1' )
+    {
+        rocketnet_network_simulator_audit( simulator, 1 );
+        printf( "soak_sim: simulator receive audit ENABLED (slow -- proof mode, not soak mode)\n" );
+    }
+
+    const char * index_fault_string = getenv( "ROCKETNET_SOAK_SIM_FAULT_INDEX" );
+    const uint64_t index_fault_iteration = index_fault_string ? strtoull( index_fault_string, NULL, 10 ) : 0;
+    if ( index_fault_iteration )
+        printf( "soak_sim: simulator index fault ARMED for iteration %llu -- the audit must go red\n",
+                (unsigned long long) index_fault_iteration );
+
     static struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof(client_counters) );
     static struct rocketnet_client_protocol_t clients[SOAK_NUM_CLIENTS];
@@ -398,6 +436,9 @@ int main( int argc, char ** argv )
         iteration++;
         if ( max_iterations && iteration > max_iterations )
             break;
+
+        if ( index_fault_iteration && iteration == index_fault_iteration )
+            rocketnet_network_simulator_inject_index_fault( simulator );
 
         time += 0.005;                              // mocked time, stepped fast
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );

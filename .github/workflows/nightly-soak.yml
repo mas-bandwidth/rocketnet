@@ -39,6 +39,14 @@ jobs:
       - name: Tests
         run: ./bin/test
 
+      # the wire's audit under the real soak, bounded: every receive
+      # cross-checked against the reference full-array scan. Slow by
+      # construction, which is why it is a bounded leg of the nightly rather
+      # than the shape the long soak runs in.
+
+      - name: Simulator wire audit (bounded, every receive cross-checked)
+        run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000
+
       - name: Simulator soak (eight clients, light loss, any failure is a finding)
         run: ./bin/soak_sim 10000000
 

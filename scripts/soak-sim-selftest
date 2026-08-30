@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# soak_sim's instruments, held to the estate's rule that an instrument with no
+# failure state is not an instrument. Each leg below drives one instrument in
+# soak_sim and asserts what it must do; the FAULT legs break something the
+# instrument is supposed to catch and fail unless it goes red.
+#
+#   bash scripts/soak-sim-selftest
+#
+# Needs ./bin/soak_sim built (make). Prints one line per leg and nothing else
+# on success; any leg that misbehaves prints why and the script exits nonzero.
+#
+# The legs, and what each one would catch:
+#
+#   1  determinism      -- two runs at a pinned seed must agree exactly. If they
+#                          do not, the A/B this repo uses to judge harness
+#                          changes is measuring the wire's mood.
+#   2  audit clean      -- the indexed wire must agree with the reference
+#                          full-array scan on every receive of a real run.
+#   3  audit fault      -- with the index deliberately corrupted, the audit MUST
+#                          abort. This is the negative control for leg 2: an
+#                          audit that never fires proves nothing.
+#   4  fault is silent  -- the SAME corruption without the audit must NOT be
+#                          caught. This is the leg that says why the audit
+#                          exists: the soak quietly loses a packet and still
+#                          reports success.
+#   5  profile clean    -- the wall-clock attribution must complete and its
+#                          parts must not exceed the whole.
+#   6  profile fault    -- with the accounting deliberately double-charging, the
+#                          profile MUST refuse itself and exit nonzero.
+#   7  profile is free  -- the soak's own output at a pinned seed must be
+#                          byte-identical with the profile on and off, or the
+#                          instrument is changing what it measures.
+
+set -u
+
+cd "$( dirname "${BASH_SOURCE[0]}" )/.." || exit 1
+
+SOAK_SIM=./bin/soak_sim
+if [ ! -x "$SOAK_SIM" ]; then
+    echo "soak-sim-selftest: $SOAK_SIM not built -- run make first" >&2
+    exit 1
+fi
+
+SEED=20260830
+SHORT=20000
+WORK="$( mktemp -d "${TMPDIR:-/tmp}/soak-sim-selftest.XXXXXX" )"
+trap 'rm -rf "$WORK"' EXIT
+
+failures=0
+
+fail()
+{
+    echo "FAIL: $*" >&2
+    failures=$(( failures + 1 ))
+}
+
+# the soak's RESULT: the finished line and any complaint it made along the way.
+# Everything else in the output is startup chatter, progress lines and whatever
+# instrument was switched on, none of which is the thing under comparison.
+
+soak_summary()
+{
+    grep -E '^(soak_sim finished:|CLIENT [0-9]+ FAILED|HANG:|PAYLOAD VERIFY|FRAGMENTED PAYLOAD VERIFY|MUST-STAY-ZERO)' "$1"
+}
+
+# ---------------------------------------------------------------------------
+# 1. determinism at a pinned seed
+
+ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/det_a.txt" 2>&1
+ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/det_b.txt" 2>&1
+if soak_summary "$WORK/det_a.txt" | diff -q - <( soak_summary "$WORK/det_b.txt" ) > /dev/null; then
+    echo "leg 1  determinism at a pinned seed: two runs agree exactly"
+else
+    fail "two runs at seed $SEED produced different results -- the A/B cannot be trusted"
+    diff <( soak_summary "$WORK/det_a.txt" ) <( soak_summary "$WORK/det_b.txt" ) >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 2. the audit over a clean run
+
+if ROCKETNET_SOAK_SIM_AUDIT=1 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/audit_clean.txt" 2>&1; then
+    if grep -q 'AUDIT FAILED' "$WORK/audit_clean.txt"; then
+        fail "the audit reported a divergence on a clean run"
+    else
+        echo "leg 2  audit over a clean run: the index and the reference scan agree on every receive"
+    fi
+else
+    fail "a clean audited run exited nonzero"
+    tail -5 "$WORK/audit_clean.txt" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 3. the audit's negative control: corrupt the index, the audit must go red
+
+# the abort IS the expected outcome, so the shell's own "Abort trap" notice is
+# kept off the transcript: it is run by an inner shell whose stderr is dropped.
+bash -c "ROCKETNET_SOAK_SIM_AUDIT=1 ROCKETNET_SOAK_SIM_FAULT_INDEX=5000 ROCKETNET_SOAK_SIM_SEED=$SEED \
+    '$SOAK_SIM' $SHORT > '$WORK/audit_fault.txt' 2>&1" 2>/dev/null
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "the index was corrupted on purpose and the audited run still passed -- the audit is decoration"
+elif ! grep -q 'AUDIT FAILED' "$WORK/audit_fault.txt"; then
+    fail "the audited run failed but never said the audit caught it (exit $status)"
+else
+    echo "leg 3  audit against a corrupted index: red, exit $status, $( grep -m1 'AUDIT FAILED' "$WORK/audit_fault.txt" | cut -c1-88 )"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. the same corruption unaudited must pass, silently losing a packet. This is
+#    the leg that justifies the audit's existence rather than the audit's code.
+
+ROCKETNET_SOAK_SIM_FAULT_INDEX=5000 ROCKETNET_SOAK_SIM_SEED=$SEED \
+    "$SOAK_SIM" $SHORT > "$WORK/fault_silent.txt" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+    fail "the unaudited corrupted run exited $status -- expected it to pass silently; if this became loud on its own, this leg needs rewriting, not deleting"
+elif soak_summary "$WORK/fault_silent.txt" | diff -q - <( soak_summary "$WORK/det_a.txt" ) > /dev/null; then
+    fail "the corrupted run produced identical results to the clean one -- the fault is not injecting anything, so leg 3 proves nothing"
+else
+    echo "leg 4  same corruption, no audit: passes silently with a packet quietly missing -- which is why the audit exists"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. the profile over a clean run
+
+if ROCKETNET_SOAK_SIM_PROFILE=1 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/profile_clean.txt" 2>&1; then
+    if grep -q 'PROFILE REFUSED' "$WORK/profile_clean.txt"; then
+        fail "the profile refused a clean run"
+    elif ! grep -q 'soak_sim profile:' "$WORK/profile_clean.txt"; then
+        fail "the profile printed no report"
+    else
+        echo "leg 5  profile over a clean run: reported, parts within the whole"
+    fi
+else
+    fail "a clean profiled run exited nonzero"
+    tail -5 "$WORK/profile_clean.txt" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 6. the profile's negative control: double-charge, it must refuse itself
+
+ROCKETNET_SOAK_SIM_PROFILE=1 ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING=1 ROCKETNET_SOAK_SIM_SEED=$SEED \
+    "$SOAK_SIM" $SHORT > "$WORK/profile_fault.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "the accounting was double-charged on purpose and the profile still reported -- the refusal is decoration"
+elif ! grep -q 'PROFILE REFUSED' "$WORK/profile_fault.txt"; then
+    fail "the profiled run failed but never said the accounting was refused (exit $status)"
+else
+    echo "leg 6  profile against a double-charged bucket: refused, exit $status, no shares printed"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. the profile must not change what the soak does
+
+ROCKETNET_SOAK_SIM_PROFILE=1 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/profile_effect.txt" 2>&1
+if soak_summary "$WORK/profile_effect.txt" | diff -q - <( soak_summary "$WORK/det_a.txt" ) > /dev/null; then
+    echo "leg 7  profile on vs off: the soak's own result is byte-identical"
+else
+    fail "turning the profile on changed what the soak reported"
+    diff <( soak_summary "$WORK/profile_effect.txt" ) <( soak_summary "$WORK/det_a.txt" ) >&2
+fi
+
+# ---------------------------------------------------------------------------
+
+if [ "$failures" -ne 0 ]; then
+    echo "soak-sim-selftest: $failures leg(s) failed" >&2
+    exit 1
+fi
+
+exit 0

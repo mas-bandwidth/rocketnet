@@ -74,6 +74,17 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/rocketnet-provision selftest
 
+      # soak_sim's instruments, each driven against its own negative control
+      # (#99). The audit legs corrupt the simulator's index on purpose and
+      # fail unless the audit aborts -- and prove, in the leg beside them,
+      # that the same corruption is SILENT without it. The profile legs
+      # double-charge the accounting on purpose and fail unless the profile
+      # refuses to print shares. Runs on both platforms, needs nothing but
+      # the build, and takes a few seconds.
+
+      - name: soak_sim instrument selftest
+        run: bash scripts/soak-sim-selftest
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
