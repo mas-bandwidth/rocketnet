@@ -619,6 +619,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char port_zero_refused_names[128];
     port_zero_refused_names[0] = '\0';
 
+    bool port_zero_refused_seen[ROCKETNET_NUM_DRIVERS];
+    memset( port_zero_refused_seen, 0, sizeof(port_zero_refused_seen) );
+
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
@@ -646,10 +649,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             // named once however many times the operator listed it: the
             // ladder parse does not deduplicate, and "xdp, xdp" in an
             // error reads as a bug in the error rather than a repeat in
-            // the list
+            // the list. keyed on the driver ID, not on a substring search
+            // of the accumulated names -- no driver name is a substring of
+            // another today, but a future one could be, and a dedupe that
+            // silently swallows a legitimate entry is worse than none.
 
-            if ( !strstr( port_zero_refused_names, rocketnet_driver_name( candidate ) ) )
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !port_zero_refused_seen[candidate] )
             {
+                port_zero_refused_seen[candidate] = true;
+
                 const size_t used = strlen( port_zero_refused_names );
                 snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
             }
