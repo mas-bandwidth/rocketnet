@@ -713,8 +713,25 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_ser
 // for it validate -- and this reads it back. Tests and single-box tools
 // build their token address from it instead of hardcoding a port and
 // racing every other process on the machine; production servers know
-// their public address already. (Port-zero discovery is a portable and
-// GSO driver property; the XDP driver binds the port it is given.)
+// their public address already.
+//
+// Port-zero discovery is a per-driver property, and since #109 the ladder
+// enforces it rather than documenting it: a driver whose create binds the
+// port it is given and discovers nothing -- the XDP driver -- cannot serve
+// a port-zero address, so that rung REFUSES one at create, loudly, naming
+// the rule, before it binds anything. It is an ordinary rung refusal: an
+// "auto" ladder falls past it to a driver that does discover, and only a
+// PIN on a non-discovering driver refuses the create outright. The
+// portable, msgx and GSO drivers discover; the XDP driver does not
+// (rocketnet_driver_discovers_bound_port is the table).
+//
+// So this returns a real port by one of two routes, not one: either the
+// public address carried a port, and that is the port -- including on an
+// XDP grant, which binds what it was given and discovers nothing -- or it
+// carried zero, in which case the rule above guarantees the granting
+// driver was one that discovers. The port-zero route is asserted for
+// every discovering driver a platform has by
+// rocketnet_test_server_port_zero_needs_a_discovering_driver.
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
 
@@ -808,9 +825,22 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // context are read-only to the caller.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
-// dropped instead (payload out of range, or the connection gone) -- the
-// sequence is burned either way, which the receiver's replay window
-// tolerates.
+// dropped instead (payload out of range, the connection gone, or a wire
+// frame it could not reserve) -- the sequences already taken are burned
+// either way, which the receiver's replay window tolerates.
+//
+// HOW MANY are burned is not always one, and the difference is large
+// enough to reason about. An unfragmented payload burns the single
+// sequence start_packet took. A FRAGMENTED one burns up to
+// fragment_count: finish reserves a block of fragment_count-1 above that
+// first sequence, and a seal failure inside the fragment loop withdraws
+// the whole reservation (on the staged xdp path, fragments already
+// committed to its asynchronous staging stay committed, so the burn is
+// the remainder). Since receive-side loss statistics are computed from
+// gaps in the session sequence, a failed fragmented send moves that
+// figure by UP TO its fragment count rather than by one -- at the default
+// 16384-byte maximum payload that ceiling is 14. USAGE.md carries the
+// worked arithmetic.
 
 struct rocketnet_packet_context_t
 {

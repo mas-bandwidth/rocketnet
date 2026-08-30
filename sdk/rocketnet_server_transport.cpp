@@ -609,11 +609,72 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char refused_names[128];
     refused_names[0] = '\0';
 
+    bool refused_seen[ROCKETNET_NUM_DRIVERS];
+    memset( refused_seen, 0, sizeof(refused_seen) );
+
+    // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
+    // can restate the rule at the level the failure itself is reported.
+    // The names are collected rather than a bare flag because a mixed list
+    // -- say "xdp,gso" where gso refused for its own queue geometry --
+    // would make "no driver here can discover a port" a lie about gso. The
+    // error names the rungs the rule actually refused, and nothing else.
+
+    char port_zero_refused_names[128];
+    port_zero_refused_names[0] = '\0';
+
+    bool port_zero_refused_seen[ROCKETNET_NUM_DRIVERS];
+    memset( port_zero_refused_seen, 0, sizeof(port_zero_refused_seen) );
+
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
 
-        switch ( candidate )
+        // #109: a port-zero public address asks the KERNEL for an
+        // ephemeral port, and the adoption below reads the granted port
+        // back out of bind_address -- so the address is only meaningful on
+        // a rung whose create discovers what it bound and hands it back.
+        // The xdp rung does not: it takes an address STRING, binds the
+        // port it is given, and leaves bind_address.port at zero, so the
+        // adoption adopts zero and the transport silently advertises port
+        // 0 -- tokens minted from rocketnet_server_transport_port() name
+        // port 0, the cookie gate never matches, and nothing says why.
+        //
+        // This is asked of EVERY candidate rather than patched into the
+        // one rung that fails it today, because #110 made create a loop
+        // and the question is a property of each driver's bind
+        // (rocketnet_driver_discovers_bound_port). It is a rung refusal
+        // like any other: "auto" falls past xdp to a rung that discovers,
+        // and only a PIN on a non-discovering rung refuses the create --
+        // loudly, naming the rule, the way the pin law already works.
+
+        if ( public_address.port == 0 && !rocketnet_driver_discovers_bound_port( candidate ) )
+        {
+            // named once however many times the operator listed it: the
+            // ladder parse does not deduplicate, and "xdp, xdp" in an
+            // error reads as a bug in the error rather than a repeat in
+            // the list.
+            //
+            // keyed on the driver ID, not on a substring search of the
+            // accumulated names. The hazard runs in the direction that is
+            // easy to get backwards: strstr( "gso", "gso2" ) is NULL, so a
+            // NEW longer name is not swallowed by a shorter accumulated
+            // one -- but strstr( "gso2", "gso" ) FINDS, so an accumulated
+            // longer name silently swallows a later legitimate shorter
+            // one. No two names collide today; an id key cannot collide
+            // whatever anyone adds.
+
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !port_zero_refused_seen[candidate] )
+            {
+                port_zero_refused_seen[candidate] = true;
+
+                const size_t used = strlen( port_zero_refused_names );
+                snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
+
+            rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
+                            rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
+        }
+        else switch ( candidate )
         {
 #if ROCKETNET_SERVER_HAS_STAGED
 
@@ -693,8 +754,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             rocketnet_warn( "server driver %s refused%s", rocketnet_driver_name( candidate ),
                             i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
 
-            const size_t used = strlen( refused_names );
-            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            // deduped on the same rule as the port-zero list below it: a
+            // repeated name in the operator's list is a repeat in the
+            // list, not two refusals worth reading, and two adjacent
+            // summary lines disagreeing about that reads as a bug in one
+            // of them
+
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !refused_seen[candidate] )
+            {
+                refused_seen[candidate] = true;
+
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
         }
     }
 
@@ -711,6 +783,24 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         rocketnet_error( "server driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
+
+        // #109 asked for an error naming the rule, and the per-rung warn
+        // above is not that: a deployed binary, the test suite and the C#
+        // smoke all run at the ERROR level, where a warn is invisible. So
+        // the rule is restated HERE, at the level the failure itself is
+        // reported -- on the fall it stays a warn, because a fall is not a
+        // failure and an error line would be a lie about the outcome.
+
+        if ( port_zero_refused_names[0] != '\0' )
+        {
+            // the remedy does NOT point at the per-rung warns: this error
+            // exists precisely because the reader is at ERROR level, where
+            // those warns are invisible. it has to stand alone.
+
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (portable, msgx, gso). raise the log level to WARN to see why each candidate refused",
+                             port_zero_refused_names );
+        }
+
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }

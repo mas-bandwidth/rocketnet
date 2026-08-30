@@ -406,6 +406,42 @@ const char * rocketnet_driver_name( int driver )
     return rocketnet_driver_names[driver];
 }
 
+// #109: does this driver's create discover the port the kernel granted and
+// hand it back to the transport? the answer is a property of each driver's
+// bind, so it is declared once here rather than tested for at the one call
+// site that happens to care.
+//
+//   portable, msgx    rocketnet_platform_socket_create_with_pump takes the
+//                     bind address by pointer and writes the getsockname
+//                     port into it (rocketnet_platform.cpp, "if bound to
+//                     port 0 find the actual port we got")
+//   gso               rocketnet_server_gso_create takes it by pointer too;
+//                     the first reuseport socket discovers and the rest
+//                     join it, and the group's port comes back out
+//   xdp               rocketnet_server_socket_create takes an address
+//                     STRING. It binds the port it is given and discovers
+//                     nothing, so there is nothing to hand back.
+//
+// the table is sized to the driver count beside the name table, and an
+// entry never filled in reads false -- which fails SAFE: a fifth driver
+// that nobody classified refuses port-zero addresses loudly, naming
+// itself, instead of quietly advertising zero.
+
+static const bool rocketnet_driver_discovers[ROCKETNET_NUM_DRIVERS] =
+{
+    true,               // ROCKETNET_DRIVER_PORTABLE
+    true,               // ROCKETNET_DRIVER_GSO
+    false,              // ROCKETNET_DRIVER_XDP
+    true,               // ROCKETNET_DRIVER_MSGX
+};
+
+bool rocketnet_driver_discovers_bound_port( int driver )
+{
+    if ( driver < 0 || driver >= ROCKETNET_NUM_DRIVERS )
+        return false;
+    return rocketnet_driver_discovers[driver];
+}
+
 #define ROCKETNET_KNOWN_DRIVER_NAMES "xdp, gso, msgx, portable"
 
 static int rocketnet_driver_id_from_name( const char * name, int name_length )
