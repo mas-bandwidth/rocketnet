@@ -282,13 +282,18 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     //   2. keep-alives are written only by update; and
     //   3. update is single-threaded per client index -- two update threads
     //      on the same slot would open it with (1) and (2) both intact.
+    //      This also covers the OTHER writer of record->sequence, the memset
+    //      in rocketnet_ack_endpoint_reset, which reaches an endpoint via
+    //      disconnect_client and is main-thread-only per rocketnet.h.
     //
-    // Breaking any one is NECESSARY to open the window, though not by itself
-    // sufficient: a mis-tag also needs a concurrent send to land on the one
-    // aliasing sequence inside the two instructions between the compare and
-    // the store. Necessary-but-not-sufficient is the right way to hold this
-    // -- the day any of the three stops being true is the day this function
-    // must be made atomic, whether or not the race has been observed.
+    // Breaking AT LEAST ONE of the three is necessary to open the window --
+    // not each of them, and none of them sufficient alone: a mis-tag also
+    // needs a concurrent send to land on the one aliasing sequence inside
+    // the compare-then-store, whose width is whatever the compiler emits and
+    // is not something this comment can promise. Hold it as
+    // necessary-but-not-sufficient: the day any of the three stops being
+    // true is the day this function must be made atomic, whether or not the
+    // race has been observed.
 
     if ( record->sequence == sequence )
         record->was_keep_alive = 1;

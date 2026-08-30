@@ -1830,8 +1830,8 @@ sixteen million sequences in a kilobyte, and iterating what a peer asserts
 rather than what this end retains would hand a connected attacker CPU at that
 ratio. Everything a block names below the retained window is silently ignored
 without being visited; within the window, sequences named that were never
-sent — possible only through reconstruction against a hostile or
-badly-truncated block — are ignored; an implementation MUST NOT treat them as
+sent — a burned sequence whose packet was never transmitted, or reconstruction
+against a hostile or badly-truncated block — are ignored; an implementation MUST NOT treat them as
 an error that affects the connection, and counts them as
 `ACK_UNKNOWN_SEQUENCE`. Note the narrowness of this case: it covers only
 sequences *this end never sent*. A block that over-claims contrary to the
@@ -2711,18 +2711,20 @@ paragraph addresses.
 
 **Both failure directions.** If the client's acks are lost or delayed, the
 test stays unsatisfied and unsuppressed keep-alives continue — more
-keep-alives, never fewer. Loss degrades toward extra bandwidth, bounded by the
-send rate, and never toward stranding.
+keep-alives, never fewer. Loss degrades toward extra bandwidth, never toward
+stranding; the pacing is the send interval, subject to the discrete-check
+caveat below.
 
 In the other direction, a client that over-claims in its ack block — naming a
 keep-alive sequence it never opened, contrary to _Acks_ — satisfies the test
 without holding its index. Keep-alives to it become suppressible by ordinary
 traffic, so **whenever the server's outbound stream to that slot leaves no gap
 longer than a send interval** they stop entirely, and the client can sit in
-_sending connection response_ until its total connect deadline. Where that
-stream does leave such gaps the client still receives keep-alives in them and
-still establishes: the false claim alone is not always sufficient. Note that
-the stream in question is everything the server sends that slot, the
+_sending connection response_ until its total connect deadline. Gaps in that
+stream do not reliably rescue it: whether a keep-alive lands in a gap is the
+discrete-check question above, and a stream with gaps can still starve the
+client to its deadline. Note that the stream in question is everything the
+server sends that slot, the
 transport's own standalone acks included — not the application's payloads
 alone.
 **Such a client strands only itself.** The block rides inside a packet sealed
@@ -2731,8 +2733,9 @@ slot, and cannot be produced by anyone else for it; no other client's pacing
 is affected, and the slot table and reclaim behave normally.
 
 *This is the paragraph to read first if you are writing a client and seeing
-connections hang in _sending connection response_ while payloads arrive
-normally.* The likely cause is an ack block that claims more than it opened —
+connections hang in _sending connection response_ while other traffic arrives
+normally — and note "other traffic", not "payloads": the server may be sending
+this slot nothing but standalone acks.* The likely cause is an ack block that claims more than it opened —
 a cumulative or optimistic acknowledgment scheme, rather than one built
 strictly from the sequences actually opened. The transport cannot detect this
 for you, because on the wire an over-claiming block is indistinguishable from
@@ -2741,20 +2744,33 @@ a truthful one.
 **What the two regimes actually look like from the server, which is less
 distinctive than it sounds.** Taking the claim does not stop keep-alives; it
 only makes them suppressible. Before the claim they are paced off the
-keep-alive clock and appear at the send rate whatever else is going out.
-After it they are paced off the last send of *anything* — and since a
-keep-alive is itself a send, an otherwise idle server keeps emitting them at
-exactly the same send rate.
+keep-alive clock, so other outbound traffic does not defer them. After it they
+are paced off the last send of *anything* — and since a keep-alive is itself a
+send, an otherwise idle server goes on emitting them on the same pacing it
+used before. Neither regime is characterised here by a rate: what an
+implementation actually emits is subject to the discrete-check caveat below.
 
-**The condition for total suppression is stated as a gap, not as a rate.**
-After the claim, a keep-alive is emitted only when the server has sent that
-slot *nothing at all* for a full send interval. So keep-alives stop entirely
-whenever the server's outbound stream to that slot leaves no gap **longer
-than** one send interval, and continue, in the gaps, whenever it does. That
-follows from the generation rule directly rather than from any timing
-measurement. The exactly-equal case — a stream whose gaps are precisely one
-send interval — is decided by the order in which an implementation sends and
-checks within a single update, and MUST NOT be relied on in either direction.
+**The sufficient condition for total suppression is a gap, not a rate, and it
+holds in one direction only.** After the claim, a keep-alive is emitted only
+when the server has sent that slot nothing at all for a full send interval.
+**So if the server's outbound stream to that slot never leaves a gap longer
+than one send interval, keep-alives stop entirely.** That direction follows
+from the generation rule by construction and needs no measurement.
+
+**The converse does not hold, and MUST NOT be assumed.** A gap longer than an
+interval does not guarantee a keep-alive in it: generation is checked
+discretely, once per update, so a keep-alive appears only if a check instant
+falls inside the gap. Whether one does depends on the update rate and on the
+phase between the two, and the effective interval is really the send interval
+rounded up to a whole update tick. **Gaps anywhere from one send interval up
+to one interval plus one tick are therefore indeterminate** — that is a band,
+not the single equal-gap point, and at a slow update rate against a fast send
+rate the band spans many send intervals. At the band's lower edge a second
+mechanism applies on top of the first: an elapsed time computed from
+wall-clock doubles lands either side of the interval depending on the absolute
+clock value, so even a stream constructed to have gaps of exactly one interval
+is not determinate. Do not infer from a gap in the outbound stream that the
+client is being served.
 
 *Do not restate this as a relationship between the keep-alive rate and the
 application's send rate.* No such relationship holds: the residual keep-alive
