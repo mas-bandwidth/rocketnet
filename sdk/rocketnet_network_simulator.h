@@ -19,6 +19,16 @@
 //
 // Deterministic: all randomness comes from a seed given at create, so a
 // failing run replays exactly.
+//
+// The delivery rule, stated because it is the instrument's behaviour rather
+// than an implementation detail: receive() delivers the packet in the LOWEST
+// OCCUPIED SLOT INDEX that is due and addressed to the caller, and send()
+// takes the LOWEST FREE SLOT INDEX. That is not delivery-time order and not
+// FIFO; it is what the array walk this file was built around produced, and
+// every soak and functional test has run against it. #99 replaced the walk
+// with an index over the same slots in the same order -- the cost changed,
+// the delivered sequence did not -- and the audit below is what holds that
+// claim up.
 
 struct rocketnet_network_simulator_t;
 
@@ -58,5 +68,28 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
                                          double current_time,
                                          struct rocketnet_address_t * out_from,
                                          uint8_t * out_packet );
+
+// The audit: the instrument's failure state. With it on, every receive() also
+// runs the original full-array scan as a reference and compares which slot the
+// two selections chose, then checks the whole index against the packet arrays.
+// Any divergence prints what diverged and ABORTS -- it does not log, warn or
+// return an error, because a simulator that has caught itself delivering a
+// different packet sequence must not go on feeding a soak. It fires under
+// NDEBUG, where rocketnet_assert does not, which is the build the soaks run.
+//
+// Deliberately slow: it is O(capacity) per receive by construction, since
+// checking the fast path means running the slow one. Proof mode, not soak
+// mode. soak_sim turns it on with ROCKETNET_SOAK_SIM_AUDIT=1.
+
+void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * simulator, int enabled );
+
+// The audit's own negative control: unlink one occupied packet from the index
+// while leaving it occupied. Nothing crashes and nothing logs -- the packet is
+// simply never delivered again, which is exactly the silent mis-measurement an
+// index can introduce. With the audit on, this must go red immediately; if it
+// does not, the audit is decoration. scripts/soak-sim-selftest runs both
+// legs and is the receipt.
+
+void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_simulator_t * simulator );
 
 #endif // #ifndef ROCKETNET_NETWORK_SIMULATOR_H
