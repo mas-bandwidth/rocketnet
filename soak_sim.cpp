@@ -20,6 +20,24 @@
     what makes an A/B of two builds honest: at the same seed every packet
     meets the same fate, the two runs do exactly the same work, and their
     summary lines must match exactly or the change did more than it claimed.
+
+    ROCKETNET_SOAK_SIM_PROFILE=1  reports where the soak's wall clock went:
+                                  how much of it the network simulator took
+                                  (harness) against how much the protocol
+                                  objects took (product). #93 needed a perf
+                                  session on a machine most of us cannot get
+                                  to in order to learn that 38.6% of the soak
+                                  was harness; this makes any machine able to
+                                  answer that about itself. The accounting is
+                                  self-checking and refuses to report a share
+                                  its own timer cannot support.
+
+    ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING=1
+                                  the profile's negative control: double-charge
+                                  the wire bucket so the accounting exceeds the
+                                  wall clock it is dividing up. The profile
+                                  MUST refuse the run. scripts/soak-sim-selftest
+                                  runs this leg and fails unless it goes red.
 */
 
 #include "rocketnet.h"
@@ -29,6 +47,7 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_test_vectors.h"
 
 #include <stdio.h>
@@ -38,6 +57,201 @@
 #include <sodium.h>
 
 static volatile int quit;
+
+// ---------------------------------------------------------------------------
+// where the soak's wall clock goes
+//
+// Two buckets and a remainder. WIRE is the network simulator, which is
+// harness by definition -- it inflates nothing about the library and exists
+// only to abuse it. PRODUCT is the client and server protocol objects and
+// everything under them, including the packet crypto, which is the thing the
+// soak is for. What is left over is the soak's own bookkeeping: payload
+// generation and verification, connect token construction, the watchdog.
+//
+// The point of measuring it here rather than under a profiler is that a soak
+// runs on whatever box it runs on, and "how much of this is instrument" has
+// to be answerable there. #93 needed perf on the space box to find that the
+// simulator held 38.6% of cycles; this answers the same question anywhere,
+// including hosts where a sampling profiler is not available at all.
+//
+// THE FAILURE STATE. A wall-clock attribution can go wrong in one direction
+// that matters: the parts can come to more than the whole, which means the
+// buckets are double-charging and every share printed is a fiction. That is
+// checked and refused. The instrument also knows what its own clock costs --
+// it calibrates that at startup -- and it refuses to print a share for a
+// bucket whose measured time is not comfortably larger than the time its own
+// timer spent measuring it, because a bucket at the level of its instrument
+// is not a measurement, it is noise with a number attached.
+
+enum { SOAK_PROFILE_WIRE, SOAK_PROFILE_PRODUCT, SOAK_PROFILE_BUCKETS };
+
+static const char * soak_profile_bucket_name[SOAK_PROFILE_BUCKETS] =
+{
+    "the wire      (harness: network simulator)",
+    "the protocol  (product: client + server + crypto)",
+};
+
+static int      soak_profile_enabled;
+static int      soak_profile_double_charge;             // the negative control
+static double   soak_profile_seconds[SOAK_PROFILE_BUCKETS];
+static uint64_t soak_profile_regions[SOAK_PROFILE_BUCKETS];
+static double   soak_profile_timer_cost;                // seconds per timed region, measured
+
+static inline double soak_profile_now()
+{
+    return soak_profile_enabled ? rocketnet_platform_time() : 0.0;
+}
+
+static inline void soak_profile_charge( int bucket, double start )
+{
+    if ( !soak_profile_enabled )
+        return;
+    const double elapsed = rocketnet_platform_time() - start;
+    soak_profile_seconds[bucket] += elapsed;
+    soak_profile_regions[bucket]++;
+    if ( soak_profile_double_charge && bucket == SOAK_PROFILE_WIRE )
+    {
+        // the negative control: charge the same elapsed time twice, so the
+        // buckets add up to more than the wall clock they are dividing.
+        soak_profile_seconds[bucket] += elapsed;
+    }
+}
+
+#define SOAK_PROFILE( bucket, ... )                                             \
+    do {                                                                        \
+        const double soak_profile_start = soak_profile_now();                   \
+        __VA_ARGS__;                                                            \
+        soak_profile_charge( bucket, soak_profile_start );                      \
+    } while ( 0 )
+
+// what one timed region costs on this machine, so a bucket can be compared
+// against its own instrument. Measured, not assumed -- it differs by an order
+// of magnitude between a vDSO clock and a trapping one.
+
+static void soak_profile_calibrate()
+{
+    // five batches, median batch taken. A single batch reads 30-50% apart run
+    // to run on a busy machine, and the timer cost is what the NOT MEASURABLE
+    // refusal is judged against -- an unstable threshold would make the
+    // instrument's own honesty a coin flip.
+
+    const int batches = 5;
+    const int samples = 50000;
+    double cost[batches];
+
+    for ( int b = 0; b < batches; b++ )
+    {
+        const double start = rocketnet_platform_time();
+        double sink = 0.0;
+        for ( int i = 0; i < samples; i++ )
+        {
+            const double t0 = rocketnet_platform_time();
+            sink += rocketnet_platform_time() - t0;
+        }
+        cost[b] = ( rocketnet_platform_time() - start ) / (double) samples;
+        (void) sink;
+    }
+
+    for ( int i = 1; i < batches; i++ )
+    {
+        for ( int j = i; j > 0 && cost[j] < cost[j-1]; j-- )
+        {
+            const double swap = cost[j]; cost[j] = cost[j-1]; cost[j-1] = swap;
+        }
+    }
+
+    soak_profile_timer_cost = cost[batches / 2];
+}
+
+// the wire's two calls, wrapped so every one of them is charged. receive()
+// lives inside a while condition, which is why these are functions and the
+// protocol calls are a macro.
+
+static void wire_send( struct rocketnet_network_simulator_t * simulator,
+                       const struct rocketnet_address_t * from,
+                       const struct rocketnet_address_t * to,
+                       const uint8_t * packet_data,
+                       int packet_bytes,
+                       double current_time )
+{
+    const double start = soak_profile_now();
+    rocketnet_network_simulator_send( simulator, from, to, packet_data, packet_bytes, current_time );
+    soak_profile_charge( SOAK_PROFILE_WIRE, start );
+}
+
+static int wire_receive( struct rocketnet_network_simulator_t * simulator,
+                         const struct rocketnet_address_t * to,
+                         double current_time,
+                         struct rocketnet_address_t * out_from,
+                         uint8_t * out_packet )
+{
+    const double start = soak_profile_now();
+    const int bytes = rocketnet_network_simulator_receive( simulator, to, current_time, out_from, out_packet );
+    soak_profile_charge( SOAK_PROFILE_WIRE, start );
+    return bytes;
+}
+
+// returns nonzero if the attribution refused itself
+
+static int soak_profile_report( double total_seconds, uint64_t iterations )
+{
+    if ( !soak_profile_enabled )
+        return 0;
+
+    double accounted = 0.0;
+    uint64_t regions = 0;
+    for ( int i = 0; i < SOAK_PROFILE_BUCKETS; i++ )
+    {
+        accounted += soak_profile_seconds[i];
+        regions += soak_profile_regions[i];
+    }
+
+    printf( "\nsoak_sim profile: %llu iterations in %.3f s (%.0f iterations/sec)\n",
+            (unsigned long long) iterations, total_seconds,
+            total_seconds > 0.0 ? (double) iterations / total_seconds : 0.0 );
+    printf( "  timer cost measured at %.1f ns per timed region, %llu regions charged (%.3f s of the total is this instrument)\n",
+            soak_profile_timer_cost * 1e9, (unsigned long long) regions, soak_profile_timer_cost * (double) regions );
+
+    if ( accounted > total_seconds )
+    {
+        printf( "\nPROFILE REFUSED: the buckets account for %.3f s of a run that lasted %.3f s.\n"
+                "The parts exceed the whole, so every share below would be a fiction. No shares printed.\n",
+                accounted, total_seconds );
+        fflush( stdout );
+        fprintf( stderr, "PROFILE REFUSED: accounted %.3f s exceeds total %.3f s\n", accounted, total_seconds );
+        return 1;
+    }
+
+    int refused = 0;
+    for ( int i = 0; i < SOAK_PROFILE_BUCKETS; i++ )
+    {
+        const double instrument = soak_profile_timer_cost * (double) soak_profile_regions[i];
+        if ( soak_profile_seconds[i] < instrument * 4.0 )
+        {
+            printf( "  %-50s %8.3f s   NOT MEASURABLE: within 4x of the %.3f s its own timer cost\n",
+                    soak_profile_bucket_name[i], soak_profile_seconds[i], instrument );
+            refused = 1;
+            continue;
+        }
+        printf( "  %-50s %8.3f s  %5.1f%%   (of which %.3f s is the timer: share is %.1f%% net)\n",
+                soak_profile_bucket_name[i], soak_profile_seconds[i],
+                100.0 * soak_profile_seconds[i] / total_seconds,
+                instrument,
+                100.0 * ( soak_profile_seconds[i] - instrument ) / total_seconds );
+    }
+
+    printf( "  %-50s %8.3f s  %5.1f%%\n",
+            "everything else (soak bookkeeping, unattributed)",
+            total_seconds - accounted,
+            100.0 * ( total_seconds - accounted ) / total_seconds );
+
+    if ( refused )
+        printf( "\nOne or more buckets are at the level of the instrument measuring them and were not\n"
+                "reported as shares. That is the honest answer, not a smaller number.\n" );
+
+    fflush( stdout );
+    return 0;
+}
 
 void interrupt_handler( int signal_value )
 {
@@ -72,6 +286,23 @@ int main( int argc, char ** argv )
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     const uint64_t max_iterations = argc > 1 ? strtoull( argv[1], NULL, 10 ) : 0;
+
+    // the profile, and its negative control
+
+    const char * profile_string = getenv( "ROCKETNET_SOAK_SIM_PROFILE" );
+    if ( profile_string && profile_string[0] == '1' )
+    {
+        soak_profile_enabled = 1;
+        soak_profile_calibrate();
+        printf( "soak_sim: wall-clock attribution ENABLED\n" );
+    }
+
+    const char * accounting_fault_string = getenv( "ROCKETNET_SOAK_SIM_FAULT_ACCOUNTING" );
+    if ( accounting_fault_string && accounting_fault_string[0] == '1' )
+    {
+        soak_profile_double_charge = 1;
+        printf( "soak_sim: accounting fault ARMED -- the profile must refuse itself\n" );
+    }
 
     // the server, on the development keys, at the vector server address
 
@@ -160,6 +391,8 @@ int main( int argc, char ** argv )
     uint64_t client_id = 1;
 
 
+    const double soak_started = rocketnet_platform_time();
+
     while ( !quit )
     {
         iteration++;
@@ -208,9 +441,11 @@ int main( int argc, char ** argv )
             private_fields.client_id = client_id++;
             randombytes_buf( private_fields.client_to_server_key, 32 );
             randombytes_buf( private_fields.server_to_client_key, 32 );
-            rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data );
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data ) );
 
-            rocketnet_client_protocol_connect( &client, token_data, time, timestamp );
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                rocketnet_client_protocol_connect( &client, token_data, time, timestamp ) );
             attempts++;
         }
 
@@ -245,26 +480,30 @@ int main( int argc, char ** argv )
             uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
             int burst_count = 0;
             int burst_bytes = 0;
-            rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes );
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes ) );
             for ( int i = 0; i < burst_count; i++ )
-                rocketnet_network_simulator_send( simulator, &client_address[c], &server_address,
-                                                  burst + i * ROCKETNET_SEND_BUDGET,
-                                                  burst_bytes, time );
+                wire_send( simulator, &client_address[c], &server_address,
+                           burst + i * ROCKETNET_SEND_BUDGET,
+                           burst_bytes, time );
         }
 
         // client drives, wire carries, server answers, wire carries back
 
-        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes ) );
         if ( packet_bytes > 0 )
-            rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
+            wire_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
 
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
-            int bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet );
+            int bytes = 0;
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet ) );
             if ( bytes > 0 )
-                rocketnet_network_simulator_send( simulator, &client_address[c], &server_address, packet, bytes, time );
+                wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
             payload_size = payload_size < ROCKETNET_MAX_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             // an occasional fragmented payload, staggered per client, so
@@ -279,14 +518,16 @@ int main( int argc, char ** argv )
                 generate_payload( fragmented_payload, fragmented_payload_size );
                 static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
                 int fragment_packet_bytes[16];
-                int fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
-                                                                                time, fragment_packets, fragment_packet_bytes, 16 );
+                int fragment_count = 0;
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                    fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
+                                                                               time, fragment_packets, fragment_packet_bytes, 16 ) );
                 if ( fragment_count > 0 )
                 {
                     for ( int i = 0; i < fragment_count; i++ )
-                        rocketnet_network_simulator_send( simulator, &client_address[c], &server_address,
-                                                          fragment_packets + i * ROCKETNET_SEND_BUDGET,
-                                                          fragment_packet_bytes[i], time );
+                        wire_send( simulator, &client_address[c], &server_address,
+                                   fragment_packets + i * ROCKETNET_SEND_BUDGET,
+                                   fragment_packet_bytes[i], time );
                     fragmented_sent++;
                 }
                 fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PAYLOAD_BYTES + 1;
@@ -297,18 +538,20 @@ int main( int argc, char ** argv )
 
         struct rocketnet_address_t from;
         int bytes;
-        rocketnet_reassembly_set_begin_update( server.reassembly );
-        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+            rocketnet_reassembly_set_begin_update( server.reassembly ) );
+        while ( ( bytes = wire_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
         {
             uint8_t response[ROCKETNET_RECEIVE_CEILING];
             int response_bytes = 0;
             uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
             int delivered_bytes = 0;
             int delivered_client_index = -1;
-            rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
-                                             response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index );
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
+                                                          response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index ) );
             if ( response_bytes > 0 )
-                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+                wire_send( simulator, &server_address, &from, response, response_bytes, time );
             if ( delivered_bytes > 0 )
             {
                 if ( verify_payload( delivered, delivered_bytes ) )
@@ -325,26 +568,32 @@ int main( int argc, char ** argv )
             }
         }
 
-        rocketnet_server_protocol_update( &server, time );
+        SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+            rocketnet_server_protocol_update( &server, time ) );
         for ( int i = 0; i < 16; i++ )
         {
             uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
-            int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server, i, time, keep_alive );
+            int keep_alive_bytes = 0;
+            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server, i, time, keep_alive ) );
             if ( keep_alive_bytes > 0 )
             {
                 int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
                 const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
-                rocketnet_network_simulator_send( simulator, &server_address, to, keep_alive, keep_alive_bytes, time );
+                wire_send( simulator, &server_address, to, keep_alive, keep_alive_bytes, time );
             }
         }
 
         for ( int c = 0; c < SOAK_NUM_CLIENTS; c++ )
         {
-            while ( ( bytes = rocketnet_network_simulator_receive( simulator, &client_address[c], time, &from, packet ) ) > 0 )
+            while ( ( bytes = wire_receive( simulator, &client_address[c], time, &from, packet ) ) > 0 )
             {
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
-                if ( rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) && delivered_bytes > 0 )
+                bool processed = false;
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) );
+                if ( processed && delivered_bytes > 0 )
                 {
                     if ( verify_payload( delivered, delivered_bytes ) )
                         payloads_verified++;
@@ -365,6 +614,8 @@ int main( int argc, char ** argv )
                     (unsigned long long) failures );
         }
     }
+
+    const double soak_elapsed = rocketnet_platform_time() - soak_started;
 
     // The counter discipline at exit: this wire injects loss, so abandoned
     // payloads are the specified semantics and may be nonzero -- every
@@ -400,6 +651,12 @@ int main( int argc, char ** argv )
             (unsigned long long) server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED],
             (unsigned long long) failures, (unsigned long long) hangs );
 
+    // a refused attribution is a failed run: the instrument said its own
+    // numbers were not trustworthy, and a soak that cannot say where its time
+    // went has not measured what it claims to measure.
+
+    const int profile_refused = soak_profile_report( soak_elapsed, iteration );
+
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
     rocketnet_admitted_token_set_destroy( server.admitted_token_set );
@@ -409,5 +666,5 @@ int main( int argc, char ** argv )
 
     rocketnet_term();
 
-    return ( failures || hangs || terminals ) ? 1 : 0;
+    return ( failures || hangs || terminals || profile_refused ) ? 1 : 0;
 }
