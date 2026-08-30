@@ -2220,16 +2220,18 @@ server's mapping answers it byte-identically. A lost response: the client
 retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
-answering. A lost keep-alive: another follows, at the send
-interval's pacing, in both directions, forever — and to a client that has not
-yet established that recurrence survives a continuous payload stream, because
-_Keep-alive generation_ forbids traffic from suppressing a keep-alive until one
-has been acknowledged. What the invariant needs is that the repair keeps coming
-and cannot be starved, which is exactly what that rule guarantees; the spacing
-itself is subject to the discrete-check caveat stated there, and is not bounded
-by one send interval exactly. The establishment keep-alive is the packet this
-clause exists for: it is the only one carrying the client index, and its loss
-is the only loss that leaves the receiving end waiting and that it cannot
+answering. A lost keep-alive: **until a keep-alive has been
+acknowledged, another follows and no traffic pattern can stop it, in both
+directions** — that is what _Keep-alive generation_ guarantees, and it is what
+this invariant needs, because it is the state in which an end is still waiting.
+Once one has been acknowledged the guarantee is a different and weaker one:
+ordinary traffic then *is* the keep-alive, and under a dense enough outbound
+stream keep-alives stop entirely, which is safe precisely because nothing is
+waiting on them any more. The spacing in either regime is subject to the
+discrete-check caveat stated there, and is not bounded by one send interval
+exactly. The establishment keep-alive is the packet this clause exists for:
+it is the only one carrying the client index, and its loss is the only loss
+that leaves the receiving end waiting and that it cannot
 re-provoke by retransmitting. A lost ack: every later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
@@ -2844,13 +2846,13 @@ walkthrough's guarantee true for the establishment keep-alive: that another
 one keeps coming, and that no traffic pattern can stop it.
 
 **What it costs.** A client whose keep-alive has not yet been acknowledged
-receives keep-alives at the send rate in addition to whatever the application
-sends it. The window is one round trip in the ordinary case. **The bound is
-the peer's behaviour, not either of the server's deadlines**, and it is worth
-being exact about why. The
-handshake deadline governs only a mapping that has not established, and a slot
-is assigned at establishment, so such a slot is already past it. The
-connection timeout does not close the window on its own either: a retransmitted
+receives keep-alives on the send rate's pacing in addition to whatever the
+application sends it. The window is one round trip in the ordinary case.
+**The bound is the peer's behaviour, not either of the server's deadlines**,
+and it is worth being exact about why. The handshake deadline governs only a
+mapping that has not established, and a slot is assigned at establishment, so
+such a slot is already past it. The connection timeout does not close the
+window on its own either: a retransmitted
 connection response refreshes the slot's last-received time even though the
 response itself is ignored as already connected. So the window lasts as long as
 the client keeps retransmitting without ever acknowledging a keep-alive, and
@@ -2858,9 +2860,9 @@ for a client that follows this document that is its own total connect deadline
 — the token lifetime — after which it stops and the connection timeout fires.
 
 Inside the window the rate is bounded by the send rate, on a slot that is
-already committed, and it is the same 10 Hz an idle established client already
-draws. So this is a bounded cost on a committed resource, not a new amplifier:
-a peer cannot use it to make the server send more than the send rate, and
+already committed, and it is bounded by exactly what an idle established client
+already draws. So this is a bounded cost on a committed resource, not a new
+amplifier: a peer cannot use it to make the server send more than the send rate, and
 cannot direct it at anyone but itself. This is the
 unsuppressed-until-acknowledged rule netcode carried on its payload prefixing,
 recovered here without the prefixing that the subtraction above deliberately
