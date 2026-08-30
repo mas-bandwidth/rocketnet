@@ -3336,6 +3336,26 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.44, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.47, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
+    // THE TRANSPORT'S OWN ORDERING, which the loops above do not exercise:
+    // the sweep runs inside update and the application's sends land in the
+    // fill phase afterwards, so the check sees the PREVIOUS send's stamp.
+    // The standard's surviving guarantee is stated for that order too --
+    // every gap strictly shorter than the interval means total suppression
+    // -- so assert it here rather than only in payload-then-check order.
+    {
+        double base = 200.0;
+        rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, base, packet ) > 0 );
+        int swept = 0;
+        for ( int i = 1; i <= 40; i++ )
+        {
+            double now = base + i * 0.09;                    // gaps of 0.09 < the 0.1 interval
+            if ( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, now, packet ) > 0 )
+                swept++;                                     // check first, as update does
+            rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, now, packet ) > 0 );
+        }
+        rocketnet_check( swept == 0 );
+    }
+
     // a disconnected index degrades to zero, never an assert
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 3, 200.0, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, -1, 200.0, packet ) == 0 );

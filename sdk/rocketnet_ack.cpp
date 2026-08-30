@@ -283,8 +283,12 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     //   3. update is single-threaded per client index -- two update threads
     //      on the same slot would open it with (1) and (2) both intact.
     //      This also covers the OTHER writer of record->sequence, the memset
-    //      in rocketnet_ack_endpoint_reset, which reaches an endpoint via
-    //      disconnect_client and is main-thread-only per rocketnet.h.
+    //      in rocketnet_ack_endpoint_reset. Its only production route is
+    //      rocketnet_server_acks_reset_slot, called from connection-response
+    //      processing when a slot is assigned -- inside update, so clause
+    //      (3) is what shuts it. (Not disconnect_client, which writes the
+    //      burst, releases the slot and removes the mapping without
+    //      touching the endpoint.)
     //
     // Breaking AT LEAST ONE of the three is necessary to open the window --
     // not each of them, and none of them sufficient alone: a mis-tag also

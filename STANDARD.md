@@ -1831,8 +1831,8 @@ rather than what this end retains would hand a connected attacker CPU at that
 ratio. Everything a block names below the retained window is silently ignored
 without being visited; within the window, sequences named that were never
 sent — a burned sequence whose packet was never transmitted, or reconstruction
-against a hostile or badly-truncated block — are ignored; an implementation MUST NOT treat them as
-an error that affects the connection, and counts them as
+against a hostile or badly-truncated block — are ignored; an implementation
+MUST NOT treat them as an error that affects the connection, and counts them as
 `ACK_UNKNOWN_SEQUENCE`. Note the narrowness of this case: it covers only
 sequences *this end never sent*. A block that over-claims contrary to the
 block-building rule above, by naming a sequence this end **did** send but its
@@ -2220,11 +2220,14 @@ server's mapping answers it byte-identically. A lost response: the client
 retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
-answering. A lost keep-alive: the next one is at most a send interval away, in
-both directions, forever — and to a client that has not yet established, that
-bound holds against a continuous payload stream, because _Keep-alive
-generation_ forbids traffic from suppressing a keep-alive until one has been
-acknowledged. The establishment keep-alive is the packet this clause exists
+answering. A lost keep-alive: another follows, at the send
+interval's pacing, in both directions, forever — and to a client that has not
+yet established that recurrence survives a continuous payload stream, because
+_Keep-alive generation_ forbids traffic from suppressing a keep-alive until one
+has been acknowledged. What the invariant needs is that the repair keeps coming
+and cannot be starved, which is exactly what that rule guarantees; the spacing
+itself is subject to the discrete-check caveat stated there, and is not bounded
+by one send interval exactly. The establishment keep-alive is the packet this clause exists
 for: it is the only one carrying the client index, and its loss is the only
 loss that leaves the receiving end waiting and that it cannot re-provoke by
 retransmitting. A lost ack: every later block restates the same
@@ -2718,15 +2721,14 @@ caveat below.
 In the other direction, a client that over-claims in its ack block — naming a
 keep-alive sequence it never opened, contrary to _Acks_ — satisfies the test
 without holding its index. Keep-alives to it become suppressible by ordinary
-traffic, so **whenever the server's outbound stream to that slot leaves no gap
-longer than a send interval** they stop entirely, and the client can sit in
-_sending connection response_ until its total connect deadline. Gaps in that
-stream do not reliably rescue it: whether a keep-alive lands in a gap is the
-discrete-check question above, and a stream with gaps can still starve the
+traffic, so **whenever every gap in the server's outbound stream to that slot
+is strictly shorter than a send interval** they stop entirely, and the client
+can sit in _sending connection response_ until its total connect deadline.
+Gaps in that stream do not reliably rescue it: whether a keep-alive lands in a gap is the
+discrete-check question below, and a stream with gaps can still starve the
 client to its deadline. Note that the stream in question is everything the
-server sends that slot, the
-transport's own standalone acks included — not the application's payloads
-alone.
+server sends that slot, the transport's own standalone acks included — not the
+application's payloads alone.
 **Such a client strands only itself.** The block rides inside a packet sealed
 under that connection's own session keys, applies only to that client's own
 slot, and cannot be produced by anyone else for it; no other client's pacing
@@ -2735,8 +2737,9 @@ is affected, and the slot table and reclaim behave normally.
 *This is the paragraph to read first if you are writing a client and seeing
 connections hang in _sending connection response_ while other traffic arrives
 normally — and note "other traffic", not "payloads": the server may be sending
-this slot nothing but standalone acks.* The likely cause is an ack block that claims more than it opened —
-a cumulative or optimistic acknowledgment scheme, rather than one built
+this slot nothing but standalone acks.* The likely cause is an ack block that
+claims more than it opened — a cumulative or optimistic acknowledgment scheme,
+rather than one built
 strictly from the sequences actually opened. The transport cannot detect this
 for you, because on the wire an over-claiming block is indistinguishable from
 a truthful one.
@@ -2752,20 +2755,23 @@ implementation actually emits is subject to the discrete-check caveat below.
 
 **The sufficient condition for total suppression is a gap, not a rate, and it
 holds in one direction only.** After the claim, a keep-alive is emitted only
-when the server has sent that slot nothing at all for a full send interval.
-**So if the server's outbound stream to that slot never leaves a gap longer
-than one send interval, keep-alives stop entirely.** That direction follows
-from the generation rule by construction and needs no measurement.
+when the server has sent that slot nothing at all for a full send interval —
+that is, emission requires the elapsed time to have *reached* the interval,
+not merely approached it. **So if every gap in the server's outbound stream to
+that slot is strictly shorter than one send interval, keep-alives stop
+entirely.** That direction follows from the generation rule by construction
+and needs no measurement. Note the strictness: a stream whose gaps are exactly
+one interval is *not* covered, and belongs to the indeterminate band below.
 
 **The converse does not hold, and MUST NOT be assumed.** A gap longer than an
 interval does not guarantee a keep-alive in it: generation is checked
 discretely, once per update, so a keep-alive appears only if a check instant
 falls inside the gap. Whether one does depends on the update rate and on the
 phase between the two, and the effective interval is really the send interval
-rounded up to a whole update tick. **Gaps anywhere from one send interval up
-to one interval plus one tick are therefore indeterminate** — that is a band,
-not the single equal-gap point, and at a slow update rate against a fast send
-rate the band spans many send intervals. At the band's lower edge a second
+discrete. **Gaps from one send interval up to and including one interval plus
+one update tick are therefore indeterminate** — a closed band, not the single
+equal-gap point, and at a slow update rate against a fast send rate it spans
+many send intervals. Determinate emission begins only *above* that band. At the band's lower edge a second
 mechanism applies on top of the first: an elapsed time computed from
 wall-clock doubles lands either side of the interval depending on the absolute
 clock value, so even a stream constructed to have gaps of exactly one interval
@@ -2777,9 +2783,12 @@ application's send rate.* No such relationship holds: the residual keep-alive
 rate below total suppression is a sawtooth in the ratio of the two intervals,
 it is not monotone in the application's rate, and over much of the range it
 *rises* with that rate rather than falling. It also shifts with the update
-tick, since the generation check runs once per update and the effective
-interval is the send interval rounded up to a whole tick. An implementation
-that needs a number must measure its own configuration.
+tick, since the generation check runs once per update. Do not reach for a
+formula in the tick either: the spacing is not the send interval rounded up to
+a whole tick, because where the interval is a whole multiple of the tick the
+comparison lands on the float edge described above and the spacing sometimes
+takes an extra tick. An implementation that needs a number must measure its
+own configuration.
 
 **What matters for the stranding is that "anything" is not just payloads.**
 The suppression clock is stamped by every session send to that slot: payloads,
