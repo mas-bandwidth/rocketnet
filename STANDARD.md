@@ -2227,10 +2227,10 @@ _Keep-alive generation_ forbids traffic from suppressing a keep-alive until one
 has been acknowledged. What the invariant needs is that the repair keeps coming
 and cannot be starved, which is exactly what that rule guarantees; the spacing
 itself is subject to the discrete-check caveat stated there, and is not bounded
-by one send interval exactly. The establishment keep-alive is the packet this clause exists
-for: it is the only one carrying the client index, and its loss is the only
-loss that leaves the receiving end waiting and that it cannot re-provoke by
-retransmitting. A lost ack: every later block restates the same
+by one send interval exactly. The establishment keep-alive is the packet this
+clause exists for: it is the only one carrying the client index, and its loss
+is the only loss that leaves the receiving end waiting and that it cannot
+re-provoke by retransmitting. A lost ack: every later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
 and nothing waits for it — the abandoned counter records it and the connection
@@ -2724,8 +2724,8 @@ without holding its index. Keep-alives to it become suppressible by ordinary
 traffic, so **whenever every gap in the server's outbound stream to that slot
 is strictly shorter than a send interval** they stop entirely, and the client
 can sit in _sending connection response_ until its total connect deadline.
-Gaps in that stream do not reliably rescue it: whether a keep-alive lands in a gap is the
-discrete-check question below, and a stream with gaps can still starve the
+Gaps in that stream do not reliably rescue it: whether a keep-alive lands in a
+gap is the discrete-check question below, and a stream with gaps can still starve the
 client to its deadline. Note that the stream in question is everything the
 server sends that slot, the transport's own standalone acks included — not the
 application's payloads alone.
@@ -2767,16 +2767,15 @@ one interval is *not* covered, and belongs to the indeterminate band below.
 interval does not guarantee a keep-alive in it: generation is checked
 discretely, once per update, so a keep-alive appears only if a check instant
 falls inside the gap. Whether one does depends on the update rate and on the
-phase between the two, and the effective interval is really the send interval
-discrete. **Gaps from one send interval up to and including one interval plus
-one update tick are therefore indeterminate** — a closed band, not the single
-equal-gap point, and at a slow update rate against a fast send rate it spans
-many send intervals. Determinate emission begins only *above* that band. At the band's lower edge a second
-mechanism applies on top of the first: an elapsed time computed from
-wall-clock doubles lands either side of the interval depending on the absolute
-clock value, so even a stream constructed to have gaps of exactly one interval
-is not determinate. Do not infer from a gap in the outbound stream that the
-client is being served.
+phase between the two. **Gaps from one send interval up to and including one
+interval plus one update tick are therefore indeterminate** — a closed band,
+not the single equal-gap point, and at a slow update rate against a fast send
+rate it spans many send intervals. Determinate emission begins only *above*
+that band. At the band's lower edge a second mechanism applies on top of the
+first: an elapsed time computed from wall-clock doubles lands either side of
+the interval depending on the absolute clock value, so even a stream
+constructed to have gaps of exactly one interval is not determinate. Do not
+infer from a gap in the outbound stream that the client is being served.
 
 *Do not restate this as a relationship between the keep-alive rate and the
 application's send rate.* No such relationship holds: the residual keep-alive
