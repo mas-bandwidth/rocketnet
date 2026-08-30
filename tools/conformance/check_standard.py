@@ -16,10 +16,19 @@ the rows it names are the wire-format ones. The glance table's timing and
 sizing rows -- send rate, handshake deadline, cookie lifetime and rotation,
 redundant disconnects, replay buffer, used-token history, admitted-token
 set -- and the Magic and KDF context-string rows are NOT compared, because
-their values live in configuration defaults and key derivation rather than
-in a wire constant this file can expand. Adding a row here is cheap and
-every one of them is worth adding; until then a green means the named rows
-agree, and the count printed at the end says how many that is.
+their values live in configuration defaults, in key derivation, or in a
+backend, rather than in a wire constant this file can expand. Adding a row
+here is cheap and every one of them is worth adding; until then a green
+means the named rows agree, and the count printed at the end says how many
+that is.
+
+That list is a promise and it has already been wrong once: the reader at
+PR #130's gate found Filter epoch missing from it, and missing for the
+worst possible reason -- the epoch IS a wire constant, dump_constants
+already printed it, and this file already compared it through the Test
+title constant's wording, so the value was checked while its own published
+row could say anything at all. It is checked on its own row now. When a row
+is excluded, the exclusion has to be true of it.
 
 Neither side is allowed to be the only source. A row missing from
 STANDARD.md fails as loudly as a mismatched value, because the failure this
@@ -151,6 +160,15 @@ def main():
                 published.group(1) if published else cell,
                 code["ROCKETNET_TEST_FILTER_VALUE"])
         compare("unkeyed filter epoch", ints(cell)[-1], code["ROCKETNET_FILTER_EPOCH_UNKEYED"])
+
+    # the epoch's own row, not only the epoch as the Test title constant's
+    # trailing number: a value checked through another row's wording is a
+    # row that can say anything (#130's reader)
+
+    cell = row("Filter epoch")
+    if cell is not None:
+        compare("unkeyed filter epoch (its own row)", ints(cell)[0],
+                code["ROCKETNET_FILTER_EPOCH_UNKEYED"])
 
     cell = row("Packet types")
     if cell is not None:
