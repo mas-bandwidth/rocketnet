@@ -14,6 +14,12 @@
 
     ./bin/soak_sim            runs forever
     ./bin/soak_sim 200000     bounded iterations
+
+    The wire's seed is random per run by default -- a soak wants a different
+    hostile wire every night. ROCKETNET_SOAK_SIM_SEED=<n> pins it, which is
+    what makes an A/B of two builds honest: at the same seed every packet
+    meets the same fate, the two runs do exactly the same work, and their
+    summary lines must match exactly or the change did more than it claimed.
 */
 
 #include "rocketnet.h"
@@ -112,7 +118,16 @@ int main( int argc, char ** argv )
     // not tolerate. the harsh configuration lives in the functional tests,
     // bounded and seeded.
 
-    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, rocketnet_random_uint64() );
+    // the seed is random per run unless pinned: a soak wants a different wire
+    // every night, an A/B wants the same one twice. a pinned seed is echoed,
+    // so a run's own output says which wire it ran on.
+
+    const char * seed_string = getenv( "ROCKETNET_SOAK_SIM_SEED" );
+    const uint64_t simulator_seed = seed_string ? strtoull( seed_string, NULL, 10 ) : rocketnet_random_uint64();
+    if ( seed_string )
+        printf( "soak_sim: simulator seed pinned to %llu\n", (unsigned long long) simulator_seed );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, simulator_seed );
     rocketnet_network_simulator_config( simulator, 0.05, 0.02, 2.0f, 2.0f );
 
     static struct rocketnet_counters_t client_counters;
