@@ -2220,18 +2220,22 @@ server's mapping answers it byte-identically. A lost response: the client
 retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
-answering. A lost keep-alive: **until a keep-alive has been
-acknowledged, another follows and no traffic pattern can stop it, in both
-directions** — that is what _Keep-alive generation_ guarantees, and it is what
-this invariant needs, because it is the state in which an end is still waiting.
-Once one has been acknowledged the guarantee is a different and weaker one:
-ordinary traffic then *is* the keep-alive, and under a dense enough outbound
-stream keep-alives stop entirely, which is safe precisely because nothing is
-waiting on them any more. The spacing in either regime is subject to the
-discrete-check caveat stated there, and is not bounded by one send interval
-exactly. The establishment keep-alive is the packet this clause exists for:
-it is the only one carrying the client index, and its loss is the only loss
-that leaves the receiving end waiting and that it cannot
+answering. A lost keep-alive: **until a keep-alive has been acknowledged,
+another follows from the server and no traffic pattern can stop it** — that is
+what
+_Keep-alive generation_ guarantees, and it is what this invariant needs,
+because it is the state in which an end is still waiting. The carve-out is the
+server's alone: a client sends keep-alives only from _connected_, where
+nothing at the server waits on one, so the client's own keep-alive is
+suppressed by its own traffic without qualification and needs no equivalent
+rule. Once one has been acknowledged the guarantee is a different and weaker
+one: ordinary traffic then *is* the keep-alive, and under a dense enough
+outbound stream keep-alives stop entirely, which is safe precisely because
+nothing is waiting on them any more. The spacing in either regime is subject
+to the discrete-check caveat stated there, and is not bounded by one send
+interval exactly. The establishment keep-alive is the packet this clause
+exists for: it is the only one carrying the client index, and its loss is the
+only loss that leaves the receiving end waiting and that it cannot
 re-provoke by retransmitting. A lost ack: every later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
