@@ -25,10 +25,11 @@ main-thread too, and never while a fill is open.
 
 `send_packets` is required once per frame, after update. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
-sent by it, and nothing is guaranteed sent without it. The portable and GSO
-drivers happen to flush update's own staging — protocol responses, keep-alives —
-inline in update; the XDP driver sends nothing until `send_packets`. Code against
-the guarantee. Calling `send_packets` twice in a frame is a no-op.
+sent by it, and nothing is guaranteed sent without it. Every driver except XDP —
+portable, msgx and GSO — happens to flush update's own staging (protocol
+responses, keep-alives) inline in update; the XDP driver sends nothing until
+`send_packets`. Code against the guarantee. Calling `send_packets` twice in a
+frame is a no-op.
 
 ## Consuming what arrived
 
@@ -62,13 +63,15 @@ carries the answer.
 The rule in one line: **everything in flight toward a peer must be drained by the
 loop that expects it.**
 
-Both ends offer the same batch three ways — indexed
-(`num_payloads` + `payload`), as parallel arrays in one call (`payloads`), and on
-the client a copying cursor (`rocketnet_client_transport_receive_packet`) that
-pops into your own buffer and is therefore the one form that outlives the next
-update. The copying cursor refuses a payload larger than the buffer you gave it
-whole rather than truncating, counts `RECEIVE_CURSOR_TOO_SMALL`, and moves on;
-size by `rocketnet_client_transport_max_payload_bytes` to never refuse.
+Both ends expose the batch two ways: indexed (`num_payloads` + `payload`) and as
+parallel arrays in one call (`payloads`). The **client** has a third,
+`rocketnet_client_transport_receive_packet`, a copying cursor that pops the next
+payload into a buffer you own and is therefore the one form whose result outlives
+the next update. There is no server equivalent; a server drains the batch and
+copies what it keeps. The cursor refuses a payload larger than the buffer you
+gave it whole rather than truncating it, counts `RECEIVE_CURSOR_TOO_SMALL`, and
+moves on to the next payload that fits; size by
+`rocketnet_client_transport_max_payload_bytes` to never refuse.
 
 Reassembled fragmented payloads take their place in the batch in arrival
 position, at the moment they complete, up to the configured maximum payload —
@@ -90,16 +93,31 @@ spent only where splitting makes it unavoidable. Either way the context's single
 batch only when every fragment has been acknowledged. A lost fragment loses the
 whole payload. The transport never resends.
 
-**A started packet burns a session sequence, whatever happens next.** The
-sequence is allocated inside `start_packet`; neither `abort_packet` nor a
-`finish_packet` that returns zero (payload out of range, or the connection gone)
-gives it back. The receiver's replay window tolerates the gap, but its
-**loss statistics do not distinguish it from a real loss**: receive-side packet
-loss is computed from gaps in the session sequence, so every abort and every
-failed finish shows up at the far end as one lost packet. Under ring pressure —
-where aborts cluster — that reads as phantom loss in a link that dropped nothing.
-Aborting is legitimate; just know it is not free, and read a loss figure with the
-abort counters beside it.
+**A started packet burns a session sequence, whatever happens next.**
+`start_packet` allocates the sequence as its *first* act, before it tries to
+acquire a frame at all, and nothing gives it back. Three ways to burn one:
+
+- `abort_packet`;
+- a `finish_packet` that returns zero — payload out of range, or the connection
+  gone;
+- and the one that dominates under pressure: **a `start_packet` that returns
+  NULL.** The sequence is already spent by then, so a full send arena
+  (`SEND_ARENA_FULL`) or a full ring (`SEND_RING_FULL`) burns one on every
+  refused acquisition. Aborts cluster; ring-full does not have to cluster to
+  outnumber them.
+
+The receiver's replay window tolerates the gaps, but **receive-side loss
+statistics cannot distinguish them from real loss** — that figure is computed
+from gaps in the session sequence, so a burned sequence reads as one lost packet
+in a link that dropped nothing.
+
+Which end actually sees it is not symmetric, and this is the part worth getting
+right: only the **client** publishes a receive-side loss figure. The server's
+per-client `packet_loss` is send-side, so **a client's burned sequences surface
+nowhere in this API** — they are visible to the server only through its counters.
+Server-to-client burns are the ones that show up as phantom loss, in
+`rocketnet_client_transport_stats`. Read either figure with the send-side
+counters beside it.
 
 `send_packet` (the convenience form) exists on both ends. On the client it
 flushes the ring inline, which makes it main-thread only and never valid during
@@ -109,17 +127,23 @@ an open fill; it is the simple form, not a fill-phase participant.
 
 `rocketnet_client_transport_stats` and
 `rocketnet_server_transport_client_stats` report rtt and jitter in milliseconds,
-packet loss as a percentage, and trailing rates. Since #84 closed, **rtt is live**:
-it seeds from the handshake's round trips and is continuously refreshed by the ack
-blocks every session packet carries — the first block acknowledging each sent
-sequence yields a sample. (Earlier notes describing rtt as frozen at its handshake
-value are stale; that was the state before #84.)
+packet loss as a percentage, and trailing rates. Since #84 closed, **rtt is
+live** on both ends: it is refreshed by the ack blocks every session packet
+carries, the first block acknowledging each sent sequence yielding a sample.
+(Earlier notes describing rtt as frozen at its handshake value are stale; that was
+the state before #84.)
 
-The two ends measure loss differently, and the difference matters when you compare
-them: the client's `packet_loss` is **receive-side**, from gaps in the session
-sequence — which is the figure the burned-sequence rule above perturbs. The
-server's per-client `packet_loss` is **send-side**: the percentage of its own sent
-packets never acknowledged.
+The **handshake seed is client-only**. The client falls back to its handshake
+round-trip estimate while no ack sample exists yet, so its rtt is useful
+immediately. The server has no such fallback: a client's rtt reads **0.0 until
+that slot's first ack sample arrives**. Treat a server-side zero as "not measured
+yet", not as a zero-millisecond link.
+
+Loss is asymmetric too, and the difference matters when you compare the two ends:
+the client's `packet_loss` is **receive-side**, from gaps in the session sequence
+— the figure the burned-sequence rule above perturbs. The server's per-client
+`packet_loss` is **send-side**: the percentage of its own sent packets never
+acknowledged. Neither end reports both.
 
 Delivery notification is the primitive underneath all of it:
 `acked_packets` returns the packet ids newly acknowledged by the last update —
@@ -209,9 +233,12 @@ Four rules, and the distinctions between them are deliberate:
   past its own geometry for gso. Per-driver bounds are refused, never clamped.
 
 The **granted** driver is what matters and what is reported —
-`rocketnet_server_transport_driver` / `rocketnet_client_transport_driver`, plus one
-create log line naming the grant and why each earlier candidate refused. Performance
-claims attach to the granted tier, never to the requested one.
+`rocketnet_server_transport_driver` / `rocketnet_client_transport_driver`, plus a
+create log line naming the grant and listing **which** candidates refused ahead of
+it. The *reasons* are not in that line: each rung logs its own refusal as it
+happens, so diagnosing a fall means reading the warnings above the grant line, not
+the grant line alone. Performance claims attach to the granted tier, never to the
+requested one.
 
 ### Port zero and the driver that cannot discover
 
@@ -225,8 +252,10 @@ Discovery is a **per-driver property**. The portable, msgx and GSO drivers bind 
 read back what they were granted. The XDP driver binds the port it is given and
 discovers nothing, so a port-zero address means nothing to it. Since #109 the
 ladder refuses that combination at create rather than documenting it: a rung that
-cannot discover refuses a port-zero address before it binds anything, loudly,
-naming the rule. It is an ordinary rung refusal — `auto` falls past it to a driver
-that does discover, and only a **pin** on a non-discovering driver refuses the
-create outright. Consequently `rocketnet_server_transport_port` never returns zero
-on a transport that was created.
+cannot discover refuses a port-zero address before it binds anything, naming the
+rule. It is an ordinary rung refusal — `auto` falls past it to a driver that does
+discover, logging a warning — and only a **pin** on a non-discovering driver
+refuses the create outright, where the rule is restated as an **error** so it is
+visible at the log level deployed binaries actually run at. Consequently
+`rocketnet_server_transport_port` never returns zero on a transport that was
+created.

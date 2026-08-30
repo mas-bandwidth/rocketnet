@@ -10122,6 +10122,13 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         // a PIN on a non-discovering rung refuses the create, and the log
         // names the rule and the driver. that naming IS the fix: without
         // it an operator debugs a cookie gate that never matches.
+        //
+        // captured at the ERROR level ON PURPOSE, because that is the
+        // level a deployed binary, this suite and the C# smoke all run at:
+        // the per-rung warn is invisible there, so if the rule were only a
+        // warn a pinned port-zero create would return NULL with nothing
+        // anywhere saying why. The exhausted-ladder path restates it as an
+        // error, and this asserts that restatement rather than the warn.
 
         struct rocketnet_server_transport_config_t config;
         rocketnet_server_transport_dev_config( &config );
@@ -10130,7 +10137,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         rocketnet_test_captured_log[0] = '\0';
         const int saved_level = rocketnet_get_log_level();
         rocketnet_log_function( rocketnet_test_capture_log );
-        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
 
@@ -10138,13 +10145,36 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         rocketnet_log_function( NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) != NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, name ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "no driver in this list can discover the port it was granted" ) != NULL );
+
+        // and at a level that shows warns, the RUNG's own refusal names
+        // the rule and the driver together -- matched as one phrase, since
+        // the driver name alone also appears in the exhausted-ladder error
+        // and would pass this check without the rule being mentioned
+
+        char expected_rung_refusal[128];
+        snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server driver %s refused: a port-zero public address", name );
+
+        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( NULL );
+
+        rocketnet_check( server == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
 
         // SCOPE, the other half of correct: the rule is about port ZERO
         // and nothing else. the same pin with a real port never meets it
-        // and goes on to refuse (or grant) on the driver's own terms --
-        // here the commit barrier, since the suite never mutates a host.
+        // and goes on to the driver's own create -- which refuses at the
+        // commit barrier, since the suite never mutates a host. That
+        // refusal is asserted rather than tolerated: it is the one path in
+        // this test that still walks INTO the xdp driver, and it is what
+        // keeps the barrier exercised now that the rule short-circuits the
+        // port-zero pins that used to reach it.
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
@@ -10155,14 +10185,9 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         rocketnet_log_level( saved_level );
         rocketnet_log_function( NULL );
 
-        if ( server )
-        {
-            rocketnet_check( rocketnet_server_transport_port( server ) == 40000 );
-            rocketnet_server_transport_stop( server );
-            rocketnet_server_transport_update( server, rocketnet_platform_time() );
-            rocketnet_server_transport_destroy( server );
-        }
+        rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
 
         // and the rung refusal is a RUNG refusal, not a create refusal:
         // put a discovering rung after it and the ladder falls, the port
@@ -10217,6 +10242,14 @@ void rocketnet_test_server_driver_pin_xdp()
     // the pin-refuses semantic proven end to end, no machine touched. on a
     // box the pre-flight passes whole, this test asserts nothing more --
     // granting xdp attaches a data plane, which is not a unit test's act.
+    //
+    // THE ADDRESS CARRIES A REAL PORT DELIBERATELY (#109). A port-zero
+    // address is now refused by the ladder's port-zero rule BEFORE the xdp
+    // rung's create runs, which would make this test pass without ever
+    // walking the path it exists to walk -- no pre-flight, no commit
+    // barrier, nothing "end to end" about it. A real port takes the rule
+    // out of the way so the refusal proven here is still the driver's own.
+    // Nothing binds it: the barrier refuses before create's first act.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
@@ -10232,7 +10265,7 @@ void rocketnet_test_server_driver_pin_xdp()
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
         rocketnet_test_expect_refusals( true );
-        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", &config, rocketnet_platform_time() ) == NULL );
         rocketnet_test_expect_refusals( false );
     }
 
@@ -10242,12 +10275,19 @@ void rocketnet_test_server_driver_pin_xdp()
 void rocketnet_test_server_driver_ladder_fall()
 {
     // THE FALL, proven to actually happen where it can be proven without
-    // mutating the host: on a box where the pre-flight refuses xdp (every
-    // CI box, unprivileged by construction), the auto ladder must land on
-    // gso -- the next rung -- never portable, never failure. on a box the
-    // pre-flight passes whole, the ladder would grant xdp by attaching a
-    // real data plane, so the test stands down: the suite never commits
-    // the machine.
+    // mutating the host: the auto ladder must land on gso -- the next rung
+    // -- never portable, never failure. on a box the pre-flight passes
+    // whole, the ladder would grant xdp by attaching a real data plane, so
+    // the test stands down: the suite never commits the machine.
+    //
+    // WHY the xdp rung refuses here, stated exactly (#109): the address
+    // carries port zero -- it must, because the gso rung below binds it
+    // and a fixed port would race every other process on the box -- so the
+    // xdp rung is refused by the port-zero rule, which is checked before
+    // the pre-flight. The fall itself is what this test asserts and that
+    // is unchanged; the pre-flight and commit-barrier path is walked by
+    // rocketnet_test_server_driver_pin_xdp, which uses a real port for
+    // exactly that reason.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );

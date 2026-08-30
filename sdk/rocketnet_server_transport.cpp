@@ -609,6 +609,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char refused_names[128];
     refused_names[0] = '\0';
 
+    // #109: whether any rung was refused by the port-zero rule, so an
+    // exhausted ladder can restate the rule at the level the failure
+    // itself is reported. see the error below.
+
+    bool port_zero_refusal = false;
+
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
@@ -633,6 +639,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
         if ( public_address.port == 0 && !rocketnet_driver_discovers_bound_port( candidate ) )
         {
+            port_zero_refusal = true;
             rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
         }
@@ -734,6 +741,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         rocketnet_error( "server driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
+
+        // #109 asked for an error naming the rule, and the per-rung warn
+        // above is not that: a deployed binary, the test suite and the C#
+        // smoke all run at the ERROR level, where a warn is invisible. So
+        // the rule is restated HERE, at the level the failure itself is
+        // reported -- on the fall it stays a warn, because a fall is not a
+        // failure and an error line would be a lie about the outcome.
+
+        if ( port_zero_refusal )
+        {
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: no driver in this list can discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or include a driver that discovers one (portable, msgx, gso)" );
+        }
+
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
