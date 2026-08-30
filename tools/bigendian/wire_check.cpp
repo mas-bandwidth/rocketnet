@@ -12,7 +12,7 @@
 // UDP_SEGMENT burst is not segmented, and the portable rung's receive loop
 // stalls -- so a suite run there would be reporting on qemu. What this file
 // touches is arithmetic and memory, which qemu reproduces exactly, on real
-// s390x instructions against real big-endian memory. #128 owns the rest:
+// s390x instructions against real big-endian memory. #129 owns the rest:
 // the full suite on real big-endian hardware.
 //
 // What it covers, and the defect each part was written against:

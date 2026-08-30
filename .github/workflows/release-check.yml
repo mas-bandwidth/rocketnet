@@ -1,8 +1,15 @@
 # rocketnet release checks (#111, serialize's release-check.yml pattern).
 #
-# WHO READS THIS: the pull request, same as ci.yml -- these are per-commit
-# gates, split into their own file only because they are about the RELEASE
-# rather than the build, exactly as serialize splits them.
+# WHO READS THIS, per job, because the two have different readers and saying
+# "the pull request" for both would be wrong. version-consistency is a
+# per-commit gate read by the pull request, same as every job in ci.yml, and
+# it is in this file rather than that one only because it is about the
+# RELEASE rather than the build, exactly as serialize splits them.
+# unreleased-wire-changes does NOT run on a pull request at all -- it is a
+# push-to-main job, for the reason given above it -- so its reader is
+# whoever watches main's runs, which today is the estate's notification
+# email, and its failure is a statement about main rather than about any
+# one PR.
 #
 # Two failures are guarded here, and they are different failures:
 #

@@ -314,16 +314,24 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
         run: ./bin/fuzz fuzz/corpus/*
 
-      # the bounded pass: fixed seed, hard wall-clock cap, and the corpus
-      # copied out first so the source tree is not mutated. Anything it finds
-      # is a real crash on inputs a real packet could carry.
+      # The bounded pass: fixed seed, FIXED EXECUTION COUNT, and the corpus
+      # copied out first so the source tree is not mutated. -runs, not
+      # -max_total_time, is what makes this repeatable: a wall-clock bound
+      # makes the number of inputs tried a function of how fast the runner
+      # is that morning, so a latent crash reddens whichever pull request
+      # happens to draw a quick machine, on code it did not touch. A fixed
+      # seed and a fixed count try the same inputs everywhere. The time cap
+      # stays only as a runaway guard, well above the measured cost of the
+      # count; if it ever bites, the count is too high and wants lowering
+      # rather than the cap raising.
 
-      - name: Bounded mutation pass (fixed seed)
+      - name: Bounded mutation pass (fixed seed, fixed count)
+        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cp -r fuzz/corpus /tmp/fuzz-corpus
-          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -max_total_time=30 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=200000 -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
@@ -364,13 +372,21 @@ jobs:
   # same archive, the same signing keys, the same apt as every other leg here.
   # No third-party image, no downloaded tarball, no new supply chain.
   #
-  # WHAT THIS LEG DOES NOT COVER, said plainly. It builds the WHOLE library
-  # and the whole test suite for s390x -- a byte-order break that fails to
-  # compile is caught here, which is literally how #112 first went red -- and
-  # then it runs the byte-order surface with NO SOCKETS: tools/bigendian's
-  # wire check, which drives the endian helpers, the wire read/write, address
-  # parsing, the prefilter, a sealed packet's construction and opening, the
-  # fragment header, base64 and the config parses, all in memory.
+  # WHAT THIS LEG DOES NOT COVER, said plainly. It COMPILES the whole library
+  # and the whole test suite for s390x and then DOES NOT RUN bin/test -- the
+  # compile is the gate on that binary, which is not nothing, because that is
+  # literally how #112 first went red -- and it runs the byte-order surface
+  # with NO SOCKETS instead: tools/bigendian's wire check, which drives the
+  # endian helpers, the wire read/write, address parsing, the prefilter, a
+  # sealed packet's construction and opening, the fragment header, base64 and
+  # the config parses, all in memory.
+  #
+  # SO THE BIG-ENDIAN ASSERTIONS THAT GATE ARE THE WIRE CHECK'S. The matching
+  # #if ROCKETNET_BIG_ENDIAN block in rocketnet_test_endian is compiled out on
+  # every leg that runs the suite and never executed on the leg that builds it
+  # for s390x: it is there for the day a real big-endian machine runs the
+  # suite (#129), and until that day it is dead code, which is a thing to know
+  # rather than a thing to discover.
   #
   # It does not RUN the socket-crossing transport tests, because under
   # qemu-user those report on the emulator rather than on the platform: a
@@ -500,9 +516,15 @@ jobs:
   # STANDARD.md against the implementation, per serialize's tools/conformance.
   # The checker reads the specification as a DOCUMENT -- its published tables,
   # parsed as markdown, with no reference to the source tree -- and compares
-  # every number against the same constant as the compiler expands it. A row
-  # deleted from the document fails as loudly as a value that disagrees,
-  # because deleting the row would otherwise be the cheapest way to pass.
+  # THE ROWS IT NAMES against the same constants as the compiler expands
+  # them. A row deleted from the document fails as loudly as a value that
+  # disagrees, because deleting the row would otherwise be the cheapest way
+  # to pass.
+  #
+  # It names the wire-format rows, not every row in the table: the timing and
+  # sizing rows, the magic and the KDF context strings are not compared, and
+  # the checker's own docstring lists exactly which and why. The count it
+  # prints on success is how many comparisons a green stands for.
   #
   # A failure means the document and the code disagree. Decide which is wrong
   # and fix that one. A specification nothing verifies drifts, and a drifted

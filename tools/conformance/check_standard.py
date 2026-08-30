@@ -7,9 +7,19 @@
 
 The family pattern (serialize's tools/conformance): the checker reads the
 specification AS A DOCUMENT -- the published tables, parsed as markdown,
-with no reference to the source tree -- and compares every number it finds
-against the same number as the COMPILER sees it, taken from
+with no reference to the source tree -- and compares the rows it NAMES
+below against the same numbers as the COMPILER sees them, taken from
 dump_constants.cpp built through the real headers.
+
+WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
+the rows it names are the wire-format ones. The glance table's timing and
+sizing rows -- send rate, handshake deadline, cookie lifetime and rotation,
+redundant disconnects, replay buffer, used-token history, admitted-token
+set -- and the Magic and KDF context-string rows are NOT compared, because
+their values live in configuration defaults and key derivation rather than
+in a wire constant this file can expand. Adding a row here is cheap and
+every one of them is worth adding; until then a green means the named rows
+agree, and the count printed at the end says how many that is.
 
 Neither side is allowed to be the only source. A row missing from
 STANDARD.md fails as loudly as a mismatched value, because the failure this

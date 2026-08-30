@@ -34,6 +34,7 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_config.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_wire.h"
 
 #include <stdint.h>
@@ -207,6 +208,20 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
 
     char decoded_string[4097];
     rocketnet_base64_decode_string( text, decoded_string, sizeof( decoded_string ) );
+
+    // THE REAL CALLER'S GEOMETRY, and the reason this second decode exists.
+    // rocketnet_config_apply_env hands this decoder a value straight out of
+    // getenv -- any length at all -- against an output buffer that is the
+    // field's own size, a key's 32 bytes. A decode into a buffer that can
+    // never be too small exercises everything EXCEPT the check that stands
+    // between an over-long env var and the config struct behind it, so the
+    // capacity refusal above would be unreachable from this harness without
+    // this call.
+
+    uint8_t key_field[ROCKETNET_KEY_BYTES];
+    const int key_bytes = rocketnet_base64_decode_data( text, key_field, sizeof( key_field ) );
+    if ( key_bytes < 0 || key_bytes > (int) sizeof( key_field ) )
+        abort();
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
     // whatever these bytes are, encoding then decoding them must return
