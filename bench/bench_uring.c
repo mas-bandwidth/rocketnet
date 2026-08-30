@@ -14,6 +14,36 @@
     bench_uring send <ip> <port> <seconds> [drop-half|zc]
 
     "zc" switches the sender to IORING_OP_SEND_ZC.
+
+    THREE QUALIFICATIONS THIS HARNESS'S NUMBERS CARRY (#98 items 2-4),
+    written here so a table quoting them cannot lose them:
+
+    1. The sender uses a CONNECTED socket. That is structural, not a
+       choice: io_uring_prep_send takes no destination address, so the
+       address has to be bound into the socket. The portable control and
+       the GSO harness both use unconnected sendto/sendmsg with a
+       per-call address, and a connected UDP socket skips the per-send
+       route lookup the others pay. So io_uring's ratio against those
+       harnesses is an UPPER BOUND for io_uring, not a like-for-like
+       comparison, and the gap is in io_uring's favour.
+
+    2. SEND_ZC over loopback does not measure what SEND_ZC costs on a
+       NIC. The zero-copy notification completion is posted when the
+       kernel is done with the buffer, and on lo that is coupled to the
+       RECEIVER draining it rather than to a transmit completing. The
+       "notification overhead is unchanged on a real NIC" reading of the
+       #81 SEND_ZC row overreaches for exactly that reason; the copy
+       saved changes on a NIC and so does when the notification lands.
+
+    3. The zero-copy syscall self-count is qualitative. liburing peeks
+       the completion queue before entering the kernel, so an
+       io_uring_wait_cqe often returns without a syscall at all -- this
+       harness counts every one of them as an enter, which OVERSTATES
+       the ZC row's syscall column. Treat that column as an ordering,
+       and take the real counts from strace -c (bench/PROTOCOL.md).
+
+    BENCH_FAULT=sqe-exhausted / recv-errno / send-refused force the
+    abort paths so their loudness can be watched (bench/selftest.sh).
 */
 
 #include "bench_common.h"
@@ -26,9 +56,27 @@
 #define URING_BUFFER_SIZE    2048
 #define URING_CQE_BATCH      64
 
+/* the submission queue is finite: io_uring_get_sqe returns NULL when it is
+   full, and dereferencing that NULL is a segfault where a message belongs
+   (#98 item 5) */
+
+static struct io_uring_sqe * bench_get_sqe_or_die( struct io_uring * ring, const char * what )
+{
+    struct io_uring_sqe * sqe = bench_fault( "sqe-exhausted" ) ? NULL : io_uring_get_sqe( ring );
+    if ( !sqe )
+    {
+        char detail[192];
+        snprintf( detail, sizeof(detail),
+                  "the submission queue had no free entry for %s -- the harness has more in flight than URING_ENTRIES (%d) allows, and every number after this point would be wrong",
+                  what, URING_ENTRIES );
+        bench_fatal( "io_uring_get_sqe", detail );
+    }
+    return sqe;
+}
+
 static void resubmit_multishot( struct io_uring * ring, int fd )
 {
-    struct io_uring_sqe * sqe = io_uring_get_sqe( ring );
+    struct io_uring_sqe * sqe = bench_get_sqe_or_die( ring, "the multishot receive" );
     io_uring_prep_recv_multishot( sqe, fd, NULL, 0, 0 );
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = URING_BUF_GROUP;
@@ -114,7 +162,10 @@ static void run_receiver( int port, double warmup, double window, int windows )
 
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold ) )
+        /* the completion reap is the batch: an empty peek carries no packets,
+           so no empty enter is ever inside a timed region that produced any
+           (#98 item 8) */
+        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold, 1 ) )
             break;
     }
 
@@ -126,6 +177,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 {
     int fd = bench_udp_socket();
     struct sockaddr_in to = bench_address( ip, port );
+
+    /* CONNECTED, structurally: io_uring_prep_send carries no destination
+       address, so it has to live in the socket. The control and GSO senders
+       are unconnected and pay a route lookup per send that this one does
+       not, which makes every io_uring ratio against them an upper bound
+       rather than like for like (#98 item 2). */
+
     if ( connect( fd, (struct sockaddr*) &to, sizeof(to) ) < 0 )
         { perror( "connect" ); exit( 1 ); }
 
@@ -160,7 +218,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( buffers[i], size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
-                struct io_uring_sqe * sqe = io_uring_get_sqe( &ring );
+                struct io_uring_sqe * sqe = bench_get_sqe_or_die( &ring, "a batched send" );
                 if ( options.zero_copy )
                     io_uring_prep_send_zc( sqe, fd, buffers[i], (size_t) size, 0, 0 );
                 else
@@ -190,7 +248,10 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             }
             io_uring_cq_advance( &ring, reaped );
 
-            /* zero-copy: drain outstanding notifications so the ring never fills */
+            /* zero-copy: drain outstanding notifications so the ring never
+               fills. syscalls++ here OVERSTATES: liburing peeks the queue
+               first, so many of these waits return without entering the
+               kernel at all (#98 item 4). */
             while ( options.zero_copy && completed < BENCH_BATCH_SIZE )
             {
                 if ( io_uring_wait_cqe( &ring, &cqe ) < 0 )
@@ -219,6 +280,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )

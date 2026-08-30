@@ -52,13 +52,20 @@ static void run_receiver( int port, double warmup, double window, int windows )
         struct timespec timeout = { 0, 1000000 };
         int n = kevent( kq, NULL, 0, &event, 1, &timeout );
         batch_syscalls++;
-        if ( n == 0 )
+        if ( n <= 0 )
+        {
+            /* a readiness call that returned nothing: EAGAIN stands for the
+               ordinary timeout, anything else means this kqueue is not
+               reporting readiness and the run must not print a rate */
+            bench_receive_refused_or_empty( "kevent", n < 0 ? errno : EAGAIN );
             batch_empty++;
+        }
 
         uint64_t t0 = bench_time_ns();
         int batch_packets = 0;
         uint64_t batch_bytes = 0;
         uint64_t batch_fold = 0;
+        int batch_timed = 1;
         if ( n > 0 )
         {
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
@@ -69,7 +76,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
                 batch_syscalls++;
                 if ( bytes < 0 )
                 {
+                    bench_receive_refused_or_empty( "recvfrom", errno );
                     batch_empty++;
+                    batch_timed = 0;            /* the empty syscall is inside the timed region */
                     break;
                 }
                 batch_fold += bench_fold_packet( packet, (int) bytes );
@@ -79,7 +88,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
         }
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold ) )
+        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold, batch_timed ) )
             break;
     }
 
@@ -93,6 +102,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     struct sockaddr_in to = bench_address( ip, port );
 
     uint8_t packet[BENCH_MAX_PACKET];
+    struct bench_send_health_t health;
+    memset( &health, 0, sizeof(health) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -120,23 +131,27 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) ) < 0 )
                 {
                     syscalls++;
+                    bench_send_refused( &health, "sendto", errno );
                     continue;
                 }
                 syscalls++;
+                bench_send_ok( &health, "sendto" );
                 sent++;
             }
         }
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed, (unsigned long long) syscalls );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
     close( fd );
 }
 
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )

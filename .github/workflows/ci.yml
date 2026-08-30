@@ -85,6 +85,27 @@ jobs:
       - name: soak_sim instrument selftest
         run: bash scripts/soak-sim-selftest
 
+      # the bench harnesses' failure states (#98). Building them here is the
+      # first time bench/ has been compiled by CI at all, which alone catches
+      # the platform-only files rotting; the selftest then FORCES each abort
+      # path -- a receive refused for a reason that is not an empty queue, a
+      # persistently refused send, a full io_uring submission queue -- and
+      # fails unless the harness goes red naming the call. The linux leg
+      # covers bench_gso, whose pps=0-on-a-GSO-less-host case is exactly what
+      # #98 item 5 filed; the macOS leg covers the darwin trio. Neither leg
+      # measures anything: no number from a CI runner is ever published.
+
+      - name: Build the bench harnesses (Linux)
+        if: runner.os == 'Linux'
+        run: make -C bench bench_portable bench_gso
+
+      - name: Build the bench harnesses (macOS)
+        if: runner.os == 'macOS'
+        run: make -C bench darwin
+
+      - name: Bench harness failure-state selftest
+        run: bash bench/selftest.sh
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from

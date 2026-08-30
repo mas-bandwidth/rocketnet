@@ -8,10 +8,34 @@
 
     Discipline (per the #81 plan): 30 s warm-up discarded, five 60 s
     measured windows, median with min/max spread reported by the runner.
-    Per-packet processing time is the batch wall time divided by the
-    packets in the batch, accumulated into a histogram per window;
     syscalls are counted by the harness itself (it knows every call it
     makes) and verified externally with strace -c on a separate run.
+
+    WHAT THE ns COLUMNS ARE, AND ARE NOT (#98 item 1). p50_ns and p99_ns
+    are BATCH AVERAGES, not per-packet tails: a batch's wall time is
+    divided by the packets in it and that one quotient is credited to
+    every packet in the batch. A batch that contains one slow packet and
+    thirty-one fast ones reports thirty-two medium packets, so the tail
+    is smeared and p99 UNDERSTATES a real per-packet tail. Any citation
+    of these columns has to say that sentence. pps is unaffected --
+    it is a count over a wall-clock window and is immune to where the
+    timer sits.
+
+    Only batches whose wall time is a clean measurement feed the
+    histogram (#98 item 8): a drain that ends on an empty syscall has
+    that empty syscall inside its timed region, which inflates the
+    quotient for every packet the batch did carry. Those batches still
+    count toward pps and bytes; they do not count toward ns. The WINDOW
+    line reports how many batches were timed, so a window whose ns
+    columns rest on nothing says so instead of printing a number.
+
+    FAIL LOUD (#98 item 5). Every refusal a harness can meet is either a
+    known back-pressure condition, counted and continued, or an abort
+    with the call and errno named. A bench that reports pps=0 because
+    the kernel refused every send has measured nothing and must not look
+    like a measurement. BENCH_FAULT=<name> forces each of those paths so
+    the loudness can be watched rather than believed; bench/selftest.sh
+    drives them.
 */
 
 #ifndef BENCH_COMMON_H
@@ -25,6 +49,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -43,6 +68,135 @@ static inline uint64_t bench_time_ns( void )
     struct timespec ts;
     clock_gettime( CLOCK_MONOTONIC, &ts );
     return (uint64_t) ts.tv_sec * 1000000000ull + (uint64_t) ts.tv_nsec;
+}
+
+/*
+    Failing loudly.
+
+    bench_fatal prints to both streams and exits nonzero. It is used for
+    every condition under which the numbers this harness would go on to
+    print are not measurements of anything: a syscall refused for a
+    reason that is not back pressure, a submission queue that could not
+    be filled, a kernel feature the harness was built to measure turning
+    out to be absent.
+
+    The BENCH_FAULT switch is the negative control. Each name forces one
+    of those paths on a run that would otherwise be healthy, so the
+    abort can be observed. Names:
+
+      recv-errno      the next receive reports a refusal that is not
+                      EAGAIN, as a kernel with a broken socket would
+      send-refused    every send is treated as refused, as a host
+                      without the feature under test would behave
+      sqe-exhausted   the io_uring submission queue reports empty, the
+                      NULL that bench_uring used to dereference
+
+    A fault that produces no abort is a finding about the harness, which
+    is the entire reason the switch exists.
+*/
+
+static const char * bench_fault_name;
+
+static inline void bench_fault_init( void )
+{
+    bench_fault_name = getenv( "BENCH_FAULT" );
+    if ( bench_fault_name )
+    {
+        printf( "FAULT ARMED: %s -- this run must abort\n", bench_fault_name );
+        fflush( stdout );
+    }
+}
+
+static inline int bench_fault( const char * name )
+{
+    return bench_fault_name && strcmp( bench_fault_name, name ) == 0;
+}
+
+static inline void bench_fatal( const char * call, const char * detail )
+{
+    printf( "\nBENCH ABORTED: %s: %s\n", call, detail );
+    fflush( stdout );
+    fprintf( stderr, "BENCH ABORTED: %s: %s\n", call, detail );
+    fflush( stderr );
+    exit( 2 );
+}
+
+/*
+    A receive that returned < 0. EAGAIN/EWOULDBLOCK means the queue is
+    empty, which is the ordinary state of a drain loop and is counted.
+    Anything else -- ENOTCONN, EBADF, ENOBUFS on the receive side, a
+    kernel that does not implement the call -- means the receiver is not
+    receiving, and a receiver that is not receiving reports pps=0, which
+    reads exactly like a slow driver. It aborts instead.
+*/
+
+/* called after EVERY receive that yielded no data, with EAGAIN standing for
+   "the queue was simply empty" -- which is what lets the fault switch turn an
+   ordinary empty drain into the refusal a broken socket would report */
+
+static inline void bench_receive_refused_or_empty( const char * call, int error )
+{
+    if ( bench_fault( "recv-errno" ) )
+        error = EBADF;
+    if ( error == EAGAIN || error == EWOULDBLOCK || error == EINTR )
+        return;
+    char detail[192];
+    snprintf( detail, sizeof(detail), "refused with errno %d (%s) -- this is not an empty queue, so every number below it would be a fiction",
+              error, strerror( error ) );
+    bench_fatal( call, detail );
+}
+
+/*
+    A send that returned < 0. ENOBUFS and EAGAIN are the socket buffer
+    saying slow down: counted, dropped, carry on, exactly as the portable
+    control always has. Anything else is the kernel refusing the shape of
+    the call -- EINVAL from a host with no UDP_SEGMENT is the case #98
+    names -- and a run that meets a long unbroken string of those is not
+    measuring a slow driver, it is measuring an absent one.
+*/
+
+#define BENCH_SEND_REFUSAL_LIMIT 64
+
+struct bench_send_health_t
+{
+    uint64_t back_pressure;
+    uint64_t consecutive_refusals;
+};
+
+static inline void bench_send_refused( struct bench_send_health_t * health, const char * call, int error );
+
+/* every send reports its outcome here, success included: the fault switch has
+   to be able to turn a healthy host's successful sends into the refusals a
+   feature-less host would produce, or the abort path has no negative control */
+
+static inline void bench_send_ok( struct bench_send_health_t * health, const char * call )
+{
+    if ( bench_fault( "send-refused" ) )
+    {
+        bench_send_refused( health, call, EINVAL );
+        return;
+    }
+    health->consecutive_refusals = 0;
+}
+
+static inline void bench_send_refused( struct bench_send_health_t * health, const char * call, int error )
+{
+    if ( bench_fault( "send-refused" ) )
+        error = EINVAL;
+    if ( error == ENOBUFS || error == EAGAIN || error == EWOULDBLOCK || error == EINTR )
+    {
+        health->back_pressure++;
+        health->consecutive_refusals = 0;
+        return;
+    }
+    health->consecutive_refusals++;
+    if ( health->consecutive_refusals < BENCH_SEND_REFUSAL_LIMIT )
+        return;
+    char detail[224];
+    snprintf( detail, sizeof(detail),
+              "%llu sends in a row refused with errno %d (%s) -- this host cannot do what this harness measures, and a silent spin here reports pps=0 as if the driver were merely slow",
+              (unsigned long long) health->consecutive_refusals, error, strerror( error ) );
+    bench_fatal( call, detail );
 }
 
 /*
@@ -124,7 +278,10 @@ static inline uint64_t bench_fold_packet( const uint8_t * packet, int bytes )
     WINDOW n secs=S pkts=N pps=R bytes=B p50_ns=X p99_ns=Y syscalls=C empty=E
 
     "syscalls" is every syscall the harness made in the window (data path
-    only), "empty" the subset that returned no data (EAGAIN spins).
+    only), "empty" the subset that returned no data (EAGAIN spins), and
+    "timed" the number of batches whose wall time was clean enough to
+    feed the ns columns (#98 item 8). p50_ns/p99_ns are batch averages
+    over those batches, never per-packet tails -- see the file header.
 */
 
 struct bench_windows_t
@@ -139,6 +296,7 @@ struct bench_windows_t
     uint64_t bytes;
     uint64_t syscalls;
     uint64_t empty;
+    uint64_t timed;                                 /* batches whose ns were clean enough to histogram */
     uint64_t fold;                                  /* payload fold, defeats dead-code elimination */
     struct bench_hist_t hist;
 };
@@ -156,7 +314,7 @@ static inline void bench_windows_init( struct bench_windows_t * w, double warmup
 static inline void bench_window_emit( struct bench_windows_t * w, uint64_t now )
 {
     double secs = (double) ( now - w->window_start_ns ) / 1e9;
-    printf( "WINDOW %d secs=%.3f pkts=%llu pps=%.0f bytes=%llu p50_ns=%llu p99_ns=%llu syscalls=%llu empty=%llu fold=%llx\n",
+    printf( "WINDOW %d secs=%.3f pkts=%llu pps=%.0f bytes=%llu p50_ns=%llu p99_ns=%llu syscalls=%llu empty=%llu timed=%llu fold=%llx\n",
             w->window_index, secs,
             (unsigned long long) w->packets,
             (double) w->packets / secs,
@@ -165,20 +323,43 @@ static inline void bench_window_emit( struct bench_windows_t * w, uint64_t now )
             (unsigned long long) bench_hist_quantile( &w->hist, 0.99 ),
             (unsigned long long) w->syscalls,
             (unsigned long long) w->empty,
+            (unsigned long long) w->timed,
             (unsigned long long) w->fold );
+
+    /* the ns columns resting on nothing say so rather than printing zeros
+       that read like a measurement */
+
+    if ( w->timed == 0 && w->packets > 0 )
+        printf( "WINDOW %d NO TIMED BATCHES: %llu packets arrived but every batch ended on an empty syscall, so p50_ns/p99_ns above are not measurements. pps and bytes stand.\n",
+                w->window_index, (unsigned long long) w->packets );
+
     fflush( stdout );
 }
 
 /* returns 0 while running, 1 when all windows are complete */
 
-static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_ns, int batch_packets, uint64_t batch_bytes, uint64_t batch_syscalls, uint64_t batch_empty, uint64_t batch_fold )
+/*
+    batch_timed says whether batch_ns is a clean measurement of the work
+    that produced batch_packets. A drain that stopped because a syscall
+    came back empty is NOT clean: that empty syscall sits inside the
+    timed region and inflates the quotient for every packet the batch
+    did carry (#98 item 8). Such a batch still counts toward pps and
+    bytes -- it delivered real packets in real wall-clock time -- and is
+    simply not offered to the histogram.
+*/
+
+static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_ns, int batch_packets, uint64_t batch_bytes, uint64_t batch_syscalls, uint64_t batch_empty, uint64_t batch_fold, int batch_timed )
 {
     if ( batch_packets > 0 )
     {
         w->packets += (uint64_t) batch_packets;
         w->bytes += batch_bytes;
         w->fold += batch_fold;
-        bench_hist_add( &w->hist, batch_ns / (uint64_t) batch_packets, (uint64_t) batch_packets );
+        if ( batch_timed )
+        {
+            bench_hist_add( &w->hist, batch_ns / (uint64_t) batch_packets, (uint64_t) batch_packets );
+            w->timed++;
+        }
     }
     w->syscalls += batch_syscalls;
     w->empty += batch_empty;
@@ -203,6 +384,7 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
     w->bytes = 0;
     w->syscalls = 0;
     w->empty = 0;
+    w->timed = 0;
     w->fold = 0;
     bench_hist_reset( &w->hist );
     return 0;

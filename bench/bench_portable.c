@@ -12,6 +12,9 @@
     "drop-half" is the harness-honesty switch: the sender skips every
     other batch, and the receiver's pps must fall by half or the bench
     has measured nothing.
+
+    BENCH_FAULT=recv-errno / send-refused force the two abort paths, so
+    the loudness is watched rather than assumed (bench/selftest.sh).
 */
 
 #include "bench_common.h"
@@ -42,6 +45,7 @@ static void run_receiver( int port, double warmup, double window, int windows, i
         uint64_t batch_syscalls = 0;
         uint64_t batch_empty = 0;
         uint64_t batch_fold = 0;
+        int batch_timed = 1;
         for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
         {
             struct sockaddr_in from;
@@ -50,7 +54,14 @@ static void run_receiver( int port, double warmup, double window, int windows, i
             batch_syscalls++;
             if ( bytes < 0 )
             {
+                /* only an empty queue ends a drain; any other errno means
+                   this receiver is not receiving and must not go on to
+                   print a rate (#98 item 5) */
+                bench_receive_refused_or_empty( "recvfrom", errno );
                 batch_empty++;
+                /* this batch's wall time now contains that empty syscall,
+                   so it is not a clean per-packet measurement (#98 item 8) */
+                batch_timed = 0;
                 break;
             }
             batch_fold += bench_fold_packet( packet, (int) bytes );
@@ -59,7 +70,7 @@ static void run_receiver( int port, double warmup, double window, int windows, i
         }
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold ) )
+        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold, batch_timed ) )
             break;
 
         if ( poll_usec > 0 && batch_packets == 0 )
@@ -75,6 +86,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     struct sockaddr_in to = bench_address( ip, port );
 
     uint8_t packet[BENCH_MAX_PACKET];
+    struct bench_send_health_t health;
+    memset( &health, 0, sizeof(health) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -101,11 +114,15 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
                 if ( sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) ) < 0 )
                 {
-                    /* ENOBUFS et al: count the syscall, drop the packet, keep going */
+                    /* ENOBUFS et al is back pressure: count the syscall, drop
+                       the packet, keep going. A long unbroken run of any other
+                       refusal is a host that cannot do this, and aborts. */
                     syscalls++;
+                    bench_send_refused( &health, "sendto", errno );
                     continue;
                 }
                 syscalls++;
+                bench_send_ok( &health, "sendto" );
                 sent++;
             }
         }
@@ -113,14 +130,16 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed, (unsigned long long) syscalls );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
     close( fd );
 }
 
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ), bench_parse_poll_usec( argc, argv, 6 ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )

@@ -14,8 +14,19 @@
     the same without an extra copy is a seam-tax suspect for the
     behind-the-seam column, counted there, not here.
 
+    On a host without UDP_SEGMENT the sender's sendmsg refuses every
+    batch with EINVAL. Before #98 it spun on that silently and the run
+    reported pps=0, which reads exactly like a very slow driver; it now
+    aborts with the errno named, because a GSO-less host has nothing for
+    this harness to measure. The receiver's UDP_GRO setsockopt has always
+    aborted, and its recvmmsg now aborts on any errno that is not an
+    empty queue.
+
     bench_gso recv <port> <warmup> <window> <windows>
     bench_gso send <ip> <port> <seconds> [drop-half]
+
+    BENCH_FAULT=recv-errno / send-refused force those aborts on a
+    healthy host so the loudness can be watched (bench/selftest.sh).
 */
 
 #include "bench_common.h"
@@ -71,6 +82,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
         int count = recvmmsg( fd, messages, GSO_RECV_VLEN, MSG_DONTWAIT, NULL );
         if ( count < 0 )
         {
+            bench_receive_refused_or_empty( "recvmmsg", errno );
             batch_empty = 1;
             count = 0;
         }
@@ -102,7 +114,10 @@ static void run_receiver( int port, double warmup, double window, int windows )
 
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, 1 /* one recvmmsg */, batch_empty, batch_fold ) )
+        /* one recvmmsg is the whole batch: an empty return carries no
+           packets, so no empty syscall is ever inside a timed region that
+           produced any (#98 item 8) */
+        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, 1 /* one recvmmsg */, batch_empty, batch_fold, 1 ) )
             break;
     }
 
@@ -117,6 +132,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     static uint8_t buffer[BENCH_BATCH_SIZE * BENCH_MAX_PACKET];
     char control[CMSG_SPACE(sizeof(uint16_t))];
 
+    struct bench_send_health_t health;
+    memset( &health, 0, sizeof(health) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -163,20 +180,31 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             ssize_t result = sendmsg( fd, &msg, 0 );
             syscalls++;
             if ( result >= 0 )
+            {
                 sent += BENCH_BATCH_SIZE;
+                bench_send_ok( &health, "sendmsg (UDP_SEGMENT)" );
+            }
+            else
+            {
+                /* EINVAL here is a kernel with no UDP_SEGMENT, which is the
+                   whole candidate absent -- not a slow one (#98 item 5) */
+                bench_send_refused( &health, "sendmsg (UDP_SEGMENT)", errno );
+            }
         }
 
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed, (unsigned long long) syscalls );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
     close( fd );
 }
 
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )

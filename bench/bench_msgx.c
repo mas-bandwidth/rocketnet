@@ -92,6 +92,7 @@ static void run_receiver( int port, double warmup, double window, int windows, i
         ssize_t received = msgx_recv( fd, msg, BENCH_BATCH_SIZE, 0 );
         if ( received < 0 )
         {
+            bench_receive_refused_or_empty( "recvmsg_x", errno );
             batch_empty = 1;
         }
         else
@@ -106,7 +107,10 @@ static void run_receiver( int port, double warmup, double window, int windows, i
         }
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, 1, batch_empty, batch_fold ) )
+        /* one recvmsg_x is the whole batch: the empty case carries no
+           packets at all, so no empty syscall is ever inside a timed
+           region that produced any (#98 item 8) */
+        if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, 1, batch_empty, batch_fold, 1 ) )
             break;
 
         if ( poll_usec > 0 && batch_packets == 0 )
@@ -125,6 +129,8 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     struct iovec iov[BENCH_BATCH_SIZE];
     struct msghdr_x msg[BENCH_BATCH_SIZE];
 
+    struct bench_send_health_t health;
+    memset( &health, 0, sizeof(health) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -164,21 +170,32 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             ssize_t result = msgx_send( fd, msg, BENCH_BATCH_SIZE, 0 );
             syscalls++;
             if ( result > 0 )
+            {
                 sent += (uint64_t) result;
-            /* a short or refused batch (ENOBUFS et al) drops the remainder
-               and keeps going, the portable harness's own discipline */
+                bench_send_ok( &health, "sendmsg_x" );
+            }
+            else
+            {
+                /* a short or back-pressured batch drops the remainder and
+                   keeps going, the portable harness's own discipline. A long
+                   unbroken run of any other refusal is a host that cannot do
+                   this and aborts rather than reporting pps=0 (#98 item 5). */
+                bench_send_refused( &health, "sendmsg_x", errno );
+            }
         }
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu\n",
-            (unsigned long long) sent, elapsed, (double) sent / elapsed, (unsigned long long) syscalls );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+            (unsigned long long) sent, elapsed, (double) sent / elapsed,
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
     close( fd );
 }
 
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     resolve_msgx_or_die();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ), bench_parse_poll_usec( argc, argv, 6 ) );

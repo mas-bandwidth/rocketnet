@@ -2,7 +2,9 @@
 #
 # probe          -- static feature report, runnable on any Linux host
 # bench_portable -- sendto/recvfrom negative control
-# bench_gso      -- sendmmsg/recvmmsg + UDP GSO/GRO
+# bench_gso      -- UDP GSO/GRO: sendmsg + UDP_SEGMENT on the send side
+#                   (one syscall per batch, NOT sendmmsg), recvmmsg + UDP_GRO
+#                   on the receive side (#98 item 6)
 # bench_uring    -- io_uring batched send + multishot recv (needs liburing;
 #                   pin it per project: make bench_uring LIBURING=/path/to/liburing-install)
 #
@@ -52,7 +54,10 @@ bench_gso: bench_gso.c bench_common.h
 bench_uring: bench_uring.c bench_common.h
 	$(CC) $(CFLAGS) -I$(LIBURING)/include -o bench_uring bench_uring.c $(LIBURING)/lib/liburing.a
 
+selftest: bench_portable
+	bash selftest.sh
+
 clean:
 	rm -f probe bench_portable bench_gso bench_uring probe_darwin bench_msgx bench_kqueue bench_nw
 
-.PHONY: all clean
+.PHONY: all clean darwin selftest

@@ -61,7 +61,7 @@ static void nw_receive_loop( nw_connection_t connection )
 
         uint64_t batch_ns = bench_time_ns() - t0;
 
-        if ( bench_window_tick( &bench_windows, batch_ns, batch_packets, batch_bytes, 1, content == NULL ? 1 : 0, batch_fold ) )
+        if ( bench_window_tick( &bench_windows, batch_ns, batch_packets, batch_bytes, 1, content == NULL ? 1 : 0, batch_fold, 1 ) )
             exit( 0 );
 
         nw_receive_loop( connection );
@@ -189,6 +189,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
+    bench_fault_init();
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )
