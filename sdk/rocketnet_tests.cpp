@@ -3277,7 +3277,7 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.11, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // UNPROVEN: a payload send does NOT suppress the next keep-alive. The
-    // server has no proof this client received a keep-alive, and the
+    // client has not claimed to have received a keep-alive, and the
     // keep-alive is the only packet carrying its index, so generation runs
     // off elapsed time alone -- the payload at 100.15 changes nothing, and
     // the keep-alive is due one interval after the last one at 100.11.
@@ -3287,7 +3287,7 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.16, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.22, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
-    // AN ACK THAT COVERS ONLY A PAYLOAD IS NOT PROOF. The client
+    // AN ACK THAT COVERS ONLY A PAYLOAD IS NOT THE CLAIM. The client
     // acknowledges sequence 3 -- the payload -- and nothing else. That
     // confirms the slot in the old sense and says nothing about whether the
     // client holds its index, so the regime MUST NOT flip: the payload at
@@ -3298,14 +3298,14 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( client_bytes > 0 );
     rocketnet_check( rocketnet_test_process_packet( &test, client_packet, client_bytes, response, &response_bytes,
                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_check( rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );        // confirmed, and still not proof
+    rocketnet_check( rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );        // confirmed, and still not the claim
     rocketnet_check( !test.server.acks->endpoints[0].keep_alive_acked );
 
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.25, packet ) > 0 );      // seq 5
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.33, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );   // seq 6
 
-    // AN ACK THAT COVERS A KEEP-ALIVE IS PROOF, and only now does the
-    // regime flip. Sequence 6 is the keep-alive just written; acknowledging
+    // AN ACK THAT COVERS A KEEP-ALIVE IS THE CLAIM THE RULE TURNS ON, and
+    // only now does the regime flip. Sequence 6 is the keep-alive just written; acknowledging
     // it CLAIMS the client opened a keep-alive, which carries its index and
     // is its only transition to _connected_. The server cannot check the
     // claim; see the note below on what that costs and who it costs.
@@ -3696,7 +3696,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
     rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
 
     // and the client still connects: an ack from a client that does not yet
-    // hold its index MUST NOT be taken as proof that it does
+    // hold its index MUST NOT flip the regime as though it did
 
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( client.client_index == 0 );

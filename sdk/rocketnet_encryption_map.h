@@ -50,8 +50,8 @@ struct rocketnet_encryption_mapping_t
     int client_index;                       // -1 until a slot is assigned
     double handshake_deadline;              // absolute, never refreshed
     double last_receive_time;               // refreshed by every opened packet
-    double last_send_time;                  // refreshed by every send; suppresses keep-alives once the client is confirmed
-    double last_keep_alive_send_time;       // refreshed by keep-alives alone; paces them while the client is unconfirmed
+    double last_send_time;                  // refreshed by every send; suppresses keep-alives once one has been acknowledged
+    double last_keep_alive_send_time;       // refreshed by keep-alives alone; paces them until one has been acknowledged
     uint64_t send_sequence_handshake;       // next handshake-phase sequence to send
     uint64_t send_sequence_session;         // next session-phase sequence to send
     uint64_t send_fragment_payload_id;      // next fragmented payload id to send, per _Fragmentation_

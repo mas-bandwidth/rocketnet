@@ -88,7 +88,7 @@ struct rocketnet_sent_packet_record_t
     uint32_t wire_bytes;
     uint8_t acked;
     uint8_t has_packet_id;
-    uint8_t was_keep_alive;                 // a keep-alive's ack is what proves the peer holds its client index
+    uint8_t was_keep_alive;                 // a keep-alive's ack is the peer's claim to hold its client index
     uint8_t pad[1];
 };
 
@@ -144,13 +144,17 @@ struct rocketnet_ack_endpoint_t
     int has_rtt_sample;                         // any first-ack sample has landed
 
     // Latched by process_block the first time a sequence recorded as a
-    // keep-alive is newly acknowledged. This is the server's PROOF that the
-    // peer received a keep-alive -- and therefore holds its client index and
-    // is connected, since a keep-alive carries the index and processing one
-    // is the client's only transition to _connected_. It is what
+    // keep-alive is newly acknowledged. This is the peer's CLAIM to have
+    // received a keep-alive -- and so to hold its client index and be
+    // connected, since a keep-alive carries the index and processing one is
+    // the client's only transition to _connected_. It is a claim and not a
+    // proof: an ack block is the peer's own statement about its own receive
+    // state, and no receiver can verify it. _Acks_ requires a block to name
+    // only sequences its sender opened; a peer that violates that latches
+    // this bit without its index and strands only itself. It is what
     // _Keep-alive generation_ flips the suppression regime on; see
     // rocketnet_server_protocol_write_keep_alive_if_due. Cleared by reset,
-    // so a reused slot starts without proof.
+    // so a reused slot starts with no claim recorded.
 
     uint8_t keep_alive_acked;
 

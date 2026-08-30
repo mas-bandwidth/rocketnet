@@ -2628,10 +2628,9 @@ no copy to fall out of sync.
 **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It
 becomes confirmed the first time the server receives any sealed packet from that
 client on that slot — a keep-alive, a payload, a fragment, an ack or a
-disconnect. The flag
-exists because the
-server has not yet observed that the client received its keep-alive, so it does
-not yet know the client considers itself connected.
+disconnect. The flag exists because the server has not yet observed that the
+client received its keep-alive, so it does not yet know the client considers
+itself connected.
 
 **What the flag does not decide.** The confirmed flag says a sealed packet
 arrived from this client. It does **not** say the client holds its client
@@ -2654,9 +2653,7 @@ the first one is still what moves the client to _connected_; payloads simply
 do not wait for it.
 
 **Keep-alive generation, and what suppression is allowed to read.** The rule
-turns on one question — **has this client received a keep-alive?** — and the
-server answers it from its own delivery bookkeeping, asking nothing of the
-client.
+turns on one question: **has this client acknowledged a keep-alive?**
 
 * **Until a keep-alive the server sent to this client has been
   acknowledged**, the server sends a keep-alive whenever the send rate
@@ -2734,9 +2731,12 @@ on it — the ack block's validity check and the type's opened-size check — an
 _Reading packets_ requires the replay window to be marked **before** both. A
 packet's sequence therefore enters the client's outgoing ack block earlier than
 the point at which the packet is acted on. If either check were reachable for
-an authentic keep-alive, a client could acknowledge a keep-alive it never acted
-on, the server would read that acknowledgment as proof of an index the client
-does not hold, and the stranding this section exists to prevent would return.
+an authentic keep-alive, a *correct* client could acknowledge a keep-alive it
+never acted on — its block naming a sequence it did open, so breaking no rule —
+and the server would read that as a claim to an index the client does not hold.
+The stranding this section exists to prevent would return, and it would return
+for conformant clients, which is the failure mode the acknowledgment test was
+chosen to rule out.
 
 Neither is reachable today, and the reason is structural: a packet that opens
 authentically was sealed by the server, so its ack block is one the server
@@ -2747,8 +2747,8 @@ checks pass by construction, for every authentic keep-alive.
 block's encoding or validity rules, to the keep-alive's type data or size, or
 to the order in which the replay window is marked relative to those checks,
 MUST preserve it. A change that makes either check reachable for an authentic
-keep-alive invalidates the proof, and _Keep-alive generation_'s confirmation
-test MUST then be re-derived rather than assumed to still hold.
+keep-alive breaks the reasoning above, and _Keep-alive generation_'s
+confirmation test MUST then be re-derived rather than assumed to still hold.
 
 **Why the carve-out is mandatory, not an optimization.** The keep-alive is the
 only packet that carries the client index, and receiving one is the only thing

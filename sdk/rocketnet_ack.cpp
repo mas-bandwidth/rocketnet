@@ -363,8 +363,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                 record->acked = 1;
                 newly_acked++;
 
-                // the proof _Keep-alive generation_ turns on: this peer
-                // received a keep-alive, so it holds its client index
+                // the claim _Keep-alive generation_ turns on: this peer
+                // says it received a keep-alive, so it says it holds its
+                // client index. unverifiable here, and by design
 
                 if ( record->was_keep_alive )
                     endpoint->keep_alive_acked = 1;

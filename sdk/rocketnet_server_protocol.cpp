@@ -1157,10 +1157,9 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     mapping->last_keep_alive_send_time = current_time;
 
     // and the tag that makes this packet's acknowledgment mean something:
-    // write_session_packet recorded the sequence just above, and an ack of
-    // it is the server's proof that this client received a keep-alive.
-    // send_sequence_session was incremented past it, so the sequence sent
-    // is the one before.
+    // write_session_packet recorded the sequence just above and reported it
+    // back, and an ack naming it is this client's claim to have received a
+    // keep-alive.
 
     if ( server->acks && client_index >= 0 )
         rocketnet_ack_endpoint_mark_keep_alive( &server->acks->endpoints[client_index], keep_alive_sequence );
@@ -1254,8 +1253,8 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
 
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
 
-    // no ack bookkeeping means no proof is obtainable; fall back to the
-    // unsuppressed clock, which is the safe direction
+    // no ack bookkeeping means the claim can never be observed; fall back to
+    // the unsuppressed clock, which is the safe direction
 
     int proven = server->acks && client_index >= 0
                     ? (int) server->acks->endpoints[client_index].keep_alive_acked
