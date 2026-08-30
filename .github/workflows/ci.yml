@@ -323,7 +323,10 @@ jobs:
       # seed and a fixed count try the same inputs everywhere. The time cap
       # stays only as a runaway guard, well above the measured cost of the
       # count; if it ever bites, the count is too high and wants lowering
-      # rather than the cap raising.
+      # rather than the cap raising. Two million executions measured at
+      # roughly thirty seconds on this runner, which is the same depth the
+      # wall-clock bound was reaching before -- the change buys determinism,
+      # it does not buy less fuzzing.
 
       - name: Bounded mutation pass (fixed seed, fixed count)
         timeout-minutes: 5
@@ -331,7 +334,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cp -r fuzz/corpus /tmp/fuzz-corpus
-          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=200000 -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=2000000 -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
