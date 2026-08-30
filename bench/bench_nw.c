@@ -72,7 +72,24 @@ static void nw_receive_loop( nw_connection_t connection )
         nw_check_error( "nw_connection_receive_message", error );
 
         if ( error != NULL )
-            return;             /* a tolerated teardown; the listener keeps running */
+        {
+            /* A tolerated teardown: this connection stops re-arming and the
+               listener keeps running. If it was the ONLY connection, the run
+               now produces no further windows and simply hangs.
+
+               That hang is loud in the one way that counts -- it yields no
+               number at all, and the doctrine here is aimed at numbers that
+               are not measurements, which a run that never finishes cannot
+               produce. But it is loud by accident rather than by design, so
+               it at least says why it went quiet. No new state: this is the
+               one place the loop stops. */
+
+            printf( "nw receive loop stopped re-arming: %s (errno %d). If no further WINDOW lines follow, this connection was the only one and the run has nothing left to measure.\n",
+                    nw_error_get_error_domain( error ) == nw_error_domain_posix ? "posix" : "non-posix",
+                    nw_error_get_error_code( error ) );
+            fflush( stdout );
+            return;
+        }
 
         uint64_t t0 = bench_time_ns();
         __block uint64_t batch_bytes = 0;

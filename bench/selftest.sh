@@ -73,9 +73,12 @@ PORT_BASE=${BENCH_SELFTEST_PORT:-$(( 20000 + ( $$ % 20000 ) ))}
 
 # and each candidate is PROBED before use, not merely assumed free. A rolling
 # base makes two runs unlikely to collide; probing makes a collision take a
-# race rather than a coincidence. Both matter, because the symptom is not a
-# red leg that names a port -- it is a leg aborting on the wrong call, or the
-# healthy control going red, neither of which points at the environment.
+# race rather than a coincidence. Note the words: this narrows the window
+# between the probe and the harness's own bind, it does not close it, and a
+# cold reader saw one failing pair in 19 attempts on a loaded machine after
+# 16 clean ones. Both parts matter, because the symptom is not a red leg that
+# names a port -- it is a leg aborting on the wrong call, or the healthy
+# control going red, neither of which points at the environment.
 
 next_port()
 {
@@ -84,11 +87,14 @@ next_port()
         PORT_BASE=$(( PORT_BASE + 1 ))
         tries=$(( tries + 1 ))
         if [ -n "$PORT_PROBE" ]; then
+            # 0.0.0.0, because that is what the harnesses bind. Probing
+            # 127.0.0.1 would pass on a port already held on another
+            # interface and hand back a number the harness then fails on.
             if "$PORT_PROBE" -c "
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
-    s.bind(('127.0.0.1', $PORT_BASE))
+    s.bind(('0.0.0.0', $PORT_BASE))
 except OSError:
     sys.exit(1)
 s.close()

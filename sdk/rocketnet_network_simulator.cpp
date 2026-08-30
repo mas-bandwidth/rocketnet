@@ -336,6 +336,13 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
 
     At 4000 that is 470x the array scan before and 2.25x after.
 
+    The occupancy-500 column is a cold first iteration, not a property of the
+    structure: a reader re-running it warmed read 8.9 and 544 where this run
+    read 17 and 943. The 4000 column, which is the one the argument rests on,
+    reproduced (3984 against 3757). Flagged rather than re-run, so that a
+    reader who notices 500 disagreeing with 1000 distrusts the cell instead of
+    the mechanism.
+
     WHERE THIS INDEX IS STILL SLOWER THAN THE SCAN IT REPLACED, which is a
     real property and not a rounding error. Finding a due packet costs one
     list step per entry the walk passes, and a list step chases a pointer and
