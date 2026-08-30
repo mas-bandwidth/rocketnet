@@ -9,10 +9,11 @@ line above the declaration. Several of the functions this file describes,
 `rocketnet_server_transport_start_packet` among them, have no comment of their
 own and are governed by a block further up.
 
-That also means the header is not a per-function reference, and a few functions
-have no nearby prose at all. If you cannot find a block that covers the one you
-want, you are reading the implementation rather than a contract, and nothing
-promises its behavior is stable.
+Read the block for what it actually covers, though, rather than assuming it
+covers everything below it. Some blocks are narrow: the one describing the driver
+accessor is followed by `rocketnet_client_transport_client_index` and
+`rocketnet_client_transport_disconnect`, which it says nothing about. Proximity
+is a hint about where to look, not a claim of scope.
 
 This file is the narrative the header cannot be: the shape of a frame, the
 contracts that are sharp enough to cut, and the configuration system that decides
@@ -198,17 +199,44 @@ an open fill; it is the simple form, not a fill-phase participant.
 
 `rocketnet_client_transport_stats` and
 `rocketnet_server_transport_client_stats` report rtt and jitter in milliseconds,
-packet loss as a percentage, and trailing rates. Since #84 closed, **rtt is
-live** on both ends: it is refreshed by the ack blocks every session packet
-carries, the first block acknowledging each sent sequence yielding a sample.
-(Earlier notes describing rtt as frozen at its handshake value are stale; that was
-the state before #84.)
+packet loss as a percentage, and trailing rates.
+
+**Read the rtt number for what it is: a floor, not a current reading.** Sampling
+is continuous — since #84 closed, the first ack block acknowledging each sent
+sequence yields a sample — but the published figure is not the latest sample. It
+is *the minimum over the whole rtt history*, which is the header's own model
+(`rocketnet_ack.h`, above `rocketnet_ack_endpoint_update_stats`: "rtt is the
+minimum over the rtt history, jitter the mean deviation from it"). The history is
+`ROCKETNET_RTT_HISTORY_SIZE` = 2048 entries indexed by sequence, so at a 10 Hz
+send rate it spans roughly 200 seconds.
+
+The consequence is the one that bites: **this figure cannot track latency
+upward.** It falls immediately when the path gets faster, and it rises only once
+every lower sample has been evicted from the ring — up to the whole window later.
+A congestion event that doubles real latency may not move it at all while any
+pre-congestion sample survives. So it is a good "how fast can this path be" and a
+bad input to a timeout, an alert, or anything that needs to notice degradation.
+For that, watch jitter and loss, which do respond, or track your own round trips
+from the acked batch.
+
+(Earlier notes describing rtt as frozen at its handshake value are stale in a
+different way: that was the state before #84, when there was no ack sampling at
+all.)
 
 The **handshake seed is client-only**. The client falls back to its handshake
 round-trip estimate while no ack sample exists yet, so its rtt is useful
 immediately. The server has no such fallback: a client's rtt reads **0.0 until
 that slot's first ack sample arrives**. Treat a server-side zero as "not measured
 yet", not as a zero-millisecond link.
+
+**Jitter is not the same measurement on the two ends**, so the two figures are
+not comparable even though both are milliseconds. The client's jitter is
+**inter-arrival** jitter over the session sequence — a property of packet arrival
+spacing. The server's per-client jitter is the **mean deviation of its rtt samples
+above their minimum** — a property of its round trips, computed off the same
+history as the rtt floor above, and therefore carrying the same long window. A
+client jitter of 5 ms and a server jitter of 5 ms are not the same statement
+about the connection.
 
 Loss is asymmetric too, and the difference matters when you compare the two ends:
 the client's `packet_loss` is **receive-side**, from gaps in the session sequence

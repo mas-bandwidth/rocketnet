@@ -838,9 +838,9 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // committed to its asynchronous staging stay committed, so the burn is
 // the remainder). Since receive-side loss statistics are computed from
 // gaps in the session sequence, a failed fragmented send moves that
-// figure by its fragment count rather than by one -- at the default
-// 16384-byte maximum payload that is 14. USAGE.md carries the worked
-// arithmetic.
+// figure by UP TO its fragment count rather than by one -- at the default
+// 16384-byte maximum payload that ceiling is 14. USAGE.md carries the
+// worked arithmetic.
 
 struct rocketnet_packet_context_t
 {
