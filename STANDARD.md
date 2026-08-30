@@ -1960,7 +1960,7 @@ application update.
 
 | Value | Default | Applies to |
 |---|---|---|
-| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once confirmed — _Keep-alive generation_) |
+| Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once one has been acknowledged — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
@@ -2204,13 +2204,13 @@ retransmits it at the send rate, and the server's response processing tolerates
 it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
 answering. A lost keep-alive: the next one is at most a send interval away, in
-both directions, forever — and to an unconfirmed client that bound holds
-against a continuous payload stream, because _Keep-alive generation_ forbids
-traffic from suppressing a keep-alive to a client that has not been observed to
-hold its index. The establishment keep-alive is the packet this clause exists
+both directions, forever — and to a client that has not yet established, that
+bound holds against a continuous payload stream, because _Keep-alive
+generation_ forbids traffic from suppressing a keep-alive until one has been
+acknowledged. The establishment keep-alive is the packet this clause exists
 for: it is the only one carrying the client index, and its loss is the only
-loss the receiving end cannot re-provoke by retransmitting. A lost ack: every
-later block restates the same
+loss that leaves the receiving end waiting and that it cannot re-provoke by
+retransmitting. A lost ack: every later block restates the same
 receive state, so no single ack packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
 and nothing waits for it — the abandoned counter records it and the connection
@@ -2580,7 +2580,7 @@ only data already verified.
   the client unconfirmed, and respond with a _connection keep-alive packet_. If
   this keep-alive is lost, the ones generated at the send rate repeat the
   answer — and per _Keep-alive generation_ they are not suppressed by whatever
-  else the server sends this client, because the client is unconfirmed.
+  else the server sends this client, because none has been acknowledged yet.
 
 ### Processing session packets at the server
 
@@ -2621,32 +2621,14 @@ exists because the
 server has not yet observed that the client received its keep-alive, so it does
 not yet know the client considers itself connected.
 
-**What the flag is allowed to prove, and the client obligation that makes it
-true.** _Keep-alive generation_ hangs a MUST on this flag, so what it proves
-has to be required rather than merely observed. The session keys exist from the
-challenge, so a client is *able* to seal a session packet before it is
-_connected_; nothing about the keys prevents it. The obligation is therefore
-normative:
-
-**A client MUST NOT send a sealed session packet before it reaches
-_connected_, with one exception: the disconnect burst, which it MAY send from
-_sending connection response_ to abandon an attempt.** A client that seals
-anything else from that state is not conformant.
-
-The exception is safe by construction and needs no carve-out in the generation
-rule. A disconnect releases the slot and destroys the mapping in the same
-processing pass that confirms it, and _Slot reset_ clears the confirmed flag
-with the rest of the slot, so there is no point between the confirm and the
-release at which generation runs on that slot.
-
-Given the obligation, the flag is exact on every slot a keep-alive decision is
-ever taken for: confirmed means the server has proof the client is connected,
-unconfirmed means it has none. **A client that violates the obligation strands
-only itself** — it confirms its own slot, the server switches to
-traffic-suppressed pacing, and the keep-alive carrying its index stops
-arriving. It holds the session keys for its own connection alone, so it cannot
-inflict this on any other client. That is why a conformance obligation is the
-right remedy here and no server-side check is required.
+**What the flag does not decide.** The confirmed flag says a sealed packet
+arrived from this client. It does **not** say the client holds its client
+index: the session keys exist from the challenge, so a client can legally seal
+before it is _connected_ — indeed _Acks_ invites one to, since a client in
+_sending connection response_ is already being delivered payloads and already
+accruing ack debt. **Keep-alive generation therefore does not read this
+flag**; it reads the acknowledgment test below. The flag keeps its own job,
+which is telling the server whether it has heard from a slot at all.
 
 **There is no keep-alive prefixing for unconfirmed clients, and the
 subtraction is deliberate.** netcode prefixed every payload to an unconfirmed
@@ -2660,26 +2642,51 @@ the first one is still what moves the client to _connected_; payloads simply
 do not wait for it.
 
 **Keep-alive generation, and what suppression is allowed to read.** The rule
-turns on the confirmed flag, because the flag is exactly the server's knowledge
-of whether the client has its index yet.
+turns on one question — **has this client received a keep-alive?** — and the
+server answers it from its own delivery bookkeeping, asking nothing of the
+client.
 
-* **To a CONFIRMED client**, the server sends a keep-alive whenever the send
-  rate interval has elapsed since it last sent that client *anything*.
-  Keep-alives are suppressed by ordinary traffic there and appear only when the
-  connection is otherwise idle. The client does the same toward the server once
-  connected, on the same reading.
-* **To an UNCONFIRMED client**, the server sends a keep-alive whenever the send
-  rate interval has elapsed since it last sent that client *a keep-alive*.
-  Ordinary traffic MUST NOT suppress it. Generation there is driven by elapsed
-  time and nothing else, exactly as _Timing_ requires of every retransmission.
+* **Until a keep-alive the server sent to this client has been
+  acknowledged**, the server sends a keep-alive whenever the send rate
+  interval has elapsed since it last sent that client *a keep-alive*. Ordinary
+  traffic MUST NOT suppress it. Generation is driven by elapsed time and
+  nothing else, exactly as _Timing_ requires of every retransmission.
+* **Once one has been acknowledged**, the server sends a keep-alive whenever
+  the send rate interval has elapsed since it last sent that client
+  *anything*. Keep-alives are suppressed by ordinary traffic there and appear
+  only when the connection is otherwise idle. The client does the same toward
+  the server once connected, on the same reading.
+
+**Why the acknowledgment is the exact test.** A keep-alive carries the client
+index, and processing a keep-alive is the client's *only* transition to
+_connected_. So an acknowledged keep-alive proves the client received one,
+which proves it holds its index and is connected — the very packet whose
+receipt is proven is the packet that connects it. Every session packet carries
+an ack block, so the proof arrives on whatever the client is already sending
+and needs no particular packet type from it.
+
+**And it asks nothing of the client, which is the point.** The defect this
+rule exists to prevent is *a client that has not established being starved of
+the packet that would establish it*. Any test that depends on client behaviour
+sits inside the class it repairs. Two that look adequate are not: **the
+confirmed flag** is set by any sealed packet, so a client following _Acks_ can
+confirm itself before it holds its index and strand itself; and **an index
+echoed back in the client's own keep-alive** is unreachable for a busy client,
+whose keep-alives its own traffic suppresses. The acknowledgment is derived
+from information the server already holds about packets it already sent.
+
+**The failure direction is the safe one.** If the client's acks are lost or
+delayed, the test simply stays unsatisfied and unsuppressed keep-alives
+continue — more keep-alives, never fewer. Loss degrades toward extra bandwidth,
+bounded by the send rate, and never toward stranding.
 
 **Why the carve-out is mandatory, not an optimization.** The keep-alive is the
 only packet that carries the client index, and receiving one is the only thing
 that moves a client from _sending connection response_ to _connected_. A client
-that has not received one sends nothing sealed — its only outbound packet is
-the retransmitted connection response, which the server ignores as already
-connected — so the client cannot repair a lost establishment keep-alive, and
-the slot stays unconfirmed. The repair can only come from the server's own
+that has not received one cannot ask for one: the only packet it can send that
+the server will act on is the retransmitted connection response, which the
+server ignores as already connected. Nothing it sends re-provokes a
+keep-alive, so the repair can only come from the server's own
 pacing. If suppression read the last send of anything in that state, a server
 application sending payloads continuously would restamp the clock the repair
 waits on, every keep-alive after the lost one would be suppressed, and the
@@ -2688,25 +2695,26 @@ that was carrying payloads the whole time. That is the case the loss
 walkthrough's invariant forbids, and this is the sentence that keeps the
 walkthrough's "the next one is at most a send interval away" true.
 
-**What it costs.** An unconfirmed client receives keep-alives at the send rate
-in addition to whatever the application sends it. The window is one round trip
-in the ordinary case. **The bound is the peer's retransmission behaviour, not
-either of the server's deadlines**, and it is worth being exact about why. The
+**What it costs.** A client whose keep-alive has not yet been acknowledged
+receives keep-alives at the send rate in addition to whatever the application
+sends it. The window is one round trip in the ordinary case. **The bound is
+the peer's behaviour, not either of the server's deadlines**, and it is worth
+being exact about why. The
 handshake deadline governs only a mapping that has not established, and a slot
-is assigned at establishment, so an unconfirmed slot is already past it. The
+is assigned at establishment, so such a slot is already past it. The
 connection timeout does not close the window on its own either: a retransmitted
 connection response refreshes the slot's last-received time even though the
 response itself is ignored as already connected. So the window lasts as long as
-the client keeps retransmitting, and for a conformant client that is its own
-total connect deadline — the token lifetime — after which it stops and the
-connection timeout fires.
+the client keeps retransmitting without ever acknowledging a keep-alive, and
+for a client that follows this document that is its own total connect deadline
+— the token lifetime — after which it stops and the connection timeout fires.
 
 Inside the window the rate is bounded by the send rate, on a slot that is
-already committed, and it is the same 10 Hz an idle confirmed client already
+already committed, and it is the same 10 Hz an idle established client already
 draws. So this is a bounded cost on a committed resource, not a new amplifier:
 a peer cannot use it to make the server send more than the send rate, and
 cannot direct it at anyone but itself. This is the
-unsuppressed-while-unconfirmed rule netcode carried on its payload prefixing,
+unsuppressed-until-established rule netcode carried on its payload prefixing,
 recovered here without the prefixing that the subtraction above deliberately
 removes.
 

@@ -2773,6 +2773,33 @@ static int rocketnet_test_write_session_packet_salted( uint8_t * packet, uint8_t
                                           ROCKETNET_TEST_PROTOCOL_ID, salt, NULL, key );
 }
 
+// the same, but carrying a real ack block: a single received run of
+// run_length sequences ending at largest, inclusive. lets a test say
+// exactly which of the server's packets the client claims to have received.
+
+static int rocketnet_test_write_session_packet_acking( uint8_t * packet, uint8_t packet_type, uint64_t sequence,
+                                                       const uint8_t * type_data, int type_data_bytes,
+                                                       const uint8_t * key,
+                                                       uint64_t largest, uint32_t run_length )
+{
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof(block) );
+    block.largest = largest;
+    block.first_range_length = run_length;
+    block.num_ranges = 0;
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    int block_bytes = rocketnet_ack_block_write( plaintext, &block );
+    if ( type_data_bytes > 0 )
+        memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
+
+    return rocketnet_write_sealed_packet( packet, packet_type, tag, sequence, NULL,
+                                          plaintext, block_bytes + type_data_bytes,
+                                          ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, key );
+}
+
 static int rocketnet_test_write_session_packet( uint8_t * packet, uint8_t packet_type, uint64_t sequence,
                                                 const uint8_t * type_data, int type_data_bytes,
                                                 const uint8_t * key )
@@ -3249,24 +3276,49 @@ void rocketnet_test_server_keep_alive_pacing()
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.05, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.11, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
-    // UNCONFIRMED: a payload send does NOT suppress the next keep-alive.
-    // The client has not been observed to hold its index yet, and the
-    // keep-alive is the only packet that carries it, so generation runs off
-    // elapsed time alone -- the payload at 100.15 changes nothing, and the
-    // keep-alive is due one interval after the last keep-alive at 100.11.
+    // UNPROVEN: a payload send does NOT suppress the next keep-alive. The
+    // server has no proof this client received a keep-alive, and the
+    // keep-alive is the only packet carrying its index, so generation runs
+    // off elapsed time alone -- the payload at 100.15 changes nothing, and
+    // the keep-alive is due one interval after the last one at 100.11.
+    // (server session sequences so far: 1 ka, 2 ka, 3 payload, 4 ka)
     const uint8_t data[4] = { 1, 2, 3, 4 };
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.15, packet ) > 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.16, packet ) == 0 );
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.22, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
-    // CONFIRMED: suppression begins. The server has now seen a sealed packet
-    // from this client, which it can only have sent from _connected_, so
-    // nothing is waiting on a keep-alive and ordinary traffic is the
-    // keep-alive.
-    rocketnet_client_slots_confirm( test.server.client_slots, 0 );
-    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.25, packet ) > 0 );
-    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.32, packet ) == 0 );
-    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.36, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    // AN ACK THAT COVERS ONLY A PAYLOAD IS NOT PROOF. The client
+    // acknowledges sequence 3 -- the payload -- and nothing else. That
+    // confirms the slot in the old sense and says nothing about whether the
+    // client holds its index, so the regime MUST NOT flip: the payload at
+    // 100.25 still fails to suppress the keep-alive due at 100.33.
+    uint8_t client_packet[ROCKETNET_RECEIVE_CEILING];
+    int client_bytes = rocketnet_test_write_session_packet_acking( client_packet, ROCKETNET_CONNECTION_ACK_PACKET, 1,
+                                                                   NULL, 0, client_keys.session_client_to_server, 3, 1 );
+    rocketnet_check( client_bytes > 0 );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, client_bytes, response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );        // confirmed, and still not proof
+    rocketnet_check( !test.server.acks->endpoints[0].keep_alive_acked );
+
+    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.25, packet ) > 0 );      // seq 5
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.33, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );   // seq 6
+
+    // AN ACK THAT COVERS A KEEP-ALIVE IS PROOF, and only now does the
+    // regime flip. Sequence 6 is the keep-alive just written; acknowledging
+    // it proves the client opened a keep-alive, which carries its index and
+    // is its only transition to _connected_.
+    client_bytes = rocketnet_test_write_session_packet_acking( client_packet, ROCKETNET_CONNECTION_ACK_PACKET, 2,
+                                                               NULL, 0, client_keys.session_client_to_server, 6, 1 );
+    rocketnet_check( client_bytes > 0 );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, client_bytes, response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( test.server.acks->endpoints[0].keep_alive_acked );
+
+    // PROVEN: ordinary traffic is the keep-alive again.
+    rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.36, packet ) > 0 );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.44, packet ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.47, packet ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // a disconnected index degrades to zero, never an assert
     rocketnet_check( rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 3, 200.0, packet ) == 0 );
@@ -3387,11 +3439,13 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     // connection response_ -- is lost, while the server application sends
     // payloads continuously from the moment the slot exists.
     //
-    // The client is unconfirmed the whole time, because a client that has
-    // not learned its index sends nothing sealed: its only outbound packet
-    // is the retransmitted connection response, which the server ignores as
-    // already connected. So nothing the client can do repairs the loss; the
-    // repair has to come from the server's own pacing.
+    // No keep-alive is ever acknowledged here, because none is ever
+    // received. Nor can the client ask for one: the only packet it sends
+    // that the server acts on is the retransmitted connection response,
+    // which is ignored as already connected. So nothing the client can do
+    // repairs the loss; the repair has to come from the server's own
+    // pacing. (The companion test below covers the case where the client
+    // DOES send sealed traffic in this state, which is legal.)
     //
     // What must hold: the keep-alive generated at the send rate reaches the
     // client despite the payload stream, and the connection establishes.
@@ -3503,6 +3557,133 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
     rocketnet_check( payloads_received_while_unconfirmed >= 5 );
     rocketnet_check( (double) payloads_sent_while_unconfirmed * tick >= connected_time - establishment_time - 2.0 * tick );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_keep_alive_pacing_survives_early_ack()
+{
+    // The second half of #90, found by a cold reader refuting the first fix.
+    //
+    // That fix flipped the suppression regime on the confirmed flag, and
+    // justified it with "a client sends nothing sealed before _connected_".
+    // The standard's own _Acks_ tells a client otherwise: a standalone ack
+    // SHOULD go out when the ack debt reaches its threshold, with no state
+    // qualifier, and a client in _sending connection response_ is already
+    // being delivered payloads and accruing debt. A client that obeys that
+    // SHOULD seals a type 8 from state 3, confirms its own slot, and the
+    // server switches to traffic-suppressed pacing before the client has
+    // ever learned its index -- #90 again, with no packet loss needed after
+    // the establishment keep-alive.
+    //
+    // This test builds that type 8 exactly as a conformant client would --
+    // the client's own session key, its own replay state, its own sequence
+    // -- rather than reaching into a private gate, because the point is
+    // that the packet is LEGAL, not that it is forced.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+    test.server.send_rate = 10.0;
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x90ACEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    const double tick = 0.01;
+    double establishment_time = -1.0;
+    double connected_time = -1.0;
+    int early_ack_sent = 0;
+    int payloads_sent_while_unconfirmed = 0;      // counted while the CLIENT is not yet connected
+
+    for ( double time = 100.0; time < 110.0 && connected_time < 0.0; time += tick )
+    {
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes > 0 )
+        {
+            int result = rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                                   ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                                   payload, &payload_bytes, &payload_client_index );
+            if ( result == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE )
+            {
+                // the same punched loss as the first reproduction: the
+                // establishment keep-alive never reaches the wire
+                rocketnet_check( establishment_time < 0.0 );
+                establishment_time = time;
+                response_bytes = 0;
+            }
+            if ( response_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+        }
+
+        rocketnet_server_protocol_update( &test.server, time );
+
+        if ( rocketnet_client_slots_connected( test.server.client_slots, 0 ) )
+        {
+            const uint8_t stream_byte[1] = { 0x5A };
+            int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_byte, 1, time, response );
+            rocketnet_check( stream_bytes > 0 );
+            if ( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                payloads_sent_while_unconfirmed++;
+            rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, &payload_bytes );
+
+            // the conformant standalone ack, sealed from _sending connection
+            // response_, sent once as soon as the client has something to
+            // acknowledge. this is the packet _Acks_ asks for.
+
+            if ( !early_ack_sent && client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
+                 client.ack.ack_debt > 0 )
+            {
+                uint8_t block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+                int block_bytes = rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &client.replay_session );
+                uint8_t early_ack[ROCKETNET_RECEIVE_CEILING];
+                int early_ack_bytes = rocketnet_write_sealed_packet( early_ack, ROCKETNET_CONNECTION_ACK_PACKET,
+                                                                     client.filter_value, client.send_sequence_session,
+                                                                     NULL, block, block_bytes,
+                                                                     client.signed_fields.protocol_id, client.connection_salt,
+                                                                     NULL, client.keys.session_client_to_server );
+                rocketnet_check( early_ack_bytes > 0 );
+                client.send_sequence_session++;
+                rocketnet_server_protocol_process_packet( &test.server, &test.client_address, early_ack, early_ack_bytes,
+                                                          ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                          payload, &payload_bytes, &payload_client_index );
+                early_ack_sent = 1;
+            }
+
+            int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, response );
+            if ( keep_alive_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &client, response, keep_alive_bytes, time, payload, &payload_bytes );
+        }
+
+        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            connected_time = time;
+    }
+
+    // the setup actually happened: the loss landed, and the legal early ack
+    // went out and was accepted -- without both, nothing below is meaningful
+
+    rocketnet_check( establishment_time > 0.0 );
+    rocketnet_check( early_ack_sent == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_ACCEPTED] >= 1 );
+    rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
+
+    // and the client still connects: an ack from a client that does not yet
+    // hold its index MUST NOT be taken as proof that it does
+
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( client.client_index == 0 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -11227,6 +11408,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_payload_before_first_keep_alive );
         RUN_TEST( test_client_keep_alive_suppression );
         RUN_TEST( test_keep_alive_unconfirmed_under_payload_traffic );
+        RUN_TEST( test_keep_alive_pacing_survives_early_ack );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );
         RUN_TEST( test_request_path_cookie_gate );

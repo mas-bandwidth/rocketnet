@@ -239,12 +239,28 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     record->wire_bytes = (uint32_t) wire_bytes;
     record->acked = 0;
     record->has_packet_id = (uint8_t) ( has_packet_id != 0 );
+    record->was_keep_alive = 0;
 
     // fill-phase threads record concurrently under distinct sequences, so
     // the high-water fold is a compare-exchange max: whatever the
     // interleaving, the mark ends at the largest recorded sequence
 
     rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
+}
+
+void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( sequence != 0 );
+
+    struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+
+    // the record must still be this sequence's: a recycled entry belongs to
+    // a later packet and must not be tagged. missing the tag only delays the
+    // latch to the next keep-alive, which is the safe direction.
+
+    if ( record->sequence == sequence )
+        record->was_keep_alive = 1;
 }
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
@@ -346,6 +362,12 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             {
                 record->acked = 1;
                 newly_acked++;
+
+                // the proof _Keep-alive generation_ turns on: this peer
+                // received a keep-alive, so it holds its client index
+
+                if ( record->was_keep_alive )
+                    endpoint->keep_alive_acked = 1;
 
                 // the first block that acknowledges a sequence yields one
                 // rtt sample: the elapsed time between sending it and

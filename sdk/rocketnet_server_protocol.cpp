@@ -1139,10 +1139,19 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     rocketnet_assert( bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     // the keep-alive's own clock, which only keep-alives move. it is what
-    // paces generation to an unconfirmed client, where ordinary traffic
-    // must not suppress -- see the due predicate below.
+    // paces generation to an unproven client, where ordinary traffic must
+    // not suppress -- see the due predicate below.
 
     mapping->last_keep_alive_send_time = current_time;
+
+    // and the tag that makes this packet's acknowledgment mean something:
+    // write_session_packet recorded the sequence just above, and an ack of
+    // it is the server's proof that this client received a keep-alive.
+    // send_sequence_session was incremented past it, so the sequence sent
+    // is the one before.
+
+    if ( server->acks && client_index >= 0 )
+        rocketnet_ack_endpoint_mark_keep_alive( &server->acks->endpoints[client_index], mapping->send_sequence_session - 1 );
 
     rocketnet_spam( "server sent keep alive to client %d", client_index );
 
@@ -1189,46 +1198,53 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
         return 0;
 
     // Which clock the suppression reads is the whole of this rule, and it
-    // turns on the confirmed flag.
+    // turns on one question: HAS THIS CLIENT RECEIVED A KEEP-ALIVE?
     //
-    // While the client is UNCONFIRMED the server has not observed that the
-    // client received a keep-alive, so it has not observed that the client
-    // knows its own index -- and the keep-alive is the only packet that
-    // carries it. Generation there is driven by elapsed time alone, off the
-    // keep-alive's own clock, and ordinary traffic does not suppress it.
-    // Reading last_send_time in that state is what let a continuous payload
-    // stream starve confirmation forever (#90): every payload restamped the
-    // clock the repair was waiting on, and the loss walkthrough's "the next
-    // one is at most a send interval away" became false.
+    // UNTIL IT HAS, generation runs off the keep-alive's own clock and
+    // ordinary traffic does not suppress it. Reading last_send_time there is
+    // what let a continuous payload stream starve establishment forever
+    // (#90): every payload restamped the clock the repair was waiting on,
+    // and the loss walkthrough's "the next one is at most a send interval
+    // away" became false. The keep-alive is the only packet carrying the
+    // client index, and a client that lacks its index cannot re-provoke one,
+    // so this is the one repair that must not be suppressible.
     //
-    // ONCE CONFIRMED the client is known to be connected, so nothing is
-    // waiting on a keep-alive any more and ordinary traffic is the
-    // keep-alive, off last_send_time as before.
+    // ONCE IT HAS, the client holds its index and is connected, nothing is
+    // waiting on a keep-alive, and ordinary traffic is the keep-alive --
+    // last_send_time, as before.
     //
-    // What makes that inference sound is a CONFORMANCE OBLIGATION, not an
-    // observation: the standard requires that a client not send a sealed
-    // session packet before _connected_, the disconnect burst excepted. The
-    // keys exist from the challenge, so a client is able to seal earlier --
-    // it is simply not allowed to. The disconnect exception cannot reach
-    // this predicate, because process_packet confirms the slot and then, in
-    // the same pass, releases it and destroys the mapping, and release
-    // clears the confirmed flag. A client that violates the obligation
-    // confirms its own slot and strands only itself.
+    // THE PROOF IS THE ACK, and it is exact. A keep-alive carries the client
+    // index, and processing a keep-alive is the client's ONLY transition to
+    // _connected_. So "a keep-alive I sent has been acknowledged" implies
+    // the client received one, which implies it holds its index AND is
+    // connected: the very packet whose receipt is proven is the packet that
+    // connects it.
     //
-    // The unconfirmed window lasts as long as the peer keeps retransmitting
-    // its connection response -- neither the handshake deadline (which
-    // covers only unestablished mappings, and this slot is established) nor
-    // the connection timeout (which that retransmission refreshes) closes it
-    // -- so for a conformant client it is the total connect deadline. Inside
-    // it the rate is the send rate, the same an idle confirmed client draws.
-    // This is netcode's unsuppressed-while-unconfirmed rule, recovered
-    // without the payload prefixing _Connected Clients_ subtracts.
+    // This asks NOTHING OF THE CLIENT, which is why it replaced the earlier
+    // confirmed-flag test. The defect class is "a client that does not
+    // confirm gets stranded", so any predicate that depends on client
+    // behaviour sits inside the class it repairs. The confirmed flag was
+    // such a predicate: it is set by ANY sealed packet, and _Acks_ invites a
+    // client in _sending connection response_ to send a standalone ack, so a
+    // conformant client could confirm itself before it had its index and
+    // strand itself. The ack of a keep-alive cannot be produced that way.
+    //
+    // IT FAILS SAFE. If the client's acks are lost the latch stays unset and
+    // unsuppressed keep-alives continue -- more keep-alives, never fewer, so
+    // loss degrades toward the pre-fix bandwidth rather than toward
+    // stranding. The rate is bounded by the send rate, the same an idle
+    // client already draws.
 
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
 
-    double last = rocketnet_client_slots_confirmed( server->client_slots, client_index )
-                    ? mapping->last_send_time
-                    : mapping->last_keep_alive_send_time;
+    // no ack bookkeeping means no proof is obtainable; fall back to the
+    // unsuppressed clock, which is the safe direction
+
+    int proven = server->acks && client_index >= 0
+                    ? (int) server->acks->endpoints[client_index].keep_alive_acked
+                    : 0;
+
+    double last = proven ? mapping->last_send_time : mapping->last_keep_alive_send_time;
 
     if ( current_time - last < 1.0 / send_rate )
         return 0;
