@@ -1721,6 +1721,18 @@ MUST be zero, and MUST NOT be zero otherwise.** The all-zero 7-byte block is
 the valid statement of a fresh connection, by construction rather than by
 special case.
 
+**A block MUST NOT name a sequence its sender has not opened.** The ranges are
+a statement about the sender's own receive state, and every received run it
+enumerates MUST consist of sequences it actually opened. This is a *sender*
+obligation and the receiver cannot verify it — a block that over-claims is
+indistinguishable on the wire from a truthful one, because only the sender
+knows what it received. It is stated as a MUST because rules elsewhere depend
+on it: _Keep-alive generation_ reads an acknowledgment as the peer's claim to
+have received a keep-alive, and delivery notification generally is only as
+truthful as the blocks it is built from. An implementation that over-claims
+corrupts its own delivery information and, per _Keep-alive generation_, can
+strand its own connection; it cannot affect any other.
+
 _Largest received_ is the low 32 bits of the receiver's highest-opened 64-bit
 session sequence — the same high-water mark replay protection keeps, all five
 session types. The sender that reads it already tracks which of its own
@@ -2657,36 +2669,96 @@ client.
   only when the connection is otherwise idle. The client does the same toward
   the server once connected, on the same reading.
 
-**Why the acknowledgment is the exact test.** A keep-alive carries the client
-index, and processing a keep-alive is the client's *only* transition to
-_connected_. So an acknowledged keep-alive proves the client received one,
-which proves it holds its index and is connected — the very packet whose
-receipt is proven is the packet that connects it. Every session packet carries
-an ack block, so the proof arrives on whatever the client is already sending
-and needs no particular packet type from it.
+**What the acknowledgment actually tells the server.** A keep-alive carries
+the client index, and processing a keep-alive is the client's *only*
+transition to _connected_. So a client that acknowledges a keep-alive is
+claiming to have received the one packet that would have connected it: if the
+claim is true the client holds its index and is connected, and the packet
+whose receipt it claims is the packet that connects it.
 
-**And it asks nothing of the client, which is the point.** The defect this
+**It is a claim, not a proof, and the server neither validates it nor needs
+to.** An ack block is the peer's statement about its own receive state, and no
+receiver can check it — _Acks_ requires a block to name only sequences its
+sender opened, but that is a sender obligation, unverifiable on the wire. The
+server takes the claim at face value. Every session packet carries a block, so
+the claim arrives on whatever the client is already sending, and no particular
+packet type is required of it.
+
+**What makes it the right test is which clients can trip it.** The defect this
 rule exists to prevent is *a client that has not established being starved of
-the packet that would establish it*. Any test that depends on client behaviour
-sits inside the class it repairs. Two that look adequate are not: **the
-confirmed flag** is set by any sealed packet, so a client following _Acks_ can
-confirm itself before it holds its index and strand itself; and **an index
-echoed back in the client's own keep-alive** is unreachable for a busy client,
-whose keep-alives its own traffic suppresses. The acknowledgment is derived
-from information the server already holds about packets it already sent.
+the packet that would establish it*, so the test must not be satisfiable by a
+client that is behaving correctly but has not established. Measured on that
+axis, two alternatives that look adequate are not:
 
-**The failure direction is the safe one.** If the client's acks are lost or
-delayed, the test simply stays unsatisfied and unsuppressed keep-alives
-continue — more keep-alives, never fewer. Loss degrades toward extra bandwidth,
-bounded by the send rate, and never toward stranding.
+* **the confirmed flag** — set by any sealed packet, and _Acks_ positively
+  invites a client in _sending connection response_ to send a standalone ack.
+  A **conformant** client trips it before it holds its index, and strands
+  itself by doing exactly what this document told it to do.
+* **an index echoed back in the client's own keep-alive** — unreachable for a
+  busy client, whose own traffic suppresses its keep-alives, so the
+  unsuppressed rate would never end for the connections that need it least.
+
+The acknowledgment test is tripped only by a client that names a sequence it
+did not open — a violation of the block-building MUST in _Acks_. It is
+therefore unreachable for any correct implementation, which is the property
+the confirmed flag lacked. It is not unreachable for an incorrect one, which
+the next paragraph addresses.
+
+**Both failure directions.** If the client's acks are lost or delayed, the
+test stays unsatisfied and unsuppressed keep-alives continue — more
+keep-alives, never fewer. Loss degrades toward extra bandwidth, bounded by the
+send rate, and never toward stranding.
+
+In the other direction, a client that over-claims in its ack block — naming a
+keep-alive sequence it never opened, contrary to _Acks_ — satisfies the test
+without holding its index. The server then suppresses keep-alives to it, and
+it can sit in _sending connection response_ until its total connect deadline.
+**Such a client strands only itself.** The block rides inside a packet sealed
+under that connection's own session keys, applies only to that client's own
+slot, and cannot be produced by anyone else for it; no other client's pacing
+is affected, and the slot table and reclaim behave normally.
+
+*This is the paragraph to read first if you are writing a client and seeing
+connections hang in _sending connection response_ while payloads arrive
+normally.* The likely cause is an ack block that claims more than it opened —
+a cumulative or optimistic acknowledgment scheme, rather than one built
+strictly from the sequences actually opened. The transport cannot detect this
+for you, because on the wire an over-claiming block is indistinguishable from
+a truthful one.
+
+**An invariant the confirmation test depends on — stated here so it cannot be
+broken silently.** The test above is exact only because *an authentically
+opened keep-alive always reaches its state transition at the client*. That is
+not self-evident, because two checks stand between opening a packet and acting
+on it — the ack block's validity check and the type's opened-size check — and
+_Reading packets_ requires the replay window to be marked **before** both. A
+packet's sequence therefore enters the client's outgoing ack block earlier than
+the point at which the packet is acted on. If either check were reachable for
+an authentic keep-alive, a client could acknowledge a keep-alive it never acted
+on, the server would read that acknowledgment as proof of an index the client
+does not hold, and the stranding this section exists to prevent would return.
+
+Neither is reachable today, and the reason is structural: a packet that opens
+authentically was sealed by the server, so its ack block is one the server
+built and its type data is exactly the eight bytes the server wrote. Both
+checks pass by construction, for every authentic keep-alive.
+
+**This is a required property, not a happy accident.** Any change to the ack
+block's encoding or validity rules, to the keep-alive's type data or size, or
+to the order in which the replay window is marked relative to those checks,
+MUST preserve it. A change that makes either check reachable for an authentic
+keep-alive invalidates the proof, and _Keep-alive generation_'s confirmation
+test MUST then be re-derived rather than assumed to still hold.
 
 **Why the carve-out is mandatory, not an optimization.** The keep-alive is the
 only packet that carries the client index, and receiving one is the only thing
 that moves a client from _sending connection response_ to _connected_. A client
-that has not received one cannot ask for one: the only packet it can send that
-the server will act on is the retransmitted connection response, which the
-server ignores as already connected. Nothing it sends re-provokes a
-keep-alive, so the repair can only come from the server's own
+that has not received one cannot ask for one. It is not that the server
+ignores everything such a client sends — a standalone ack from _sending
+connection response_ is acted on, per _Processing session packets at the
+server_ — but that **nothing it can send re-provokes a keep-alive**: its
+connection response is ignored as already connected, and no session type
+elicits one. So the repair can only come from the server's own
 pacing. If suppression read the last send of anything in that state, a server
 application sending payloads continuously would restamp the clock the repair
 waits on, every keep-alive after the lost one would be suppressed, and the

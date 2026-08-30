@@ -1066,7 +1066,8 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
                                                   const uint8_t * type_data,
                                                   int type_data_bytes,
                                                   double current_time,
-                                                  uint8_t * out_packet )
+                                                  uint8_t * out_packet,
+                                                  uint64_t * out_sequence )
 {
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
     rocketnet_assert( type_data_bytes <= 8 );
@@ -1097,6 +1098,15 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     mapping->send_sequence_session++;
     mapping->last_send_time = current_time;
 
+    // the sequence this packet actually carried, reported to the caller
+    // rather than left to be re-derived from the counter. re-reading
+    // send_sequence_session - 1 is only correct while nothing else can send
+    // on this mapping in between, which is a contract stated in another
+    // file; a caller that needs the sequence gets it from here.
+
+    if ( out_sequence )
+        *out_sequence = sequence;
+
     if ( server->acks && client_index >= 0 )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
@@ -1124,9 +1134,11 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     rocketnet_write_uint32( &p, (uint32_t) client_index );
     rocketnet_write_uint32( &p, (uint32_t) rocketnet_client_slots_max_clients( server->client_slots ) );
 
+    uint64_t keep_alive_sequence = 0;
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                        ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                       keep_alive_data, 8, current_time, out_packet );
+                                                       keep_alive_data, 8, current_time, out_packet,
+                                                       &keep_alive_sequence );
 
     // a failed seal is not a send, and MUST NOT stamp the clock below: the
     // assert vanishes in release, and stamping there would buy a full send
@@ -1151,7 +1163,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     // is the one before.
 
     if ( server->acks && client_index >= 0 )
-        rocketnet_ack_endpoint_mark_keep_alive( &server->acks->endpoints[client_index], mapping->send_sequence_session - 1 );
+        rocketnet_ack_endpoint_mark_keep_alive( &server->acks->endpoints[client_index], keep_alive_sequence );
 
     rocketnet_spam( "server sent keep alive to client %d", client_index );
 
@@ -1178,7 +1190,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
 
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                        ROCKETNET_CONNECTION_ACK_PACKET,
-                                                       NULL, 0, current_time, out_packet );
+                                                       NULL, 0, current_time, out_packet, NULL );
 
     rocketnet_spam( "server sent standalone ack to client %d", client_index );
 
@@ -1213,27 +1225,32 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // waiting on a keep-alive, and ordinary traffic is the keep-alive --
     // last_send_time, as before.
     //
-    // THE PROOF IS THE ACK, and it is exact. A keep-alive carries the client
-    // index, and processing a keep-alive is the client's ONLY transition to
-    // _connected_. So "a keep-alive I sent has been acknowledged" implies
-    // the client received one, which implies it holds its index AND is
-    // connected: the very packet whose receipt is proven is the packet that
-    // connects it.
+    // THE SIGNAL IS THE ACK, and it is a CLAIM rather than a proof. A
+    // keep-alive carries the client index, and processing a keep-alive is
+    // the client's ONLY transition to _connected_, so a client that
+    // acknowledges one is claiming to have received the packet that would
+    // have connected it. The server cannot verify the claim -- an ack block
+    // is the peer's statement about its own receive state -- and does not
+    // need to; see below.
     //
-    // This asks NOTHING OF THE CLIENT, which is why it replaced the earlier
-    // confirmed-flag test. The defect class is "a client that does not
-    // confirm gets stranded", so any predicate that depends on client
-    // behaviour sits inside the class it repairs. The confirmed flag was
-    // such a predicate: it is set by ANY sealed packet, and _Acks_ invites a
-    // client in _sending connection response_ to send a standalone ack, so a
-    // conformant client could confirm itself before it had its index and
-    // strand itself. The ack of a keep-alive cannot be produced that way.
+    // WHY THIS TEST AND NOT THE CONFIRMED FLAG: the defect class is "a
+    // client that has not established is starved of the packet that would
+    // establish it", so the test must not be satisfiable by a client that is
+    // behaving correctly but has not established. The confirmed flag was: it
+    // is set by ANY sealed packet, and _Acks_ invites a client in _sending
+    // connection response_ to send a standalone ack, so a CONFORMANT client
+    // confirmed itself before it had its index and stranded itself. This
+    // test is satisfiable only by a client that names a sequence it never
+    // opened, which _Acks_ forbids when building a block -- unreachable for
+    // any correct implementation.
     //
-    // IT FAILS SAFE. If the client's acks are lost the latch stays unset and
-    // unsuppressed keep-alives continue -- more keep-alives, never fewer, so
-    // loss degrades toward the pre-fix bandwidth rather than toward
-    // stranding. The rate is bounded by the send rate, the same an idle
-    // client already draws.
+    // BOTH FAILURE DIRECTIONS. Lost or delayed acks leave the latch unset
+    // and unsuppressed keep-alives continue -- more, never fewer, bounded by
+    // the send rate. An over-claiming client satisfies the test without its
+    // index and strands ITSELF: the block rides inside a packet sealed under
+    // that connection's own session keys and applies only to that slot, so
+    // it cannot be produced by anyone else for it and no other client's
+    // pacing is affected.
 
     double send_rate = server->send_rate > 0.0 ? server->send_rate : 10.0;
 
@@ -1583,7 +1600,7 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
         int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                            ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                            NULL, 0, mapping->last_send_time,
-                                                           out_packets + i * ROCKETNET_SEND_BUDGET );
+                                                           out_packets + i * ROCKETNET_SEND_BUDGET, NULL );
         rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
         rocketnet_assert( i == 0 || bytes == burst_bytes );
         burst_bytes = bytes;

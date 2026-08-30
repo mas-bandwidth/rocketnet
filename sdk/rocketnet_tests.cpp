@@ -3306,14 +3306,30 @@ void rocketnet_test_server_keep_alive_pacing()
 
     // AN ACK THAT COVERS A KEEP-ALIVE IS PROOF, and only now does the
     // regime flip. Sequence 6 is the keep-alive just written; acknowledging
-    // it proves the client opened a keep-alive, which carries its index and
-    // is its only transition to _connected_.
+    // it CLAIMS the client opened a keep-alive, which carries its index and
+    // is its only transition to _connected_. The server cannot check the
+    // claim; see the note below on what that costs and who it costs.
     client_bytes = rocketnet_test_write_session_packet_acking( client_packet, ROCKETNET_CONNECTION_ACK_PACKET, 2,
                                                                NULL, 0, client_keys.session_client_to_server, 6, 1 );
     rocketnet_check( client_bytes > 0 );
     rocketnet_check( rocketnet_test_process_packet( &test, client_packet, client_bytes, response, &response_bytes,
                                                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     rocketnet_check( test.server.acks->endpoints[0].keep_alive_acked );
+
+    // Note what this block actually was: this synthetic client never opened
+    // sequence 6 -- it never opened anything. It CLAIMED to, and the server
+    // took the claim, because an ack block is the peer's statement about its
+    // own receive state and no receiver can check it. That is the
+    // false-positive direction _Keep-alive generation_ documents, reproduced
+    // here deliberately: an over-claiming block latches the pacing regime.
+    //
+    // And it reaches exactly one slot. The latch lives per client index, and
+    // the block arrived inside a packet sealed under this connection's own
+    // session keys, so no other client's pacing moved -- which is why an
+    // over-claiming client strands only itself.
+
+    for ( int i = 1; i < rocketnet_client_slots_max_clients( test.server.client_slots ); i++ )
+        rocketnet_check( !test.server.acks->endpoints[i].keep_alive_acked );
 
     // PROVEN: ordinary traffic is the keep-alive again.
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, data, 4, 100.36, packet ) > 0 );
@@ -3440,12 +3456,12 @@ void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
     // payloads continuously from the moment the slot exists.
     //
     // No keep-alive is ever acknowledged here, because none is ever
-    // received. Nor can the client ask for one: the only packet it sends
-    // that the server acts on is the retransmitted connection response,
-    // which is ignored as already connected. So nothing the client can do
-    // repairs the loss; the repair has to come from the server's own
-    // pacing. (The companion test below covers the case where the client
-    // DOES send sealed traffic in this state, which is legal.)
+    // received. Nor can the client ask for one: not because the server
+    // ignores everything it sends -- a standalone ack from this state is
+    // acted on, which is what the companion test below turns on -- but
+    // because nothing it can send re-provokes a keep-alive. Its connection
+    // response is ignored as already connected, and no session type elicits
+    // one. So the repair has to come from the server's own pacing.
     //
     // What must hold: the keep-alive generated at the send rate reaches the
     // client despite the payload stream, and the connection establishes.
