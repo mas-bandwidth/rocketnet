@@ -59,9 +59,24 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &server_config, rocketnet_time() );
+    // Bind port zero and adopt what the kernel grants, the #107 shape. This
+    // used to bind 127.0.0.1:40100, and a soak is the worst place for a fixed
+    // port: it is the one binary the estate runs for DAYS, so it is the one
+    // most likely to still hold the port when the next run starts, and CI
+    // runs it nightly beside whatever else is on the box. A collision does
+    // not look like a collision either -- create returns NULL and the run
+    // exits 1, which reads as a soak failure rather than as a busy port.
+    // #107 fixed twelve of these in the test suite; it did not reach here.
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_time() );
     if ( !server )
+    {
+        printf( "soak: failed to create the server transport\n" );
         return 1;
+    }
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
 
     struct rocketnet_client_transport_t * client = NULL;
 
@@ -91,7 +106,7 @@ int main( int argc, char ** argv )
                 rocketnet_client_transport_destroy( client );
             }
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
-            if ( !rocketnet_write_dev_connect_token( "127.0.0.1:40100", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
+            if ( !rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) )
             {
                 printf( "soak: failed to write dev connect token\n" );
                 exit( 1 );

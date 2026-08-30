@@ -407,6 +407,12 @@ int main( int argc, char ** argv )
 
     #define SOAK_NUM_CLIENTS 8
 
+    // These addresses are simulated: every one of them is a key into the
+    // in-memory network simulator and no socket is ever created for any of
+    // them, so the fixed ports here are not the #107 collision hazard and
+    // must NOT be converted to port zero -- the documentation ranges are
+    // deliberate, and two soak_sim processes on one box share nothing.
+
     struct rocketnet_address_t server_address;
     rocketnet_address_parse( &server_address, "203.0.113.10:40000" );
 

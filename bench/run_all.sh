@@ -121,15 +121,24 @@ say ""
 
 PACE=100000
 
+# Ports derive from the pid rather than being fixed, the #107 class: two
+# campaigns on one box -- or a campaign beside a smoke run -- otherwise bind
+# the same numbers, and the loser reports a rate of zero that reads like a
+# slow driver rather than like a busy port.
+
+PORT_BASE=${BENCH_PORT_BASE:-$(( 20000 + ( $$ % 20000 ) ))}
+say "port base       $PORT_BASE (derived from pid; override with BENCH_PORT_BASE)"
+say ""
+
 say "--- harness honesty plants"
 for h in $HARNESSES; do
     say "$h: pace plant at $PACE pps"
-    ./smoke_pair.sh "$h" 9301 "$RECV_CORE" "$SEND_CORE" "pace=$PACE" \
+    ./smoke_pair.sh "$h" $(( PORT_BASE + 1 )) "$RECV_CORE" "$SEND_CORE" "pace=$PACE" \
         > "$RESULTS/honesty_${h}_pace.txt" 2>&1 || say "  $h aborted during the pace plant -- see the file"
     grep -h '^WINDOW' "$RESULTS/honesty_${h}_pace.txt" | tee -a "$REPORT" || true
 
     say "$h: drop-half plant"
-    ./smoke_pair.sh "$h" 9302 "$RECV_CORE" "$SEND_CORE" "drop-half" \
+    ./smoke_pair.sh "$h" $(( PORT_BASE + 2 )) "$RECV_CORE" "$SEND_CORE" "drop-half" \
         > "$RESULTS/honesty_${h}_drophalf.txt" 2>&1 || say "  $h aborted during the drop-half plant -- see the file"
     grep -h '^WINDOW' "$RESULTS/honesty_${h}_drophalf.txt" | tee -a "$REPORT" || true
     say ""
@@ -149,7 +158,7 @@ say ""
 # candidates inside each other's spread are TIED and get said so.
 
 say "--- the matrix (30 s warm-up, 5 x 60 s windows per harness)"
-PORT=9401
+PORT=$(( PORT_BASE + 100 ))
 for h in $HARNESSES; do
     say "$h -> $RESULTS/$h.txt"
     ./run_pair.sh "$h" "$PORT" "${RECV_CORE:-0}" "${SEND_CORE:-0}" \
