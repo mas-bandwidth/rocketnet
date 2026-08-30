@@ -1,12 +1,22 @@
 # Using rocketnet
 
-The authority for the API is [sdk/rocketnet.h](sdk/rocketnet.h): where a contract
-is written down, it is written there, as a comment block above a function or
-above a group of related ones. Not every function carries one — of 84 exported
-functions, 21 have a comment block directly above them — so the header is the
-authority, not a complete reference. This file is the narrative the header cannot
-be: the shape of a frame, the contracts that are sharp enough to cut, and the
-configuration system that decides what a transport actually is at create.
+The authority for the API is [sdk/rocketnet.h](sdk/rocketnet.h), and it is worth
+knowing how it is written before you go looking in it: **contracts are prose
+blocks covering a surface** — the send path, the delivered batch, the config
+table, the driver ladder — **not one comment per function.** So the rule for
+reading it is to find the block above the *region* a function sits in, not the
+line above the declaration. Several of the functions this file describes,
+`rocketnet_server_transport_start_packet` among them, have no comment of their
+own and are governed by a block further up.
+
+That also means the header is not a per-function reference, and a few functions
+have no nearby prose at all. If you cannot find a block that covers the one you
+want, you are reading the implementation rather than a contract, and nothing
+promises its behavior is stable.
+
+This file is the narrative the header cannot be: the shape of a frame, the
+contracts that are sharp enough to cut, and the configuration system that decides
+what a transport actually is at create.
 
 Build and driver-matrix instructions live in [BUILDING.md](BUILDING.md); the wire
 format lives in [STANDARD.md](STANDARD.md).
@@ -138,6 +148,12 @@ So the ways to burn, in rough order of how much they cost:
   is reserved: up to `fragment_count` sequences;
 - a `start_packet` that fails to acquire a frame, an `abort_packet`, or a
   zero-returning `finish_packet` on an unfragmented payload: one each.
+
+The symbols above are the server's. **The client has the same shape** —
+`rocketnet_client_protocol_start_fragments` reserves the same
+`fragment_count - 1` block and a seal failure withdraws the same whole
+reservation — so the counts apply to both ends. The client has no staged driver,
+so it has no partial-withdrawal case.
 
 The receiver's replay window tolerates the gaps, but **receive-side loss
 statistics cannot distinguish them from real loss** — that figure is computed

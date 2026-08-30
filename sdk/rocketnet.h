@@ -825,9 +825,22 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // context are read-only to the caller.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
-// dropped instead (payload out of range, or the connection gone) -- the
-// sequence is burned either way, which the receiver's replay window
-// tolerates.
+// dropped instead (payload out of range, the connection gone, or a wire
+// frame it could not reserve) -- the sequences already taken are burned
+// either way, which the receiver's replay window tolerates.
+//
+// HOW MANY are burned is not always one, and the difference is large
+// enough to reason about. An unfragmented payload burns the single
+// sequence start_packet took. A FRAGMENTED one burns up to
+// fragment_count: finish reserves a block of fragment_count-1 above that
+// first sequence, and a seal failure inside the fragment loop withdraws
+// the whole reservation (on the staged xdp path, fragments already
+// committed to its asynchronous staging stay committed, so the burn is
+// the remainder). Since receive-side loss statistics are computed from
+// gaps in the session sequence, a failed fragmented send moves that
+// figure by its fragment count rather than by one -- at the default
+// 16384-byte maximum payload that is 14. USAGE.md carries the worked
+// arithmetic.
 
 struct rocketnet_packet_context_t
 {
