@@ -244,7 +244,10 @@ rtt floor above and therefore averaged over that whole ring.
 
 Both *rise* when conditions worsen, which is what makes them usable where the rtt
 floor is not; they simply respond on different timescales and measure different
-things. The client's is the one to watch for a fast signal. A client jitter of
+things. The client's is the one to watch for a fast signal — with one caveat that
+matters precisely when you are watching: it updates **only on in-order arrivals**,
+so while packets are being lost it stops moving rather than climbing. Read it
+alongside `packet_loss`, which is what responds to that case. A client jitter of
 5 ms and a server jitter of 5 ms are not the same statement about the connection.
 
 Loss is asymmetric too, and the difference matters when you compare the two ends:
@@ -282,7 +285,7 @@ described below. Reading every `getenv` in `sdk/`, these sit outside it:
 section says so.** It is the pre-#106 override, kept working with its exact old
 meaning: it suppresses the Darwin msgx probe outright. So a config that pins
 `driver = "msgx"` — which the rules below define as "that driver or a loud
-failure" — becomes the failure whenever that variable is set in the environment,
+failure" — becomes the failure whenever that variable is set to `portable`,
 for a reason the pin itself never mentions. If a pinned msgx create refuses on a
 Mac and the ladder logs look wrong, check `ROCKETNET_PUMP` before anything else.
 Whether that variable retires or gains an explicit interaction rule is #128; this
