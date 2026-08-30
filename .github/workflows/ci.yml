@@ -1,32 +1,67 @@
-# rocketnet CI: build the library and every tool the Makefile produces, then run the
-# test suite, on ubuntu and macos — the two platforms the Makefile builds on — and
-# on windows via CMake+MSVC directly (build-and-test-windows below), which is the
-# windows baseline row of the #81 matrix doctrine made real.
+# rocketnet CI: THE PER-COMMIT GATE (#111).
 #
-# This is the family's standard shape (rocketnet's ci.yml is the sibling): make,
-# then run bin/test directly. The Linux build links the XDP dataplane against
-# libbpf/libxdp, so those dev packages are installed there; the XDP program
-# itself (server_xdp) is embedded as a source tarball by the build and compiles
-# on the target kernel, so compiling it needs a kernel with BTF and stays
-# outside this workflow.
+# The split this file's existence rests on is DURATION-DEPENDENCE. Everything
+# here gates and fits in minutes; a check whose value comes from TIME -- deep
+# fuzz with a persisted corpus, TSAN, a bounded soak, a leak pass -- belongs
+# in the nightly half, which is specified but deliberately unbuilt (#124).
+# The line is not "cheap here, expensive there": asan+ubsan is not cheap and
+# it is here, because a sanitizer finding on THIS commit is what stops the
+# defect from being merged. Anything that only finds what an hour finds is
+# not a gate, it is a watch.
 #
-# The csharp-smoke job proves the C# binding on the same two platforms: the
-# shared library target, the binding build, and the loopback smoke test with
-# its negative controls.
+# WHO READS THIS: the pull request. Every job below is a required-in-practice
+# check on the PR that carries it, read by the human at the gate before merge
+# -- which is why nothing here may be advisory. A job that cannot fail is not
+# a gate, and a job whose failure nobody must answer for is decoration.
+#
+# The legs, and what each one exists to catch:
+#
+#   build-and-test          the suite on ubuntu, macos and windows, in BOTH
+#                           Debug and Release. Release-only bugs are real:
+#                           the assert that fires in Debug is compiled out,
+#                           and the optimizer is a different compiler.
+#   csharp-smoke            the binding and its loopback smoke, three OSes
+#   sanitizers              asan + ubsan over the whole suite
+#   fuzz-smoke              a bounded, deterministic replay of the committed
+#                           regression corpus over the wire-facing parsers
+#   big-endian              the suite on real big-endian bytes (s390x), the
+#                           only leg that can see an endianness break before
+#                           a customer does
+#   conformance             STANDARD.md against the implementation
+#
+# The Linux build links the XDP dataplane against libbpf/libxdp, so those dev
+# packages are installed there; the XDP program itself (server_xdp) is
+# embedded as a source tarball by the build and compiles on the target kernel,
+# so compiling it needs a kernel with BTF and stays outside this workflow.
 
 name: CI
 
 on:
   push:
+    branches: [ main ]
   pull_request:
+  # Filtering push to main means a feature branch no longer runs the matrix
+  # twice -- once for the push, once for its PR. workflow_dispatch keeps a
+  # deliberate way to run it on a branch, which is the capability the filter
+  # would otherwise silently remove. (serialize's ci.yml, same reasoning.)
+  workflow_dispatch:
+
+# a superseded commit's run is not a gate on anything -- the gate is the head
+# of the branch -- so it yields its runners to the run that replaced it
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+
   build-and-test:
+    name: ${{ matrix.os }} / ${{ matrix.build_type }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        os: [ubuntu-24.04, macos-15]      # linux x64, macos apple silicon
+        build_type: [Debug, Release]
     steps:
 
       - uses: actions/checkout@v4
@@ -41,8 +76,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
-      - name: Build
+      # The Makefile IS the Release build -- it configures CMAKE_BUILD_TYPE=Release
+      # and nothing else -- and it is the front door BUILDING.md sends a new
+      # consumer through, so the Release rows go through it rather than around
+      # it. A front door nothing opens rots. Debug has no Makefile spelling, so
+      # those rows configure directly.
+
+      - name: Build (Release, through the Makefile)
+        if: matrix.build_type == 'Release'
         run: make
+
+      - name: Build (Debug)
+        if: matrix.build_type == 'Debug'
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --parallel
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. The default run walks the auto ladder: on this unprivileged
@@ -121,6 +169,14 @@ jobs:
   # are compiled out on windows, named and logged by the suite itself: the
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
+  #
+  # TWO KNOWN WARTS, owned on #111 and NOT fixed here (both need CMakeLists.txt,
+  # which three in-flight branches also touch): the vcpkg port baseline is
+  # whatever the runner image ships, so the libsodium version floats run to
+  # run; and the Debug leg links the release import library, because the
+  # single find_library at configure time hits the vcpkg release tree first.
+  # Functional for an opaque C API, a latent CRT-mixing wart. The installed
+  # version is printed below so the float is at least visible in the log.
 
   build-and-test-windows:
     name: windows-2025 / ${{ matrix.build_type }}
@@ -134,7 +190,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install libsodium (vcpkg)
-        run: vcpkg install libsodium:x64-windows
+        run: |
+          vcpkg install libsodium:x64-windows
+          vcpkg list libsodium
 
       - name: Configure
         run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
@@ -146,6 +204,346 @@ jobs:
         shell: bash
         run: ./bin/${{ matrix.build_type }}/test.exe
 
+  # asan + ubsan over the whole suite, per commit, exactly as serialize runs
+  # it: the transport allocates arenas at create, hands out interior pointers
+  # into frames, and reads bytes it did not write, which is the shape of
+  # defect these two see and inspection does not.
+  #
+  # -fno-sanitize-recover=all: undefined behaviour ends the run rather than
+  # printing and continuing, so the leg cannot go green over a warning nobody
+  # read.
+  #
+  # LEAK DETECTION IS OFF HERE, deliberately and not silently: ASAN's leak
+  # check is duration-independent in exactly the wrong way -- it reports at
+  # exit, on a suite that creates and destroys transports, and its findings
+  # are for the nightly leak pass (#124) where a human is reading them
+  # against a known baseline. The per-commit gate takes asan's memory-safety
+  # findings and ubsan's, both of which are immediate and unambiguous.
+
+  sanitizers:
+    name: asan + ubsan
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests (auto ladder)
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./bin/test
+
+      - name: Run tests (portable rung pinned by env)
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test
+
+  # THE FUZZ SMOKE -- a REPLAY, not a hunt.
+  #
+  # Discovery is the nightly's job (#124: hours, with the corpus persisted
+  # between nights). What belongs on a per-commit gate is the property a
+  # replay has and a hunt does not: the same inputs, in the same order, with
+  # the same verdict, every run. So the gate below is the first step -- every
+  # committed corpus file executed exactly once through the four wire-facing
+  # parsers under asan+ubsan, seconds, no randomness anywhere in it. Each
+  # file in fuzz/corpus is a shape the wire can carry or a shape a defect
+  # once had, and the harness carries oracles beyond memory safety (base64
+  # round-trip, the fragment plan's arithmetic, the ladder's output range),
+  # so a wrong ANSWER fails it too, not only a wrong access.
+  #
+  # The second step is a small fixed-seed mutation pass on top. It is bounded
+  # by wall clock and cannot fail on anything but a genuine crash, and it is
+  # NOT the gate's determinism argument -- the replay is.
+
+  fuzz-smoke:
+    name: fuzz smoke (libFuzzer, corpus replay)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      # the library is built once with coverage instrumentation and the
+      # sanitizers, then the harness links against it -- one parallel build
+      # instead of one long single-file compile of the whole sdk
+
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz --target rocketnet --parallel
+
+      - name: Build the harness
+        run: |
+          clang++ -g -O1 -std=c++17 \
+            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+            -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
+            $(pkg-config --libs libsodium) -lbpf -lxdp -lpthread \
+            -o bin/fuzz
+
+      # THE GATE: each committed input, once, in order. libFuzzer given files
+      # rather than a directory runs exactly them and exits -- no mutation, no
+      # seeded randomness, no clock.
+
+      - name: Replay the regression corpus
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: ./bin/fuzz fuzz/corpus/*
+
+      # The bounded pass: fixed seed, FIXED EXECUTION COUNT, and the corpus
+      # copied out first so the source tree is not mutated. -runs, not
+      # -max_total_time, is what makes this repeatable: a wall-clock bound
+      # makes the number of inputs tried a function of how fast the runner
+      # is that morning, so a latent crash reddens whichever pull request
+      # happens to draw a quick machine, on code it did not touch. A fixed
+      # seed and a fixed count try the same inputs everywhere. The time cap
+      # stays only as a runaway guard, well above the measured cost of the
+      # count; if it ever bites, the count is too high and wants lowering
+      # rather than the cap raising. Two million executions measured at
+      # roughly thirty seconds on this runner, which is the same depth the
+      # wall-clock bound was reaching before -- the change buys determinism,
+      # it does not buy less fuzzing.
+
+      - name: Bounded mutation pass (fixed seed, fixed count)
+        timeout-minutes: 5
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus /tmp/fuzz-corpus
+          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=2000000 -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-crashes
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
+
+  # THE BIG-ENDIAN LEG (#111), and the reason it was built before the bug it
+  # was built for (#112).
+  #
+  # rocketnet writes wire bytes. Every machine the estate owns is
+  # little-endian, so the entire byte-order half of this protocol -- the
+  # bswaps, the network-order helpers, the address parses, the endian_fix
+  # helpers a consumer calls -- is unexecuted code on every other leg in this
+  # file. It was not under-tested, it was UNTESTED, and the failure mode is
+  # silent: a wrong swap on a little-endian host is a no-op that passes
+  # everything.
+  #
+  # This leg found three latent defects on its way in, none of which any
+  # existing leg could ever have seen: #112 (rocketnet_endian_fix byte-swapped
+  # the POINTER), #125 (every parsed IPv4 address reversed), #127 (ntohs and
+  # htons swapping unconditionally, corrupting every port and every IPv6
+  # group). It went red on each and green after each.
+  #
+  # serialize's pattern, deliberately: cross-compile with the s390x toolchain
+  # at native compiler speed and run under qemu-user, on real s390x
+  # instructions against real big-endian memory. Compiling inside an emulated
+  # s390x container would put the whole sdk build under emulation and cost the
+  # per-commit budget for nothing this does not already prove.
+  #
+  # The s390x libraries come from ports.ubuntu.com through dpkg multiarch: the
+  # same archive, the same signing keys, the same apt as every other leg here.
+  # No third-party image, no downloaded tarball, no new supply chain.
+  #
+  # WHAT THIS LEG DOES NOT COVER, said plainly. It COMPILES the whole library
+  # and the whole test suite for s390x and then DOES NOT RUN bin/test -- the
+  # compile is the gate on that binary, which is not nothing, because that is
+  # literally how #112 first went red -- and it runs the byte-order surface
+  # with NO SOCKETS instead: tools/bigendian's wire check, which drives the
+  # endian helpers, the wire read/write, address parsing, the prefilter, a
+  # sealed packet's construction and opening, the fragment header, base64 and
+  # the config parses, all in memory.
+  #
+  # SO THE BIG-ENDIAN ASSERTIONS THAT GATE ARE THE WIRE CHECK'S. The matching
+  # #if ROCKETNET_BIG_ENDIAN block in rocketnet_test_endian is compiled out on
+  # every leg that runs the suite and never executed on the leg that builds it
+  # for s390x: it is there for the day a real big-endian machine runs the
+  # suite (#129), and until that day it is dead code, which is a thing to know
+  # rather than a thing to discover.
+  #
+  # It does not RUN the socket-crossing transport tests, because under
+  # qemu-user those report on the emulator rather than on the platform: a
+  # UDP_SEGMENT burst is delivered unsegmented (the gso rung's disconnect
+  # burst arrives as one datagram and refuses to open) and the portable
+  # rung's receive loop stalls outright. Passing those off as a big-endian
+  # result would be worse than not running them. #129 owns the remainder --
+  # the full suite on real big-endian hardware -- and until then this leg
+  # gates exactly what it can actually prove.
+
+  big-endian:
+    name: big endian s390x / ${{ matrix.build_type }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Add the s390x architecture and the ports archive
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture s390x
+
+          # The amd64 mirrors carry only amd64, so every EXISTING entry is
+          # pinned to it -- otherwise apt goes looking for s390x indexes that
+          # are not there and the update fails on the third-party lists the
+          # runner image ships. deb822 entries take an Architectures: field,
+          # one-line entries take [arch=amd64].
+
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -e "$f" ] || continue
+            grep -q '^Architectures:' "$f" || sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
+          done
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+            [ -e "$f" ] || continue
+            sudo sed -i -E 's|^deb +\[|deb [arch=amd64 |; s|^deb +([^[])|deb [arch=amd64] \1|' "$f"
+          done
+
+          sudo tee /etc/apt/sources.list.d/s390x-ports.sources > /dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: noble noble-updates
+          Components: main universe
+          Architectures: s390x
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+
+          sudo apt-get update -y
+
+      - name: Install the cross toolchain, the s390x libraries, and qemu
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            cmake xxd pkg-config qemu-user-static \
+            g++-s390x-linux-gnu \
+            libstdc++6:s390x \
+            libsodium-dev:s390x libbpf-dev:s390x libxdp-dev:s390x
+
+      # CMAKE_SYSTEM_NAME=Linux keeps the linux branch of CMakeLists.txt --
+      # this leg builds the same library the ubuntu leg does, xdp dataplane
+      # and all, not a reduced one. pkg-config is pointed at the s390x
+      # multiarch tree so libsodium resolves for the target, not the host.
+
+      - name: Configure
+        env:
+          PKG_CONFIG_LIBDIR: /usr/lib/s390x-linux-gnu/pkgconfig:/usr/share/pkgconfig
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_SYSTEM_NAME=Linux
+          -DCMAKE_SYSTEM_PROCESSOR=s390x
+          -DCMAKE_C_COMPILER=s390x-linux-gnu-gcc
+          -DCMAKE_CXX_COMPILER=s390x-linux-gnu-g++
+          -DCMAKE_LIBRARY_ARCHITECTURE=s390x-linux-gnu
+          -DCMAKE_FIND_ROOT_PATH=/usr/lib/s390x-linux-gnu
+          -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
+          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+          -DCMAKE_EXE_LINKER_FLAGS="-L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu"
+          -DCMAKE_SHARED_LINKER_FLAGS="-L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu"
+
+      # the whole library AND the whole suite, compiled for big-endian: a
+      # byte-order break that the compiler can see is caught right here,
+      # which is exactly how #112 announced itself the first time this leg
+      # ran (__builtin_bswap64 handed a pointer does not compile).
+
+      - name: Build the library and the suite for s390x
+        run: cmake --build build --target rocketnet test --parallel
+
+      - name: Build the big-endian wire check
+        run: |
+          s390x-linux-gnu-g++ -std=c++11 -Wall -Isdk \
+            tools/bigendian/wire_check.cpp build/librocketnet.a \
+            -L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu \
+            -lsodium -lbpf -lxdp -lpthread \
+            -o bin/wire_check
+
+      # A LEG THAT CANNOT PROVE ITS OWN PREMISE IS NOT A GATE. If this ever
+      # silently built for the host, every check below would pass for the
+      # wrong reason and the endian path would go back to being unexecuted
+      # code. So the artifact is interrogated before it is run: s390x, big
+      # endian, out of the ELF header itself.
+
+      - name: Prove the binaries are big-endian s390x
+        run: |
+          set -euo pipefail
+          for binary in bin/test bin/wire_check; do
+            readelf -h "$binary" | grep -E "Class|Data|Machine"
+            readelf -h "$binary" | grep -q "2's complement, big endian"
+            readelf -h "$binary" | grep -qi "s/390"
+          done
+
+      # QEMU_LD_PREFIX=/ points the emulated loader at the host filesystem,
+      # where the multiarch tree already holds every s390x library these
+      # binaries need; LD_LIBRARY_PATH adds the cross toolchain's own
+      # libstdc++, which lives beside the compiler rather than in the
+      # multiarch tree.
+
+      - name: Run the big-endian wire check
+        timeout-minutes: 5
+        env:
+          QEMU_LD_PREFIX: /
+          LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
+        run: qemu-s390x-static ./bin/wire_check
+
+  # STANDARD.md against the implementation, per serialize's tools/conformance.
+  # The checker reads the specification as a DOCUMENT -- its published tables,
+  # parsed as markdown, with no reference to the source tree -- and compares
+  # THE ROWS IT NAMES against the same constants as the compiler expands
+  # them. A row deleted from the document fails as loudly as a value that
+  # disagrees, because deleting the row would otherwise be the cheapest way
+  # to pass.
+  #
+  # It names the wire-format rows, not every row in the table: the timing and
+  # sizing rows, the magic and the KDF context strings are not compared, and
+  # the checker's own docstring lists exactly which and why. The count it
+  # prints on success is how many comparisons a green stands for.
+  #
+  # A failure means the document and the code disagree. Decide which is wrong
+  # and fix that one. A specification nothing verifies drifts, and a drifted
+  # spec is worse than none, because independent implementations are built on
+  # it.
+
+  conformance:
+    name: STANDARD.md conformance
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Verify STANDARD.md against the implementation
+        run: python3 tools/conformance/check_standard.py
+
   # The C# binding smoke: build the shared library (the target the binding
   # loads at runtime), build the binding and its smoke test with the .NET 8
   # SDK (the binding's TFM floor), and run the smoke against the built
@@ -155,10 +553,11 @@ jobs:
   # vcpkg's applocal step drops libsodium.dll beside it.
 
   csharp-smoke:
+    name: csharp smoke / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025]
+        os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
 

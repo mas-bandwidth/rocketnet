@@ -1,0 +1,202 @@
+# rocketnet release checks (#111, serialize's release-check.yml pattern).
+#
+# WHO READS THIS, per job, because the two have different readers and saying
+# "the pull request" for both would be wrong. version-consistency is a
+# per-commit gate read by the pull request, same as every job in ci.yml, and
+# it is in this file rather than that one only because it is about the
+# RELEASE rather than the build, exactly as serialize splits them.
+# unreleased-wire-changes does NOT run on a pull request at all -- it is a
+# push-to-main job, for the reason given above it -- so its reader is
+# whoever watches main's runs, which today is the estate's notification
+# email, and its failure is a statement about main rather than about any
+# one PR.
+#
+# Two failures are guarded here, and they are different failures:
+#
+#   version-consistency     the version sites in the tree disagree with each
+#                           other, or with the tag being built
+#   unreleased-wire-changes main has drifted past the newest release with
+#                           wire-affecting changes aboard and nothing says a
+#                           release is owed
+#
+# The second is DORMANT TODAY and says so in its own output: rocketnet has no
+# v* tags yet, so there is no newest release to compare against and the job
+# exits green having reported exactly that. It is here rather than in the
+# follow-up because the failure it catches happened in serialize -- four
+# merged PRs including a wire change, every version check green because the
+# version numbers still agreed with each other -- and the day rocketnet tags
+# v1.0.0 is the day this needs to already exist. A dormant job that announces
+# its own dormancy is not a vacuous pass; a silent one would be.
+
+name: Release Check
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  version-consistency:
+    name: version consistency
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      # rocketnet's version lives in one header and in two branches of it:
+      # the shipping version and the development version, selected by
+      # ROCKETNET_DEVELOPMENT. BOTH branches are checked, because the one
+      # that is not compiled today is the one that drifts.
+
+      - name: Check the version sites agree
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          check_branch() {
+            branch_name="$1"
+            full="$2"
+            major="$3"
+            minor="$4"
+            patch="$5"
+            if [ -z "$full" ] || [ -z "$major" ] || [ -z "$minor" ] || [ -z "$patch" ]; then
+              echo "::error::Could not extract the $branch_name version from sdk/rocketnet.h (FULL='$full', MAJOR/MINOR/PATCH='$major.$minor.$patch') — the version macros moved and this check did not follow."
+              fail=1
+              return
+            fi
+            echo "$branch_name: ROCKETNET_VERSION_FULL=$full  MAJOR.MINOR.PATCH=$major.$minor.$patch"
+            if [ "$full" = "dev" ]; then
+              # the development branch names itself rather than numbering
+              # itself; its integers are the 255.255.255 sentinel
+              if [ "$major.$minor.$patch" != "255.255.255" ]; then
+                echo "::error::The development version is \"dev\" but its integers are $major.$minor.$patch, not the 255.255.255 sentinel."
+                fail=1
+              fi
+              return
+            fi
+            if [ "$full" != "$major.$minor.$patch" ]; then
+              echo "::error::ROCKETNET_VERSION_FULL ($full) does not match ROCKETNET_VERSION_MAJOR/MINOR/PATCH_INT ($major.$minor.$patch) in the $branch_name branch of sdk/rocketnet.h."
+              fail=1
+            fi
+          }
+
+          # the two branches, in file order: the shipping one first
+          shipping_full=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
+          shipping_major=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          shipping_minor=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          shipping_patch=$(awk '/#if !ROCKETNET_DEVELOPMENT/,/#else/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+
+          dev_full=$(awk '/#else \/\/ !ROCKETNET_DEVELOPMENT/,/#endif \/\/ !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([^"]+)".*/\1/p' | head -n1)
+          dev_major=$(awk '/#else \/\/ !ROCKETNET_DEVELOPMENT/,/#endif \/\/ !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MAJOR_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          dev_minor=$(awk '/#else \/\/ !ROCKETNET_DEVELOPMENT/,/#endif \/\/ !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_MINOR_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+          dev_patch=$(awk '/#else \/\/ !ROCKETNET_DEVELOPMENT/,/#endif \/\/ !ROCKETNET_DEVELOPMENT/' sdk/rocketnet.h | sed -nE 's/.*ROCKETNET_VERSION_PATCH_INT[[:space:]]+([0-9]+).*/\1/p' | head -n1)
+
+          check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch"
+          check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch"
+
+          # the C# binding states the same version to its own consumers; it
+          # carries no version property today, and this check turns on by
+          # itself the moment one appears rather than waiting to be
+          # remembered
+          csharp_version=$(sed -nE 's|.*<Version>([0-9]+\.[0-9]+\.[0-9]+)</Version>.*|\1|p' csharp/RocketNet.csproj | head -n1)
+          if [ -n "$csharp_version" ]; then
+            echo "csharp: <Version>$csharp_version</Version>"
+            if [ "$csharp_version" != "$shipping_full" ]; then
+              echo "::error::csharp/RocketNet.csproj declares $csharp_version and sdk/rocketnet.h ships $shipping_full."
+              fail=1
+            fi
+          else
+            echo "csharp: no <Version> declared — nothing to compare."
+          fi
+
+          case "${GITHUB_REF:-}" in
+            refs/tags/*)
+              tag_version="${GITHUB_REF_NAME#v}"
+              echo "release tag: $tag_version"
+              if [ "$tag_version" != "$shipping_full" ]; then
+                echo "::error::Tag $GITHUB_REF_NAME does not match the shipping version $shipping_full in sdk/rocketnet.h — bump the header as part of the release."
+                fail=1
+              fi
+              ;;
+          esac
+
+          exit $fail
+
+  # Version-site agreement cannot see the other failure mode: main drifting
+  # past the newest release with wire-affecting changes aboard and nothing
+  # announcing that a release is owed. Runs on push to main only -- on a PR it
+  # would demand a version bump inside every wire-touching PR, which is not
+  # the process. The release train is main's.
+
+  unreleased-wire-changes:
+    name: unreleased wire changes
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tags and full history: the whole job is a comparison against the newest tag
+
+      - name: Compare main against the newest release tag
+        run: |
+          set -euo pipefail
+
+          newest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$newest_tag" ]; then
+            echo "DORMANT: rocketnet has no v* tags, so there is no release to have drifted from."
+            echo "This job wakes by itself the day the first release is tagged."
+            exit 0
+          fi
+
+          total=$(git rev-list --count "$newest_tag"..HEAD)
+          echo "Newest tag: $newest_tag ($total commit(s) behind HEAD)"
+          if [ "$total" -eq 0 ]; then
+            echo "main is exactly at $newest_tag."
+            exit 0
+          fi
+
+          # WIRE-AFFECTING PATHS: the standard itself, the shared wire
+          # constants (the one file the sdk and the kernel program both
+          # read), and the protocol layer that writes and reads packets.
+          # Deliberately NOT the whole sdk: a gate that cries wolf on a
+          # transport refactor is a gate people learn to merge past, and
+          # this one exists because a real wire change once shipped
+          # unannounced in a sibling.
+
+          wire_log=$(git log --oneline "$newest_tag"..HEAD -- \
+            STANDARD.md \
+            sdk/rocketnet_wire.h \
+            sdk/rocketnet_protocol.h sdk/rocketnet_protocol.cpp \
+            sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp)
+
+          if [ -z "$wire_log" ]; then
+            echo "main is $total commit(s) past $newest_tag, none of them wire-affecting. Fine."
+            exit 0
+          fi
+
+          count=$(printf '%s\n' "$wire_log" | wc -l | tr -d ' ')
+          {
+            echo "## Unreleased wire-affecting changes"
+            echo ""
+            echo "main is **$total** commit(s) past **$newest_tag**, and **$count** touch wire-affecting paths:"
+            echo ""
+            echo '```'
+            printf '%s\n' "$wire_log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          version=$(sed -nE 's/.*ROCKETNET_VERSION_FULL[[:space:]]+"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' sdk/rocketnet.h | head -n1)
+          tag_version="${newest_tag#v}"
+          if [ "$version" = "$tag_version" ]; then
+            echo "::error::main carries $count wire-affecting commit(s) past $newest_tag and the shipping version is still $version — nothing announces that a release is owed. Bump the version and tag a release (or revert the wire change). The commit list is in the job summary."
+            exit 1
+          fi
+          echo "::warning::main carries $count wire-affecting commit(s) past $newest_tag. The version is already bumped to $version — tag v$version when the release is ready. The commit list is in the job summary."

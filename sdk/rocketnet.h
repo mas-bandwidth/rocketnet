@@ -361,7 +361,7 @@ inline void rocketnet_endian_fix( uint64_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
 #ifdef __GNUC__
-    *value = __builtin_bswap64( value );
+    *value = __builtin_bswap64( *value );
 #else // #ifdef __GNUC__
     *value = ( *value & 0x00000000FFFFFFFF ) << 32 | ( *value & 0xFFFFFFFF00000000 ) >> 32;
     *value = ( *value & 0x0000FFFF0000FFFF ) << 16 | ( *value & 0xFFFF0000FFFF0000 ) >> 16;

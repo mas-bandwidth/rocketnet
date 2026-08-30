@@ -147,6 +147,62 @@ void rocketnet_test_endian()
     rocketnet_check( bytes[0] == 0x11 );
 
 #endif // #if ROCKETNET_LITTLE_ENDIAN
+
+    // rocketnet_endian_fix, called for the first time by anything (#112).
+    // The header's public helper converts between host order and the
+    // standard's little-endian wire order in place, and is a no-op on a
+    // little-endian host. Nothing in the sdk called it and nothing in this
+    // suite called it, so the uint64 overload's defect -- it byte-swapped
+    // the POINTER and stored that as the value -- was invisible to every
+    // machine the estate owns. The checks below are written against WIRE
+    // BYTES rather than host values, so they hold on either endianness and
+    // it is the big-endian leg that drives the swap.
+
+    const uint8_t wire[8] = { 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
+
+    uint16_t v16 = 0;
+    memcpy( &v16, wire, 2 );
+    rocketnet_endian_fix( &v16 );
+    rocketnet_check( v16 == 0x7788 );
+
+    uint32_t v32 = 0;
+    memcpy( &v32, wire, 4 );
+    rocketnet_endian_fix( &v32 );
+    rocketnet_check( v32 == 0x55667788 );
+
+    uint64_t v64 = 0;
+    memcpy( &v64, wire, 8 );
+    rocketnet_endian_fix( &v64 );
+    rocketnet_check( v64 == 0x1122334455667788ULL );
+
+    // the fix is its own inverse: a host value pushed back through it lands
+    // on the wire in the standard's order, whatever the host
+
+    rocketnet_endian_fix( &v64 );
+    uint8_t out[8];
+    memcpy( out, &v64, 8 );
+    rocketnet_check( memcmp( out, wire, 8 ) == 0 );
+
+#if ROCKETNET_BIG_ENDIAN
+
+    // on a big-endian host the helper must actually MOVE BYTES. The checks
+    // above pass on a machine where every overload is a no-op -- that is
+    // exactly the little-endian case -- so this is the assertion that makes
+    // the big-endian leg a gate rather than a second little-endian run.
+
+    uint16_t swap16 = 0x1122;
+    rocketnet_endian_fix( &swap16 );
+    rocketnet_check( swap16 == 0x2211 );
+
+    uint32_t swap32 = 0x11223344;
+    rocketnet_endian_fix( &swap32 );
+    rocketnet_check( swap32 == 0x44332211 );
+
+    uint64_t swap64 = 0x1122334455667788ULL;
+    rocketnet_endian_fix( &swap64 );
+    rocketnet_check( swap64 == 0x8877665544332211ULL );
+
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 void rocketnet_test_read_write()
