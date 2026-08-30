@@ -1217,8 +1217,11 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // ordinary traffic does not suppress it. Reading last_send_time there is
     // what let a continuous payload stream starve establishment forever
     // (#90): every payload restamped the clock the repair was waiting on,
-    // and the loss walkthrough's "the next one is at most a send interval
-    // away" became false. The keep-alive is the only packet carrying the
+    // and the loss walkthrough's recurrence guarantee became false. (That
+    // walkthrough then read "at most a send interval away"; this PR replaced
+    // the numeric bound, which the discrete check cannot support, with the
+    // recurrence the invariant actually needs.) The keep-alive is the only
+    // packet carrying the
     // client index, and a client that lacks its index cannot re-provoke one,
     // so this is the one repair that must not be suppressible.
     //

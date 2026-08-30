@@ -3485,9 +3485,11 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
     //
     // What must hold: the keep-alive generated at the send rate reaches the
     // client despite the payload stream, and the connection establishes.
-    // The loss walkthrough's invariant says the next keep-alive is at most a
-    // send interval away -- this test is that sentence, with a payload on
-    // every tick trying to make it false.
+    // The loss walkthrough's invariant is that another keep-alive keeps
+    // coming and no traffic pattern can stop it; this test is that sentence,
+    // with a payload on every tick trying to make it false. It asserts
+    // recurrence within a bound, not a bound of exactly one send interval --
+    // the standard deliberately makes no such claim.
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -3576,9 +3578,12 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
     rocketnet_check( establishment_time > 0.0 );
     rocketnet_check( state_after_the_loss == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
-    // the client connected, and the invariant's bound held: the next
-    // keep-alive was at most a send interval away, not a send interval away
-    // from whenever the payload stream happened to pause
+    // the client connected, and it did so promptly: the assertion below is
+    // two send intervals, which is the loose bound this test actually
+    // checks. The point is not the exact spacing -- the standard makes no
+    // one-interval claim, and the discrete check makes none available -- but
+    // that the repair arrived on the keep-alive's own clock rather than
+    // waiting for the payload stream to pause, which it never does here.
 
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( client.client_index == 0 );

@@ -2838,8 +2838,10 @@ application sending payloads continuously would restamp the clock the repair
 waits on, every keep-alive after the lost one would be suppressed, and the
 client would be stranded until its total connect deadline failed an attempt
 that was carrying payloads the whole time. That is the case the loss
-walkthrough's invariant forbids, and this is the sentence that keeps the
-walkthrough's "the next one is at most a send interval away" true.
+walkthrough's invariant forbids — no loss may leave an end waiting for
+something that will never be sent again — and this is the rule that keeps the
+walkthrough's guarantee true for the establishment keep-alive: that another
+one keeps coming, and that no traffic pattern can stop it.
 
 **What it costs.** A client whose keep-alive has not yet been acknowledged
 receives keep-alives at the send rate in addition to whatever the application
