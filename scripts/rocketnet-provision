@@ -1,0 +1,1307 @@
+#!/bin/bash
+#
+# rocketnet-provision -- machine provisioning for the XDP driver.
+#
+# RocketNet. Copyright 2026 Más Bandwidth LLC.
+# Licensed under the GNU Affero General Public License v3.0
+#
+# The library never mutates machine state (#106, ruled on the #110 review):
+# rocketnet_server_transport_create() with the xdp driver is VERIFY AND BIND
+# only -- a non-mutating pre-flight checks the machine is provisioned and
+# refuses by name when it is not, and the library's own acts stay per-socket
+# (build+load of its BPF program, attach, AF_XDP bind, memlock rlimit).
+# Everything that changes the MACHINE lives here, run deliberately by the
+# operator. The setup was hand-run once for the space game; no game that
+# uses rocketnet with XDP reconstructs it -- this script IS the setup.
+# Idempotent: run it twice and the second run changes nothing.
+#
+# THE CONDITION LIST -- the authoritative statement of "provisioned", in two
+# tiers. rocketnet_server_socket_preflight() in
+# sdk/rocketnet_server_socket_linux.cpp verifies these conditions read-only
+# and names this script in every refusal; BUILDING.md's deployment section
+# walks an operator through them cold. Change a condition anywhere and you
+# must change it everywhere; this header is the single documented list.
+#
+# BOOT TIER -- this script VERIFIES these but cannot perform them:
+#
+#   B1. kernel command line   /proc/cmdline carries
+#                             irqaffinity=0 isolcpus=<range> nohz_full=<range>
+#                             (and nosmt, whose effect condition R6 verifies
+#                             by state): edit GRUB_CMDLINE_LINUX in
+#                             /etc/default/grub, update-grub, reboot. The
+#                             range is a PARAMETER of this script, default
+#                             1-15 -- the verified 10 Gbps point ("this is
+#                             enough for 10gbps"), not a constant: the
+#                             isolated-core mask, the queue count and the
+#                             IRQ pinning scale TOGETHER with NIC bandwidth
+#                             ("higher bandwidth nics may need more cores").
+#   B2. isolated cpu set      /sys/devices/system/cpu/isolated is non-empty
+#                             (the observable effect of B1's isolcpus).
+#   B3. NIC driver            a recent vendor driver built manually where the
+#                             distro's is too old for stable AF_XDP zero copy
+#                             -- for Intel 700 series, i40e from
+#                             github.com/mas-bandwidth/ethernet-linux-i40e.
+#                             Reported informationally (ethtool -i); not
+#                             machine-verifiable beyond the version string.
+#
+# RUNTIME TIER -- this script PERFORMS these, idempotently:
+#
+#   R1. root                  the XDP data plane requires euid 0.
+#   R2. interface             the interface exists and is UP (this script
+#                             takes the interface name; whether it carries
+#                             the server's public IPv4 address is checked by
+#                             the pre-flight, which alone knows the address).
+#   R3. exclusive xdp slot    no XDP program attached (this script unloads;
+#                             the library never unloads anyone and pins only
+#                             under its own per-INSTANCE random-token root
+#                             rocketnet_xdp_<token>_<pid>_<starttime>_<bootid>,
+#                             which it creates itself and never adopts). the
+#                             pre-flight verifies this read-only. crash
+#                             leftovers are the SWEEP mode's business alone:
+#                             host pid liveness is unreliable where bpffs is
+#                             shared into containers, so neither provision
+#                             nor verify touches them -- they are inert, and
+#                             a colliding create refuses loudly.
+#   R4. irq pinning           each of the interface's queue IRQs pinned to
+#                             its own CPU from the isolated set, one queue
+#                             one CPU (/proc/interrupts ->
+#                             /proc/irq/N/smp_affinity_list). IRQ lines are
+#                             matched by the bounded-token rule stated at
+#                             the matcher below; drivers whose irq names do
+#                             not embed the interface name (mlx5-class)
+#                             cannot be checked BY NAME -- both checkers
+#                             state that limit rather than passing it off
+#                             as nothing-to-pin.
+#   R5. busy-poll pair        /sys/class/net/IFACE/napi_defer_hard_irqs = 2,
+#                             /sys/class/net/IFACE/gro_flush_timeout = 200000
+#                             (knobs absent on this kernel pass).
+#   R6. smt off               /sys/devices/system/cpu/smt/control reads off,
+#                             forceoff or notsupported. Belt-and-braces under
+#                             B1's nosmt; the runtime echo lives here, never
+#                             in the library.
+#   R7. queue count           the NIC's combined channel count equals the
+#                             queue count the server is configured for
+#                             (ethtool -L; a NIC without channel support
+#                             passes).
+#
+#   K1. kernel capability     the kernel grants an AF_XDP socket and a BPF
+#                             program load. Verified by the library
+#                             pre-flight only (probe descriptors created
+#                             and closed, nothing bound or attached); not
+#                             checkable from shell, and nothing to perform.
+#
+# usage:
+#   rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]
+#
+#     provision (default): perform the runtime tier idempotently, verify the
+#                          boot tier, loud either way
+#     verify:              check only, mutate nothing, exit 1 listing unmet
+#     sweep:               remove crash-leftover pin roots judged stale by
+#                          the metadata in their names (rules inline at the
+#                          sweep block); also invocable bare as
+#                          `rocketnet-provision sweep`
+#     selftest:            drive this script's own machinery against
+#                          replayed reality -- the IRQ matcher's case set,
+#                          and the R3/R7 enforcement functions end to end
+#                          in both modes over stubs replaying captured
+#                          xdp-tools 1.6.2 output (no root, no arguments;
+#                          touches only a private temp dir it creates and
+#                          removes; CI runs it); also invocable bare as
+#                          `rocketnet-provision selftest`
+#     isolated-range:      the isolcpus/nohz_full range this box should boot
+#                          with, default 1-15 (the 10 Gbps point) -- used in
+#                          the B1 guidance and the scaling check below
+#
+# scaling: one NIC queue wants one isolated core; higher-bandwidth NICs need
+# more queues and therefore a larger isolated range -- size num_queues and
+# isolated-range together.
+
+set -u
+
+SELF="$0"          # the selftest's full-flow case re-invokes this very script
+
+# sweep and selftest stand alone: they need no interface and no queue count
+
+if [ "${1:-}" = "sweep" ] || [ "${1:-}" = "selftest" ]; then
+    if [ $# -gt 1 ]; then
+        # counted, not tested for emptiness: an explicit empty argument is
+        # as much a mangled intent as a non-empty one
+        echo "usage: rocketnet-provision $1   (no further arguments; a stray argument may be a mangled intent)" >&2
+        exit 2
+    fi
+    MODE="$1"
+    INTERFACE=""
+    NUM_QUEUES=1
+    WANT_RANGE="1-15"
+else
+    INTERFACE="${1:-}"
+    NUM_QUEUES="${2:-}"
+    MODE="${3:-provision}"
+    WANT_RANGE="${4:-1-15}"
+fi
+
+case "$MODE" in
+    provision|verify|sweep|selftest) ;;
+    *) echo "unknown mode '$MODE' (provision, verify, sweep, or selftest; a misspelled mode must never mutate)" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ]; then
+    if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
+        echo "usage: rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
+        exit 2
+    fi
+fi
+
+case "$NUM_QUEUES" in
+    ''|*[!0-9]*|0) echo "num_queues must be a positive integer (at least 1)" >&2; exit 2 ;;
+esac
+
+VERIFY=0
+[ "$MODE" = "verify" ] && VERIFY=1
+
+# THE SWEEP, its own deliberate mode, judging staleness by the metadata
+# every pin root carries IN ITS NAME (bpffs holds no regular files, and a
+# directory name is atomic with the mkdir that claimed it):
+#
+#     rocketnet_xdp_<token16>_<pid>_<starttime>_<bootid32>
+#
+# (underscore-delimited: bpffs refuses '.' in names; exactly four fields
+#  after the prefix, or the name is not provably ours)
+#
+# THE RULES, explicit:
+#   1. boot id differs from this host's        -> stale, sweep (bpffs does
+#      not survive a reboot, so this only names roots on an oddly-mounted
+#      or shared bpffs -- still another boot's state)
+#   2. pid absent in this host's /proc         -> stale, sweep
+#   3. pid present, start time differs         -> the pid was RECYCLED to
+#      some other process; the instance is gone -> stale, sweep
+#   4. pid present, start time matches         -> live instance, leave
+#   5. name unparseable as the format above    -> not provably rocketnet's
+#      state: LEAVE IT and name it for manual judgment -- deleting what we
+#      cannot identify is the category this design exists to close
+#
+# CAVEAT, stated before any action: with bpffs shared across pid
+# namespaces, pids and start times read here describe THIS namespace --
+# sweep from the namespace that owns the servers.
+
+UNMET=0
+
+say()  { echo "rocketnet-provision: $*"; }
+
+# fail() counts every condition it ACTED on (UNMET_COUNT), and the mode
+# summaries publish that count beside the UNMET lines -- so an unmet that
+# PRINTS without being COUNTED (an enforcement call drifted into a
+# subshell or a pipeline, its flag discarded with the child) is visible
+# as a lines-vs-count mismatch, which the selftest's full-flow case
+# asserts. propagation, pinned -- not just printing.
+
+UNMET_COUNT=0
+fail() { echo "rocketnet-provision: UNMET: $*"; UNMET=1; UNMET_COUNT=$((UNMET_COUNT+1)); }
+
+# xdp-loader's status, stdout only -- stderr never reaches the grader,
+# and the exit status is this exact invocation's. ASSUMPTION, stated:
+# xdp-tools prints program listings on stdout; the selftest pins the
+# capture discipline with a STUB (exit 0, clean stdout, XDP_ noise on
+# stderr), not against every real xdp-tools version's output shape.
+
+query_xdp_slot_stdout()
+{
+    xdp-loader status "$1" 2>/dev/null
+}
+
+# THE ONE GRADER, derived from observation, never assumption. Captured
+# from xdp-tools 1.6.2 (ubuntu, lima VM, 2026-08-29), single-interface
+# queries, all three attachment states:
+#
+#   clean:       lo    <No XDP program loaded!>
+#   dispatcher:  lo    xdp_dispatcher    skb   129  ba2e1a15f08cd656
+#                 =>   50  xdp_pass_prog       138  d4f8542f2b42fac5  XDP_PASS
+#   foreign (ip link set dev lo xdp obj -- no dispatcher):
+#                lo    xdp_pass_prog     skb   115  d4f8542f2b42fac5
+#
+# the FOREIGN row carries neither "xdp_dispatcher" nor any "XDP_" token,
+# so the old token allowlist was fail-open by measurement, not just by
+# argument. the one stable CLEAN marker is the "<No XDP program loaded!>"
+# row: clean iff the marker is present, occupied otherwise -- an unknown
+# output shape grades occupied, which fails the condition; it never opens
+# the machine. exit 0 = occupied, anything else = clean (grep error rc
+# cannot occur: the input is a shell variable, never a file).
+
+xdp_slot_occupied()
+{
+    ! printf '%s\n' "$1" | grep -q "No XDP program loaded"
+}
+
+# THE ONE R3 PATH: query and grade fused, so there is no top-level capture
+# left to drift back to round seven's merged form (the wiring itself was
+# the one place the selftest could not see -- proven by a reader running
+# the old defect under a green selftest). echoes occupied|clean; returns
+# nonzero when the query itself failed. the live block and the selftest
+# both drive THIS function.
+
+r3_query_and_grade()
+{
+    # local: the grade token on stdout is this function's whole interface
+
+    local R3_QUERY_STDOUT
+    R3_QUERY_STDOUT="$(query_xdp_slot_stdout "$1")" || return 1
+    if xdp_slot_occupied "$R3_QUERY_STDOUT"; then
+        echo occupied
+    else
+        echo clean
+    fi
+    return 0
+}
+
+# R7's query and parser, each ONE function used by every R7 read -- the
+# probe, the current-count parse, and the post-write read-back -- so no
+# transcription can drift and every rc keys to its own invocation
+
+query_combined_stdout()
+{
+    LC_ALL=C ethtool -l "$1" 2>/dev/null
+}
+
+parse_combined_count()
+{
+    printf '%s\n' "$1" | awk '/Current hardware settings:/{f=1} f && /Combined:/{print $2; exit}'
+}
+
+irq_lines_for_interface()
+{
+    ROCKETNET_IFACE="$1" awk -F: '
+        BEGIN { iface = ENVIRON["ROCKETNET_IFACE"]; iface_length = length(iface) }
+        {
+            line = $0
+            search_from = 1
+            matched = 0
+            while ( search_from <= length(line) )
+            {
+                offset = index( substr( line, search_from ), iface )
+                if ( offset == 0 )
+                    break
+                start = search_from + offset - 1
+                before = ( start == 1 ) ? " " : substr( line, start - 1, 1 )
+                after_position = start + iface_length
+                after = ( after_position > length(line) ) ? "" : substr( line, after_position, 1 )
+                if ( ( before == " " || before == "\t" || before == "-" ) && ( after == "-" || after == ":" || after == "@" || after == " " || after == "\t" || after == "" ) )
+                {
+                    matched = 1
+                    break
+                }
+                search_from = start + 1
+            }
+            if ( matched ) { gsub( / /, "", $1 ); print $1 }
+        }'
+}
+
+# R3 ENFORCEMENT AS A FUNCTION (the round-twelve boundary move): the
+# consumer is no longer live-only -- the selftest drives this exact
+# function end to end, verify and provision modes alike, against stub
+# environments, asserting exit state AND the UNMET/say distinction. env
+# contract: INTERFACE, VERIFY; effects: say/fail only.
+
+r3_enforce()
+{
+    # env contract, asserted: INTERFACE must be non-empty -- an empty name
+    # would query and unload whatever the tools default to
+
+    if [ -z "${INTERFACE:-}" ]; then
+        fail "r3_enforce called without INTERFACE (contract)"
+        return
+    fi
+
+    if command -v xdp-loader >/dev/null 2>&1; then
+        # the content grep reads STDOUT ONLY (round eight's regression class:
+        # a diagnostic on stderr containing "XDP_" must never grade an empty
+        # slot occupied) and the rc keys to that same invocation; the error
+        # text is fetched by a second read-only query only on the failure path
+
+        XDP_GRADE="$(r3_query_and_grade "$INTERFACE")"
+        XDP_GRADE_RC=$?      # belt: the explicit token case below re-guards what this rc already gates
+
+        if [ $XDP_GRADE_RC -ne 0 ]; then
+            # the second query can race a change on the NIC; its staleness
+            # colors only this error text, never a grade
+            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
+            fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
+        else
+            # FAIL CLOSED outside the outcome set (the round-eleven law): the
+            # grade is an explicit token, and anything that is not exactly
+            # "occupied" or "clean" is UNMET -- never clean by default
+            case "$XDP_GRADE" in
+                occupied)
+                    if [ $VERIFY -eq 1 ]; then
+                        fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
+                    else
+                        # the act half of R3 lives under the same law as its
+                        # query half: a failed unload is UNMET, and the slot is
+                        # RE-GRADED through the same fused path after the act
+
+                        say "unloading XDP programs from $INTERFACE (R3)"
+                        if ! xdp-loader unload -a "$INTERFACE"; then
+                            # one act, one UNMET: a failed unload is not also
+                            # graded for the state it failed to change -- the
+                            # same one-act-one-UNMET law R7's read-back follows
+                            fail "xdp-loader unload -a $INTERFACE failed (R3)"
+                        else
+                            XDP_AFTER_GRADE="$(r3_query_and_grade "$INTERFACE")"
+                            XDP_AFTER_RC=$?
+                            if [ $XDP_AFTER_RC -ne 0 ]; then
+                                fail "could not re-query $INTERFACE after unload (R3)"
+                            else
+                                case "$XDP_AFTER_GRADE" in
+                                    clean)    say "exclusive xdp slot confirmed clear after unload (R3)" ;;
+                                    occupied) fail "an XDP program is still attached to $INTERFACE after unload (R3)" ;;
+                                    *)        fail "R3 re-grade '$XDP_AFTER_GRADE' is outside the outcome set: failing closed" ;;
+                                esac
+                            fi
+                        fi
+                    fi
+                    ;;
+                clean)
+                    say "no XDP program attached to $INTERFACE (R3)"
+                    ;;
+                *)
+                    fail "R3 grade '$XDP_GRADE' is outside the outcome set: failing closed"
+                    ;;
+            esac
+        fi
+    else
+        fail "xdp-loader not found (R3): the exclusive slot can be neither cleared nor verified from here -- install xdp-tools"
+    fi
+}
+
+# R7 ENFORCEMENT AS A FUNCTION, same boundary move and same contract:
+# INTERFACE, NUM_QUEUES, VERIFY in; say/fail out; the selftest drives it
+# end to end in both modes.
+
+r7_enforce()
+{
+    # env contract, asserted like r3's: INTERFACE must be non-empty
+
+    if [ -z "${INTERFACE:-}" ]; then
+        fail "r7_enforce called without INTERFACE (contract)"
+        return
+    fi
+
+    if ! command -v ethtool >/dev/null 2>&1; then
+        fail "ethtool not found (R7): the queue count can be neither set nor verified from here -- install ethtool"
+        ETHTOOL_RC=127      # belt: command -v is re-tested below; this keeps set -u honest on every path
+    else
+        # ONE invocation on the success path: rc and the parsed output come
+        # from the same run (stdout only -- the R3 lesson), locale pinned so
+        # the failure signature match below cannot rot under translation; the
+        # error text is fetched by a second read-only run only on failure
+        ETHTOOL_STDOUT="$(query_combined_stdout "$INTERFACE")"
+        ETHTOOL_RC=$?
+    fi
+
+    if command -v ethtool >/dev/null 2>&1 && [ $ETHTOOL_RC -eq 0 ]; then
+        CURRENT="$(parse_combined_count "$ETHTOOL_STDOUT")"
+        if [ "$CURRENT" = "$NUM_QUEUES" ]; then
+            say "combined queue count already $NUM_QUEUES (R7)"
+        elif [ $VERIFY -eq 1 ]; then
+            fail "combined queue count is ${CURRENT:-unknown}, want $NUM_QUEUES (R7): ethtool -L $INTERFACE combined $NUM_QUEUES"
+        else
+            say "setting combined queue count = $NUM_QUEUES (R7)"
+            if ! ethtool -L "$INTERFACE" combined "$NUM_QUEUES"; then
+                fail "ethtool -L refused combined $NUM_QUEUES (R7)"
+            else
+                # a write that claims success is read back, like R3's unload:
+                # an ethtool that returns 0 without taking effect must never
+                # verify by omission. the read-back keys rc to its own
+                # invocation and parses through the one parser -- a FAILED
+                # read is its own errand, distinct from a write that did not
+                # take (read-back on the remaining runtime writes is a
+                # recorded follow-on, not smuggled into this change)
+                REREAD_STDOUT="$(query_combined_stdout "$INTERFACE")"
+                REREAD_RC=$?
+                if [ $REREAD_RC -ne 0 ]; then
+                    fail "could not re-read the queue count after ethtool -L (R7): the write may or may not have taken"
+                else
+                    REREAD="$(parse_combined_count "$REREAD_STDOUT")"
+                    if [ "$REREAD" = "$NUM_QUEUES" ]; then
+                        say "combined queue count confirmed at $NUM_QUEUES after ethtool -L (R7)"
+                    else
+                        fail "combined queue count reads back ${REREAD:-unknown} after ethtool -L, want $NUM_QUEUES (R7)"
+                    fi
+                fi
+            fi
+        fi
+    elif command -v ethtool >/dev/null 2>&1; then
+        # the failure is discriminated, exactly as the pre-flight discriminates
+        # errno: ONLY the no-channel-support refusal passes -- a vanished
+        # device, EBUSY, or a netlink mismatch is an unmet condition, never a
+        # silent pass (the header's law: change a condition anywhere, change it
+        # everywhere). LC_ALL=C keeps the signature in the C locale strerror
+        # spelling; "not supported" covers the EOPNOTSUPP family. this
+        # invocation deliberately does NOT ride query_combined_stdout: it wants
+        # the INVERSE stream (stderr for the signature, stdout discarded), so
+        # the locale pin is repeated here rather than shared
+        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
+        case "$ETHTOOL_ERROR" in
+            *"not supported"*)
+                say "no channel surface on $INTERFACE (R7 passes: the driver does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
+                ;;
+            *)
+                fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
+                ;;
+        esac
+    fi
+}
+
+# SELFTEST: the script's matcher held to the SAME CASE SET as the C test
+# (rocketnet_test_xdp_interrupt_matcher), transcribed -- the bytes differ
+# deliberately in ways outside the boundary logic (single spaces where the
+# C strings carry doubles; no trailing newline, since awk strips the
+# newline the C matcher sees, which is exactly why the C after-set carries
+# '\n' and '\r' and the awk after-set covers end-of-line with the empty
+# string). so the two implementations of the one boundary definition
+# provably agree case for case -- including the case that caught round
+# five's escaping bug: eth0.100 must never match eth0x100. further
+# accepted asymmetries, recorded: the C reader splits interrupt lines
+# past its 4096-byte buffer where awk is unbounded (real /proc/interrupts
+# lines are far shorter); '\r' and the empty interface name are
+# unreachable on the script side (no CRLF procfs; empty arguments refuse
+# at the door). runs anywhere, needs no root, and touches only a private
+# temp dir it creates and removes (the R3 stub). CI runs it on every push.
+
+if [ "$MODE" = "selftest" ]; then
+    PASS=1
+
+    # the watchdog: a mutation that HANGS instead of failing must still
+    # end red -- the killer fires only if the selftest overruns its bound
+
+    # ALL THREE descriptors are DETACHED (</dev/null >/dev/null 2>&1): the
+    # sleep child inherits the subshell's descriptors, and ANY inherited
+    # pipe -- stdout or stderr -- makes a capturing caller (CI runners,
+    # 2>&1 harnesses) wait the full 120s on the PASS path (measured: 1s to
+    # a file, 120s captured via 2>&1 when only stdout was detached). the
+    # timeout message therefore comes from the MAIN process's TERM trap,
+    # whose stderr is legitimately attached and closes at exit; a marker
+    # file distinguishes watchdog fire from an external TERM. bash DEFERS
+    # trap execution until the foreground command completes, so a hang
+    # INSIDE a command would outlive TERM alone -- the KILL backstop five
+    # seconds later cannot be trapped or deferred, and a KILLed selftest
+    # exits 137: message lost, redness kept (the contract is that a hang
+    # ends red; the message is best-effort).
+
+    WATCHDOG_MARK="$(mktemp)" || WATCHDOG_MARK=""
+    trap 'if [ -n "$WATCHDOG_MARK" ] && [ -f "$WATCHDOG_MARK.fired" ]; then echo "selftest FAIL: watchdog timeout (120s)" >&2; else echo "selftest FAIL: terminated" >&2; fi; exit 124' TERM
+    ( sleep 120; [ -n "$WATCHDOG_MARK" ] && touch "$WATCHDOG_MARK.fired"; kill -TERM $$; sleep 5; kill -KILL $$ ) </dev/null >/dev/null 2>&1 &
+    WATCHDOG_PID=$!
+
+    expect_match()
+    {
+        RESULT="$(printf '%s\n' "$2" | irq_lines_for_interface "$1")"
+        if [ "$3" = "yes" ] && [ -z "$RESULT" ]; then
+            echo "selftest FAIL: '$1' should match: $2"; PASS=0
+        elif [ "$3" = "no" ] && [ -n "$RESULT" ]; then
+            echo "selftest FAIL: '$1' must not match: $2"; PASS=0
+        fi
+    }
+
+    expect_match "ens1f0"   " 24:  0 0 IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0" "yes"
+    expect_match "ens1f0"   " 25:  0 0 IR-PCI-MSI 524289-edge      ice-ens1f0-TxRx-1" "yes"
+    expect_match "eth0"     " 26:  0 0 PCI-MSI 49152-edge      eth0-TxRx-0" "yes"
+    expect_match "eth0"     " 27:  0 0 PCI-MSI 1048577-edge      eth0" "yes"
+    expect_match "virtio0"  " 28:  0 0 PCI-MSI 65536-edge      virtio0-input.0" "yes"
+    expect_match "eth0.100" " 29:  0 0 PCI-MSI 49153-edge      eth0.100-TxRx-0" "yes"
+    expect_match "eth0"     " 29:  0 0 PCI-MSI 49153-edge      eth0.100-TxRx-0" "no"
+    expect_match "eth0.100" " 30:  0 0 PCI-MSI 49154-edge      eth0x100-TxRx-0" "no"
+    expect_match "lo"       " 31:  0 0 PCI-MSI 2097152-edge      velocity0-tx" "no"
+    expect_match "lo"       "LOC:  12345 67890   Local timer interrupts" "no"
+    expect_match "ens1f0"   " 32:  0 0 PCI-MSI 2097153-edge      ens1f10-TxRx-0" "no"
+    expect_match "eth0"     " 33:  0 0 PCI-MSI 2097154-edge      eth00" "no"
+    expect_match "eth0"     " 34:  0 0 PCI-MSI 2097156-edge      xeth0-TxRx-0" "no"
+    expect_match "ens1f0"   " 35:  0 0 IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0" "no"
+
+    # THE OUTCOME AND ENFORCEMENT PINS (rounds eleven through thirteen):
+    # every outcome of the graded functions is driven through the REAL
+    # functions, and the CONSUMERS are driven too -- r3_enforce and
+    # r7_enforce run end to end, verify and provision modes alike, against
+    # stub environments, with the exit state asserting the UNMET/say
+    # distinction (a fail turned into a say goes red here), and EVERY fail
+    # site in both enforcement functions has a driving case: the env
+    # contract, tool absence, query failure, occupied in verify, count
+    # mismatch in verify, act refused, act lied, post-act query failure,
+    # read-back mismatch, precision of the no-channel discriminator, and
+    # the injected outside-set arms and the r7 query-function
+    # injections -- the fail-site
+    # enumeration receipt on the PR pairs each site with its case, so the
+    # coverage claim is a checkable list, not an adjective. the xdp-loader stub
+    # REPLAYS REAL OUTPUT captured from xdp-tools 1.6.2 on the lima VM
+    # (see the grader's derivation comment); the ethtool stub emits
+    # real-shaped output (the exact "Combined:" table layout ethtool
+    # prints, not a byte capture). both carry a second interface with a program attached
+    # so the interface argument is load-bearing, and ASSERT their arguments
+    # -- a stub invoked with a missing or unknown interface exits 99, so
+    # wiring drift becomes a loud query failure, never a silent pass. the
+    # stubs live in a private temp dir on PATH; the dir is guarded (an
+    # unguarded empty expansion would write at the filesystem root) and
+    # removed after.
+
+    STUB_DIR="$(mktemp -d)" || STUB_DIR=""
+    if [ -z "$STUB_DIR" ]; then
+        echo "selftest FAIL: could not create a private temp dir for the stubs"
+        kill "$WATCHDOG_PID" 2>/dev/null
+        trap - TERM
+        rm -f "$WATCHDOG_MARK" "$WATCHDOG_MARK.fired" 2>/dev/null
+        exit 1
+    fi
+    # (a noexec TMPDIR surfaces below as the first enforcement case failing
+    #  on exit state: the stubs cannot execute from a noexec mount)
+
+    # the replay stub: xdp-loader status <iface> answers from captured
+    # xdp-tools 1.6.2 output according to the per-interface state files;
+    # unload -a <iface> transitions state (or refuses, per LOADER_UNLOAD)
+
+    cat > "$STUB_DIR/xdp-loader" << 'STUB'
+#!/bin/sh
+BANNER="CURRENT XDP PROGRAM STATUS:
+
+Interface        Prio  Program name      Mode     ID   Tag               Chain actions
+--------------------------------------------------------------------------------------"
+case "$1" in
+    status)
+        IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: status invoked without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/query_broken" ] && { echo "stub: status now failing (post-act failure mode)" >&2; exit 1; }
+        STATE="$(cat "$STUB_STATE_DIR/state.$IFACE")"
+        echo "$BANNER"
+        case "$STATE" in
+            clean)
+                echo "$IFACE                     <No XDP program loaded!>"
+                ;;
+            dispatcher)
+                echo "$IFACE                     xdp_dispatcher    skb      129  ba2e1a15f08cd656 "
+                echo " =>              50     xdp_pass_prog             138  d4f8542f2b42fac5  XDP_PASS"
+                ;;
+            foreign)
+                echo "$IFACE                     xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
+                ;;
+        esac
+        echo ""
+        exit 0
+        ;;
+    unload)
+        [ "$2" = "-a" ] || { echo "stub: unexpected unload form $*" >&2; exit 99; }
+        IFACE="$3"
+        [ -f "$STUB_STATE_DIR/state.$IFACE" ] || { echo "stub: unknown interface '$IFACE'" >&2; exit 99; }
+        case "$(cat "$STUB_STATE_DIR/unload_mode")" in
+            works) echo clean > "$STUB_STATE_DIR/state.$IFACE"; exit 0 ;;
+            fails) echo "stub: unload refused" >&2; exit 1 ;;
+            lies)  exit 0 ;;
+            works_then_query_fails) echo clean > "$STUB_STATE_DIR/state.$IFACE"; touch "$STUB_STATE_DIR/query_broken"; exit 0 ;;
+        esac
+        ;;
+esac
+echo "stub: unexpected invocation $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_DIR/xdp-loader"
+
+    # the ethtool stub: -l <iface> reports the current combined count from
+    # state; -L <iface> combined N transitions it (or refuses/lies)
+
+    cat > "$STUB_DIR/ethtool" << 'STUB'
+#!/bin/sh
+case "$1" in
+    -l)
+        IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: -l without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/l_broken" ] && { echo "stub: -l now failing (post-act failure mode)" >&2; exit 1; }
+        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "netlink error: no device matches name (offset 24)" >&2; exit 1; }
+        COUNT="$(cat "$STUB_STATE_DIR/combined.$IFACE")"
+        if [ "$COUNT" = "vanished" ]; then
+            echo "Cannot get device channel parameters: No such device" >&2
+            exit 1
+        fi
+        if [ "$COUNT" = "nochannels" ]; then
+            echo "netlink error: Operation not supported" >&2
+            exit 1
+        fi
+        if [ "$COUNT" = "rxonly" ]; then
+            echo "Channel parameters for $IFACE:"
+            echo "Pre-set maximums:"
+            echo "RX:             8"
+            echo "TX:             8"
+            echo "Current hardware settings:"
+            echo "RX:             4"
+            echo "TX:             4"
+            exit 0
+        fi
+        echo "Channel parameters for $IFACE:"
+        echo "Pre-set maximums:"
+        echo "Combined:       32"
+        echo "Current hardware settings:"
+        echo "Combined:       $COUNT"
+        exit 0
+        ;;
+    -L)
+        IFACE="$2"
+        [ -n "$IFACE" ] || { echo "stub: -L without an interface" >&2; exit 99; }
+        [ -f "$STUB_STATE_DIR/combined.$IFACE" ] || { echo "stub: -L on unknown interface '$IFACE'" >&2; exit 99; }
+        [ "$3" = "combined" ] || { echo "stub: unexpected -L form $*" >&2; exit 99; }
+        case "$(cat "$STUB_STATE_DIR/setl_mode")" in
+            works) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
+            fails) echo "stub: -L refused" >&2; exit 1 ;;
+            lies)  exit 0 ;;
+            works_then_l_fails) echo "$4" > "$STUB_STATE_DIR/combined.$IFACE"; touch "$STUB_STATE_DIR/l_broken"; exit 0 ;;
+            works_then_unparseable) echo rxonly > "$STUB_STATE_DIR/combined.$IFACE"; exit 0 ;;
+        esac
+        ;;
+esac
+echo "stub: unexpected invocation $*" >&2
+exit 99
+STUB
+    chmod +x "$STUB_DIR/ethtool"
+
+    # each case runs the REAL enforcement function in a subshell with the
+    # stub environment; the subshell exits with its own UNMET, so the
+    # UNMET/say distinction is the asserted contract, not the wording
+
+    run_r3()        # $1 verify-flag  $2 iface  -> rc = UNMET; output on stdout
+    {
+        ( UNMET=0; VERIFY="$1"; INTERFACE="$2"; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+          r3_enforce; exit $UNMET ) 2>&1
+    }
+
+    run_r7()        # $1 verify-flag  $2 iface  $3 queues  -> rc = UNMET
+    {
+        ( UNMET=0; VERIFY="$1"; INTERFACE="$2"; NUM_QUEUES="$3"; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+          r7_enforce; exit $UNMET ) 2>&1
+    }
+
+    expect_case()   # $1 name  $2 got-rc  $3 want-rc  $4 output  $5 required-substring  [$6 required-UNMET-count]  [$7 forbidden-substring]
+    {
+        if [ "$2" != "$3" ]; then
+            echo "selftest FAIL: $1: exit $2, want $3"; PASS=0
+        elif ! printf '%s\n' "$4" | grep -qF "$5"; then
+            echo "selftest FAIL: $1: output lacks: $5"; PASS=0
+        elif [ -n "${6:-}" ] && [ "$(printf '%s\n' "$4" | grep -cF UNMET)" != "$6" ]; then
+            echo "selftest FAIL: $1: UNMET count $(printf '%s\n' "$4" | grep -cF UNMET), want $6"; PASS=0
+        elif [ -n "${7:-}" ] && printf '%s\n' "$4" | grep -qF "$7"; then
+            echo "selftest FAIL: $1: output must not contain: $7"; PASS=0
+        fi
+    }
+
+    STUB_STATE_DIR="$STUB_DIR/state"
+    mkdir -p "$STUB_STATE_DIR"
+    export STUB_STATE_DIR
+
+    # the standing second interface, occupied, so the interface argument
+    # is load-bearing in every clean-graded case below
+    echo foreign > "$STUB_STATE_DIR/state.busy0"
+    echo 4 > "$STUB_STATE_DIR/combined.busy0"
+
+    # --- r3, verify mode ---
+
+    echo clean > "$STUB_STATE_DIR/state.clean0"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 1 clean0)"; expect_case "r3 verify clean" $? 0 "$OUT" "no XDP program attached"
+
+    echo foreign > "$STUB_STATE_DIR/state.for0"
+    OUT="$(run_r3 1 for0)"; expect_case "r3 verify foreign-occupied" $? 1 "$OUT" "run without verify" 1
+
+    echo dispatcher > "$STUB_STATE_DIR/state.dis0"
+    OUT="$(run_r3 1 dis0)"; expect_case "r3 verify dispatcher-occupied" $? 1 "$OUT" "run without verify" 1
+
+    # --- r3, provision mode ---
+
+    echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p0)"; expect_case "r3 provision unload-works" $? 0 "$OUT" "confirmed clear after unload"
+
+    echo foreign > "$STUB_STATE_DIR/state.p1"; echo fails > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p1)"; expect_case "r3 provision unload-fails" $? 1 "$OUT" "unload -a p1 failed" 1
+
+    echo foreign > "$STUB_STATE_DIR/state.p2"; echo lies > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p2)"; expect_case "r3 provision unload-lies" $? 1 "$OUT" "still attached" 1
+
+    # --- r3, query failure (unknown interface: the stub asserts its args) ---
+
+    OUT="$(run_r3 1 ghost0)"; expect_case "r3 query-failure" $? 1 "$OUT" "could not query" 1
+
+    # --- r7, verify mode ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.q0"
+    OUT="$(run_r7 1 q0 7)"; expect_case "r7 verify match" $? 0 "$OUT" "already"
+
+    OUT="$(run_r7 1 q0 9)"; expect_case "r7 verify mismatch" $? 1 "$OUT" "combined queue count is 7, want 9" 1
+
+    echo nochannels > "$STUB_STATE_DIR/combined.q1"
+    OUT="$(run_r7 1 q1 7)"; expect_case "r7 verify no-channel-surface" $? 0 "$OUT" "no channel surface"
+
+    OUT="$(run_r7 1 ghostq 7)"; expect_case "r7 verify other-failure" $? 1 "$OUT" "cannot verify the queue count" 1
+
+    # --- r7, provision mode --- (the target counts VARY across cases --
+    # 8, 7, 6 -- so a comparison hardcoded to any fixture constant cannot
+    # ship green: fixture-constant coupling is a demonstrated mutant class)
+
+    echo 4 > "$STUB_STATE_DIR/combined.q2"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q2 8)"; expect_case "r7 provision set-works" $? 0 "$OUT" "confirmed at 8"
+
+    echo 4 > "$STUB_STATE_DIR/combined.q3"; echo fails > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q3 7)"; expect_case "r7 provision set-fails" $? 1 "$OUT" "refused combined 7" 1
+
+    echo 4 > "$STUB_STATE_DIR/combined.q4"; echo lies > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q4 7)"; expect_case "r7 provision set-lies" $? 1 "$OUT" "reads back 4" 1
+
+    # --- post-act failures: the act succeeds and THEN the world stops
+    # answering -- the re-check's own failure arm must be UNMET, not a
+    # silent success ride-along ---
+
+    echo foreign > "$STUB_STATE_DIR/state.p3"; echo works_then_query_fails > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 p3)"; expect_case "r3 provision post-unload query-fails" $? 1 "$OUT" "could not re-query" 1
+    rm -f "$STUB_STATE_DIR/query_broken"
+
+    echo 4 > "$STUB_STATE_DIR/combined.q6"; echo works_then_l_fails > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q6 6)"; expect_case "r7 provision post-set read-fails" $? 1 "$OUT" "could not re-read" 1
+    rm -f "$STUB_STATE_DIR/l_broken"
+
+    # --- precision of the no-channel discriminator: a vanished device in
+    # the ioctl-era spelling must be UNMET, never a no-channel pass (a
+    # widened signature match live-passes exactly this) ---
+
+    echo vanished > "$STUB_STATE_DIR/combined.q7"
+    OUT="$(run_r7 1 q7 7)"; expect_case "r7 verify vanished-device precision" $? 1 "$OUT" "cannot verify the queue count" 1 "no channel surface"
+
+    # --- rc-0-but-unparseable: a zero-rc ethtool whose table carries no
+    # Combined row (rx/tx-only channel NICs are real) must fail closed as
+    # unknown at BOTH parse sites -- emptiness is not agreement ---
+
+    echo rxonly > "$STUB_STATE_DIR/combined.q8"
+    OUT="$(run_r7 1 q8 7)"; expect_case "r7 verify unparseable-count fails closed" $? 1 "$OUT" "combined queue count is unknown, want 7" 1
+
+    echo 4 > "$STUB_STATE_DIR/combined.q9"; echo works_then_unparseable > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 q9 7)"; expect_case "r7 provision reads-back-unparseable fails closed" $? 1 "$OUT" "reads back unknown" 1
+
+    # --- the r7 mirror of r3's outside-set injections: r7_enforce must
+    # consume the ONE query function at BOTH call sites, so overriding it
+    # in the subshell must change r7's behavior -- a call-site bypass
+    # (running ethtool directly) cannot ship green here ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.qi0"
+    OUT="$( ( query_combined_stdout() { echo "injected: not a channel table"; return 5; }
+              UNMET=0; VERIFY=1; INTERFACE=qi0; NUM_QUEUES=7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    expect_case "r7 injected initial-query failure" $? 1 "$OUT" "cannot verify the queue count" 1 "already"
+
+    echo 4 > "$STUB_STATE_DIR/combined.qi1"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$( ( query_combined_stdout() { if [ -f "$STUB_STATE_DIR/qi1_second" ]; then return 6; fi
+                                        touch "$STUB_STATE_DIR/qi1_second"
+                                        printf 'Current hardware settings:\nCombined:       4\n'; return 0; }
+              UNMET=0; VERIFY=0; INTERFACE=qi1; NUM_QUEUES=9; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    expect_case "r7 injected re-read failure" $? 1 "$OUT" "could not re-read" 1 "confirmed"
+    rm -f "$STUB_STATE_DIR/qi1_second"
+
+    # --- tool absence: the most reachable live failure arms in the file.
+    # the curated PATH exists to EXCLUDE the tool under test; today's
+    # absence arms use only shell builtins (command -v, echo), so the
+    # utility symlinks below are belt for any future arm that shells out,
+    # not load-bearing -- stated so the mechanism is not overread ---
+
+    TOOLS_DIR="$STUB_DIR/tools"
+    mkdir -p "$TOOLS_DIR"
+    for TOOL in grep awk cat; do
+        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null || true
+    done
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; PATH="$TOOLS_DIR"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 tool-absent" $RC 1 "$OUT" "install xdp-tools" 1
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; NUM_QUEUES=7; PATH="$TOOLS_DIR"
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r7 tool-absent" $RC 1 "$OUT" "install ethtool" 1
+
+    # --- the env contract: an empty INTERFACE is refused at the door,
+    # with a substring unique to the contract arm ---
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=""; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 empty-interface contract" $RC 1 "$OUT" "r3_enforce called without INTERFACE (contract)" 1
+
+    OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=""; NUM_QUEUES=7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              r7_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r7 empty-interface contract" $RC 1 "$OUT" "r7_enforce called without INTERFACE (contract)" 1
+
+    # --- the interface arrives UNMANGLED: a VLAN name keeps its dot all
+    # the way to the tool (the replay stub asserts its argument, so any
+    # in-flight mangling -- an inserted \${INTERFACE%%.*} -- becomes a
+    # loud query failure and this case goes red) ---
+
+    echo clean > "$STUB_STATE_DIR/state.eth0.100"
+    OUT="$(run_r3 1 eth0.100)"
+    expect_case "r3 vlan name unmangled" $? 0 "$OUT" "no XDP program attached to eth0.100"
+
+    # ...and r7's mirror: the dotted name must reach ethtool intact -- a
+    # mangled name would read (and in provision mode WRITE) the parent
+    # device, so the state file exists only under the dotted spelling
+
+    echo 7 > "$STUB_STATE_DIR/combined.eth0.100"
+    OUT="$(run_r7 1 eth0.100 7)"
+    expect_case "r7 vlan name unmangled" $? 0 "$OUT" "already"
+
+    # ...and the ACT paths: unload and -L must carry the dotted name too --
+    # a mangled act mutates a device the operator never named, so the
+    # argument-asserting stubs turn any mangle into a loud failure here
+
+    echo foreign > "$STUB_STATE_DIR/state.eth1.200"; echo works > "$STUB_STATE_DIR/unload_mode"
+    OUT="$(run_r3 0 eth1.200)"
+    expect_case "r3 provision vlan unmangled through unload" $? 0 "$OUT" "confirmed clear after unload"
+
+    echo 4 > "$STUB_STATE_DIR/combined.eth1.200"; echo works > "$STUB_STATE_DIR/setl_mode"
+    OUT="$(run_r7 0 eth1.200 5)"
+    expect_case "r7 provision vlan unmangled through -L" $? 0 "$OUT" "confirmed at 5"
+
+    # --- THE TOP OF THE LADDER: the WHOLE SCRIPT, door to fail. a verify
+    # run of this very script under the stub environment must exit 1 and
+    # carry the R3 and R7 UNMETs by name in its full-flow output -- this
+    # pins the top-level call sites themselves (deleting an enforcement
+    # invocation ships green nowhere: it goes red HERE), and there is no
+    # level above the whole script, so the pin ladder terminates by
+    # construction ---
+
+    echo foreign > "$STUB_STATE_DIR/state.stubiface0"
+    echo 4 > "$STUB_STATE_DIR/combined.stubiface0"
+    FULL_OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface0 7 verify 2>&1 )"
+    FULL_RC=$?
+    FULL_UNMET_LINES="$(printf '%s\n' "$FULL_OUT" | grep -cF "UNMET:")"
+    if [ $FULL_RC -ne 1 ]; then
+        echo "selftest FAIL: full-flow verify should exit 1 (got $FULL_RC)"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "an XDP program is attached to stubiface0 (R3)"; then
+        echo "selftest FAIL: full-flow verify output lacks the R3 UNMET -- is r3_enforce still wired at the top?"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "combined queue count is 4, want 7 (R7)"; then
+        echo "selftest FAIL: full-flow verify output lacks the R7 UNMET -- is r7_enforce still wired at the top?"; PASS=0
+    elif ! printf '%s\n' "$FULL_OUT" | grep -qF "verify FAILED: $FULL_UNMET_LINES unmet condition(s)"; then
+        echo "selftest FAIL: full-flow PROPAGATION: $FULL_UNMET_LINES UNMET lines printed but the summary counted differently -- an enforcement call is printing without its flag reaching the exit (subshell or pipeline drift)"; PASS=0
+    fi
+
+    # the count must TRACK, not merely match once: a second full-flow run
+    # with R3 and R7 both met prints two fewer UNMETs, and its summary
+    # must count ITS OWN lines -- a count hardcoded to either run's value
+    # mismatches the other and goes red
+
+    echo clean > "$STUB_STATE_DIR/state.stubiface1"
+    echo 7 > "$STUB_STATE_DIR/combined.stubiface1"
+    FULL2_OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface1 7 verify 2>&1 )"
+    FULL2_RC=$?
+    FULL2_UNMET_LINES="$(printf '%s\n' "$FULL2_OUT" | grep -cF "UNMET:")"
+    if [ $FULL2_RC -ne 1 ]; then
+        echo "selftest FAIL: second full-flow verify should still exit 1 on this unprovisioned box (got $FULL2_RC)"; PASS=0
+    elif [ "$FULL2_UNMET_LINES" = "$FULL_UNMET_LINES" ]; then
+        echo "selftest FAIL: the two full-flow runs printed the same UNMET count ($FULL_UNMET_LINES) -- the R3/R7 conditions did not vary between them"; PASS=0
+    elif ! printf '%s\n' "$FULL2_OUT" | grep -qF "verify FAILED: $FULL2_UNMET_LINES unmet condition(s)"; then
+        echo "selftest FAIL: second full-flow PROPAGATION: $FULL2_UNMET_LINES UNMET lines printed but the summary counted differently"; PASS=0
+    fi
+
+    # --- the pair-level pins kept from round eleven: the parser sees only
+    # what the query's stdout carried ---
+
+    echo 7 > "$STUB_STATE_DIR/combined.q5"
+    STUB_STDOUT="$(PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" query_combined_stdout q5)"
+    STUB_RC=$?
+    STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
+    if [ $STUB_RC -ne 0 ] || [ "$STUB_COUNT" != "7" ]; then
+        echo "selftest FAIL: the current-settings Combined must parse to 7 (got rc $STUB_RC, count \"$STUB_COUNT\")"; PASS=0
+    fi
+
+    # noise stubs live in their own directory: they must never overwrite
+    # the argument-asserting replay stubs other cases still depend on
+
+    NOISE_DIR="$STUB_DIR/noise"
+    mkdir -p "$NOISE_DIR"
+
+    make_noise_stub()
+    {
+        printf '#!/bin/sh\n%s\n' "$2" > "$NOISE_DIR/$1"
+        chmod +x "$NOISE_DIR/$1"
+    }
+
+    make_noise_stub ethtool 'echo "Current hardware settings:" >&2
+echo "Combined:       9" >&2
+exit 0'
+    STUB_STDOUT="$(PATH="$NOISE_DIR:$PATH" query_combined_stdout ignored0)"
+    STUB_COUNT="$(parse_combined_count "$STUB_STDOUT")"
+    if [ "$STUB_COUNT" = "9" ]; then
+        echo "selftest FAIL: a Combined on stderr reached the parser -- the captures are merged"; PASS=0
+    fi
+
+    # and R3's mirror of that case, at the outcome level: an occupied
+    # stdout with clean-marker NOISE on stderr (the shape a merged capture
+    # would flip) must still grade occupied through the real fused path.
+    # libxdp genuinely writes diagnostics to stderr -- we captured one
+    # while deriving the grader -- so the noise is realistic, not invented.
+
+    make_noise_stub xdp-loader 'echo " libxdp: hint: No XDP program loaded on some other interface" >&2
+echo "CURRENT XDP PROGRAM STATUS:"
+echo ""
+echo "Interface        Prio  Program name      Mode     ID   Tag               Chain actions"
+echo "--------------------------------------------------------------------------------------"
+echo "noisy0                 xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
+exit 0'
+    STUB_GRADE="$(PATH="$NOISE_DIR:$PATH" r3_query_and_grade noisy0)"
+    STUB_RC=$?
+    if [ $STUB_RC -ne 0 ] || [ "$STUB_GRADE" != "occupied" ]; then
+        echo "selftest FAIL: clean-marker noise on stderr flipped the grade (got rc $STUB_RC, grade \"$STUB_GRADE\") -- the captures are merged"; PASS=0
+    fi
+
+    # THE OUTSIDE-SET ARMS, driven: the consumers' fail-closed defaults
+    # are unreachable through the real grader (it emits only two tokens),
+    # so the selftest INJECTS the impossible state by overriding the fused
+    # function inside a subshell -- the arms are law, and law gets driven
+
+    OUT="$( ( r3_query_and_grade() { echo maybe; return 0; }
+              UNMET=0; VERIFY=1; INTERFACE=clean0; PATH="$STUB_DIR:$PATH"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 outside-set initial grade" $RC 1 "$OUT" "R3 grade 'maybe' is outside the outcome set" 1
+
+    OUT="$( ( r3_query_and_grade() { if [ ! -f "$STUB_STATE_DIR/garbage_marker" ]; then touch "$STUB_STATE_DIR/garbage_marker"; echo occupied; else echo maybe; fi; return 0; }
+              UNMET=0; VERIFY=0; INTERFACE=p0; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
+              echo foreign > "$STUB_STATE_DIR/state.p0"; echo works > "$STUB_STATE_DIR/unload_mode"
+              r3_enforce; exit $UNMET ) 2>&1 )"
+    RC=$?
+    expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "R3 re-grade 'maybe' is outside the outcome set" 1
+    rm -f "$STUB_STATE_DIR/garbage_marker"
+
+    rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
+
+    kill "$WATCHDOG_PID" 2>/dev/null
+    wait "$WATCHDOG_PID" 2>/dev/null
+    trap - TERM
+    rm -f "$WATCHDOG_MARK" "$WATCHDOG_MARK.fired" 2>/dev/null
+
+    if [ $PASS -eq 1 ]; then
+        echo "rocketnet-provision selftest passed"
+        exit 0
+    fi
+    exit 1
+fi
+
+if [ "$MODE" = "sweep" ]; then
+    if [ "$(id -u)" != "0" ]; then
+        say "sweep must run as root"; exit 1
+    fi
+    say "CAVEAT: pids and start times are read from THIS host's /proc; with bpffs shared into containers, sweep from the namespace that owns the servers"
+    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    SWEPT=0
+    for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
+        [ -e "$PIN_ROOT" ] || continue
+        NAME="${PIN_ROOT##*/rocketnet_xdp_}"
+        FIELD_COUNT="$(echo "$NAME" | awk -F_ '{print NF}')"
+        PIN_PID="$(echo "$NAME" | cut -d_ -f2)"
+        PIN_START="$(echo "$NAME" | cut -d_ -f3)"
+        PIN_BOOT="$(echo "$NAME" | cut -d_ -f4)"
+        if [ "$FIELD_COUNT" != "4" ]; then
+            say "leaving $PIN_ROOT: name does not carry parseable instance metadata -- judge and remove it by hand"
+            continue
+        fi
+        case "${PIN_PID}${PIN_START}" in
+            ''|*[!0-9]*)
+                say "leaving $PIN_ROOT: name does not carry parseable instance metadata -- judge and remove it by hand"
+                continue
+                ;;
+        esac
+        # rule 1 fires only on a well-formed boot id: a recorder that could
+        # not read boot_id writes "unknown", and sweeping a LIVE instance
+        # because its recorder was blind would break the live-and-matching
+        # rule -- malformed boot fields fall through to the pid rules
+        BOOT_WELL_FORMED=0
+        case "$PIN_BOOT" in
+            *[!0-9a-f]*|"") BOOT_WELL_FORMED=0 ;;
+            *) [ "${#PIN_BOOT}" = "32" ] && BOOT_WELL_FORMED=1 ;;
+        esac
+        REASON=""
+        if [ $BOOT_WELL_FORMED -eq 1 ] && [ -n "$HOST_BOOT_ID" ] && [ "$PIN_BOOT" != "$HOST_BOOT_ID" ]; then
+            REASON="boot id $PIN_BOOT is not this boot"
+        elif [ ! -d "/proc/$PIN_PID" ]; then
+            REASON="pid $PIN_PID is gone"
+        else
+            # fields resume after the LAST ')' -- comm may contain
+            # anything, including a ') ' -- matching the C recorder exactly
+            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null || true)"
+            if [ -z "$LIVE_START" ]; then
+                # rule 5's principle: an unreadable start time is not
+                # PROVABLY stale, and we never delete what we cannot judge
+                say "leaving $PIN_ROOT: pid $PIN_PID is alive but its start time is unreadable -- not provably stale"
+                continue
+            fi
+            # string-compared, accepted: a leading-zero spelling difference
+            # (never produced by the C recorder or by /proc) would grade
+            # stale -- erring on the loud, operator-visible side
+            if [ "$LIVE_START" != "$PIN_START" ]; then
+                REASON="pid $PIN_PID was recycled (start time $LIVE_START, instance recorded $PIN_START)"
+            fi
+        fi
+        if [ -n "$REASON" ]; then
+            say "sweeping $PIN_ROOT ($REASON)"
+            rm -f "$PIN_ROOT"/* 2>/dev/null
+            rmdir "$PIN_ROOT" 2>/dev/null || fail "could not sweep $PIN_ROOT"
+            SWEPT=1
+        else
+            say "leaving $PIN_ROOT: instance pid $PIN_PID is alive with a matching start time"
+        fi
+    done
+    [ $SWEPT -eq 0 ] && say "nothing to sweep"
+    exit $UNMET
+fi
+
+# R1. root (needed to perform, and to read some of what verify reads)
+
+if [ "$(id -u)" != "0" ]; then
+    if [ $VERIFY -eq 1 ]; then
+        fail "not root (R1): the XDP data plane requires euid 0"
+    else
+        say "must run as root (R1)"; exit 1
+    fi
+fi
+
+# B1. kernel command line
+
+# the values are checked, not just the knobs: irqaffinity must be exactly
+# 0, and the range parameters must carry a value -- matching the library
+# pre-flight's B1 check exactly
+
+CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+
+B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
+
+case " $CMDLINE " in
+    *" irqaffinity=0 "*) say "kernel command line carries irqaffinity=0 (B1)" ;;
+    *) fail "kernel command line lacks irqaffinity=0 -- exactly that token (B1): $B1_GUIDANCE" ;;
+esac
+
+for TOKEN in isolcpus nohz_full; do
+    # left-bounded like irqaffinity: "xisolcpus=" is not the parameter.
+    # ACCEPTED-UNREACHABLE divergences from the C checker, recorded rather
+    # than chased: a kernel command line with the same token duplicated
+    # (one valid, one malformed) can grade differently between the two
+    # checkers, and an empty interface name never reaches either matcher
+    # (the script refuses empty arguments at the door; the C pre-flight
+    # runs after interface discovery, which cannot return an empty name).
+    case " $CMDLINE" in
+        *" $TOKEN="[!\ ]*) say "kernel command line carries $TOKEN=<range> (B1)" ;;
+        *) fail "kernel command line lacks $TOKEN=<range> (B1): $B1_GUIDANCE" ;;
+    esac
+done
+
+# B2. isolated cpu set
+
+ISOLATED="$(cat /sys/devices/system/cpu/isolated 2>/dev/null || true)"
+if [ -n "$ISOLATED" ]; then
+    say "isolated cpu set is $ISOLATED (B2)"
+else
+    fail "no isolated cpus (B2): B1's isolcpus= has not taken effect (reboot required after grub change)"
+fi
+
+# the scaling check: one queue wants one isolated core
+
+# expand the isolated range list ("1-7,9") into an array for R4
+
+ISOLATED_CPUS=()
+if [ -n "$ISOLATED" ]; then
+    IFS=',' read -ra RANGES <<< "$ISOLATED"
+    for RANGE in "${RANGES[@]}"; do
+        case "$RANGE" in
+            *-*) for (( CPU=${RANGE%-*}; CPU<=${RANGE#*-}; CPU++ )); do ISOLATED_CPUS+=("$CPU"); done ;;
+            *) ISOLATED_CPUS+=("$RANGE") ;;
+        esac
+    done
+fi
+
+# B3. NIC driver, reported informationally
+
+if command -v ethtool >/dev/null 2>&1; then
+    DRIVER_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^driver:|^version:/{printf "%s ", $2}')"
+    [ -n "$DRIVER_INFO" ] && say "NIC driver: $DRIVER_INFO(B3: build a recent vendor driver where the distro's is too old -- see the header)"
+fi
+
+# R2. interface exists and is up
+
+if [ -d "/sys/class/net/$INTERFACE" ]; then
+    FLAGS="$(cat /sys/class/net/$INTERFACE/flags 2>/dev/null || echo 0)"
+    if [ $(( FLAGS & 1 )) -eq 1 ]; then
+        say "interface $INTERFACE present and up (R2)"
+    else
+        fail "interface $INTERFACE is not up (R2): ip link set $INTERFACE up"
+    fi
+else
+    fail "interface $INTERFACE does not exist (R2)"
+    [ $VERIFY -eq 0 ] && exit 1
+fi
+
+# R3. exclusive xdp slot
+
+r3_enforce
+
+
+# crash-leftover pin roots are the SWEEP mode's business, deliberately --
+# see the sweep block above for why neither provision nor verify touches
+# them (containerized pid views make host liveness unreliable). they are
+# inert until a create collides with one, and create refuses that loudly.
+
+# R4. per-queue irq pinning: one queue irq, one isolated cpu, round robin
+
+# THE BOUNDARY DEFINITION (single source, implemented twice, held by the
+# C fixture test rocketnet_test_xdp_interrupt_matcher AND this script's own
+# selftest mode): the interface name matches an interrupt line as a LITERAL
+# bounded token -- preceded by line start, space, tab, or '-'
+# (driver-prefixed names like i40e-ens1f0-TxRx-0) and followed by '-', ':',
+# '@', space, tab, or end. NEVER a regex and never an escape: the name
+# rides ENVIRON (awk -v mangles backslashes) and is matched with index(),
+# so eth0.100 is four literal characters and can never match eth0x100.
+# rocketnet_server_socket_interrupt_line_matches_interface is the C form.
+
+INTERRUPTS_READABLE=0
+if [ ! -r /proc/interrupts ]; then
+    # silence must never verify: an unreadable interrupt table is unmet,
+    # exactly as the pre-flight refuses it
+    fail "/proc/interrupts is unreadable (R4): irq pinning can be neither performed nor verified"
+    IRQS=""
+else
+    INTERRUPTS_READABLE=1
+    IRQS="$(irq_lines_for_interface "$INTERFACE" < /proc/interrupts || true)"
+fi
+if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
+    fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
+fi
+
+IRQ_COUNT=$(echo "$IRQS" | grep -c . || true)
+
+if [ -z "$IRQS" ]; then
+    [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its driver's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC driver's own tooling"
+elif [ ${#ISOLATED_CPUS[@]} -eq 0 ]; then
+    fail "cannot pin $INTERFACE IRQs (R4): no isolated cpus (B1/B2 first)"
+elif [ "$IRQ_COUNT" -gt ${#ISOLATED_CPUS[@]} ]; then
+    # refused, exactly as the pre-flight refuses a doubled cpu: wrapping
+    # the round robin would BE the doubling
+    fail "$IRQ_COUNT IRQs on $INTERFACE but only ${#ISOLATED_CPUS[@]} isolated cpus (R4): one queue, one core -- grow the isolated range or shrink the queue count"
+else
+    INDEX=0
+    SEEN_CPUS=()
+    for IRQ in $IRQS; do
+        CPU="${ISOLATED_CPUS[$INDEX]}"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        if [ $VERIFY -eq 1 ]; then
+            # ONE logic path (ruled on the #110 gate, round five): every
+            # branch classifies the CURRENT affinity and every single-cpu
+            # affinity feeds the doubling check -- an already-pinned irq
+            # doubled onto another's cpu must fail exactly like any other
+            case "$CURRENT" in
+                *-*|*,*|"")
+                    fail "irq $IRQ affinity is '$CURRENT', want a single isolated cpu (R4)"
+                    ;;
+                *)
+                    IN_SET=0
+                    for CPU_CANDIDATE in "${ISOLATED_CPUS[@]}"; do
+                        [ "$CPU_CANDIDATE" = "$CURRENT" ] && IN_SET=1
+                    done
+                    if [ $IN_SET -eq 0 ]; then
+                        fail "irq $IRQ is pinned to cpu $CURRENT, which is not in the isolated set $ISOLATED (R4)"
+                    elif printf '%s\n' "${SEEN_CPUS[@]:-}" | grep -qx "$CURRENT"; then
+                        fail "two IRQs pinned to cpu $CURRENT (R4): one queue, one core"
+                    else
+                        say "irq $IRQ pinned to isolated cpu $CURRENT (R4)"
+                    fi
+                    SEEN_CPUS+=("$CURRENT")
+                    ;;
+            esac
+        elif [ "$CURRENT" = "$CPU" ]; then
+            say "irq $IRQ already pinned to cpu $CPU (R4)"
+        else
+            say "pinning irq $IRQ to cpu $CPU (R4)"
+            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
+        fi
+        INDEX=$(( INDEX + 1 ))
+    done
+fi
+
+# R5. busy-poll pair
+
+NAPI_DEFER="/sys/class/net/$INTERFACE/napi_defer_hard_irqs"
+GRO_FLUSH="/sys/class/net/$INTERFACE/gro_flush_timeout"
+
+if [ -f "$NAPI_DEFER" ]; then
+    if [ "$(cat $NAPI_DEFER)" = "2" ]; then
+        say "napi_defer_hard_irqs already 2 (R5)"
+    elif [ $VERIFY -eq 1 ]; then
+        fail "napi_defer_hard_irqs is $(cat $NAPI_DEFER), want 2 (R5): echo 2 > $NAPI_DEFER"
+    else
+        say "setting napi_defer_hard_irqs = 2 (R5)"
+        echo 2 > "$NAPI_DEFER" || fail "could not set napi_defer_hard_irqs (R5)"
+    fi
+else
+    say "no napi_defer_hard_irqs knob on this kernel (R5 passes)"
+fi
+
+if [ -f "$GRO_FLUSH" ]; then
+    if [ "$(cat $GRO_FLUSH)" = "200000" ]; then
+        say "gro_flush_timeout already 200000 (R5)"
+    elif [ $VERIFY -eq 1 ]; then
+        fail "gro_flush_timeout is $(cat $GRO_FLUSH), want 200000 (R5): echo 200000 > $GRO_FLUSH"
+    else
+        say "setting gro_flush_timeout = 200000 (R5)"
+        echo 200000 > "$GRO_FLUSH" || fail "could not set gro_flush_timeout (R5)"
+    fi
+else
+    say "no gro_flush_timeout knob on this kernel (R5 passes)"
+fi
+
+# R6. smt off (belt-and-braces under B1's nosmt)
+
+SMT_CONTROL=/sys/devices/system/cpu/smt/control
+if [ -f "$SMT_CONTROL" ]; then
+    SMT="$(cat $SMT_CONTROL)"
+    case "$SMT" in
+        off|forceoff|notsupported|notimplemented)
+            say "smt already $SMT (R6)"
+            ;;
+        *)
+            if [ $VERIFY -eq 1 ]; then
+                fail "smt is '$SMT', want off (R6): echo off > $SMT_CONTROL (or B1's nosmt)"
+            else
+                say "disabling smt (R6)"
+                echo off > "$SMT_CONTROL" || fail "could not disable smt (R6)"
+            fi
+            ;;
+    esac
+else
+    say "no smt control on this machine (R6 passes)"
+fi
+
+# R7. queue count
+
+r7_enforce
+
+
+if [ $VERIFY -eq 1 ]; then
+    if [ $UNMET -eq 1 ]; then
+        say "verify FAILED: $UNMET_COUNT unmet condition(s) above -- boot-tier conditions need grub + reboot (see header); runtime conditions: run rocketnet-provision $INTERFACE $NUM_QUEUES as root"
+        exit 1
+    fi
+    say "verify passed: machine is provisioned for the xdp driver"
+    exit 0
+fi
+
+# ACCEPTED-UNDRIVEN (listed with the top-wiring entry in the receipt):
+# this provision-mode summary gate cannot be driven by the unprivileged
+# selftest -- provision exits at the root gate before any enforcement --
+# so its correctness rests on being the verify gate's structural twin,
+# on the function-level provision drives, and on the C pre-flight's
+# independent R3 re-check at create.
+
+if [ $UNMET -eq 1 ]; then
+    say "provision FAILED: $UNMET_COUNT unmet condition(s) above (boot-tier conditions need grub + reboot; failed runtime writes are named where they failed)"
+    exit 1
+fi
+
+say "provisioned"
+exit 0

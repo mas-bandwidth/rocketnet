@@ -44,16 +44,49 @@ jobs:
       - name: Build
         run: make
 
-      - name: Run tests
+      # Driver selection is runtime now (#106), so one build serves the whole
+      # matrix. The default run walks the auto ladder: on this unprivileged
+      # runner the linux leg is the FALL made real -- xdp refused for missing
+      # privilege, gso granted -- so the full suite runs over the gso driver
+      # here (and over the darwin msgx pump on macOS); the in-suite pin tests
+      # (test_server_driver_pin_*) go red if a rung stops granting, so a
+      # silent fall cannot hollow this leg out. The second run pins the
+      # portable floor by env, proving the floor rung carries the suite too
+      # and exercising the env > struct precedence over every create.
+
+      - name: Run tests (auto ladder — the fall, on Linux)
         run: ./bin/test
+
+      - name: Run tests (portable rung pinned by env)
+        run: ROCKETNET_DRIVER=portable ./bin/test
+
+      # the provisioning script's selftest: the awk IRQ matcher held to the
+      # C test's case set, transcribed, plus the R3/R7 enforcement functions
+      # driven end to end in both modes against stubs replaying captured
+      # xdp-tools output -- every fail site in both functions paired to a
+      # driving case (the fail-site enumeration receipt on PR #110 is the
+      # pairing), and the WHOLE SCRIPT driven door-to-fail by the selftest's
+      # full-flow verify case. exit state asserts the UNMET/say distinction,
+      # so fail-open consumer drift goes red here. needs no root; touches
+      # only a private temp dir it creates and removes.
+
+      - name: Provisioning script selftest
+        if: runner.os == 'Linux'
+        run: bash scripts/rocketnet-provision selftest
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
   # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
   # policy. libsodium comes from vcpkg (preinstalled on the runner); the
-  # multi-config generator puts binaries under bin/<config>. Two tests are
-  # compiled out on windows, named and logged by the suite itself: the
+  # multi-config generator puts binaries under bin/<config>. The #106
+  # config and driver tests run here too -- setenv/unsetenv are shimmed
+  # over _putenv_s in the test file, so the windows leg proves the env
+  # engine and the portable rung on the one platform whose only rung is
+  # portable -- EXCEPT the empty-value distinction, which windows cannot
+  # represent: its CRT has no set-but-empty variable, so that one case is
+  # skipped there, named and logged with that reason. Exactly two tests
+  # are compiled out on windows, named and logged by the suite itself: the
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
 
@@ -80,29 +113,6 @@ jobs:
       - name: Run tests
         shell: bash
         run: ./bin/${{ matrix.build_type }}/test.exe
-
-  # The GSO driver leg (#97): the same suite, byte-identical above the seam,
-  # against the server transport built on the non-root GSO driver --
-  # SO_REUSEPORT sharding, sendmmsg/recvmmsg, UDP GSO/GRO with runtime
-  # probing. Linux only, unprivileged by design, so it runs wherever the
-  # portable leg runs. The matrix is the test of the abstraction.
-
-  build-and-test-gso:
-    runs-on: ubuntu-latest
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
-
-      - name: Build (GSO driver)
-        run: make build-gso
-
-      - name: Run tests (GSO driver)
-        run: ./bin/test
 
   # The C# binding smoke: build the shared library (the target the binding
   # loads at runtime), build the binding and its smoke test with the .NET 8

@@ -7,17 +7,11 @@ add_compile_definitions(ROCKETNET_DEVELOPMENT=0)
 # real build still prints its [ x%] progress lines, and errors are untouched.
 set(CMAKE_TARGET_MESSAGES OFF)
 
-# server transport driver selection (#97): default portable; -DROCKETNET_SERVER_XDP=1
-# selects the AF_XDP driver, -DROCKETNET_SERVER_GSO=1 the non-root GSO driver.
-# both are linux only; the seam guarantees call sites never change.
-option(ROCKETNET_SERVER_XDP "build the server transport against the AF_XDP driver (linux)" OFF)
-option(ROCKETNET_SERVER_GSO "build the server transport against the GSO driver (linux)" OFF)
-if(ROCKETNET_SERVER_XDP)
-    add_compile_definitions(ROCKETNET_SERVER_XDP=1)
-endif()
-if(ROCKETNET_SERVER_GSO)
-    add_compile_definitions(ROCKETNET_SERVER_GSO=1)
-endif()
+# server transport driver selection is runtime (#106): one build carries every
+# driver its platform has -- linux carries xdp, gso and portable -- and the
+# transport walks the config's candidate list at create (config driver field,
+# ROCKETNET_DRIVER env). the old ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
+# compile options are gone; passing them now errors in the transport source.
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -99,6 +93,10 @@ target_link_directories(rocketnet PUBLIC ${SODIUM_LIBRARY_DIRS})
 target_link_libraries(rocketnet ${SODIUM_LIBRARIES})
 if (APPLE)
     target_link_libraries(rocketnet Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # every linux consumer inherits the XDP dataplane's libraries now that
+    # the driver ladder is runtime and one build carries all three drivers
+    target_link_libraries(rocketnet Threads::Threads bpf xdp)
 else()
     target_link_libraries(rocketnet Threads::Threads)
 endif()
@@ -120,7 +118,7 @@ target_link_directories(rocketnet_shared PUBLIC ${SODIUM_LIBRARY_DIRS})
 target_link_libraries(rocketnet_shared ${SODIUM_LIBRARIES})
 if (APPLE)
     target_link_libraries(rocketnet_shared Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
-elseif (LINUX)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(rocketnet_shared Threads::Threads bpf xdp)
 else()
     target_link_libraries(rocketnet_shared Threads::Threads)
@@ -144,7 +142,7 @@ enable_language(CXX)
 add_executable(server server.c)
 target_include_directories(server PRIVATE sdk)
 add_dependencies(server rocketnet)
-if (LINUX)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(server rocketnet bpf xdp)
 else()
     target_link_libraries(server rocketnet)

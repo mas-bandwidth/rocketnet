@@ -348,11 +348,26 @@ public static unsafe class RocketNet
         /// <summary>Reassembly slots for the connection; zero means <see cref="DefaultReassemblySlots"/>.</summary>
         public int NumReassemblySlots;
 
+        /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
+        /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
+        /// tried left to right at create, first grant wins ("auto" walks the platform's
+        /// recommended order; an applicable one-element list is a pin that refuses loudly;
+        /// a list whose every name is inapplicable to this endpoint falls to auto, loudly).
+        /// Read and write it through <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
+        public fixed byte Driver[DriverStringLength];
+
         /// <summary>Native function pointer for void (*)( void * context, int previous_state,
         /// int current_state ), or IntPtr.Zero for none. Delegate marshaling is deliberately
         /// not built here: the callback fires on library threads, and the pinning and lifetime
         /// rules that makes safe are not worth the surface in v1 — poll <see cref="ClientTransportState(IntPtr)"/>.</summary>
         public IntPtr StateChangeCallback;
+
+        /// <summary>Reads the driver candidate list as a string.</summary>
+        public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
+
+        /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteFixedString( driver, DriverStringLength, value, "driver list" ); }
     }
 
     /// <summary>rocketnet_server_transport_config_t. The server is configured explicitly;
@@ -373,10 +388,13 @@ public static unsafe class RocketNet
         public fixed byte ServerPublicKey[32];
         /// <summary>The server's secret key, 32 bytes.</summary>
         public fixed byte ServerSecretKey[32];
-        /// <summary>Staged driver queue count -- XDP queues on the XDP build, reuseport sockets on the
-        /// GSO build; zero means the transport default. The portable build ignores it.</summary>
+        /// <summary>The staged drivers' queue count at runtime -- XDP queues on an xdp grant,
+        /// reuseport sockets on a gso grant; zero means the driver default. Bounds are per
+        /// driver, refused loudly at the rung (gso refuses past 32). The portable driver
+        /// ignores it.</summary>
         public int NumXdpQueues;
-        /// <summary>XDP transport OS cpu count; zero means the transport default. The portable build ignores it.</summary>
+        /// <summary>The xdp driver's OS cpu count (its workers pin from this core upward);
+        /// zero means the driver default. The other drivers ignore it.</summary>
         public int NumOsCpus;
 
         /// <summary>Largest payload this server sends (fragmenting transparently) and
@@ -385,6 +403,58 @@ public static unsafe class RocketNet
 
         /// <summary>Reassembly slots per client slot; zero means <see cref="DefaultReassemblySlots"/>.</summary>
         public int NumReassemblySlots;
+
+        /// <summary>The driver candidate list (#106), a NUL-terminated ASCII string of up to
+        /// <see cref="DriverStringLength"/> - 1 characters: an ordered comma-separated list
+        /// tried left to right at create, first grant wins — on linux the auto ladder is
+        /// xdp,gso,portable — and an applicable one-element list is a pin that refuses
+        /// loudly rather than falling. Known names absent on the platform or endpoint are
+        /// skipped softly (a list of nothing but skips falls to auto, loudly); unknown
+        /// names refuse the create at parse. Read and write it through
+        /// <see cref="GetDriver"/> / <see cref="SetDriver"/>.</summary>
+        public fixed byte Driver[DriverStringLength];
+
+        /// <summary>The server's public address (#110 review), a NUL-terminated string of up
+        /// to <see cref="AddressStringLength"/> - 1 characters; empty (the default) means
+        /// "use the create call's address parameter". When set — struct, or the
+        /// ROCKETNET_PUBLIC_ADDRESS env var (deprecated alias ROCKETNET_SERVER_PUBLIC_ADDRESS)
+        /// — it displaces that parameter before anything reads it, so the address the driver
+        /// ladder verifies, the address the granted driver binds, and the address connect
+        /// tokens validate against are always the same one. Read and write through
+        /// <see cref="GetPublicAddress"/> / <see cref="SetPublicAddress"/>.</summary>
+        public fixed byte PublicAddress[AddressStringLength];
+
+        /// <summary>Reads the driver candidate list as a string.</summary>
+        public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
+
+        /// <summary>Writes the driver candidate list. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetDriver( string value ) { fixed ( byte * driver = Driver ) WriteFixedString( driver, DriverStringLength, value, "driver list" ); }
+
+        /// <summary>Reads the public address override as a string.</summary>
+        public string GetPublicAddress() { fixed ( byte * address = PublicAddress ) return Marshal.PtrToStringUTF8( (IntPtr) address ) ?? string.Empty; }
+
+        /// <summary>Writes the public address override. Throws when the value cannot fit —
+        /// mirroring the C surface, which refuses loudly and never truncates.</summary>
+        public void SetPublicAddress( string value ) { fixed ( byte * address = PublicAddress ) WriteFixedString( address, AddressStringLength, value, "public address" ); }
+    }
+
+    /// <summary>rocketnet.h ROCKETNET_DRIVER_STRING_LENGTH: the driver field's capacity,
+    /// terminator included.</summary>
+    public const int DriverStringLength = 64;
+
+    /// <summary>rocketnet.h ROCKETNET_MAX_ADDRESS_STRING_LENGTH: the public address field's
+    /// capacity, terminator included.</summary>
+    public const int AddressStringLength = 256;
+
+    static void WriteFixedString( byte * buffer, int capacity, string value, string what )
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes( value ?? string.Empty );
+        if ( bytes.Length >= capacity )
+            throw new ArgumentException( $"{what} is too long ({capacity - 1} character maximum)" );
+        for ( int i = 0; i < bytes.Length; i++ )
+            buffer[i] = bytes[i];
+        buffer[bytes.Length] = 0;
     }
 
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
@@ -704,6 +774,13 @@ public static unsafe class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_state", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportState( IntPtr client );
 
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_driver", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr client_transport_driver( IntPtr client );
+
+    /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
+    /// that won the ladder at create ("portable", "msgx"), never the requested list.</summary>
+    public static string ClientTransportDriver( IntPtr client ) => Marshal.PtrToStringUTF8( client_transport_driver( client ) ) ?? string.Empty;
+
     /// <summary>The client's slot index on the server, -1 when not connected.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_client_index", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ClientTransportClientIndex( IntPtr client );
@@ -769,6 +846,21 @@ public static unsafe class RocketNet
     /// <summary>The server state, one of the Server state constants.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_state", CallingConvention = CallingConvention.Cdecl )]
     public static extern int ServerTransportState( IntPtr server );
+
+    /// <summary>The commit barrier for host processes that must never commit an XDP data
+    /// plane (test harnesses, smokes): installed once, the xdp driver's create refuses
+    /// before its first act; the non-mutating pre-flight stays reachable. A no-op on
+    /// platforms without the xdp driver.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_forbid_xdp_commit", CallingConvention = CallingConvention.Cdecl )]
+    public static extern void ForbidXdpCommit();
+
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_driver", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr server_transport_driver( IntPtr server );
+
+    /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
+    /// that won the ladder at create ("xdp", "gso", "msgx", "portable"), never the requested
+    /// list. Performance claims attach to what this returns.</summary>
+    public static string ServerTransportDriver( IntPtr server ) => Marshal.PtrToStringUTF8( server_transport_driver( server ) ) ?? string.Empty;
 
     /// <summary>Advances the server one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]

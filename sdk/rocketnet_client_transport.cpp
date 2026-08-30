@@ -12,6 +12,7 @@
 #include "rocketnet_memory_checks.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_jitter_tracker.h"
+#include "rocketnet_config.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -99,6 +100,8 @@ struct rocketnet_client_transport_t
 
     uint16_t bound_port;
 
+    int driver;                     // the granted driver (ROCKETNET_DRIVER_*), decided by the ladder at create
+
     rocketnet_platform_socket_t * socket;
 
     rocketnet_platform_thread_t * thread;
@@ -142,24 +145,45 @@ struct rocketnet_client_transport_t
 
 static void rocketnet_client_thread_function( void * data );
 
-void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
-{
-    rocketnet_assert( config );
-    memset( config, 0, sizeof(struct rocketnet_client_transport_config_t) );
-    const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memcpy( config->filter_value, test_filter, ROCKETNET_FILTER_VALUE_BYTES );
-}
+// rocketnet_client_transport_default_config lives in rocketnet_config.cpp,
+// written from the config table so every default is declared exactly once
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
     rocketnet_assert( connect_token );
 
-    struct rocketnet_client_transport_config_t default_config;
-    if ( !config )
-    {
-        rocketnet_client_transport_default_config( &default_config );
-        config = &default_config;
-    }
+    // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
+    // the development posture (the default shape); the caller's struct is
+    // the middle layer; the environment overlays both through the config
+    // table, every override logged loudly with the value it displaced.
+    // validation refuses loudly and never clamps.
+
+    struct rocketnet_client_transport_config_t effective_config;
+    if ( config )
+        effective_config = *config;
+    else
+        rocketnet_client_transport_default_config( &effective_config );
+
+    int num_config_fields = 0;
+    const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );
+
+    if ( !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
+        return NULL;
+
+    if ( !rocketnet_config_validate( "client", &effective_config, config_fields, num_config_fields ) )
+        return NULL;
+
+    config = &effective_config;
+
+    // the driver candidate list parses before anything allocates: a typo
+    // fails here, loudly, listing the valid names
+
+    int num_available_drivers = 0;
+    const int * available_drivers = rocketnet_client_driver_availability( &num_available_drivers );
+
+    struct rocketnet_driver_ladder_t ladder;
+    if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+        return NULL;
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) rocketnet_malloc( context, sizeof(rocketnet_client_transport_t) );
     if ( !client_transport )
@@ -173,27 +197,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     client_transport->context = context;
     client_transport->next_packet_id = 1;
 
-    // the fragmentation shape: zero means the defaults, anything else is
-    // validated -- a maximum below the wire capacity or past the
-    // 256-fragment ceiling is a configuration error, refused loudly
+    // the fragmentation shape: zero means the defaults; the table already
+    // refused anything out of range, loudly, never clamped
 
     client_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-
-    if ( client_transport->max_payload_bytes < ROCKETNET_MAX_PAYLOAD_BYTES ||
-         client_transport->max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES )
-    {
-        rocketnet_error( "client config max_payload_bytes %d is out of range (%d to %d)", client_transport->max_payload_bytes, ROCKETNET_MAX_PAYLOAD_BYTES, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES );
-        rocketnet_free( context, client_transport );
-        return NULL;
-    }
-
-    if ( num_reassembly_slots > ROCKETNET_MAX_FRAGMENTS )
-    {
-        rocketnet_error( "client config num_reassembly_slots %d is out of range (1 to %d)", num_reassembly_slots, ROCKETNET_MAX_FRAGMENTS );
-        rocketnet_free( context, client_transport );
-        return NULL;
-    }
 
     // the arena's slot stride stays 16-aligned so every root handed to a
     // caller is aligned for any word-based serializer
@@ -275,16 +283,73 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
         }
     }
 
-    client_transport->socket = rocketnet_platform_socket_create( client_transport->context, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    if ( client_transport->socket == NULL )
+    // THE LADDER (#106), the client's short form: candidates tried left to
+    // right, first grant wins, a one-element list is a pin that refuses
+    // rather than falls, and the exhausted list fails loudly naming what
+    // was skipped for platform and what refused for grant.
+
+    int granted_driver = -1;
+
+    char refused_names[128];
+    refused_names[0] = '\0';
+
+    for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
-        rocketnet_error( "client could not create socket" );
+        const int candidate = ladder.candidates[i];
+
+        if ( candidate == ROCKETNET_DRIVER_MSGX || candidate == ROCKETNET_DRIVER_PORTABLE )
+        {
+            // each attempt binds its own copy of the address, so a refused
+            // attempt's discovered ephemeral port never constrains the next
+
+            rocketnet_address_t attempt_address = bind_address;
+
+            client_transport->socket = rocketnet_platform_socket_create_with_pump( client_transport->context, &attempt_address,
+                                                                                   ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE,
+                                                                                   rocketnet_driver_name( candidate ) );
+            if ( client_transport->socket )
+            {
+                bind_address = attempt_address;
+                granted_driver = candidate;
+            }
+        }
+
+        if ( granted_driver < 0 )
+        {
+            rocketnet_warn( "client driver %s refused%s", rocketnet_driver_name( candidate ),
+                            i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
+            const size_t used = strlen( refused_names );
+            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+        }
+    }
+
+    if ( granted_driver < 0 )
+    {
+        char skipped_names[128];
+        skipped_names[0] = '\0';
+        for ( int i = 0; i < ladder.num_skipped; i++ )
+        {
+            const size_t used = strlen( skipped_names );
+            snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( ladder.skipped[i] ) );
+        }
+
+        rocketnet_error( "client driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+                         refused_names[0] != '\0' ? refused_names : "(none)",
+                         skipped_names[0] != '\0' ? skipped_names : "(none)" );
         rocketnet_client_transport_destroy( client_transport );
         return NULL;
     }
 
+    client_transport->driver = granted_driver;
+
+    if ( refused_names[0] != '\0' )
+    {
+        rocketnet_info( "client driver ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
+    }
+
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    rocketnet_info( "client bound to %s", rocketnet_address_to_string( &bind_address, address_string ) );
+    rocketnet_info( "client bound to %s [%s]", rocketnet_address_to_string( &bind_address, address_string ), rocketnet_driver_name( granted_driver ) );
 
     client_transport->bound_port = bind_address.port;
 
@@ -914,6 +979,15 @@ int rocketnet_client_transport_state( rocketnet_client_transport_t * client_tran
 {
     rocketnet_assert( client_transport );
     return client_transport->protocol.state;
+}
+
+// the granted-tier report: the driver that won the ladder at create, by
+// name -- what performance claims and operator errands attach to
+
+const char * rocketnet_client_transport_driver( rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return rocketnet_driver_name( client_transport->driver );
 }
 
 int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )

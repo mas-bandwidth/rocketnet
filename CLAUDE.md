@@ -110,8 +110,12 @@ Still open, highest first:
    running at all — that project is in development, not production, and cut the
    XDP path down. Worth knowing before anyone "re-enables" something that is
    already on.
-2. **Startup side effects, output and exit status discarded**: several `popen`
-   calls, and library init disables SMT machine-wide.
+2. **Resolved by #110's verify-and-bind**: the XDP create used to disable
+   SMT machine-wide and run machine-mutating `popen` setup; all machine
+   provisioning now lives in `scripts/rocketnet-provision` and create is
+   verify-and-bind (a non-mutating pre-flight, then per-socket acts only).
+   The remaining spawned commands are read-only discovery and the private
+   build-directory workflow.
 
 3. **The umem fill-ring refill path is unverified on Linux**: the
    `num_consumed` accounting that drives release, refill and the
@@ -202,8 +206,18 @@ library is never observed unloaded.
 
 For hosts where XDP is not available — AWS GameLift and similar, no
 `CAP_NET_ADMIN` — the third server implementation exists (#97):
-`rocketnet_server_gso_linux.cpp` behind the same seam, selected with
-`-DROCKETNET_SERVER_GSO=1` (`make build-gso`), Linux only, unprivileged.
+`rocketnet_server_gso_linux.cpp` behind the same seam, Linux only,
+unprivileged. Since #106 selection is runtime, not compile time: one Linux
+build carries xdp, gso and portable, and the transport walks the config's
+ordered candidate list at create (`driver` field / `ROCKETNET_DRIVER`,
+default `auto` = xdp,gso,portable) — first grant wins, pins refuse loudly,
+the granted tier is reported by `rocketnet_server_transport_driver` and one
+create log line. The config system is one X-macro table per transport in
+`rocketnet.h` deriving struct, defaults, env names (`ROCKETNET_` +
+uppercased field), parse and validation; precedence default < struct < env,
+overrides logged with the displaced value, validation refuses and never
+clamps. STANDARD.md "Driver selection and transport configuration" is the
+ruling form.
 
 The shape is the one this section always planned, confirmed by the #81
 measurements (GSO/GRO 11.62x over portable standalone on the space box's

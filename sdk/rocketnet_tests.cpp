@@ -30,10 +30,20 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_config.h"
+
+// the linux driver tests reach below the transport: the xdp pre-flight
+// (never the committing create) and the gso driver's geometry constants
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include "rocketnet_server_socket.h"
+#include "rocketnet_server_gso.h"
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #include <sodium.h>
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +59,38 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// setenv/unsetenv are posix-only names: the MSVC CRT spells both
+// _putenv_s -- and getenv sees the change because the suite and the sdk
+// read the same CRT environment -- so the #106 config and driver tests RUN
+// on windows instead of being compiled out (a skipped test is named and
+// logged, never silent; a runnable test is run)
+//
+// ONE semantic gap remains, and it is the platform's rather than the
+// shim's: the windows CRT cannot represent a set-but-empty variable at
+// all. _putenv_s(name,"") DELETES the variable, so "set to empty" and
+// "not set" are the same state here, and unsetenv is spelled with it.
+// the one case that turns on the distinction -- config validation's
+// empty-value case -- is skipped on windows, named and logged with this
+// reason; rocketnet_config_apply_env's empty branch is correspondingly
+// unreachable on windows. nothing else in the suite depends on it.
+//
+// `overwrite` is HONORED rather than ignored: no call site passes 0
+// today, but a shim that silently clobbered under overwrite=0 would be a
+// trap laid for the first one that does
+
+static int setenv( const char * name, const char * value, int overwrite )
+{
+    if ( !overwrite && getenv( name ) != NULL )
+        return 0;
+    return _putenv_s( name, value );
+}
+
+static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 static void rocketnet_check_handler( const char * condition,
                                 const char * function,
@@ -162,6 +204,49 @@ void rocketnet_test_base64()
     rocketnet_check( rocketnet_base64_decode_string( encoded, decoded, sizeof(decoded) ) > 0 );
     rocketnet_check( strcmp( decoded, input ) == 0 );
     rocketnet_check( rocketnet_base64_decode_string( encoded, decoded, 10 ) == 0 );
+
+    // the strict decoder (#110 review, both readers independently): invalid
+    // characters, high-bit bytes, misplaced or excessive padding, and
+    // impossible lengths all refuse whole -- for the config system's key
+    // fields a corrupted value must never silently become a wrong key, and
+    // a byte past 0x7f must never index below the decode table
+
+    uint8_t bytes[64];
+    rocketnet_check( rocketnet_base64_decode_data( "####", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AA A=", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "\xC3\xA9zz", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "zz=z", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "z===", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "=", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "zzzzz", bytes, sizeof(bytes) ) == 0 );
+
+    // a bare invalid character inside a well-formed length
+
+    rocketnet_check( rocketnet_base64_decode_data( "AA!A", bytes, sizeof(bytes) ) == 0 );
+
+    // ONE SPELLING PER KEY, now a real property of the decoder: padding
+    // is required (unpadded "AA" refuses beside "AA=="), the alphabet is
+    // the standard one alone (the url-safe aliases refuse), and
+    // non-canonical tails refuse ("AB==" against the canonical "AQ==") --
+    // so every byte string has exactly one accepted encoding
+
+    rocketnet_check( rocketnet_base64_decode_data( "AAECAw==", bytes, sizeof(bytes) ) == 4 );
+    rocketnet_check( bytes[0] == 0x00 && bytes[1] == 0x01 && bytes[2] == 0x02 && bytes[3] == 0x03 );
+
+    rocketnet_check( rocketnet_base64_decode_data( "AA==", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( bytes[0] == 0x00 );
+    rocketnet_check( rocketnet_base64_decode_data( "AA", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AB", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AB==", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "AQ==", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( bytes[0] == 0x01 );
+
+    rocketnet_check( rocketnet_base64_decode_data( "+w==", bytes, sizeof(bytes) ) == 1 );
+    rocketnet_check( bytes[0] == 0xFB );
+    rocketnet_check( rocketnet_base64_decode_data( "+w", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "-w==", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "-_==", bytes, sizeof(bytes) ) == 0 );
+    rocketnet_check( rocketnet_base64_decode_data( "A_==", bytes, sizeof(bytes) ) == 0 );
 }
 
 void rocketnet_test_hash()
@@ -5563,9 +5648,7 @@ void rocketnet_test_platform_batch_pump_degraded()
     // refusal would degrade to. on platforms whose pump is portable
     // already, the override is a no-op and the exchange still holds.
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     setenv( "ROCKETNET_PUMP", "portable", 1 );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, "0.0.0.0" );
@@ -5576,9 +5659,7 @@ void rocketnet_test_platform_batch_pump_degraded()
 
     rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", "portable" );
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     unsetenv( "ROCKETNET_PUMP" );
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 }
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -9356,6 +9437,1052 @@ void rocketnet_test_transport_ipv6_loopback()
     rocketnet_server_transport_destroy( server );
 }
 
+// ----------------------------------------------------------------
+//        the config table and the driver ladder (#106)
+// ----------------------------------------------------------------
+
+// env guard: the suite may itself run under a driver matrix leg
+// (ROCKETNET_DRIVER=... ./bin/test), so every test that touches the
+// environment saves what it found and puts it back
+
+struct rocketnet_test_env_guard_t
+{
+    const char * name;
+    bool was_set;
+    char saved[1024];
+};
+
+static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
+{
+    guard->name = name;
+    const char * value = getenv( name );
+    guard->was_set = value != NULL;
+    guard->saved[0] = '\0';
+    if ( value )
+        snprintf( guard->saved, sizeof(guard->saved), "%s", value );
+}
+
+static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
+{
+    rocketnet_test_env_save( guard, name );
+    unsetenv( name );
+}
+
+// the same platform truth the empty-value case below is skipped for bounds
+// this restore on windows: a guard that saved a set-but-empty value would
+// put back a DELETED variable rather than an empty one. the state is
+// unreachable there -- the windows CRT cannot hold a set-but-empty variable
+// in the first place -- so this is disclosure, not a live defect
+
+static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guard )
+{
+    if ( guard->was_set )
+        setenv( guard->name, guard->saved, 1 );
+    else
+        unsetenv( guard->name );
+}
+
+// the log capture sink, shared by the tests that assert a log line rather
+// than trusting it (config validation's empty-value case, and the override
+// logging test's redaction MUSTs)
+
+static char rocketnet_test_captured_log[16384];
+
+static void rocketnet_test_capture_log( int level, const char * format, ... )
+{
+    (void) level;
+    va_list args;
+    va_start( args, format );
+    char line[1024];
+    vsnprintf( line, sizeof(line), format, args );
+    va_end( args );
+    const size_t used = strlen( rocketnet_test_captured_log );
+    snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
+}
+
+// THE COMPLETENESS TEST: walk both config tables and prove every declared
+// field round-trips from environment -- set the derived env var to a value
+// the default is not, apply, read the field back. a field added to a table
+// without env support cannot pass here, so the env mirror stays complete
+// by check rather than by memory.
+
+static void rocketnet_test_config_table_round_trip( const char * transport_name, void * config, void ( *default_config )( void * ),
+                                                    const struct rocketnet_config_field_t * fields, int num_fields )
+{
+    rocketnet_check( num_fields > 0 );
+
+    for ( int i = 0; i < num_fields; i++ )
+    {
+        const struct rocketnet_config_field_t * field = &fields[i];
+
+        char env_name[128];
+        rocketnet_check( rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) );
+
+        struct rocketnet_test_env_guard_t guard;
+        rocketnet_test_env_save( &guard, env_name );
+
+        default_config( config );
+
+        char value_string[256];
+        uint8_t expected_bytes[256];
+        int64_t expected_int = 0;
+        uint64_t expected_uint64 = 0;
+
+        switch ( field->kind )
+        {
+            case ROCKETNET_CONFIG_KIND_INT:
+            {
+                int current;
+                memcpy( &current, (uint8_t*) config + field->offset, sizeof(current) );
+                expected_int = field->min_value != (int64_t) current ? field->min_value : field->min_value + 1;
+                rocketnet_check( expected_int <= field->max_value );
+                snprintf( value_string, sizeof(value_string), "%" PRId64, expected_int );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_UINT64:
+            {
+                expected_uint64 = 9876543210987654321ULL;
+                snprintf( value_string, sizeof(value_string), "%" PRIu64, expected_uint64 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_BYTES:
+            {
+                rocketnet_check( field->size <= (int) sizeof(expected_bytes) );
+                for ( int j = 0; j < field->size; j++ )
+                    expected_bytes[j] = (uint8_t) ( j * 37 + 11 + field->offset );
+                rocketnet_check( rocketnet_base64_encode_data( expected_bytes, (size_t) field->size, value_string, sizeof(value_string) ) > 0 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_STRING:
+            {
+                // one value for every string field: the table's validate
+                // checks termination only (the driver list's CONTENT is
+                // parsed by the ladder at create, which this walk never
+                // reaches), so a per-field special case here would be
+                // decoration
+
+                snprintf( value_string, sizeof(value_string), "value-under-test" );
+            }
+            break;
+
+            default:
+            {
+                rocketnet_check( !"unknown config field kind" );
+            }
+            break;
+        }
+
+        setenv( env_name, value_string, 1 );
+
+        rocketnet_check( rocketnet_config_apply_env( transport_name, config, fields, num_fields ) );
+        rocketnet_check( rocketnet_config_validate( transport_name, config, fields, num_fields ) );
+
+        const uint8_t * base = (const uint8_t*) config + field->offset;
+
+        switch ( field->kind )
+        {
+            case ROCKETNET_CONFIG_KIND_INT:
+            {
+                int applied;
+                memcpy( &applied, base, sizeof(applied) );
+                rocketnet_check( (int64_t) applied == expected_int );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_UINT64:
+            {
+                uint64_t applied;
+                memcpy( &applied, base, sizeof(applied) );
+                rocketnet_check( applied == expected_uint64 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_BYTES:
+            {
+                rocketnet_check( memcmp( base, expected_bytes, (size_t) field->size ) == 0 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_STRING:
+            {
+                rocketnet_check( strcmp( (const char*) base, value_string ) == 0 );
+            }
+            break;
+        }
+
+        rocketnet_test_env_restore( &guard );
+    }
+}
+
+static void rocketnet_test_client_default_config_erased( void * config )
+{
+    rocketnet_client_transport_default_config( (struct rocketnet_client_transport_config_t*) config );
+}
+
+static void rocketnet_test_server_default_config_erased( void * config )
+{
+    rocketnet_server_transport_default_config( (struct rocketnet_server_transport_config_t*) config );
+}
+
+void rocketnet_test_config_env_round_trip()
+{
+    // the derivation is mechanical: field name uppercased under the prefix
+
+    char derived[128];
+    rocketnet_check( rocketnet_config_env_var_name( "driver", derived, sizeof(derived) ) );
+    rocketnet_check( strcmp( derived, "ROCKETNET_DRIVER" ) == 0 );
+    rocketnet_check( rocketnet_config_env_var_name( "num_xdp_queues", derived, sizeof(derived) ) );
+    rocketnet_check( strcmp( derived, "ROCKETNET_NUM_XDP_QUEUES" ) == 0 );
+
+    int num_client_fields = 0;
+    const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_test_config_table_round_trip( "client", &client_config, rocketnet_test_client_default_config_erased, client_fields, num_client_fields );
+
+    int num_server_fields = 0;
+    const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_test_config_table_round_trip( "server", &server_config, rocketnet_test_server_default_config_erased, server_fields, num_server_fields );
+
+    // both tables carry the driver field, as a string
+
+    bool client_has_driver = false;
+    for ( int i = 0; i < num_client_fields; i++ )
+        if ( strcmp( client_fields[i].name, "driver" ) == 0 && client_fields[i].kind == ROCKETNET_CONFIG_KIND_STRING )
+            client_has_driver = true;
+    rocketnet_check( client_has_driver );
+
+    bool server_has_driver = false;
+    for ( int i = 0; i < num_server_fields; i++ )
+        if ( strcmp( server_fields[i].name, "driver" ) == 0 && server_fields[i].kind == ROCKETNET_CONFIG_KIND_STRING )
+            server_has_driver = true;
+    rocketnet_check( server_has_driver );
+}
+
+// expected-refusal bracket: these tests PROVOKE refusals and assert them
+// by return value, so the error chatter of a refusal that is the point is
+// quieted for the provocation and the #107 posture (errors always print)
+// restored right after. nothing true is lost: when a provoked refusal
+// unexpectedly succeeds there was no error line to see anyway, and the
+// failing check names the spot.
+
+static int rocketnet_test_saved_log_level = ROCKETNET_LOG_LEVEL_ERROR;
+
+static void rocketnet_test_expect_refusals( bool expecting )
+{
+    if ( expecting )
+    {
+        rocketnet_test_saved_log_level = rocketnet_get_log_level();
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    }
+    else
+    {
+        rocketnet_log_level( rocketnet_test_saved_log_level );
+    }
+}
+
+void rocketnet_test_config_validation()
+{
+    rocketnet_test_expect_refusals( true );
+
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+
+    // ranges refuse loudly, never clamp; zero passes only where the field
+    // declares it means the default
+
+    struct rocketnet_server_transport_config_t config;
+
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    config.max_clients = 0;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.max_clients = ROCKETNET_MAX_CLIENTS;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    rocketnet_server_transport_default_config( &config );
+    config.max_payload_bytes = -1;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES - 1;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.max_payload_bytes = 0;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    // the table's num_xdp_queues range is structural; the per-driver
+    // bounds live at the ladder rungs (the gso pin test proves the gso
+    // rung's refusal at 33)
+
+    rocketnet_server_transport_default_config( &config );
+    config.num_xdp_queues = 33;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.num_xdp_queues = 1025;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    // an unterminated driver string is refused, not read past
+
+    rocketnet_server_transport_default_config( &config );
+    memset( config.driver, 'x', sizeof(config.driver) );
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    // env parses are strict: the whole value or a loud failure
+
+    struct rocketnet_test_env_guard_t guard;
+
+    rocketnet_test_env_save( &guard, "ROCKETNET_MAX_CLIENTS" );
+
+    rocketnet_server_transport_default_config( &config );
+    setenv( "ROCKETNET_MAX_CLIENTS", "abc", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    setenv( "ROCKETNET_MAX_CLIENTS", "12x", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+
+    // strtoll's lenient spellings are refused before it ever runs: no
+    // leading whitespace, no '+', digits only
+
+    setenv( "ROCKETNET_MAX_CLIENTS", "+5", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    setenv( "ROCKETNET_MAX_CLIENTS", " 5", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    setenv( "ROCKETNET_MAX_CLIENTS", "99999999999999999999", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+
+    // the empty value is ignored as unset, with a log line, leaving the
+    // field untouched -- and the LOG LINE is asserted, not assumed: the
+    // return value and the field alone cannot tell "set to empty" from
+    // "not set at all", so without the capture this case would still pass
+    // if the empty branch vanished entirely
+    //
+    // windows cannot run it. the CRT has no set-but-empty state at all --
+    // _putenv_s(name,"") DELETES the variable -- so the shim at the top of
+    // this file cannot put the process in the state the case needs, and
+    // the branch it covers is unreachable on that platform. a skipped test
+    // is named and logged, never silent
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    setenv( "ROCKETNET_MAX_CLIENTS", "", 1 );
+    rocketnet_server_transport_default_config( &config );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int empty_saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+
+    rocketnet_log_level( empty_saved_level );
+    rocketnet_log_function( NULL );
+
+    rocketnet_check( config.max_clients == 64 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_MAX_CLIENTS" ) != NULL );
+
+#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_config_validation empty-value case [SKIPPED on windows: the CRT cannot represent a set-but-empty variable; empty deletes]" );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    rocketnet_test_env_restore( &guard );
+
+    rocketnet_test_env_save( &guard, "ROCKETNET_PROTOCOL_ID" );
+    rocketnet_server_transport_default_config( &config );
+    setenv( "ROCKETNET_PROTOCOL_ID", "-5", 1 );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_test_env_restore( &guard );
+
+    // byte fields demand base64 of exactly the field's length
+
+    rocketnet_test_env_save( &guard, "ROCKETNET_FILTER_VALUE" );
+    rocketnet_server_transport_default_config( &config );
+    setenv( "ROCKETNET_FILTER_VALUE", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    setenv( "ROCKETNET_FILTER_VALUE", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
+    rocketnet_check( memcmp( config.filter_value, expected_filter, 4 ) == 0 );
+    rocketnet_test_env_restore( &guard );
+
+    // an out-of-range env value refuses the whole create
+
+    rocketnet_test_env_save( &guard, "ROCKETNET_MAX_CLIENTS" );
+    setenv( "ROCKETNET_MAX_CLIENTS", "0", 1 );
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_env_restore( &guard );
+
+    rocketnet_test_expect_refusals( false );
+}
+
+void rocketnet_test_driver_ladder_parse()
+{
+    rocketnet_test_expect_refusals( true );
+
+    const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
+    const int mac_endpoint[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
+
+    struct rocketnet_driver_ladder_t ladder;
+
+    // auto -- and its spellings NULL, "", and whitespace -- expands to the
+    // availability order
+
+    rocketnet_check( rocketnet_driver_ladder_parse( NULL, linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 0 );
+    rocketnet_check( ladder.candidates[0] == ROCKETNET_DRIVER_XDP && ladder.candidates[1] == ROCKETNET_DRIVER_GSO && ladder.candidates[2] == ROCKETNET_DRIVER_PORTABLE );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "auto", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 3 );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 3 );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "  auto  ", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 3 );
+
+    // a one-element list is a pin; an explicit list is exactly that list,
+    // in exactly that order, with no implicit floor appended
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "gso", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_GSO );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "gso,xdp", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 2 );
+    rocketnet_check( ladder.candidates[0] == ROCKETNET_DRIVER_GSO && ladder.candidates[1] == ROCKETNET_DRIVER_XDP );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( " gso , portable ", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 2 );
+
+    // known names absent here are skipped softly, so one fleet-wide line
+    // deploys unmodified to heterogeneous boxes
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "xdp,gso,msgx,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 3 && ladder.num_skipped == 1 );
+    rocketnet_check( ladder.skipped[0] == ROCKETNET_DRIVER_MSGX );
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "xdp,gso,msgx,portable", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 2 && ladder.num_skipped == 2 );
+    rocketnet_check( ladder.candidates[0] == ROCKETNET_DRIVER_MSGX && ladder.candidates[1] == ROCKETNET_DRIVER_PORTABLE );
+
+    // a list whose every name was skipped names no driver for this
+    // endpoint: the parse falls to the availability order, loudly, so a
+    // fleet-wide line never bricks an endpoint it was not addressing
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "xdp", mac_endpoint, 2, &ladder ) );
+    rocketnet_check( ladder.num_skipped == 1 && ladder.skipped[0] == ROCKETNET_DRIVER_XDP );
+    rocketnet_check( ladder.num_candidates == 2 );
+    rocketnet_check( ladder.candidates[0] == ROCKETNET_DRIVER_MSGX && ladder.candidates[1] == ROCKETNET_DRIVER_PORTABLE );
+
+    // typos are not skips: a name in no transport set fails loudly
+
+    rocketnet_check( !rocketnet_driver_ladder_parse( "protable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( "GSO", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( "gso,,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( ",", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( "auto,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_driver_ladder_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
+
+    // duplicates of an available name are allowed: trying a rung twice is
+    // the operator's list, honored as written
+
+    rocketnet_check( rocketnet_driver_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
+    rocketnet_check( ladder.num_candidates == 2 );
+
+    rocketnet_test_expect_refusals( false );
+}
+
+void rocketnet_test_config_precedence()
+{
+    // DEFAULT < STRUCT < ENV, observed through the one config field with a
+    // public query: max_payload_bytes
+
+    struct rocketnet_test_env_guard_t payload_guard;
+    rocketnet_test_env_clear( &payload_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+
+    // default layer
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    rocketnet_server_transport_destroy( server );
+
+    // struct displaces default
+
+    config.max_payload_bytes = 18000;
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
+    rocketnet_server_transport_destroy( server );
+
+    // env displaces struct
+
+    setenv( "ROCKETNET_MAX_PAYLOAD_BYTES", "20000", 1 );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_env_restore( &payload_guard );
+}
+
+// the rung-forcing exchange: pin a driver list on the server, expect the
+// named grant, and pass real payloads both ways through it -- the matrix
+// doctrine's runtime form. the pin rides the struct, so ROCKETNET_DRIVER
+// is cleared for the duration (env would win, by design). port zero per
+// the #107 law: the kernel grants the port and the token is minted for
+// what was granted, so no other process on the box can race this test.
+
+static void rocketnet_test_driver_pin_exchange( const char * driver_list, const char * expected_driver )
+{
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    snprintf( server_config.driver, sizeof(server_config.driver), "%s", driver_list );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), expected_driver ) == 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    int server_received = 0;
+    int client_received = 0;
+    int sent = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent < 5 )
+        {
+            rocketnet_client_transport_send_packet( client, (const uint8_t*) "rung!", 5 );
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "rung!", 5 );
+            sent++;
+        }
+
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload && payload_bytes == 5 && memcmp( payload, "rung!", 5 ) == 0 );
+            server_received++;
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 5 && memcmp( packet, "rung!", 5 ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= 5 && client_received >= 5 )
+            break;
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received >= 5 );
+    rocketnet_check( client_received >= 5 );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+void rocketnet_test_server_driver_pin_portable()
+{
+    // the portable rung carries traffic on every platform -- the floor
+    // must never be the untested tier
+
+    rocketnet_test_driver_pin_exchange( "portable", "portable" );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+void rocketnet_test_server_driver_pin_gso()
+{
+    rocketnet_test_driver_pin_exchange( "gso", "gso" );
+
+    // per-driver bounds: a queue count past the gso geometry refuses the
+    // pinned rung -- and with nothing left to fall to, the create --
+    // loudly, never clamped
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "gso" );
+    config.num_xdp_queues = ROCKETNET_GSO_MAX_QUEUES + 1;
+
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+void rocketnet_test_server_driver_pin_xdp()
+{
+    // the pre-flight is the ONLY xdp surface the suite touches: create's
+    // committing acts (its BPF program built, loaded and attached, AF_XDP
+    // binds) must never run under a test, root box or not -- the suite
+    // never mutates a host. where the pre-flight refuses (every CI box, by
+    // the root condition at least), the xdp PIN must refuse create loudly:
+    // the pin-refuses semantic proven end to end, no machine touched. on a
+    // box the pre-flight passes whole, this test asserts nothing more --
+    // granting xdp attaches a data plane, which is not a unit test's act.
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    rocketnet_test_expect_refusals( true );
+    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40000", 7 );
+    rocketnet_test_expect_refusals( false );
+
+    if ( !provisioned )
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        snprintf( config.driver, sizeof(config.driver), "xdp" );
+
+        rocketnet_test_expect_refusals( true );
+        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+        rocketnet_test_expect_refusals( false );
+    }
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+void rocketnet_test_server_driver_ladder_fall()
+{
+    // THE FALL, proven to actually happen where it can be proven without
+    // mutating the host: on a box where the pre-flight refuses xdp (every
+    // CI box, unprivileged by construction), the auto ladder must land on
+    // gso -- the next rung -- never portable, never failure. on a box the
+    // pre-flight passes whole, the ladder would grant xdp by attaching a
+    // real data plane, so the test stands down: the suite never commits
+    // the machine.
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    rocketnet_test_expect_refusals( true );
+    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40000", 7 );
+    rocketnet_test_expect_refusals( false );
+
+    if ( !provisioned )
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        snprintf( config.driver, sizeof(config.driver), "xdp,gso,portable" );
+
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        rocketnet_check( server );
+        rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "gso" ) == 0 );
+        rocketnet_server_transport_stop( server );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_destroy( server );
+    }
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+// the R4 matcher against fixture strings of real /proc/interrupts lines:
+// driver-prefixed names from the exact families B3 tells operators to
+// build, plus the substring traps -- pure string logic, held here so the
+// pre-flight's and the script's shared boundary rule cannot drift
+// unwitnessed
+
+void rocketnet_test_xdp_interrupt_matcher()
+{
+    // real driver lines (i40e, ice, ixgbe-style, virtio, and a real mlx5
+    // completion vector) plus CONSTRUCTED trap lines -- the VLAN pair and
+    // the substring traps are synthetic by design, they exist to pin the
+    // boundary rule, and this comment says so rather than calling them
+    // real. the honest limit is also pinned: mlx5's completion vectors
+    // carry NO netdev name, so no netdev can match them -- the pre-flight
+    // states that limit instead of claiming there is nothing to pin. the
+    // script's selftest mode holds its awk matcher to the SAME CASE SET,
+    // transcribed (the deliberate byte differences are recorded there).
+
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 24:  0  0  IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-0\n", "ens1f0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 25:  0  0  IR-PCI-MSI 524289-edge      ice-ens1f0-TxRx-1\n", "ens1f0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 26:  0  0  PCI-MSI 49152-edge      eth0-TxRx-0\n", "eth0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 27:  0  0  PCI-MSI 1048577-edge      eth0\n", "eth0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 28:  0  0  PCI-MSI 65536-edge      virtio0-input.0\n", "virtio0" ) );
+
+    // vlan sub-interfaces are their own names: the parent must not claim
+    // the child's lines and the child matches its own literally (the dot
+    // is a character, never a wildcard)
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0" ) );
+    rocketnet_check( rocketnet_server_socket_interrupt_line_matches_interface(
+        " 29:  0  0  PCI-MSI 49153-edge      eth0.100-TxRx-0\n", "eth0.100" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 30:  0  0  PCI-MSI 49154-edge      eth0x100-TxRx-0\n", "eth0.100" ) );
+
+    // the substring traps stay traps
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 30:  0  0  PCI-MSI 2097152-edge      velocity0-tx\n", "lo" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        "LOC:  12345  67890   Local timer interrupts\n", "lo" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 31:  0  0  PCI-MSI 2097153-edge      ens1f10-TxRx-0\n", "ens1f0" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 32:  0  0  PCI-MSI 2097154-edge      eth00\n", "eth0" ) );
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 33:  0  0  PCI-MSI 2097156-edge      xeth0-TxRx-0\n", "eth0" ) );
+
+    // the honest limit: a real mlx5 completion vector line names no
+    // netdev, so no netdev matches it -- R4 for that class is stated
+    // unverifiable-by-name, never silently passed as nothing-to-pin
+
+    rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
+        " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+void rocketnet_test_server_driver_pin_msgx()
+{
+    rocketnet_test_driver_pin_exchange( "msgx", "msgx" );
+}
+
+void rocketnet_test_driver_pump_alias()
+{
+    // ROCKETNET_PUMP=portable keeps its exact pre-#106 meaning -- the
+    // darwin batch pump is off -- absorbed into the ladder as an msgx
+    // refusal, so the auto ladder lands on portable
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_test_env_guard_t pump_guard;
+    rocketnet_test_env_save( &pump_guard, "ROCKETNET_PUMP" );
+    setenv( "ROCKETNET_PUMP", "portable", 1 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+
+    rocketnet_test_expect_refusals( true );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_test_expect_refusals( false );
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_destroy( server );
+
+    // and a pinned msgx under the same override is a refusal-exhausted
+    // ladder: the pin refuses loudly, it never falls
+
+    struct rocketnet_server_transport_config_t pinned_config;
+    rocketnet_server_transport_dev_config( &pinned_config );
+    snprintf( pinned_config.driver, sizeof(pinned_config.driver), "msgx" );
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &pinned_config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    rocketnet_test_env_restore( &pump_guard );
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+void rocketnet_test_driver_all_skipped_uses_auto()
+{
+    // a list whose every name is a platform- or endpoint-skip names no
+    // driver for this endpoint at all -- a fleet-wide line read by an
+    // endpoint it was not addressing -- so the endpoint falls to its own
+    // auto order, loudly, instead of bricking (#110 review, ruled inside
+    // the #106 ignore rule). a typo is still a typo: loud parse failure,
+    // no create. refusal-exhausted lists still fail loudly -- the xdp pin
+    // test and the pump-alias msgx pin prove that side.
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    snprintf( config.driver, sizeof(config.driver), "msgx" );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    snprintf( config.driver, sizeof(config.driver), "gso" );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    // the grant came from the endpoint's own auto order
+
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+    bool granted_from_auto = false;
+    for ( int i = 0; i < num_available; i++ )
+        if ( strcmp( rocketnet_server_transport_driver( server ), rocketnet_driver_name( available[i] ) ) == 0 )
+            granted_from_auto = true;
+    rocketnet_check( granted_from_auto );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_destroy( server );
+
+    snprintf( config.driver, sizeof(config.driver), "protable" );
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+// the STANDARD's logging MUSTs, asserted rather than trusted: every env
+// override logs the variable and the displaced value, and secret material
+// never reaches a log line -- not the new value, not the displaced one
+// (the capture sink itself lives up beside the env guards, because the
+// validation test asserts a log line too)
+
+void rocketnet_test_config_override_logging()
+{
+    struct rocketnet_test_env_guard_t clients_guard;
+    rocketnet_test_env_save( &clients_guard, "ROCKETNET_MAX_CLIENTS" );
+
+    struct rocketnet_test_env_guard_t secret_guard;
+    rocketnet_test_env_save( &secret_guard, "ROCKETNET_SERVER_SECRET_KEY" );
+
+    uint8_t secret_bytes[32];
+    for ( int i = 0; i < 32; i++ )
+        secret_bytes[i] = (uint8_t) ( i * 11 + 5 );
+    char secret_base64[64];
+    rocketnet_check( rocketnet_base64_encode_data( secret_bytes, 32, secret_base64, sizeof(secret_base64) ) > 0 );
+
+    setenv( "ROCKETNET_MAX_CLIENTS", "77", 1 );
+    setenv( "ROCKETNET_SERVER_SECRET_KEY", secret_base64, 1 );
+
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+    rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( NULL );
+
+    rocketnet_check( config.max_clients == 77 );
+    rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) == 0 );
+
+    // the non-secret override logs the variable, the value, and what it
+    // displaced; the secret override logs redacted on both sides and the
+    // secret's encoding appears nowhere in the log
+
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_MAX_CLIENTS=77" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 64)" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SECRET_KEY=(redacted)" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
+
+    // the failure path redacts too: a mistyped secret is still a secret
+
+    setenv( "ROCKETNET_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
+
+    rocketnet_test_env_restore( &clients_guard );
+    rocketnet_test_env_restore( &secret_guard );
+}
+
+// the deprecated env aliases (the pre-#106 spellings): honored where the
+// successor is unset, logged loudly naming the successor, yielding loudly
+// beside it -- and the public address alias feeds the one resolved
+// address create uses everywhere
+
+void rocketnet_test_config_env_aliases()
+{
+    struct rocketnet_test_env_guard_t alias_guard;
+    rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
+
+    struct rocketnet_test_env_guard_t successor_guard;
+    rocketnet_test_env_save( &successor_guard, "ROCKETNET_NUM_XDP_QUEUES" );
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    // the alias is honored where the successor is unset...
+
+    unsetenv( "ROCKETNET_NUM_XDP_QUEUES" );
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_server_transport_destroy( server );
+
+    // ...parsed strictly...
+
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    // ...and yields to the successor when both are set
+
+    setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
+    setenv( "ROCKETNET_NUM_XDP_QUEUES", "2", 1 );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_env_restore( &alias_guard );
+    rocketnet_test_env_restore( &successor_guard );
+
+    // the public address rides the table now, scoped first-create-consumes
+    // for the env layer. proven deterministically, no fixed port: the
+    // create PARAMETER is unparseable, so the create succeeds if and only
+    // if the env override displaced it -- and the second create proves the
+    // consumption, succeeding-by-refusal when the parameter (not the still
+    // exported variable) is what create reads.
+
+    struct rocketnet_test_env_guard_t address_guard;
+    rocketnet_test_env_save( &address_guard, "ROCKETNET_PUBLIC_ADDRESS" );
+    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
+
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+
+    server = rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+    rocketnet_server_transport_destroy( server );
+
+    rocketnet_test_expect_refusals( true );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_test_expect_refusals( false );
+
+    rocketnet_test_env_restore( &address_guard );
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+
+void rocketnet_test_client_driver()
+{
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    // the portable pin grants everywhere and reports itself
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    rocketnet_check( strcmp( config.driver, "auto" ) == 0 );
+
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "portable" ) == 0 );
+    rocketnet_client_transport_destroy( client );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+    // the msgx pin grants on macOS and reports itself
+
+    snprintf( config.driver, sizeof(config.driver), "msgx" );
+    client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "msgx" ) == 0 );
+    rocketnet_client_transport_destroy( client );
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+    // the staged linux drivers are not client transports: a list naming
+    // only them is an all-skipped list for the client endpoint, which
+    // falls to the client's auto order rather than bricking every client
+    // in a process that shares the fleet's ROCKETNET_DRIVER value
+
+    snprintf( config.driver, sizeof(config.driver), "gso" );
+    client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    {
+        int num_available = 0;
+        const int * available = rocketnet_client_driver_availability( &num_available );
+        bool granted_from_auto = false;
+        for ( int i = 0; i < num_available; i++ )
+            if ( strcmp( rocketnet_client_transport_driver( client ), rocketnet_driver_name( available[i] ) ) == 0 )
+                granted_from_auto = true;
+        rocketnet_check( granted_from_auto );
+    }
+    rocketnet_client_transport_destroy( client );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // The GSO driver's own tests (#97), linux only, run on every linux build
@@ -9898,6 +11025,25 @@ void rocketnet_test_server_gso_send_overflow()
 
 void rocketnet_run_tests()
 {
+    // THE COMMIT BARRIER (#110 gate, both readers): the suite must never
+    // commit an XDP data plane -- not by per-test discipline, which two
+    // readers proved decorative, but structurally: installed once here,
+    // it removes the committing create from every test's reach, present
+    // and future, root box or not. the pre-flight stays reachable (it is
+    // non-mutating by contract); a test that ever needs the committing
+    // path must call rocketnet_server_socket_allow_commit() explicitly,
+    // and none does.
+
+    rocketnet_forbid_xdp_commit();
+
+    // ambient address overrides would redirect the suite's first create
+    // (their designed scope) at whatever test happens to run first: the
+    // suite owns its process environment, so they are cleared here rather
+    // than defended against in every test
+
+    unsetenv( "ROCKETNET_PUBLIC_ADDRESS" );
+    unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+
     // while ( true )
     {
         RUN_TEST( test_time );
@@ -9983,8 +11129,8 @@ void rocketnet_run_tests()
         RUN_TEST( test_platform_pump_zero_length_chaff );
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
         // a skipped test is named and logged, never silent: both drive the
-        // posix raw-socket injector beside the platform socket, which has no
-        // windows arm (and the chaff test also leans on setenv)
+        // posix raw-socket injector beside the platform socket, which has
+        // no windows arm
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_batch_pump_refused_destination [SKIPPED on windows: posix raw-socket injector]" );
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_platform_pump_zero_length_chaff [SKIPPED on windows: posix raw-socket injector]" );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -10033,6 +11179,28 @@ void rocketnet_run_tests()
         RUN_TEST( test_send_arena );
         RUN_TEST( test_frame_sync_wait );
         RUN_TEST( test_transport_ipv6_loopback );
+
+        // the config table and the driver ladder (#106)
+
+        RUN_TEST( test_config_env_round_trip );
+        RUN_TEST( test_config_validation );
+        RUN_TEST( test_driver_ladder_parse );
+        RUN_TEST( test_config_precedence );
+        RUN_TEST( test_server_driver_pin_portable );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        RUN_TEST( test_server_driver_pin_gso );
+        RUN_TEST( test_server_driver_pin_xdp );
+        RUN_TEST( test_server_driver_ladder_fall );
+        RUN_TEST( test_xdp_interrupt_matcher );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        RUN_TEST( test_server_driver_pin_msgx );
+        RUN_TEST( test_driver_pump_alias );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        RUN_TEST( test_driver_all_skipped_uses_auto );
+        RUN_TEST( test_config_override_logging );
+        RUN_TEST( test_config_env_aliases );
+        RUN_TEST( test_client_driver );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         RUN_TEST( test_server_gso_probe );
         RUN_TEST( test_server_gso_wire_ipv4 );

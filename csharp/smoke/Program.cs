@@ -75,17 +75,48 @@ static class Smoke
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );
+
+        // the commit barrier, structural rather than per-line discipline: this
+        // smoke must never commit an XDP data plane on any box it runs on,
+        // whatever a future edit does to the driver pins below
+
+        RocketNet.ForbidXdpCommit();
         Ok( $"init (protocol version {RocketNet.ProtocolVersion():x}, native time {RocketNet.Time():F2}, user id {RocketNet.UserIdString( 0x1234567812345678UL )})" );
 
         int port = FreePort();
         string address = $"127.0.0.1:{port}";
 
+        // the config table mirror (#106): the default carries driver "auto",
+        // the struct round-trips a pinned list through the binding, a typo
+        // refuses at create, and the granted driver reads back by name
+
+        RocketNet.ServerTransportDefaultConfig( out RocketNet.ServerTransportConfig defaultConfig );
+        if ( defaultConfig.GetDriver() != "auto" )
+            Fail( $"default config driver is '{defaultConfig.GetDriver()}', expected 'auto'" );
+        if ( defaultConfig.GetPublicAddress() != "" )
+            Fail( $"default config public address is '{defaultConfig.GetPublicAddress()}', expected empty" );
+        defaultConfig.SetPublicAddress( "10.0.0.1:5000" );
+        if ( defaultConfig.GetPublicAddress() != "10.0.0.1:5000" )
+            Fail( "public address does not round-trip through the binding" );
+
+        RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig typoConfig );
+        typoConfig.SetDriver( "protable" );
+        RocketNet.LogLevel( RocketNet.LogLevelNone );       // the refusal is the assertion; its chatter is not
+        IntPtr typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig, time );
+        RocketNet.LogLevel( RocketNet.LogLevelError );
+        if ( typoServer != IntPtr.Zero )
+            Fail( "a typo driver list must refuse create" );
+        Ok( "config mirror: default driver 'auto', typo driver list refused at create" );
+
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig serverConfig );
         serverConfig.MaxClientSlots = 4;
+        serverConfig.SetDriver( "portable" );
         IntPtr server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
         if ( server == IntPtr.Zero )
             Fail( $"server create on {address}" );
-        Ok( $"server up on {address}" );
+        if ( RocketNet.ServerTransportDriver( server ) != "portable" )
+            Fail( $"granted driver is '{RocketNet.ServerTransportDriver( server )}', expected the pinned 'portable'" );
+        Ok( $"server up on {address} [{RocketNet.ServerTransportDriver( server )}]" );
 
         // connect with an explicitly defaulted config: the config struct layout
         // crosses the interop boundary here — a wrong filter value would leave
@@ -98,9 +129,13 @@ static class Smoke
             Fail( "write dev connect token" );
 
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
+        if ( clientConfig.GetDriver() != "auto" )
+            Fail( $"client default config driver is '{clientConfig.GetDriver()}', expected 'auto'" );
         IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref clientConfig, time );
         if ( client == IntPtr.Zero )
             Fail( "client create" );
+        if ( RocketNet.ClientTransportDriver( client ).Length == 0 )
+            Fail( "client granted driver reads back empty" );
 
         int iterations = 0;
         while ( RocketNet.ClientTransportState( client ) != RocketNet.ClientTransportStateConnected && iterations < 2000 )

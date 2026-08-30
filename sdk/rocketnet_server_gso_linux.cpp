@@ -565,8 +565,15 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     if ( num_queues <= 0 )
         num_queues = ROCKETNET_GSO_DEFAULT_QUEUES;
 
+    // refuse, never clamp (#106's validation law): a queue count past this
+    // driver's geometry is a configuration error named here, not a silently
+    // different server
+
     if ( num_queues > ROCKETNET_GSO_MAX_QUEUES )
-        num_queues = ROCKETNET_GSO_MAX_QUEUES;
+    {
+        rocketnet_error( "gso driver num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_GSO_MAX_QUEUES );
+        return NULL;
+    }
 
     struct rocketnet_server_gso_t * gso = (struct rocketnet_server_gso_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_gso_t) );
     if ( !gso )
