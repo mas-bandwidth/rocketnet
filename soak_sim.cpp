@@ -180,9 +180,11 @@ static inline void soak_profile_charge( int bucket, double start )
 static void soak_profile_calibrate()
 {
     // five batches, median batch taken. A single batch reads 30-50% apart run
-    // to run on a busy machine, and the timer cost is what the NOT MEASURABLE
-    // refusal is judged against -- an unstable threshold would make the
-    // instrument's own honesty a coin flip.
+    // to run on a busy machine, and this cost is what decides whether a
+    // bucket's figure carries the NOT SUPPORTABLE caveat -- an unstable
+    // threshold would make the instrument's own honesty a coin flip. It is
+    // also why the NET share moves between runs while the gross does not:
+    // net subtracts this, and this is the unstable term.
 
     const int batches = 5;
     const int samples = 50000;

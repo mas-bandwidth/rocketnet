@@ -31,7 +31,17 @@ skipped=0
 # coverage check at the bottom fails if a BUILT harness got neither a leg nor
 # a skip: an untested abort path is how #98 item 5 happened the first time.
 
-ALL_HARNESSES="bench_portable bench_kqueue bench_msgx bench_gso bench_uring bench_nw"
+# Derived from the source, not typed. A hardcoded list only covers the
+# harnesses someone remembered, and a new one added later passes this script
+# green while announcing "FAULT ARMED -- this run must abort" and then
+# printing a rate. Anything that calls bench_fault_init owes a leg, so the
+# list of things that call bench_fault_init IS the list.
+
+ALL_HARNESSES=$( grep -l 'bench_fault_init' ./*.c 2>/dev/null | sed 's|^\./||; s|\.c$||' | tr '\n' ' ' )
+if [ -z "$ALL_HARNESSES" ]; then
+    echo "bench-selftest: found no harness calling bench_fault_init -- this script is looking in the wrong place" >&2
+    exit 1
+fi
 COVERED=""
 
 fail()
@@ -53,11 +63,49 @@ trap 'rm -rf "$WORK"' EXIT
 # end state as one that never fires.
 
 PORT_BASE=${BENCH_SELFTEST_PORT:-$(( 20000 + ( $$ % 20000 ) ))}
-port()
+
+# next_port assigns to PORT rather than echoing. An earlier version echoed,
+# and every caller read it as p=$( port ) -- a SUBSHELL, so the increment
+# never reached the parent and all thirteen legs plus the healthy pair shared
+# one port. The pid-derived base masked that for two separate runs and did
+# nothing for two runs given the same BENCH_SELFTEST_PORT, which reproduced
+# the false FAIL every time, control leg included.
+
+# and each candidate is PROBED before use, not merely assumed free. A rolling
+# base makes two runs unlikely to collide; probing makes a collision take a
+# race rather than a coincidence. Both matter, because the symptom is not a
+# red leg that names a port -- it is a leg aborting on the wrong call, or the
+# healthy control going red, neither of which points at the environment.
+
+next_port()
 {
-    PORT_BASE=$(( PORT_BASE + 1 ))
-    echo "$PORT_BASE"
+    local tries=0
+    while [ "$tries" -lt 200 ]; do
+        PORT_BASE=$(( PORT_BASE + 1 ))
+        tries=$(( tries + 1 ))
+        if [ -n "$PORT_PROBE" ]; then
+            if "$PORT_PROBE" -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.bind(('127.0.0.1', $PORT_BASE))
+except OSError:
+    sys.exit(1)
+s.close()
+" 2>/dev/null; then
+                PORT=$PORT_BASE
+                return
+            fi
+            continue
+        fi
+        PORT=$PORT_BASE                     # no probe available: the base alone
+        return
+    done
+    echo "bench-selftest: found no free UDP port in 200 tries from $PORT_BASE" >&2
+    exit 1
 }
+
+PORT_PROBE=$( command -v python3 || true )
 
 # A leg: run one side of one harness with one fault armed, and require a
 # nonzero exit carrying "BENCH ABORTED" and the named call.
@@ -68,7 +116,8 @@ leg()
 {
     local harness="$1" role="$2" fault="$3" expect="$4" description="$5"
     local out="$WORK/${harness}_${role}_${fault}.txt"
-    local p; p=$( port )
+    next_port
+    local p="$PORT"
 
     if [ ! -x "./$harness" ]; then
         echo "SKIP  $harness $fault -- not built on this host ($description)"
@@ -144,7 +193,8 @@ leg bench_nw       send send-refused nw_connection_send "a send completion carry
 # the harness aborts unconditionally would otherwise pass.
 
 if [ -x ./bench_portable ]; then
-    p=$( port )
+    next_port
+    p="$PORT"
     ./smoke_pair.sh bench_portable "$p" > "$WORK/healthy.txt" 2>&1
     status=$?
     if [ "$status" -ne 0 ]; then

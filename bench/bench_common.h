@@ -226,7 +226,14 @@ static inline void bench_send_refused( struct bench_send_health_t * health, cons
 /* the share of a window's packets the ns columns must cover before they are
    reported without a warning. A quarter is a judgement call, not a derived
    constant: below it the surviving batches are too few and too congestion-
-   selected for a p99 to mean what a reader will take it to mean. */
+   selected for a p99 to mean what a reader will take it to mean.
+
+   What this floor does NOT do, since a threshold invites the reading that
+   above it everything is fine: it is a check on QUANTITY while the bias is
+   CATEGORICAL. The inclusion rule is "the batch filled" at every share, so a
+   window at 26% coverage prints unwarned and is still congestion-selected.
+   The floor catches the case where the columns rest on almost nothing; it
+   does not make the rest unbiased, and no threshold could. */
 
 #define BENCH_TIMED_SHARE_FLOOR 0.25
 

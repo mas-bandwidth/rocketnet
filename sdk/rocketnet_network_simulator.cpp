@@ -44,7 +44,10 @@
     hold more than one destination). Same visits, same order, same winner --
     fewer slots touched to get there.
 
-    Two further constant-cost aids, both exact:
+    Two further aids, both exact, and neither one constant-cost -- free_hint's
+    scan is O(the gap it skips) and the bound's refresh is O(the list it
+    walked). They are cheap in every shape this file meets, which is not the
+    same claim:
 
       - free_hint: the lowest slot index that may be free. Every slot below it
         is occupied, so insert's scan starts there instead of at 0 and still
@@ -76,9 +79,14 @@
     to be able to fire.
 
     And the audit has its own negative control: rocketnet_network_simulator_
-    inject_index_fault() deliberately corrupts the index in the one way that
-    matters, so the audit can be watched failing on demand rather than
-    trusted. scripts/soak-sim-selftest runs both legs.
+    inject_index_fault() deliberately drops one occupied slot out of the
+    index, so the audit can be watched failing on demand rather than trusted.
+    scripts/soak-sim-selftest runs both legs. That injection is ONE fault of
+    several the audit catches -- a cold reader has since driven it red with a
+    mis-ordered link, a wrong shard assignment, a shard bound set one
+    nanosecond too high, and three others, four of which leave no trace in the
+    soak's own output -- so it is the negative control, not the boundary of
+    what is checked.
 */
 
 #define ROCKETNET_SIMULATOR_NO_SLOT (-1)
@@ -309,8 +317,14 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
     So the walk picks its end. A slot below the head is a prepend and a slot
     above the tail is an append, both constant time, and those are the two
     shapes that actually occur; anything landing in the interior walks from
-    whichever end is nearer in index space, so the worst case is half the list
-    rather than all of it.
+    whichever end is nearer IN INDEX SPACE.
+
+    Index distance is not entry count, so that heuristic can pick the longer
+    end and the worst case is still the whole list: a shard holding slots
+    0..1199 plus one at 4000, inserted at 1200, walks 1199 entries when the
+    other end was one step away. Measured over the soak it chooses wrong 2.1%
+    of the time for 1.004x the optimal total steps, worst single excess 31
+    entries, which is why this is a heuristic and not a fix.
 
     Measured, Apple M3 Ultra (Mac Studio), one destination, the lowest slot
     vacated and refilled 20,000 times, nanoseconds per receive+send pair:

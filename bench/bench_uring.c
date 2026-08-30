@@ -256,7 +256,17 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 bench_send_refused( &health, "io_uring_submit_and_wait", -result );
                 continue;
             }
-            bench_send_ok( &health, "io_uring_submit_and_wait" );
+
+            /* NOT bench_send_ok here. A submission the ring ACCEPTED is not a
+               packet the kernel SENT, and calling it here reset the refusal
+               counter once per batch while the reap below could only raise it
+               32 times against a limit of 64 -- so on a host where every send
+               completion failed, the counter peaked at 32 and the abort could
+               never fire. The run spun forever and printed pps=0, which is
+               the condition #98 item 5 filed, in the code written to fix it.
+               Only a completion that actually sent something clears the
+               count, which is what the other harnesses have always meant by
+               a send succeeding. */
 
             /* reap: for send_zc each send posts a completion and later a notification */
             struct io_uring_cqe * cqe;
@@ -270,9 +280,14 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 {
                     completed++;
                     if ( cqe->res > 0 )
+                    {
                         sent++;
+                        bench_send_ok( &health, "io_uring send completion" );
+                    }
                     else if ( cqe->res < 0 )
+                    {
                         bench_send_refused( &health, "io_uring send completion", -cqe->res );
+                    }
                 }
             }
             io_uring_cq_advance( &ring, reaped );
@@ -290,7 +305,17 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 {
                     completed++;
                     if ( cqe->res > 0 )
+                    {
                         sent++;
+                        bench_send_ok( &health, "io_uring send completion (zc)" );
+                    }
+                    else if ( cqe->res < 0 )
+                    {
+                        /* the zero-copy drain discarded this outright: a
+                           SEND_ZC row could report pps=0 with every send
+                           refused and never say a word */
+                        bench_send_refused( &health, "io_uring send completion (zc)", -cqe->res );
+                    }
                 }
                 io_uring_cqe_seen( &ring, cqe );
             }

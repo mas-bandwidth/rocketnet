@@ -118,11 +118,26 @@ reports thirty-two medium packets. The tail is smeared and **p99 understates a
 real per-packet tail**. Any table quoting these columns restates that in one
 sentence (#98 item 1).
 
-**`timed=`** says how many batches in the window fed the ns columns. Batches
-that ended on an empty syscall are excluded, because that empty syscall sits
-inside the timed region and inflates the quotient for every packet the batch
-did carry (#98 item 8). A window with `timed=0` prints a line saying its ns
-columns are not measurements.
+**`timed=`** says how many batches in the window fed the ns columns, and
+**`timed_pkts=`** how many packets those batches carried. Batches that ended on
+an empty syscall are excluded, because that empty syscall sits inside the timed
+region and inflates the quotient for every packet the batch did carry (#98
+item 8).
+
+The exclusion can leave the columns resting on very little, and what survives
+is not a neutral sample: the batches that fill completely are the congested
+ones. So the check is a SHARE, not a nonzero test. A window whose `timed_pkts`
+covers less than 25% of its packets prints `NS COLUMNS UNREPRESENTATIVE` with
+the exact fraction, and a window with `timed=0` prints `NS COLUMNS VOID`. Do
+not cite the ns columns of a window carrying either line.
+
+Two things that 25% floor does not fix, stated so nobody reads more into a
+clean window than is there. It is a threshold on QUANTITY while the bias is
+CATEGORICAL: the inclusion rule is "the batch filled" at every share, so a
+window at 26% coverage prints without a warning and is still congestion-
+selected. And on a saturated loopback the shortfall can be extreme --
+`bench_portable` on an M3 Ultra covered 0.04% -- so the absence of a warning
+is worth checking rather than assuming.
 
 **`empty=`** is the drain's idle probes. At saturation a receiver spends real
 time on them; they are not per-packet work and do not belong in a per-packet
