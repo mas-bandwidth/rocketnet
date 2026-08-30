@@ -83,9 +83,12 @@ jobs:
   # config and driver tests run here too -- setenv/unsetenv are shimmed
   # over _putenv_s in the test file, so the windows leg proves the env
   # engine and the portable rung on the one platform whose only rung is
-  # portable. Exactly two tests are compiled out on windows, named and
-  # logged by the suite itself: the refused-destination and
-  # zero-length-chaff pump tests, whose raw-socket injector is posix-only.
+  # portable -- EXCEPT the empty-value distinction, which windows cannot
+  # represent: its CRT has no set-but-empty variable, so that one case is
+  # skipped there, named and logged with that reason. Exactly two tests
+  # are compiled out on windows, named and logged by the suite itself: the
+  # refused-destination and zero-length-chaff pump tests, whose raw-socket
+  # injector is posix-only.
 
   build-and-test-windows:
     name: windows-2025 / ${{ matrix.build_type }}

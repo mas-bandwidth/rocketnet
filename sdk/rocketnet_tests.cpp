@@ -63,13 +63,31 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // setenv/unsetenv are posix-only names: the MSVC CRT spells both
-// _putenv_s -- a value of "" REMOVES the variable, and getenv sees the
-// change because the suite and the sdk read the same CRT environment --
-// so the #106 config and driver tests RUN on windows instead of being
-// compiled out (a skipped test is named and logged, never silent; a
-// runnable test is run)
+// _putenv_s -- and getenv sees the change because the suite and the sdk
+// read the same CRT environment -- so the #106 config and driver tests RUN
+// on windows instead of being compiled out (a skipped test is named and
+// logged, never silent; a runnable test is run)
+//
+// ONE semantic gap remains, and it is the platform's rather than the
+// shim's: the windows CRT cannot represent a set-but-empty variable at
+// all. _putenv_s(name,"") DELETES the variable, so "set to empty" and
+// "not set" are the same state here, and unsetenv is spelled with it.
+// the one case that turns on the distinction -- config validation's
+// empty-value case -- is skipped on windows, named and logged with this
+// reason; rocketnet_config_apply_env's empty branch is correspondingly
+// unreachable on windows. nothing else in the suite depends on it.
+//
+// `overwrite` is HONORED rather than ignored: no call site passes 0
+// today, but a shim that silently clobbered under overwrite=0 would be a
+// trap laid for the first one that does
 
-static int setenv( const char * name, const char * value, int overwrite ) { (void) overwrite; return _putenv_s( name, value ); }
+static int setenv( const char * name, const char * value, int overwrite )
+{
+    if ( !overwrite && getenv( name ) != NULL )
+        return 0;
+    return _putenv_s( name, value );
+}
+
 static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -9450,12 +9468,36 @@ static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard,
     unsetenv( name );
 }
 
+// the same platform truth the empty-value case below is skipped for bounds
+// this restore on windows: a guard that saved a set-but-empty value would
+// put back a DELETED variable rather than an empty one. the state is
+// unreachable there -- the windows CRT cannot hold a set-but-empty variable
+// in the first place -- so this is disclosure, not a live defect
+
 static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guard )
 {
     if ( guard->was_set )
         setenv( guard->name, guard->saved, 1 );
     else
         unsetenv( guard->name );
+}
+
+// the log capture sink, shared by the tests that assert a log line rather
+// than trusting it (config validation's empty-value case, and the override
+// logging test's redaction MUSTs)
+
+static char rocketnet_test_captured_log[16384];
+
+static void rocketnet_test_capture_log( int level, const char * format, ... )
+{
+    (void) level;
+    va_list args;
+    va_start( args, format );
+    char line[1024];
+    vsnprintf( line, sizeof(line), format, args );
+    va_end( args );
+    const size_t used = strlen( rocketnet_test_captured_log );
+    snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
 }
 
 // THE COMPLETENESS TEST: walk both config tables and prove every declared
@@ -9711,12 +9753,40 @@ void rocketnet_test_config_validation()
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     // the empty value is ignored as unset, with a log line, leaving the
-    // field untouched
+    // field untouched -- and the LOG LINE is asserted, not assumed: the
+    // return value and the field alone cannot tell "set to empty" from
+    // "not set at all", so without the capture this case would still pass
+    // if the empty branch vanished entirely
+    //
+    // windows cannot run it. the CRT has no set-but-empty state at all --
+    // _putenv_s(name,"") DELETES the variable -- so the shim at the top of
+    // this file cannot put the process in the state the case needs, and
+    // the branch it covers is unreachable on that platform. a skipped test
+    // is named and logged, never silent
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     setenv( "ROCKETNET_MAX_CLIENTS", "", 1 );
     rocketnet_server_transport_default_config( &config );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int empty_saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
+
+    rocketnet_log_level( empty_saved_level );
+    rocketnet_log_function( NULL );
+
     rocketnet_check( config.max_clients == 64 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_MAX_CLIENTS" ) != NULL );
+
+#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_config_validation empty-value case [SKIPPED on windows: the CRT cannot represent a set-but-empty variable; empty deletes]" );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_test_env_restore( &guard );
 
@@ -10218,20 +10288,8 @@ void rocketnet_test_driver_all_skipped_uses_auto()
 // the STANDARD's logging MUSTs, asserted rather than trusted: every env
 // override logs the variable and the displaced value, and secret material
 // never reaches a log line -- not the new value, not the displaced one
-
-static char rocketnet_test_captured_log[16384];
-
-static void rocketnet_test_capture_log( int level, const char * format, ... )
-{
-    (void) level;
-    va_list args;
-    va_start( args, format );
-    char line[1024];
-    vsnprintf( line, sizeof(line), format, args );
-    va_end( args );
-    const size_t used = strlen( rocketnet_test_captured_log );
-    snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
-}
+// (the capture sink itself lives up beside the env guards, because the
+// validation test asserts a log line too)
 
 void rocketnet_test_config_override_logging()
 {
