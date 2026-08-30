@@ -10036,6 +10036,138 @@ void rocketnet_test_server_driver_pin_portable()
     rocketnet_test_driver_pin_exchange( "portable", "portable" );
 }
 
+// #109: a port-zero public address asks the KERNEL for a port, so it only
+// means anything to a driver that discovers what it was granted and hands
+// it back. the portable and msgx rungs discover through the platform
+// socket's bind_address parameter, the gso rung through its own; the xdp
+// rung takes an address STRING and hands nothing back, so a port-zero
+// address granted on xdp used to advertise port 0 -- connect tokens minted
+// from rocketnet_server_transport_port() named port 0, the cookie gate
+// never matched, and nothing said why.
+//
+// the question is per DRIVER, not per build: #110 made create a loop over
+// candidates, so the rule asks every candidate the same question at the
+// top of that loop and a rung that cannot discover refuses a port-zero
+// address the way every other rung refusal works -- the ladder falls to a
+// rung that can, and a PIN on a non-discovering rung refuses the create.
+//
+// WHAT THIS TEST REACHES, honestly: the refusal and its reason are live
+// wherever a non-discovering driver is available (the linux legs of CI).
+// The defect itself -- a GRANTED xdp socket advertising port 0 -- is not
+// reachable here at any privilege: the suite installs the commit barrier
+// structurally, so the committing xdp create never runs under a test. That
+// half is a documented manual reproduction on #109, not an assertion.
+
+void rocketnet_test_server_port_zero_needs_a_discovering_driver()
+{
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    int num_available = 0;
+    const int * available = rocketnet_server_driver_availability( &num_available );
+
+    // THE ACCEPT SIDE FIRST, and it is the load-bearing half: this rule
+    // must never cost a port-zero create that a discovering driver can
+    // serve. auto on every platform, plus every discovering driver this
+    // platform has, pinned one at a time.
+
+    for ( int i = -1; i < num_available; i++ )
+    {
+        const char * list = "auto";
+        if ( i >= 0 )
+        {
+            if ( available[i] == ROCKETNET_DRIVER_XDP )
+                continue;                                   // granting xdp attaches a data plane; the barrier forbids it
+            list = rocketnet_driver_name( available[i] );
+        }
+
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        snprintf( config.driver, sizeof(config.driver), "%s", list );
+
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        rocketnet_check( server );
+        rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+        rocketnet_server_transport_stop( server );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_destroy( server );
+    }
+
+    // THE REFUSE SIDE, where this platform actually carries a
+    // non-discovering driver. the loop body is the linux legs; elsewhere
+    // the accept side above is the whole test, which is the honest state
+    // of a rule about a driver that does not exist on this platform.
+
+    for ( int i = 0; i < num_available; i++ )
+    {
+        if ( available[i] != ROCKETNET_DRIVER_XDP )
+            continue;
+
+        const char * name = rocketnet_driver_name( available[i] );
+
+        // a PIN on a non-discovering rung refuses the create, and the log
+        // names the rule and the driver. that naming IS the fix: without
+        // it an operator debugs a cookie gate that never matches.
+
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        snprintf( config.driver, sizeof(config.driver), "%s", name );
+
+        rocketnet_test_captured_log[0] = '\0';
+        const int saved_level = rocketnet_get_log_level();
+        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( NULL );
+
+        rocketnet_check( server == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, name ) != NULL );
+
+        // SCOPE, the other half of correct: the rule is about port ZERO
+        // and nothing else. the same pin with a real port never meets it
+        // and goes on to refuse (or grant) on the driver's own terms --
+        // here the commit barrier, since the suite never mutates a host.
+
+        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_log_function( rocketnet_test_capture_log );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:40000", &config, rocketnet_platform_time() );
+
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( NULL );
+
+        if ( server )
+        {
+            rocketnet_check( rocketnet_server_transport_port( server ) == 40000 );
+            rocketnet_server_transport_stop( server );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_destroy( server );
+        }
+        rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
+
+        // and the rung refusal is a RUNG refusal, not a create refusal:
+        // put a discovering rung after it and the ladder falls, the port
+        // is discovered, and the advertised address is the real one.
+
+        snprintf( config.driver, sizeof(config.driver), "%s,portable", name );
+
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        rocketnet_check( server );
+        rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
+        rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+        rocketnet_server_transport_stop( server );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_destroy( server );
+    }
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_server_driver_pin_gso()
@@ -11187,6 +11319,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_driver_ladder_parse );
         RUN_TEST( test_config_precedence );
         RUN_TEST( test_server_driver_pin_portable );
+        RUN_TEST( test_server_port_zero_needs_a_discovering_driver );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         RUN_TEST( test_server_driver_pin_gso );
         RUN_TEST( test_server_driver_pin_xdp );
