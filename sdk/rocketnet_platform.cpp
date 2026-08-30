@@ -83,12 +83,25 @@ int rocketnet_platform_connection_type()
 
 uint16_t rocketnet_platform_ntohs( uint16_t in )
 {
+    // network order IS host order on a big-endian machine, so the swap is
+    // the little-endian case and not the definition. Swapping
+    // unconditionally reversed every ipv6 group and every port on the one
+    // architecture where this function is supposed to do nothing (#127,
+    // found by the #111 big-endian leg).
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 uint16_t rocketnet_platform_htons( uint16_t in )
 {
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
@@ -841,7 +854,12 @@ static bool parse_kernel_route( struct nlmsghdr * msg_ptr, rocketnet_ifforward4_
     if ( route_entry->rtm_table != RT_TABLE_MAIN )
         return false;
 
-    out->forward_mask = ( 1 << route_entry->rtm_dst_len ) - 1;
+    // a host route has a prefix length of 32, and shifting a 32-bit int by
+    // 32 is undefined -- ubsan on the #111 sanitizers leg, first run (#123).
+    // every defined case keeps the value it had; the undefined one takes the
+    // value the arithmetic was reaching for.
+
+    out->forward_mask = route_entry->rtm_dst_len >= 32 ? 0xFFFFFFFFu : ( ( 1u << route_entry->rtm_dst_len ) - 1 );
 
     // read all attributes
     int route_attribute_len = RTM_PAYLOAD( msg_ptr );
@@ -1305,12 +1323,25 @@ const char * rocketnet_platform_getenv( const char * var )
 
 uint16_t rocketnet_platform_ntohs( uint16_t in )
 {
+    // network order IS host order on a big-endian machine, so the swap is
+    // the little-endian case and not the definition. Swapping
+    // unconditionally reversed every ipv6 group and every port on the one
+    // architecture where this function is supposed to do nothing (#127,
+    // found by the #111 big-endian leg).
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 uint16_t rocketnet_platform_htons( uint16_t in )
 {
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
@@ -2516,12 +2547,25 @@ double rocketnet_platform_time()
 
 uint16_t rocketnet_platform_ntohs( uint16_t in )
 {
+    // network order IS host order on a big-endian machine, so the swap is
+    // the little-endian case and not the definition. Swapping
+    // unconditionally reversed every ipv6 group and every port on the one
+    // architecture where this function is supposed to do nothing (#127,
+    // found by the #111 big-endian leg).
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 uint16_t rocketnet_platform_htons( uint16_t in )
 {
+#if ROCKETNET_BIG_ENDIAN
+    return in;
+#else // #if ROCKETNET_BIG_ENDIAN
     return (uint16_t)( ( ( in << 8 ) & 0xFF00 ) | ( ( in >> 8 ) & 0x00FF ) );
+#endif // #if ROCKETNET_BIG_ENDIAN
 }
 
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )

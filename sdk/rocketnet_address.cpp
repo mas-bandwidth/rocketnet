@@ -107,10 +107,15 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     if ( rocketnet_platform_inet_pton4( address_string, &addr4 ) )
     {
         address->type = ROCKETNET_ADDRESS_IPV4;
-        address->data.ipv4[3] = (uint8_t) ( ( addr4 & 0xFF000000 ) >> 24 );
-        address->data.ipv4[2] = (uint8_t) ( ( addr4 & 0x00FF0000 ) >> 16 );
-        address->data.ipv4[1] = (uint8_t) ( ( addr4 & 0x0000FF00 ) >> 8  );
-        address->data.ipv4[0] = (uint8_t) ( ( addr4 & 0x000000FF )     );
+
+        // inet_pton hands back s_addr, which is network order, and
+        // data.ipv4 stores network order -- rocketnet_address_load_ipv4
+        // says so in one memcpy. Pulling the bytes out by host arithmetic
+        // instead reproduced that order only by accident on a
+        // little-endian host, and reversed every parsed address on a
+        // big-endian one (#125, found by the big-endian leg).
+
+        memcpy( address->data.ipv4, &addr4, 4 );
         return true;
     }
 
