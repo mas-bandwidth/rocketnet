@@ -207,8 +207,11 @@ sequence yields a sample — but the published figure is not the latest sample. 
 is *the minimum over the whole rtt history*, which is the header's own model
 (`rocketnet_ack.h`, above `rocketnet_ack_endpoint_update_stats`: "rtt is the
 minimum over the rtt history, jitter the mean deviation from it"). The history is
-`ROCKETNET_RTT_HISTORY_SIZE` = 2048 entries indexed by sequence, so at a 10 Hz
-send rate it spans roughly 200 seconds.
+`ROCKETNET_RTT_HISTORY_SIZE` = 2048 entries indexed by **sent sequence**, so the
+window is a packet count, not a duration, and how long it spans depends entirely
+on your send rate: roughly 200 seconds at 10 sends per second, roughly 34 at 60.
+Payload sends consume entries alongside keep-alives, so a busy connection recycles
+the ring faster than a quiet one.
 
 The consequence is the one that bites: **this figure cannot track latency
 upward.** It falls immediately when the path gets faster, and it rises only once
@@ -216,8 +219,9 @@ every lower sample has been evicted from the ring — up to the whole window lat
 A congestion event that doubles real latency may not move it at all while any
 pre-congestion sample survives. So it is a good "how fast can this path be" and a
 bad input to a timeout, an alert, or anything that needs to notice degradation.
-For that, watch jitter and loss, which do respond, or track your own round trips
-from the acked batch.
+For that, watch jitter and loss — unlike the rtt floor, both *rise* when
+conditions worsen — or track your own round trips from the acked batch. Of the
+two jitter figures the client's is the more responsive; see below.
 
 (Earlier notes describing rtt as frozen at its handshake value are stale in a
 different way: that was the state before #84, when there was no ack sampling at
@@ -232,11 +236,16 @@ yet", not as a zero-millisecond link.
 **Jitter is not the same measurement on the two ends**, so the two figures are
 not comparable even though both are milliseconds. The client's jitter is
 **inter-arrival** jitter over the session sequence — a property of packet arrival
-spacing. The server's per-client jitter is the **mean deviation of its rtt samples
-above their minimum** — a property of its round trips, computed off the same
-history as the rtt floor above, and therefore carrying the same long window. A
-client jitter of 5 ms and a server jitter of 5 ms are not the same statement
-about the connection.
+spacing, kept as an exponential moving average that moves 1% toward each new
+sample, so it tracks a change within roughly a hundred packets. The server's
+per-client jitter is the **mean deviation of its rtt samples above their
+minimum** — a property of its round trips, computed off the same history as the
+rtt floor above and therefore averaged over that whole ring.
+
+Both *rise* when conditions worsen, which is what makes them usable where the rtt
+floor is not; they simply respond on different timescales and measure different
+things. The client's is the one to watch for a fast signal. A client jitter of
+5 ms and a server jitter of 5 ms are not the same statement about the connection.
 
 Loss is asymmetric too, and the difference matters when you compare the two ends:
 the client's `packet_loss` is **receive-side**, from gaps in the session sequence
@@ -253,8 +262,31 @@ and standalone-ack sequences carry no packet id and never appear.
 ## Configuration
 
 One X-macro table per transport in `rocketnet.h` derives the struct, the defaults,
-the environment variable names, the parse and the validation. There is one
-declaration; everything else is generated from it.
+the environment variable names, the parse and the validation. For everything in
+the table, there is one declaration and the rest is generated from it.
+
+**The table is not the whole environment surface**, and the difference matters
+because only the table's variables get the precedence, logging and validation
+described below. Reading every `getenv` in `sdk/`, these sit outside it:
+
+- `ROCKETNET_PUMP` — see below, it has the sharpest edge;
+- `ROCKETNET_LOG_LEVEL`, read once at process init;
+- `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, read by the XDP driver;
+- `ROCKETNET_SERVER_NUM_QUEUES`, `ROCKETNET_SERVER_NUM_OS_CPUS` and
+  `ROCKETNET_SERVER_PUBLIC_ADDRESS` — deprecated but fully functional aliases of
+  the table's `ROCKETNET_NUM_XDP_QUEUES`, `ROCKETNET_NUM_OS_CPUS` and
+  `ROCKETNET_PUBLIC_ADDRESS`. Each is honored only where its successor is unset,
+  and every use is logged naming the successor.
+
+**`ROCKETNET_PUMP=portable` can defeat a driver pin, and nothing in the driver
+section says so.** It is the pre-#106 override, kept working with its exact old
+meaning: it suppresses the Darwin msgx probe outright. So a config that pins
+`driver = "msgx"` — which the rules below define as "that driver or a loud
+failure" — becomes the failure whenever that variable is set in the environment,
+for a reason the pin itself never mentions. If a pinned msgx create refuses on a
+Mac and the ladder logs look wrong, check `ROCKETNET_PUMP` before anything else.
+Whether that variable retires or gains an explicit interaction rule is #128; this
+paragraph is the workaround, not the resolution.
 
 **Precedence is default < struct < env.** The struct you pass is the middle layer,
 and the environment overlays it. Every environment override is logged loudly,
