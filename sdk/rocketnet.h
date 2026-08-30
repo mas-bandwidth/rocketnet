@@ -713,8 +713,17 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_ser
 // for it validate -- and this reads it back. Tests and single-box tools
 // build their token address from it instead of hardcoding a port and
 // racing every other process on the machine; production servers know
-// their public address already. (Port-zero discovery is a portable and
-// GSO driver property; the XDP driver binds the port it is given.)
+// their public address already.
+//
+// Port-zero discovery is a per-driver property, and since #109 the ladder
+// enforces it rather than documenting it: a driver whose create binds the
+// port it is given and discovers nothing -- the XDP driver -- cannot serve
+// a port-zero address, so that rung REFUSES one at create, loudly, naming
+// the rule, before it binds anything. It is an ordinary rung refusal: an
+// "auto" ladder falls past it to a driver that does discover, and only a
+// PIN on a non-discovering driver refuses the create outright. The
+// portable, msgx and GSO drivers all discover. This function therefore
+// never returns zero on a transport that was created.
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
 

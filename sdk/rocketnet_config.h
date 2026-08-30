@@ -96,6 +96,15 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 
 const char * rocketnet_driver_name( int driver );
 
+// #109: does this driver's create discover the port the kernel granted and
+// hand it back? a port-zero public address asks the kernel for an
+// ephemeral port, so it is only meaningful to a driver that answers yes --
+// the transport's ladder refuses a port-zero address on any rung that
+// answers no, before that rung's create runs, and falls to one that
+// answers yes. an unclassified driver reads false, which fails safe.
+
+bool rocketnet_driver_discovers_bound_port( int driver );
+
 #define ROCKETNET_MAX_DRIVER_CANDIDATES 8
 
 struct rocketnet_driver_ladder_t

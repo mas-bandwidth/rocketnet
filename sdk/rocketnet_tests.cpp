@@ -10060,6 +10060,20 @@ void rocketnet_test_server_driver_pin_portable()
 
 void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 {
+    // every driver answers the question, and the answers are the ones the
+    // rungs actually implement -- checked against the code in the table's
+    // own comment, rung by rung
+
+    rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_PORTABLE ) );
+    rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_MSGX ) );
+    rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_GSO ) );
+    rocketnet_check( !rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_XDP ) );
+
+    // and out of range fails safe rather than reading off the end
+
+    rocketnet_check( !rocketnet_driver_discovers_bound_port( -1 ) );
+    rocketnet_check( !rocketnet_driver_discovers_bound_port( ROCKETNET_NUM_DRIVERS ) );
+
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
 
@@ -10076,8 +10090,8 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         const char * list = "auto";
         if ( i >= 0 )
         {
-            if ( available[i] == ROCKETNET_DRIVER_XDP )
-                continue;                                   // granting xdp attaches a data plane; the barrier forbids it
+            if ( !rocketnet_driver_discovers_bound_port( available[i] ) )
+                continue;                                   // the refuse side below owns those
             list = rocketnet_driver_name( available[i] );
         }
 
@@ -10100,7 +10114,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 
     for ( int i = 0; i < num_available; i++ )
     {
-        if ( available[i] != ROCKETNET_DRIVER_XDP )
+        if ( rocketnet_driver_discovers_bound_port( available[i] ) )
             continue;
 
         const char * name = rocketnet_driver_name( available[i] );

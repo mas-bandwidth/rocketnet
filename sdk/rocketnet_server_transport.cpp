@@ -613,7 +613,30 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     {
         const int candidate = ladder.candidates[i];
 
-        switch ( candidate )
+        // #109: a port-zero public address asks the KERNEL for an
+        // ephemeral port, and the adoption below reads the granted port
+        // back out of bind_address -- so the address is only meaningful on
+        // a rung whose create discovers what it bound and hands it back.
+        // The xdp rung does not: it takes an address STRING, binds the
+        // port it is given, and leaves bind_address.port at zero, so the
+        // adoption adopts zero and the transport silently advertises port
+        // 0 -- tokens minted from rocketnet_server_transport_port() name
+        // port 0, the cookie gate never matches, and nothing says why.
+        //
+        // This is asked of EVERY candidate rather than patched into the
+        // one rung that fails it today, because #110 made create a loop
+        // and the question is a property of each driver's bind
+        // (rocketnet_driver_discovers_bound_port). It is a rung refusal
+        // like any other: "auto" falls past xdp to a rung that discovers,
+        // and only a PIN on a non-discovering rung refuses the create --
+        // loudly, naming the rule, the way the pin law already works.
+
+        if ( public_address.port == 0 && !rocketnet_driver_discovers_bound_port( candidate ) )
+        {
+            rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
+                            rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
+        }
+        else switch ( candidate )
         {
 #if ROCKETNET_SERVER_HAS_STAGED
 
