@@ -3366,6 +3366,134 @@ void rocketnet_test_client_keep_alive_suppression()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_keep_alive_unconfirmed_under_payload_traffic()
+{
+    // #90, the stranding case, driven end to end on a punched wire: the
+    // establishment keep-alive -- the only packet that carries the client
+    // index, and the only one that moves the client out of _sending
+    // connection response_ -- is lost, while the server application sends
+    // payloads continuously from the moment the slot exists.
+    //
+    // The client is unconfirmed the whole time, because a client that has
+    // not learned its index sends nothing sealed: its only outbound packet
+    // is the retransmitted connection response, which the server ignores as
+    // already connected. So nothing the client can do repairs the loss; the
+    // repair has to come from the server's own pacing.
+    //
+    // What must hold: the keep-alive generated at the send rate reaches the
+    // client despite the payload stream, and the connection establishes.
+    // The loss walkthrough's invariant says the next keep-alive is at most a
+    // send interval away -- this test is that sentence, with a payload on
+    // every tick trying to make it false.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+    test.server.send_rate = 10.0;
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x90570ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    const double tick = 0.01;                   // ten ticks to a send interval
+    double establishment_time = -1.0;           // when the lost keep-alive was written
+    double connected_time = -1.0;
+    int payloads_sent_while_unconfirmed = 0;
+    int payloads_received_while_unconfirmed = 0;
+    int state_after_the_loss = -1;
+
+    for ( double time = 100.0; time < 110.0 && connected_time < 0.0; time += tick )
+    {
+        // the client's own scheduled send: requests, then the response,
+        // retransmitted at the send rate for as long as it waits
+
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes > 0 )
+        {
+            int result = rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                                   ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                                   payload, &payload_bytes, &payload_client_index );
+            if ( result == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE )
+            {
+                // the punched loss: exactly one packet, the establishment
+                // keep-alive, never reaches the wire. everything else the
+                // server sends is delivered.
+                rocketnet_check( establishment_time < 0.0 );
+                establishment_time = time;
+                state_after_the_loss = client.state;
+                response_bytes = 0;
+            }
+            if ( response_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+        }
+
+        rocketnet_server_protocol_update( &test.server, time );
+
+        if ( rocketnet_client_slots_connected( test.server.client_slots, 0 ) )
+        {
+            // continuous payload traffic: a payload on every tick, ten to
+            // every send interval. this is the suppression pressure.
+
+            const uint8_t stream_byte[1] = { 0x90 };
+            int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_byte, 1, time, response );
+            rocketnet_check( stream_bytes > 0 );
+            if ( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) )
+                payloads_sent_while_unconfirmed++;
+            int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+            if ( rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, &payload_bytes ) &&
+                 payload_bytes > 0 && !connected_before )
+            {
+                payloads_received_while_unconfirmed++;
+            }
+
+            int keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, response );
+            if ( keep_alive_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &client, response, keep_alive_bytes, time, payload, &payload_bytes );
+        }
+
+        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            connected_time = time;
+    }
+
+    // the loss landed, and it landed on a client that was still waiting for
+    // its index -- without this the rest of the test proves nothing
+
+    rocketnet_check( establishment_time > 0.0 );
+    rocketnet_check( state_after_the_loss == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    // the client connected, and the invariant's bound held: the next
+    // keep-alive was at most a send interval away, not a send interval away
+    // from whenever the payload stream happened to pause
+
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( client.client_index == 0 );
+    rocketnet_check( connected_time > 0.0 );
+    rocketnet_check( connected_time - establishment_time <= 2.0 / test.server.send_rate );
+
+    // and the pressure was real for the whole of that window: the payload
+    // stream never left a send-interval-sized hole for a suppressed
+    // keep-alive to slip through, so a pass here cannot be an artifact of
+    // the traffic stopping
+
+    rocketnet_check( payloads_sent_while_unconfirmed >= 5 );
+    rocketnet_check( payloads_received_while_unconfirmed >= 5 );
+    rocketnet_check( (double) payloads_sent_while_unconfirmed * tick >= connected_time - establishment_time - 2.0 * tick );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_client_connect_validations()
 {
     struct rocketnet_counters_t counters;
@@ -11085,6 +11213,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_server_keep_alive_pacing );
         RUN_TEST( test_client_payload_before_first_keep_alive );
         RUN_TEST( test_client_keep_alive_suppression );
+        RUN_TEST( test_keep_alive_unconfirmed_under_payload_traffic );
         RUN_TEST( test_request_path_happy );
         RUN_TEST( test_request_path_refusals );
         RUN_TEST( test_request_path_cookie_gate );
