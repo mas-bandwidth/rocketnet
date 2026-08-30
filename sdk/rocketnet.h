@@ -722,8 +722,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_ser
 // the rule, before it binds anything. It is an ordinary rung refusal: an
 // "auto" ladder falls past it to a driver that does discover, and only a
 // PIN on a non-discovering driver refuses the create outright. The
-// portable, msgx and GSO drivers all discover. This function therefore
-// never returns zero on a transport that was created.
+// portable, msgx and GSO drivers discover; the XDP driver does not
+// (rocketnet_driver_discovers_bound_port is the table). So a created
+// transport was granted by a driver that discovers, and this reads back a
+// real port -- asserted for every discovering driver this platform has by
+// rocketnet_test_server_port_zero_needs_a_discovering_driver.
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
 

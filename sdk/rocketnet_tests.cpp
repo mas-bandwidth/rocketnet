@@ -10234,16 +10234,17 @@ void rocketnet_test_server_driver_pin_gso()
 
 void rocketnet_test_server_driver_pin_xdp()
 {
-    // the pre-flight is called DIRECTLY here, and that direct call is the
-    // only place the suite runs it: inside the xdp driver's create the
-    // pre-flight sits below the commit barrier, which the suite installs
-    // process-wide, so the in-create pre-flight has never been reachable
-    // under a test and still is not. What create refuses with, under this
-    // suite, is the BARRIER -- its first act, before the pre-flight and
-    // before any committing work. That is the refusal the pin asserts:
-    // pin-refuses proven through create, no machine touched. On a box the
-    // pre-flight passes whole, this test asserts nothing more -- granting
-    // xdp attaches a data plane, which is not a unit test's act.
+    // the pre-flight is called DIRECTLY here, as it also is in
+    // rocketnet_test_server_driver_ladder_fall below: those two direct
+    // calls are how the suite reaches it. Inside the xdp driver's create
+    // the pre-flight sits below the commit barrier (barrier at
+    // rocketnet_server_socket_linux.cpp:982, pre-flight at :1015), and the
+    // suite installs that barrier process-wide, so the in-create pre-flight
+    // is not reached under this suite. What create refuses with here is the
+    // BARRIER. That is the refusal the pin asserts: pin-refuses proven
+    // through create, no machine touched. On a box the pre-flight passes
+    // whole, this test asserts nothing more -- granting xdp attaches a data
+    // plane, which is not a unit test's act.
     //
     // THE ADDRESS CARRIES A REAL PORT DELIBERATELY (#109). A port-zero
     // address is now refused by the ladder's port-zero rule before the xdp
@@ -10284,12 +10285,19 @@ void rocketnet_test_server_driver_ladder_fall()
     //
     // WHY the xdp rung refuses here, stated exactly (#109): the address
     // carries port zero -- it must, because the gso rung below binds it
-    // and a fixed port would race every other process on the box -- so the
-    // xdp rung is refused by the port-zero rule, which is checked before
-    // the pre-flight. The fall itself is what this test asserts and that
-    // is unchanged; the pre-flight and commit-barrier path is walked by
+    // and a fixed port would race other processes on the box -- so the xdp
+    // rung here is refused by the port-zero rule, which is checked before
+    // the rung's create is called at all. The fall itself is what this
+    // test asserts and that is unchanged.
+    //
+    // Note what this does NOT reach, so the two comments agree: neither
+    // the commit barrier nor the in-create pre-flight runs on this path,
+    // because the rule refuses above both. The barrier is walked by
     // rocketnet_test_server_driver_pin_xdp, which uses a real port for
-    // exactly that reason.
+    // exactly that reason; the in-create pre-flight is below the barrier
+    // and so is not reached under this suite from either test. The direct
+    // pre-flight call just below is this test's own, and is what decides
+    // whether to stand down.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );

@@ -117,12 +117,23 @@ statistics cannot distinguish them from real loss** — that figure is computed
 from gaps in the session sequence, so a burned sequence reads as one lost packet
 in a link that dropped nothing.
 
-Which end actually sees it is not symmetric, and this is the part worth getting
-right: only the **client** publishes a receive-side loss figure. The server's
-per-client `packet_loss` is send-side, so **a client's burned sequences surface
-nowhere in this API at all.** Server-to-client burns are the ones that show up as
-phantom loss, in `rocketnet_client_transport_stats`. Read that figure with the
-send-side counters beside it.
+Where a burn does and does not show up is worth being exact about, because the
+two surfaces disagree.
+
+**In the loss statistics:** the client publishes a receive-side `packet_loss`,
+the server's per-client `packet_loss` is send-side, and neither end publishes a
+receive-side figure for the server. So server-to-client burns appear as phantom
+loss in `rocketnet_client_transport_stats`, and **client-to-server burns appear in
+no loss statistic at either end.**
+
+**In the counters, which is where to actually look:** an acquisition-failure burn
+is counted at the end that burned it — `SEND_RING_FULL` and `SEND_ARENA_FULL`, on
+both the client and the server, through
+`rocketnet_client_transport_counters` / `rocketnet_server_transport_counters`. So
+a client-to-server burn is invisible as *loss* but perfectly visible as *pressure*,
+and that is the number to reach for. Burns from `abort_packet` and from a
+zero-returning `finish_packet` increment no counter of their own; those you have
+to know you caused.
 
 `send_packet` (the convenience form) exists on both ends. On the client it
 flushes the ring inline, which makes it main-thread only and never valid during

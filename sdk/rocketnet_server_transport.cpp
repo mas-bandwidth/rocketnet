@@ -609,6 +609,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     char refused_names[128];
     refused_names[0] = '\0';
 
+    bool refused_seen[ROCKETNET_NUM_DRIVERS];
+    memset( refused_seen, 0, sizeof(refused_seen) );
+
     // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
     // can restate the rule at the level the failure itself is reported.
     // The names are collected rather than a bare flag because a mixed list
@@ -649,10 +652,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             // named once however many times the operator listed it: the
             // ladder parse does not deduplicate, and "xdp, xdp" in an
             // error reads as a bug in the error rather than a repeat in
-            // the list. keyed on the driver ID, not on a substring search
-            // of the accumulated names -- no driver name is a substring of
-            // another today, but a future one could be, and a dedupe that
-            // silently swallows a legitimate entry is worse than none.
+            // the list.
+            //
+            // keyed on the driver ID, not on a substring search of the
+            // accumulated names. The hazard runs in the direction that is
+            // easy to get backwards: strstr( "gso", "gso2" ) is NULL, so a
+            // NEW longer name is not swallowed by a shorter accumulated
+            // one -- but strstr( "gso2", "gso" ) FINDS, so an accumulated
+            // longer name silently swallows a later legitimate shorter
+            // one. No two names collide today; an id key cannot collide
+            // whatever anyone adds.
 
             if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !port_zero_refused_seen[candidate] )
             {
@@ -745,8 +754,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             rocketnet_warn( "server driver %s refused%s", rocketnet_driver_name( candidate ),
                             i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
 
-            const size_t used = strlen( refused_names );
-            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            // deduped on the same rule as the port-zero list below it: a
+            // repeated name in the operator's list is a repeat in the
+            // list, not two refusals worth reading, and two adjacent
+            // summary lines disagreeing about that reads as a bug in one
+            // of them
+
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !refused_seen[candidate] )
+            {
+                refused_seen[candidate] = true;
+
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
         }
     }
 
@@ -773,7 +793,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
         if ( port_zero_refused_names[0] != '\0' )
         {
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give it a real port, or list a driver that both discovers a granted port (portable, msgx, gso) and can grant here -- any refusals above say why a candidate did not",
+            // the remedy does NOT point at the per-rung warns: this error
+            // exists precisely because the reader is at ERROR level, where
+            // those warns are invisible. it has to stand alone.
+
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (portable, msgx, gso). raise the log level to WARN to see why each candidate refused",
                              port_zero_refused_names );
         }
 
