@@ -1222,8 +1222,8 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // the numeric bound, which the discrete check cannot support, with the
     // recurrence the invariant actually needs.) The keep-alive is the only
     // packet carrying the client index, and a client that lacks its index
-    // cannot re-provoke one,
-    // so this is the one repair that must not be suppressible.
+    // cannot re-provoke one, so this is the one repair that must not be
+    // suppressible.
     //
     // ONCE IT HAS, the client has claimed to hold its index and be
     // connected. If the claim is true nothing is waiting on a keep-alive,

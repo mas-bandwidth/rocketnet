@@ -2222,22 +2222,21 @@ it — the first copy assigns the slot, later copies find the address connected
 and are ignored, while the keep-alives generated at the send rate keep
 answering. A lost keep-alive: **until a keep-alive has been acknowledged,
 another follows from the server and no traffic pattern can stop it** — that is
-what
-_Keep-alive generation_ guarantees, and it is what this invariant needs,
+what _Keep-alive generation_ guarantees, and it is what this invariant needs,
 because it is the state in which an end is still waiting. The carve-out is the
 server's alone: a client sends keep-alives only from _connected_, where
 nothing at the server waits on one, so the client's own keep-alive is
 suppressed by its own traffic without qualification and needs no equivalent
 rule. Once one has been acknowledged the guarantee is a different and weaker
 one: ordinary traffic then *is* the keep-alive, and under a dense enough
-outbound stream keep-alives stop entirely, which is safe precisely because
-nothing is waiting on them any more. The spacing in either regime is subject
-to the discrete-check caveat stated there, and is not bounded by one send
-interval exactly. The establishment keep-alive is the packet this clause
-exists for: it is the only one carrying the client index, and its loss is the
-only loss that leaves the receiving end waiting and that it cannot
-re-provoke by retransmitting. A lost ack: every later block restates the same
-receive state, so no single ack packet's delivery is ever load-bearing. A lost
+outbound stream keep-alives stop entirely; see the second failure direction
+below. The spacing in either regime is subject to the discrete-check caveat
+stated there, and is not bounded by one send interval exactly. The
+establishment keep-alive is the packet this clause exists for: it is the only
+one carrying the client index, and its loss is the only loss that leaves the
+receiving end waiting and that it cannot re-provoke by retransmitting. A lost
+ack: every later block restates the same receive state, so no single ack
+packet's delivery is ever load-bearing. A lost
 fragment: the payload it belonged to is lost, which is its specified semantics,
 and nothing waits for it — the abandoned counter records it and the connection
 moves on. A lost denied: re-provoked by the next retransmitted
@@ -2731,10 +2730,11 @@ traffic, so **whenever every gap in the server's outbound stream to that slot
 is strictly shorter than a send interval** they stop entirely, and the client
 can sit in _sending connection response_ until its total connect deadline.
 Gaps in that stream do not reliably rescue it: whether a keep-alive lands in a
-gap is the discrete-check question below, and a stream with gaps can still starve the
-client to its deadline. Note that the stream in question is everything the
-server sends that slot, the transport's own standalone acks included — not the
-application's payloads alone.
+gap is the discrete-check question below, and a stream with gaps can still
+starve the client to its deadline. Note that the stream in question is
+everything the server sends that slot, the transport's own standalone acks
+included — not the application's payloads alone.
+
 **Such a client strands only itself.** The block rides inside a packet sealed
 under that connection's own session keys, applies only to that client's own
 slot, and cannot be produced by anyone else for it; no other client's pacing
@@ -2866,8 +2866,8 @@ for a client that follows this document that is its own total connect deadline
 Inside the window the rate is bounded by the send rate, on a slot that is
 already committed, and it is bounded by exactly what an idle established client
 already draws. So this is a bounded cost on a committed resource, not a new
-amplifier: a peer cannot use it to make the server send more than the send rate, and
-cannot direct it at anyone but itself. This is the
+amplifier: a peer cannot use it to make the server send more than the send
+rate, and cannot direct it at anyone but itself. This is the
 unsuppressed-until-acknowledged rule netcode carried on its payload prefixing,
 recovered here without the prefixing that the subtraction above deliberately
 removes.
