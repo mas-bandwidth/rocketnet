@@ -576,11 +576,6 @@ void rocketnet_test_address()
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
-static bool equal_within_tolerance( float a, float b, float tolerance = 0.001f )
-{
-    return fabs(double(a)-double(b)) <= tolerance;
-}
-
 void rocketnet_test_random_bytes()
 {
     const int BufferSize = 999;
@@ -2530,7 +2525,6 @@ void rocketnet_test_request_path_config_branches()
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
-    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
@@ -2893,7 +2887,6 @@ void rocketnet_test_server_full_connect()
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
@@ -6722,18 +6715,6 @@ void rocketnet_test_jitter_tracker()
 
     rocketnet_check( tracker.jitter >= 0.0 );
     rocketnet_check( tracker.jitter <= 0.000001 );
-}
-
-extern void * rocketnet_default_malloc_function( void * context, size_t bytes );
-
-extern void rocketnet_default_free_function( void * context, void * p );
-
-static void context_check_free( void * context, void * p )
-{
-    (void) p;
-    rocketnet_check( context );
-    rocketnet_check( *((int *)context) == 23 );
-    rocketnet_default_free_function( context, p );;
 }
 
 void rocketnet_test_frame_sync_advance()
