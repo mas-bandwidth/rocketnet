@@ -70,7 +70,8 @@ jobs:
       # red night on a distro sodium bump is legible from the log rather than
       # a mystery (the sodium-version gate lives in ci.yml; this only records)
       - name: Record the libsodium version
-        run: dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
 
       # persist the discovered corpus across runs: restore the newest prior
       # cache for this target, save a fresh entry keyed by run id. cache
