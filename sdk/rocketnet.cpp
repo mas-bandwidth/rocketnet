@@ -11,7 +11,8 @@
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
-#include "rocketnet_hydrogen.h"
+
+#include <sodium.h>
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -109,7 +110,7 @@ const char * rocketnet_log_level_string( int level )
 
 static void default_log_function( int level, const char * format, ... )
 {
-#if !NETWORK_FLOW_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
+#if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
     va_list args;
     va_start( args, format );
     char buffer[1024];
@@ -128,7 +129,7 @@ static void default_log_function( int level, const char * format, ... )
     }
     va_end( args );
     fflush( stdout );
-#endif // #if !NETWORK_FLOW_UNREAL_ENGINE
+#endif // #if !ROCKETNET_UNREAL_ENGINE
 }
 
 static void (*log_function)( int level, const char * format, ... ) = default_log_function;
@@ -293,7 +294,7 @@ uint64_t rocketnet_protocol_version()
 float rocketnet_random_float()
 {
     uint32_t uint32_value;
-    hydro_random_buf( (uint8_t*)&uint32_value, sizeof(uint32_value) );
+    randombytes_buf( &uint32_value, sizeof(uint32_value) );
     uint64_t uint64_value = uint64_t(uint32_value);
     double double_value = double(uint64_value) / 0xFFFFFFFF;
     return float(double_value);
@@ -302,34 +303,34 @@ float rocketnet_random_float()
 uint8_t rocketnet_random_uint8()
 {
     uint8_t value;
-    hydro_random_buf( &value, sizeof(value) );
+    randombytes_buf( &value, sizeof(value) );
     return value;
 }
 
 uint16_t rocketnet_random_uint16()
 {
     uint16_t value;
-    hydro_random_buf( (uint8_t*)&value, sizeof(value) );
+    randombytes_buf( &value, sizeof(value) );
     return value;
 }
 
 uint32_t rocketnet_random_uint32()
 {
     uint32_t value;
-    hydro_random_buf( (uint8_t*)&value, sizeof(value) );
+    randombytes_buf( &value, sizeof(value) );
     return value;
 }
 
 uint64_t rocketnet_random_uint64()
 {
     uint64_t value;
-    hydro_random_buf( (uint8_t*)&value, sizeof(value) );
+    randombytes_buf( &value, sizeof(value) );
     return value;
 }
 
 void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 {
-    hydro_random_buf( (uint8_t*)data, bytes );
+    randombytes_buf( data, bytes );
 }
 
 // -------------------------------------------------------------
@@ -405,9 +406,9 @@ bool rocketnet_init( void * context )
 
     rocketnet_info( "platform is %s (%s)", platform_string, connection_string );
 
-    if ( hydro_init() != 0 ) 
+    if ( sodium_init() < 0 )
     {
-        rocketnet_error( "failed to initialize hydrogen" );
+        rocketnet_error( "failed to initialize sodium" );
         return false;
     }
 

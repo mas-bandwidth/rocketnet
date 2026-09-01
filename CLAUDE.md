@@ -28,11 +28,12 @@ already earn their keep.
 
 ## The layering
 
-    rocketnet_hydrogen        vendored libhydrogen (~24% of the source)
+    libsodium            system package (brew/apt/vcpkg) — the one external dependency
     leaf utilities       hash, base64, address, trackers
     rocketnet_platform        threads, mutexes, time, sockets — the only system headers
     wire format          constants, packets, tokens, packet filter
-    the two sockets      client, and server (XDP or portable)
+    the two transports   client_transport, and server_transport over
+                         runtime-selected drivers (portable, xdp, gso, msgx)
 
 `rocketnet.{h,cpp}` sits beside rather than above: process init, assert/log/allocator
 hooks, RNG.
@@ -45,7 +46,7 @@ XDP or portable. Any third implementation drops into that same seam.
 ## What rocketnet owns, and what it does not
 
 **Owns:** socket lifecycle and tuning, threads/time, `rocketnet_address_t`, the
-18-byte `{type, pittle, chonkle}` prefix, packet buffering and batching, the
+6-byte `{type, epoch, filter value}` prefilter header, packet buffering and batching, the
 whole XDP dataplane including Ethernet/IP/UDP synthesis, crypto primitives —
 and, on the connection protocol, the general acks: every session packet's
 sealed plaintext opens with an ack block, and the transport surfaces the
@@ -63,21 +64,21 @@ direct path all connection semantics.
 `rocketnet_server_socket_t` has no client table; `ROCKETNET_MAX_CLIENTS` is only an
 array-sizing constant.
 
-## Current state: direct mode only, by ruling
+## Current state: the secure connect is landed
 
-Direct mode is the library: a client connects to a server address and
-exchanges raw packets. The network next era machinery is gone; flow's repo
-preserves all of it. What comes next is REQUIREMENTS.md's order of
-operations: the minimal secure connect — netcode-style connect tokens on
-public key crypto, no secret shared between backend and servers, hydrogen if
-possible — then platform transports behind an easy-to-extend seam, then
-reliability, flows and broadcast at the end.
+The transport tier is the library: netcode-style connect tokens on public
+key crypto (no secret shared between backend and servers), the
+address-validated two-RTT handshake, per-connection derived keys, sealed
+packets opening with the general ack block, fragmentation, and server-side
+client slots — `client_transport` and `server_transport` over the runtime
+driver ladder (portable everywhere; xdp and gso on linux; msgx ahead of
+portable on macOS). `client.c` and `server.c` connect out of the box under
+the published dev keys. The network next era machinery is gone; flow's repo
+preserves all of it.
 
-Practical consequence today: a direct client is `CONNECTED` at create time
-before a byte moves, and the server has no notion of a client at all. That is
-the security hole issue #6 exists to fix: a netcode-style two-RTT handshake,
-per-session keys, sealed packets, and a server-side client table are the next
-construction.
+What remains is REQUIREMENTS.md's tail: reliability, flows and broadcast
+above the transport, and the sodium re-vendor before anything ships.
+TODO.md is the live ordering.
 
 ## The scaling story, in one paragraph
 
@@ -101,42 +102,22 @@ lifetime out of the game entirely, for ~85 MB/s of copying at target load.
 
 Still open, highest first:
 
-1. **`magic` is all zeros at every call site**, so chonkle is unkeyed: the
-   filter proves a packet has rocketnet's *shape*, not that it came from someone
-   holding a key.
+1. **The umem fill-ring refill path's edges are unverified**: the common
+   release/refill accounting has run live (the space-box bring-up echoed
+   1800 payloads through the AF_XDP rings), but the pending-return spill —
+   taken when the fill ring cannot absorb a full drain's frames — has never
+   been driven.
 
-   Note the kernel-side filter **is live in this repo's XDP program.** It is
-   commented out in space game's vendored copy, where the AF_XDP program is not
-   running at all — that project is in development, not production, and cut the
-   XDP path down. Worth knowing before anyone "re-enables" something that is
-   already on.
-2. **Resolved by #110's verify-and-bind**: the XDP create used to disable
-   SMT machine-wide and run machine-mutating `popen` setup; all machine
-   provisioning now lives in `scripts/rocketnet-provision` and create is
-   verify-and-bind (a non-mutating pre-flight, then per-socket acts only).
-   The remaining spawned commands are read-only discovery and the private
-   build-directory workflow.
+2. **Lower:** the per-queue XDP socket array is never zeroed after its
+   `malloc`, so a `create()` that fails mid-loop hands `destroy()`
+   uninitialized sockets past the failure point; it works only because a
+   ~271 MiB `malloc` lands in `mmap` (a glibc detail, not a guarantee).
 
-3. **The umem fill-ring refill path is unverified on Linux**: the
-   `num_consumed` accounting that drives release, refill and the
-   pending-return spill has never been run for real, because the file is
-   `#if ROCKETNET_XDP` and does not compile on macOS.
+Refuted on inspection, recorded so nobody re-hunts it:
 
-Refuted on inspection, recorded so nobody re-hunts them:
-
-- The 18-byte runt packet does NOT give an attacker a coin-flip on dispatch.
-  Every construction attempt is blocked by an existing check: the filter's
-  18-byte minimum, then `packet_bytes < ROCKETNET_HEADER_BYTES` in
-  `process_direct_packet`. A 1-byte packet reads only `packet_data[0]`, which
-  that packet wrote.
 - The fill ring SETUP is sound: 2048 slots reserved, 2048 valid addresses from
-  an initialized 32768-entry pool. The defect was in the per-poll refill, above.
-
-5. **Lower:** `destroy()` walks uninitialized pointers on `create()` error
-   paths; the per-queue socket array is never zeroed and works only because a
-   ~271 MiB `malloc` lands in `mmap` (a glibc detail, not a guarantee); the XDP
-   port literal is pre-swapped but named as host order, so it is correct by
-   accident and will silently blackhole the day someone "updates" it.
+  an initialized 32768-entry pool. The unverified part is the per-poll refill's
+  spill edge, above.
 
 ## Verification ladder
 
@@ -243,16 +224,16 @@ bytes), the missing associated data parameter — and then decisively on the
 bench: at 1000 players x 60 Hz its packet crypto alone exceeds one core
 where sodium uses about a fifth, scalar versus scalar on arm64.
 
-Interim, so construction moves quickly: brew libsodium as is on the dev box.
-Before anything ships: a gutted two-file vendor in the shape netcode and
-yojimbo already carry, extended with the Ed25519 and sealed box families the
-public key token design needs.
+The switch is complete: every crypto call in the tree is sodium, from the
+system package for now (brew on mac, libsodium-dev on linux, vcpkg on
+windows). Before anything ships: a gutted two-file vendor in the shape
+netcode and yojimbo already carry, extended with the Ed25519 and sealed box
+families the public key token design needs.
 
-`rocketnet_hydrogen.cpp` is [mas-bandwidth/hydrogen](https://github.com/mas-bandwidth/hydrogen),
-vendored byte-for-byte; it stays until the sodium construction replaces it.
-Patch upstream and re-vendor; do not edit it here. Hydrogen and
+[Hydrogen](https://github.com/mas-bandwidth/hydrogen) and
 [proton](https://github.com/mas-bandwidth/proton) remain the kernel/XDP
-experiment track in their own repos, maintained by the open source sweep.
+experiment track in their own repos, maintained by the open source sweep;
+nothing here vendors them.
 
 ## Vendoring
 

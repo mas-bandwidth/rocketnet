@@ -15,7 +15,6 @@
 #include "rocketnet_out_of_order_tracker.h"
 #include "rocketnet_jitter_tracker.h"
 #include "rocketnet_value_tracker.h"
-#include "rocketnet_hydrogen.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
@@ -575,11 +574,6 @@ void rocketnet_test_address()
         rocketnet_check( rocketnet_address_is_ipv4_in_ipv6( &address ) );
     }
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
-}
-
-static bool equal_within_tolerance( float a, float b, float tolerance = 0.001f )
-{
-    return fabs(double(a)-double(b)) <= tolerance;
 }
 
 void rocketnet_test_random_bytes()
@@ -2531,7 +2525,6 @@ void rocketnet_test_request_path_config_branches()
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
-    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     // the ipv6 advertised branch: a token naming a DIFFERENT server's ipv4
@@ -2894,7 +2887,6 @@ void rocketnet_test_server_full_connect()
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
@@ -6725,18 +6717,6 @@ void rocketnet_test_jitter_tracker()
     rocketnet_check( tracker.jitter <= 0.000001 );
 }
 
-extern void * rocketnet_default_malloc_function( void * context, size_t bytes );
-
-extern void rocketnet_default_free_function( void * context, void * p );
-
-static void context_check_free( void * context, void * p )
-{
-    (void) p;
-    rocketnet_check( context );
-    rocketnet_check( *((int *)context) == 23 );
-    rocketnet_default_free_function( context, p );;
-}
-
 void rocketnet_test_frame_sync_advance()
 {
     const uint64_t period = 16666666;
@@ -10460,9 +10440,9 @@ void rocketnet_test_server_driver_pin_portable()
 // it back. the portable and msgx rungs discover through the platform
 // socket's bind_address parameter, the gso rung through its own; the xdp
 // rung takes an address STRING and hands nothing back, so a port-zero
-// address granted on xdp used to advertise port 0 -- connect tokens minted
-// from rocketnet_server_transport_port() named port 0, the cookie gate
-// never matched, and nothing said why.
+// address granted on xdp would advertise port 0 -- connect tokens minted
+// from rocketnet_server_transport_port() would name port 0, the cookie gate
+// would never match, and nothing would say why.
 //
 // the question is per DRIVER, not per build: #110 made create a loop over
 // candidates, so the rule asks every candidate the same question at the
@@ -10592,8 +10572,8 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         // commit barrier -- the suite never mutates a host. That refusal
         // is asserted by its message rather than merely tolerated: it is
         // the one path in this test that enters the xdp driver at all, and
-        // it is what keeps the BARRIER exercised now that the rule
-        // short-circuits the port-zero pins that used to reach it.
+        // it is what keeps the BARRIER exercised, since the rule
+        // short-circuits the port-zero pins that would otherwise reach it.
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );

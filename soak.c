@@ -59,14 +59,13 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    // Bind port zero and adopt what the kernel grants, the #107 shape. This
-    // used to bind 127.0.0.1:40100, and a soak is the worst place for a fixed
-    // port: it is the one binary the estate runs for DAYS, so it is the one
-    // most likely to still hold the port when the next run starts, and CI
-    // runs it nightly beside whatever else is on the box. A collision does
-    // not look like a collision either -- create returns NULL and the run
-    // exits 1, which reads as a soak failure rather than as a busy port.
-    // #107 fixed twelve of these in the test suite; it did not reach here.
+    // Bind port zero and adopt what the kernel grants, the #107 shape. A soak
+    // is the worst place for a fixed port: it is the one binary the estate
+    // runs for DAYS, so it is the one most likely to still hold the port when
+    // the next run starts, and CI runs it nightly beside whatever else is on
+    // the box. A collision does not look like a collision either -- create
+    // returns NULL and the run exits 1, which reads as a soak failure rather
+    // than as a busy port.
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_time() );
     if ( !server )
