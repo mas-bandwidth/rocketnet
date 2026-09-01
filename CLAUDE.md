@@ -28,7 +28,7 @@ already earn their keep.
 
 ## The layering
 
-    rocketnet_hydrogen        vendored libhydrogen (~24% of the source)
+    libsodium            system package (brew/apt/vcpkg) — the one external dependency
     leaf utilities       hash, base64, address, trackers
     rocketnet_platform        threads, mutexes, time, sockets — the only system headers
     wire format          constants, packets, tokens, packet filter
@@ -243,16 +243,16 @@ bytes), the missing associated data parameter — and then decisively on the
 bench: at 1000 players x 60 Hz its packet crypto alone exceeds one core
 where sodium uses about a fifth, scalar versus scalar on arm64.
 
-Interim, so construction moves quickly: brew libsodium as is on the dev box.
-Before anything ships: a gutted two-file vendor in the shape netcode and
-yojimbo already carry, extended with the Ed25519 and sealed box families the
-public key token design needs.
+The switch is complete: every crypto call in the tree is sodium, from the
+system package for now (brew on mac, libsodium-dev on linux, vcpkg on
+windows). Before anything ships: a gutted two-file vendor in the shape
+netcode and yojimbo already carry, extended with the Ed25519 and sealed box
+families the public key token design needs.
 
-`rocketnet_hydrogen.cpp` is [mas-bandwidth/hydrogen](https://github.com/mas-bandwidth/hydrogen),
-vendored byte-for-byte; it stays until the sodium construction replaces it.
-Patch upstream and re-vendor; do not edit it here. Hydrogen and
+[Hydrogen](https://github.com/mas-bandwidth/hydrogen) and
 [proton](https://github.com/mas-bandwidth/proton) remain the kernel/XDP
-experiment track in their own repos, maintained by the open source sweep.
+experiment track in their own repos, maintained by the open source sweep;
+nothing here vendors them.
 
 ## Vendoring
 
