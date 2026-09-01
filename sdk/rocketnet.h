@@ -43,7 +43,6 @@
 
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
-#define ROCKETNET_MTU                                               1450
 
 #define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 8 - 20 )
 
@@ -128,7 +127,6 @@
 
 #define ROCKETNET_PLATFORM_HAS_IPV6 1
 
-#define ROCKETNET_PLATFORM_CAN_RUN_SERVER 1
 
 #if !defined(ROCKETNET_UNREAL_ENGINE)
 #define ROCKETNET_UNREAL_ENGINE 0
