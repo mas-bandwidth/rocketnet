@@ -101,7 +101,6 @@
 
 #define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
 #define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30
-#define ROCKETNET_SECONDS_BETWEEN_PACKET_LOSS_UPDATES                      0.1
 
 #define ROCKETNET_IPV4_HEADER_BYTES                                         20
 #define ROCKETNET_UDP_HEADER_BYTES                                           8

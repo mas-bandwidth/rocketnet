@@ -10,8 +10,6 @@
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
-#define ROCKETNET_MUTEX_BYTES                      256
-
 struct rocketnet_address_t;
 
 typedef void (*rocketnet_platform_thread_func_t)(void*);
