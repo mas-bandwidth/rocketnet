@@ -238,22 +238,38 @@ land. The milestone view is issue #28; this file is the live ordering.
   zero-copy shape (payloads out as pointers, sends sealed in place into
   frames, flushed together). The dev surface implemented: published dev
   keys embedded (asserted byte-equal to the test vectors so the copies
-  cannot drift) and local dev-token minting. client.cpp and server.cpp are
+  cannot drift) and local dev-token minting. client.c and server.c are
   the simplest out-of-the-box demos — make && ./bin/server, ./bin/client,
   connected in ~234ms over real UDP with the state machine narrating at
   info level, payloads echoing, clean disconnect. Proven by the transport
   UDP loopback functional test and by running the real binaries. The old
   client socket contracted (deleted, no callers); old server socket files
   remain until the XDP transport rung ports the protocol into them.
+- Runtime driver selection (#106), replacing compile-time transport
+  selection outright: one build carries every driver its platform has, and
+  create walks an ordered candidate list -- the config's driver field,
+  overridden by ROCKETNET_DRIVER -- granting the first rung that accepts.
+  The old ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO macros are refused by
+  a #error rather than merely retired. The ladder is {portable, gso, xdp,
+  msgx}: xdp then gso then portable on linux, msgx ahead of portable on
+  macOS for both endpoints, portable alone elsewhere. "auto" expands to that
+  table, an explicit list is a preference order, and a one-element list is a
+  pin that fails loudly instead of falling. The grant is reported
+  request-vs-granted through rocketnet_server_transport_driver, with one
+  create-time log line naming why each earlier candidate refused.
+  Port-zero discovery became a ladder-enforced per-driver property (#109):
+  the XDP rung refuses a port-zero address at create rather than binding
+  something it cannot discover.
 
 ## TODO
 
 - ClientTransport and ServerTransport virtual interfaces (with Glenn):
   light C++ like flow, sparingly -- the free-function transport surfaces
-  map one to one onto methods, the portable implementations become the
-  first concrete transports, and the interface is what makes runtime
-  transport selection by preference possible later. The protocol core
-  below stays as it is.
+  map one to one onto methods, and the portable implementations become the
+  first concrete transports. The protocol core below stays as it is. Note
+  the original motive is spent: runtime selection by preference landed
+  without virtual interfaces (#106, in DONE), so what is left to decide is
+  the C++ ergonomics on their own merits.
 - The public surface above it all, ruled: the root header Dean sees is
   netcode-style pure C -- rocketnet_client_transport_t with functions,
   rocketnet_server_transport_t with functions, maybe the address type, nothing
@@ -263,9 +279,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   is this surface's usage spec.
 - The XDP server transport, remaining rungs: ipv6 in the kernel program
   and the userspace path (#19); surface the kernel filter counters
-  through the transport counter surface; then io_uring and IOCP. Compile-time
-  transport selection stays for now; runtime configuration with
-  preference ordering is a named follow-on.
+  through the transport counter surface; then io_uring and IOCP.
 - The socket-level swarm with Go orchestration, against real transports.
 - THE SESSION LAYER, a v2 offering (ruled 2026-08-27, the frame sync
   argument at the connection layer: every game has to work this out, so the
