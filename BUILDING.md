@@ -1,6 +1,7 @@
 # Building rocketnet
 
-rocketnet builds on Linux and macOS with CMake, driven by the Makefile:
+rocketnet builds on Linux, macOS and Windows with CMake. On Linux and macOS the
+Makefile is the front door:
 
     make
 
@@ -8,9 +9,21 @@ Binaries and libraries land in `bin/`. Run the test suite with:
 
     ./bin/test
 
-On Linux the build links the XDP dataplane, so it needs the dev packages CI installs:
+Dependencies, per platform, as CI installs them:
 
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+    # Linux -- the build links the XDP dataplane, and liburing is the bench
+    # harness's io_uring rung
+    sudo apt install cmake build-essential libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+
+    # macOS
+    brew install libsodium pkgconf
+
+Windows has no Makefile path; CMake is driven directly, with libsodium from
+vcpkg, and the binaries land under `bin/<config>/`:
+
+    cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+    cmake --build build --config Release --parallel
+    ./bin/Release/test.exe
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
