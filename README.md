@@ -7,14 +7,14 @@ AF_XDP kernel-bypass fast path on Linux, and portable socket paths everywhere
 else. It carries the flow codebase forward under a new name, narrowed to one
 thing: a packet-level transport worthy of a 1000 player game.
 
-Right now it is direct mode only: a client connects to a server address and
-exchanges raw packets. The requirements are locked in
-[REQUIREMENTS.md](REQUIREMENTS.md): first the minimal secure connect —
-netcode-style connect tokens on public key crypto, with no secret shared
-between the backend and the servers, so player hosted servers are never
-excluded — then platform transports behind an easy-to-extend seam, then
-reliability, flows and broadcast on top. Security construction is tracked in
-issue #6, transports in issue #2.
+The secure connect is landed: netcode-style connect tokens on public key
+crypto, with no secret shared between the backend and the servers, so player
+hosted servers are never excluded; an address-validated handshake; sealed
+packets with delivery notification and fragmentation. Servers run over
+runtime-selected drivers — AF_XDP and GSO on Linux, a batch pump on macOS,
+portable UDP everywhere. The requirements are locked in
+[REQUIREMENTS.md](REQUIREMENTS.md); next per its order: reliability, flows
+and broadcast on top.
 
 ## Building
 
