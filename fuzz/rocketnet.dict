@@ -1,0 +1,80 @@
+# The libFuzzer dictionary for every rocketnet fuzz target. Entries are the
+# wire's own magic values, spelled as the little-endian bytes the parsers
+# compare against, so mutation lands on the constants the checks gate on
+# instead of rediscovering them a byte at a time. Every entry derives from a
+# named constant in sdk/ -- the source is cited beside each -- and an entry
+# that drifts from its constant is a dictionary bug, not a protocol change.
+
+# --- the prefilter header (sdk/rocketnet_wire.h) ---
+
+# the published test filter value, ROCKETNET_TEST_FILTER_VALUE
+filter_value="\xb7\x59\x01\x00"
+
+# full 6-byte prefilter headers at epoch 0: type, epoch, filter value
+prefilter_request="\x00\x00\xb7\x59\x01\x00"
+prefilter_denied="\x01\x00\xb7\x59\x01\x00"
+prefilter_challenge="\x02\x00\xb7\x59\x01\x00"
+prefilter_response="\x03\x00\xb7\x59\x01\x00"
+prefilter_keep_alive="\x04\x00\xb7\x59\x01\x00"
+prefilter_payload="\x05\x00\xb7\x59\x01\x00"
+prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
+prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
+prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
+
+# the first reserved type, and a keyed epoch the unkeyed 1.0 must refuse
+type_reserved="\x0a"
+epoch_keyed="\x01"
+
+# --- the connect token (sdk/rocketnet_connect_token.h) ---
+
+# ROCKETNET_VERSION 0x4E7C1A93, little-endian on the wire
+version="\x93\x1a\x7c\x4e"
+
+# ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788, little-endian
+dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
+
+# address flags: ipv4, ipv6, both (bits 2-7 must be zero)
+addr_ipv4="\x01"
+addr_ipv6="\x02"
+addr_both="\x03"
+
+# the test vector timestamp ROCKETNET_TEST_CREATE_TS 1756166400, as u64 LE
+test_create_ts="\x00\xf9\xac\x68\x00\x00\x00\x00"
+
+# the dev server address the vectors and soaks use: 203.0.113.10:40000,
+# octets then port little-endian, the signed data's ipv4 field layout
+dev_server_ipv4="\xcb\x00\x71\x0a\x40\x9c"
+
+# --- the fragment header (sdk/rocketnet_fragment.h) ---
+
+# payload id (u32 LE, zero invalid), fragment index, fragment count - 1
+fragment_first_of_two="\x01\x00\x00\x00\x00\x01"
+fragment_last_of_two="\x01\x00\x00\x00\x01\x01"
+fragment_max_count="\x01\x00\x00\x00\xff\xff"
+
+# --- sequence numbers (STANDARD.md _Sequence numbers_) ---
+
+# the wire's 4 bytes: one (the first valid), zero (never valid), and the
+# reconstruction window's edges
+sequence_one="\x01\x00\x00\x00"
+sequence_zero="\x00\x00\x00\x00"
+sequence_wrap_low="\xff\xff\xff\xff"
+sequence_half="\x00\x00\x00\x80"
+
+# --- base64 (sdk/rocketnet_base64.cpp) ---
+
+base64_pad="="
+base64_pad2="=="
+base64_plus="+"
+base64_slash="/"
+base64_key_32="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+# --- the config parses (sdk/rocketnet_config.cpp driver table) ---
+
+driver_auto="auto"
+driver_portable="portable"
+driver_gso="gso"
+driver_xdp="xdp"
+driver_msgx="msgx"
+driver_ladder="xdp,gso,portable"

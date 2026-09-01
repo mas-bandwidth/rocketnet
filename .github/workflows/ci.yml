@@ -76,6 +76,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
+      # RECORD THE CRYPTO VERSION EVERY JOB LINKS AGAINST. rocketnet builds on
+      # SYSTEM libsodium (the crypto ruling's interim), and apt and brew drift
+      # the version silently across runner images -- the failure that record
+      # exists to make legible is a green CI on a sodium the shipped targets
+      # never see. The pinned-sodium job below is the gate that goes red on a
+      # behaviour change; this line is the log evidence that says which
+      # version a given run actually used.
+      - name: Record the libsodium version
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list --versions libsodium || true
+          else
+            dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+          fi
+
       # The Makefile IS the Release build -- it configures CMAKE_BUILD_TYPE=Release
       # and nothing else -- and it is the front door BUILDING.md sends a new
       # consumer through, so the Release rows go through it rather than around
@@ -597,3 +612,251 @@ jobs:
         env:
           ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
         run: dotnet run --project csharp/smoke -c Release --no-build
+
+  # THE SANITIZED SOAK, PER COMMIT. This is where the duration-split (see the
+  # file header) is drawn tightest: the NIGHTLY soak (nightly-soak.yml) runs
+  # soak_sim for tens of millions of iterations and belief comes after days;
+  # what earns a place on the per-commit gate is not depth but the pairing of
+  # a BOUNDED, SEED-PINNED run with the sanitizers -- a fixed seed and a fixed
+  # iteration count try the same hostile-lite wire on every commit, and asan +
+  # ubsan turn a memory error or an undefined operation on that wire into an
+  # immediate red rather than a statistical one. It is the fuzz-smoke's
+  # determinism argument applied to the stateful simulator: same inputs, same
+  # order, same verdict, and the sanitizers watching while they run.
+  #
+  # soak_sim is the RIGHT target here and bin/soak (real UDP loopback) is not:
+  # the simulator drives the protocol layer in memory against a seeded packet
+  # simulator, with no sockets and no wall clock, so a pinned seed makes the
+  # entire run reproducible bit for bit. bin/soak's loopback timing is not
+  # reproducible and belongs to the nightly.
+  #
+  # LEAK DETECTION IS ON HERE (detect_leaks=1), which is the one per-commit
+  # home LSan has -- and it is legitimate precisely because this run is leak
+  # -clean by construction: the client protocol structs are inline (no heap),
+  # and every heap object the harness creates (the server's maps and slot set,
+  # the reassembly set, the network simulator) is destroyed before it exits.
+  # So a leak report here is a NEW unfreed allocation -- a create without its
+  # destroy -- reported deterministically, not the create/destroy-accounting
+  # noise the whole-suite `sanitizers` job defers to the nightly with its
+  # documented detect_leaks=0. The two are not in tension: the suite job takes
+  # asan+ubsan's immediate findings and leaves leak accounting to a human with
+  # a baseline; this leg gates the one leak shape that is unambiguous.
+  #
+  # Same asan+ubsan flags as the `sanitizers` job. Output is verbose, so it
+  # goes to a file and only the tail is surfaced on failure (yojimbo's soak).
+
+  sanitized-soak:
+    name: soak_sim (asan + ubsan + lsan, bounded)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Record the libsodium version
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build soak_sim
+        run: cmake --build build --target soak_sim --parallel
+
+      # bounded, seed-pinned. the count is measured to land around a minute
+      # under the sanitizers on this runner; the sim's own iteration bound is
+      # the gate's clock, not wall time, so the run tries the same inputs on a
+      # slow morning as on a fast one.
+
+      - name: Run the bounded sanitized soak (seed pinned)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ROCKETNET_SOAK_SIM_SEED: "1"
+        run: |
+          set -o pipefail
+          if ./bin/soak_sim 600000 > soak_sim.log 2>&1; then
+            echo "sanitized soak completed cleanly"
+            tail -3 soak_sim.log
+          else
+            echo "sanitized soak FAILED (exit $?)"
+            tail -80 soak_sim.log
+            exit 1
+          fi
+
+      - name: Upload the soak log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitized-soak-log
+          path: soak_sim.log
+          if-no-files-found: ignore
+
+  # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
+  # story or leaves the threads to luck; this is the only leg that watches the
+  # transport's concurrency directly. rocketnet spawns real threads -- the
+  # client transport's receive thread behind an atomic-quit and a mutex, the
+  # server's GSO worker threads on the linux gso rung, and the suite's own
+  # multi-client hammer tests that pound a transport from several threads at
+  # once -- and a data race in any of those is invisible to asan, ubsan and
+  # inspection alike. tsan is the instrument that sees a race the run did not
+  # happen to lose, so a race becomes a red on a commit rather than a heisenbug
+  # in a soak months later.
+  #
+  # WHAT CARRIES THE THREADS, and what does not. bin/test on the auto ladder is
+  # the richest surface: on this linux runner the ladder falls to the gso rung
+  # (xdp refused for privilege, gso granted), so the server's GSO worker
+  # threads run, the client receive thread runs, frame_sync's timed wait runs,
+  # and the hammer tests drive the concurrent path on purpose. bin/soak adds
+  # the real-UDP loopback -- a client and a server transport, each with its
+  # receive thread and its socket, exchanging over the loopback -- bounded so
+  # the leg ends. soak_sim is DELIBERATELY NOT here: it drives the protocol
+  # layer in memory with no threads and no sockets, so under tsan it is a
+  # single-threaded program with no race surface at all, and a leg that cannot
+  # find the thing it names is decoration. The threaded soak is bin/soak.
+  #
+  # A REAL FINDING STOPS THE WORLD. halt_on_error=1 ends the run on the first
+  # race, and there is NO suppressions file -- a blanket suppression is how a
+  # race leg goes green while the race stays. If tsan reddens this leg, the
+  # finding is the work: read it, and fix the race or prove it benign one
+  # named site at a time. Do not add a suppression to get back to green.
+  #
+  # Both C and C++ flags are set (soak.c is C) so every translation unit that
+  # touches shared state is instrumented; an uninstrumented unit is where tsan
+  # goes quietly blind.
+
+  tsan:
+    name: tsan (threaded transport)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Record the libsodium version
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build the suite and the soak
+        run: cmake --build build --target test soak --parallel
+
+      - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ./bin/test
+
+      - name: Run the bounded loopback soak under tsan (real transport threads)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ./bin/soak 20000
+
+  # THE PINNED-SODIUM LEG (GAP 5, the gate half). rocketnet builds on SYSTEM
+  # libsodium (the crypto ruling's interim -- the gutted two-file vendor
+  # replaces it before anything ships), which every other leg here gets from
+  # apt or brew, and those bump the version silently across runner images. A
+  # version drift is invisible: the suite goes green on whatever sodium the
+  # image happened to ship that morning, and a behaviour this code leans on
+  # could change under it without anything going red. The build-and-test legs
+  # RECORD the version they linked so a drift is legible after the fact; THIS
+  # leg is the gate that goes red WHEN it happens, by building the suite
+  # against a sodium pinned to a known-good version, from source, on a leg
+  # where nothing else can substitute a different one.
+  #
+  # The pin is by CONTENT, not by URL: the release tarball is verified against
+  # a recorded SHA-256 before it is unpacked, so a moved tag or a swapped
+  # mirror fails closed rather than building something else. The built prefix
+  # is cached by version, so the autotools build runs once and later commits
+  # restore it.
+  #
+  # PKG_CONFIG_LIBDIR (not PATH) points cmake's pkg_check_modules at ONLY the
+  # pinned prefix -- sodium is the one dependency this project resolves through
+  # pkg-config (libbpf and libxdp are named libraries, linked directly), so
+  # replacing the search path cannot starve anything else, and it guarantees
+  # the system libsodium-dev that the xdp packages pull in cannot be picked by
+  # accident. The premise is then PROVEN, not assumed: the resolved version is
+  # asserted equal to the pin before the build, so a leg that silently found
+  # the wrong sodium reddens here rather than passing for the wrong reason.
+  #
+  # To bump the pin: change SODIUM_VERSION and SODIUM_SHA256 together. That is
+  # the deliberate act the silent apt/brew bump is not.
+
+  sodium-pinned:
+    name: pinned libsodium (built from source)
+    runs-on: ubuntu-24.04
+    env:
+      SODIUM_VERSION: "1.0.20"
+      SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
+      # a user-writable prefix: make install needs no sudo, and the cache save
+      # reads a tree the runner user owns.
+      SODIUM_PREFIX: ${{ github.workspace }}/sodium-pin
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies (no libsodium-dev)
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential pkg-config libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+
+      - name: Restore the pinned sodium prefix
+        id: sodium-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SODIUM_PREFIX }}
+          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}
+
+      - name: Build the pinned libsodium from source (content-verified)
+        if: steps.sodium-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
+          curl -fsSL -o sodium.tar.gz "$url"
+          echo "${SODIUM_SHA256}  sodium.tar.gz" | sha256sum -c -
+          mkdir sodium-src
+          tar xzf sodium.tar.gz -C sodium-src --strip-components=1
+          cd sodium-src
+          ./configure --prefix="${SODIUM_PREFIX}" --disable-dependency-tracking
+          make -j"$(nproc)"
+          make install
+
+      # PROVE THE PREMISE: pkg-config, restricted to the pinned prefix, must
+      # report exactly the pinned version. If it does not, the leg is finding
+      # the wrong sodium and every check below would pass for the wrong reason.
+      - name: Prove pkg-config resolves the pin
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          resolved="$(pkg-config --modversion libsodium)"
+          echo "pkg-config resolves libsodium ${resolved} (pin is ${SODIUM_VERSION})"
+          [ "$resolved" = "$SODIUM_VERSION" ]
+
+      - name: Configure against the pinned sodium
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build the suite
+        run: cmake --build build --target test --parallel
+
+      - name: Run tests (auto ladder) against the pinned sodium
+        run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test

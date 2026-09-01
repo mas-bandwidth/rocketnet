@@ -1,0 +1,133 @@
+# The nightly deep fuzz (#124's discovery half). ci.yml's fuzz-smoke is a
+# REPLAY -- the same committed inputs, same order, same verdict, seconds,
+# no randomness -- and that is what a per-commit gate must be. This is its
+# opposite and its complement: a long, coverage-guided HUNT per target, with
+# the discovered corpus persisted (and grown) across nights via the cache, the
+# committed seed corpus reused, the wire's own dictionary applied, and any
+# crash reddening that target's job and uploaded as a reproducer.
+#
+# Separate workflow from ci.yml so it never blocks a pull request. A red night
+# is a found bug, read by whoever is on the estate that morning, not a gate on
+# a merge.
+#
+# ONE INSTRUMENTED LIBRARY, MANY TARGETS: the sdk is built once with
+# fuzzer-no-link coverage plus asan+ubsan, and each target links the harness
+# against that archive -- one parallel build instead of recompiling the whole
+# sdk per target, exactly as ci.yml's fuzz-smoke does. The three targets are
+# the one-binary stateless parser sweep (the smoke's own binary, run long
+# here), the connect token ladder, and the stateful receive path.
+
+name: Fuzz (nightly)
+
+on:
+  schedule:
+    - cron: "17 7 * * *"   # daily at 07:17 UTC
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "Seconds to fuzz each target"
+        required: false
+        default: "900"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: nightly fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # each row is a harness source under fuzz/ and the seed-corpus and
+        # persisted-corpus directories that feed it. the stateless sweep keeps
+        # its historic name (rocketnet_fuzz) and its historic seed dir
+        # (fuzz/corpus); the two stateful targets carry their own.
+        include:
+          - target: rocketnet_fuzz
+            source: fuzz/rocketnet_fuzz.cpp
+            seeds: fuzz/corpus
+          - target: rocketnet_fuzz_connect_token
+            source: fuzz/rocketnet_fuzz_connect_token.cpp
+            seeds: fuzz/corpus_connect_token
+          - target: rocketnet_fuzz_receive_structured
+            source: fuzz/rocketnet_fuzz_receive_structured.cpp
+            seeds: fuzz/corpus_receive_structured
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      # the version of the crypto every target links against, printed so a
+      # red night on a distro sodium bump is legible from the log rather than
+      # a mystery (the sodium-version gate lives in ci.yml; this only records)
+      - name: Record the libsodium version
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+
+      # persist the discovered corpus across runs: restore the newest prior
+      # cache for this target, save a fresh entry keyed by run id. cache
+      # entries are immutable, so a unique key each run plus a prefix
+      # restore-key gives a growing corpus.
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz --target rocketnet --parallel
+
+      - name: Build ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          clang++ -g -O1 -std=c++17 \
+            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+            -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet.a \
+            $(pkg-config --libs libsodium) -lbpf -lxdp -lpthread \
+            -o "bin/${{ matrix.target }}"
+
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -euo pipefail
+          mkdir -p "corpus/${{ matrix.target }}"
+          T="${{ github.event.inputs.max_total_time || '900' }}"
+          echo "fuzzing ${{ matrix.target }} for ${T}s with the wire dictionary"
+          ./"bin/${{ matrix.target }}" \
+            "corpus/${{ matrix.target }}" "${{ matrix.seeds }}" \
+            -dict=fuzz/rocketnet.dict \
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+
+      # libFuzzer writes a reproducer to the working dir on a crash; keep it.
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: |
+            crash-*
+            oom-*
+            timeout-*
+            leak-*
+          if-no-files-found: ignore
