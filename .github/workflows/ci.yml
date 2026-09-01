@@ -76,6 +76,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
+      # RECORD THE CRYPTO VERSION EVERY JOB LINKS AGAINST. rocketnet builds on
+      # SYSTEM libsodium (the crypto ruling's interim), and apt and brew drift
+      # the version silently across runner images -- the failure that record
+      # exists to make legible is a green CI on a sodium the shipped targets
+      # never see. The pinned-sodium job below is the gate that goes red on a
+      # behaviour change; this line is the log evidence that says which
+      # version a given run actually used.
+      - name: Record the libsodium version
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list --versions libsodium || true
+          else
+            dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+          fi
+
       # The Makefile IS the Release build -- it configures CMAKE_BUILD_TYPE=Release
       # and nothing else -- and it is the front door BUILDING.md sends a new
       # consumer through, so the Release rows go through it rather than around
@@ -597,3 +612,89 @@ jobs:
         env:
           ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
         run: dotnet run --project csharp/smoke -c Release --no-build
+
+  # THE SANITIZED SOAK, PER COMMIT. This is where the duration-split (see the
+  # file header) is drawn tightest: the NIGHTLY soak (nightly-soak.yml) runs
+  # soak_sim for tens of millions of iterations and belief comes after days;
+  # what earns a place on the per-commit gate is not depth but the pairing of
+  # a BOUNDED, SEED-PINNED run with the sanitizers -- a fixed seed and a fixed
+  # iteration count try the same hostile-lite wire on every commit, and asan +
+  # ubsan turn a memory error or an undefined operation on that wire into an
+  # immediate red rather than a statistical one. It is the fuzz-smoke's
+  # determinism argument applied to the stateful simulator: same inputs, same
+  # order, same verdict, and the sanitizers watching while they run.
+  #
+  # soak_sim is the RIGHT target here and bin/soak (real UDP loopback) is not:
+  # the simulator drives the protocol layer in memory against a seeded packet
+  # simulator, with no sockets and no wall clock, so a pinned seed makes the
+  # entire run reproducible bit for bit. bin/soak's loopback timing is not
+  # reproducible and belongs to the nightly.
+  #
+  # LEAK DETECTION IS ON HERE (detect_leaks=1), which is the one per-commit
+  # home LSan has -- and it is legitimate precisely because this run is leak
+  # -clean by construction: the client protocol structs are inline (no heap),
+  # and every heap object the harness creates (the server's maps and slot set,
+  # the reassembly set, the network simulator) is destroyed before it exits.
+  # So a leak report here is a NEW unfreed allocation -- a create without its
+  # destroy -- reported deterministically, not the create/destroy-accounting
+  # noise the whole-suite `sanitizers` job defers to the nightly with its
+  # documented detect_leaks=0. The two are not in tension: the suite job takes
+  # asan+ubsan's immediate findings and leaves leak accounting to a human with
+  # a baseline; this leg gates the one leak shape that is unambiguous.
+  #
+  # Same asan+ubsan flags as the `sanitizers` job. Output is verbose, so it
+  # goes to a file and only the tail is surfaced on failure (yojimbo's soak).
+
+  sanitized-soak:
+    name: soak_sim (asan + ubsan + lsan, bounded)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Record the libsodium version
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build soak_sim
+        run: cmake --build build --target soak_sim --parallel
+
+      # bounded, seed-pinned. the count is measured to land around a minute
+      # under the sanitizers on this runner; the sim's own iteration bound is
+      # the gate's clock, not wall time, so the run tries the same inputs on a
+      # slow morning as on a fast one.
+
+      - name: Run the bounded sanitized soak (seed pinned)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ROCKETNET_SOAK_SIM_SEED: "1"
+        run: |
+          set -o pipefail
+          if ./bin/soak_sim 600000 > soak_sim.log 2>&1; then
+            echo "sanitized soak completed cleanly"
+            tail -3 soak_sim.log
+          else
+            echo "sanitized soak FAILED (exit $?)"
+            tail -80 soak_sim.log
+            exit 1
+          fi
+
+      - name: Upload the soak log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitized-soak-log
+          path: soak_sim.log
+          if-no-files-found: ignore
