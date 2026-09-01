@@ -3155,9 +3155,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
     // a required msgx under the ROCKETNET_PUMP=portable override refuses
-    // BEFORE any socket exists: pre-#106 there was exactly one bind, and a
-    // refused rung that binds and releases a fixed port before the next
-    // rung rebinds it would open a window the old code never had
+    // BEFORE any socket exists: a rung that binds a fixed port, refuses, and
+    // releases it before the next rung rebinds opens a window for anything
+    // else on the machine to take that port mid-ladder
 
     if ( require_msgx )
     {

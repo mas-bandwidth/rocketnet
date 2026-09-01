@@ -1175,20 +1175,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     // Build the server_xdp program in a PRIVATE directory.
     //
-    // This used to run, via popen and as root:
-    //
-    //     rm -f Makefile && rm -f *.c && rm -f *.h && rm -f *.o
-    //
-    // in whatever directory the process happened to inherit -- there is no
-    // chdir anywhere in this library, so the glob expanded wherever the
-    // server was started from. Launch it from a source tree and it deletes
-    // the source tree; run two servers in one directory and they race over
-    // server_xdp.o. The sanctioned launcher happens to cd into dist/ first,
-    // which is why this has not bitten yet, but nothing enforces that and the
-    // rm lives in the library, not the launcher.
+    // It must not build in whatever directory the process inherited. There is
+    // no chdir anywhere in this library, so any glob or removal would expand
+    // wherever the server was started from -- a source tree, or a directory
+    // two servers share and race over server_xdp.o in. A launcher that cds
+    // somewhere safe first cannot be relied on: the build lives in the
+    // library, not the launcher.
     //
     // mkdtemp gives a fresh 0700 directory per process. Nothing needs
-    // pre-clearing (it starts empty), the race disappears, and cleanup is
+    // pre-clearing (it starts empty), there is no race, and cleanup is
     // rm -rf on a path this process created rather than a glob over files it
     // did not put there.
 

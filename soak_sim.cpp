@@ -159,9 +159,9 @@ static inline void soak_profile_charge( int bucket, double start )
     {
         // the negative control: charge every bucket twice, so the parts add up
         // to more than the wall clock they are dividing. Every bucket and not
-        // just one, because the wire is now small enough that doubling it
-        // alone no longer breaks the sum -- a negative control has to stay
-        // able to break the thing it is controlling for.
+        // just one, because the wire is small enough that doubling it alone
+        // does not break the sum -- a negative control has to stay able to
+        // break the thing it is controlling for.
         soak_profile_seconds[bucket] += elapsed;
     }
 }

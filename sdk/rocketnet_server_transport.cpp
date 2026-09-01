@@ -153,8 +153,7 @@ struct rocketnet_server_transport_t
 
     // the granted driver (ROCKETNET_DRIVER_*), decided by the ladder at
     // create and constant for the transport's life -- the runtime fork
-    // every seam function below branches on, one predictable branch where
-    // the compile-time build used to fork
+    // every seam function below branches on, one predictable branch
 
     int driver;
 
@@ -395,8 +394,7 @@ static int rocketnet_server_config_has_keys( const struct rocketnet_server_trans
 // the pre-#106 env spellings kept working under the ROCKETNET_PUMP pattern:
 // a deprecated alias is honored only where its successor is unset, strict-
 // parsed by the same rules, and every use is logged loudly naming the
-// successor; set beside the successor it yields, loudly. these two used to
-// be silent raw getenv reads inside the xdp driver.
+// successor; set beside the successor it yields, loudly.
 
 static bool rocketnet_server_apply_env_alias( const char * alias_name, const char * successor_name, int * field )
 {
@@ -1163,7 +1161,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // one pump call drains the batch, then processing walks it -- the batch
     // is how a platform with batch syscalls earns its keep, and on every
-    // other platform the pump is the same per-packet loop this used to be
+    // other platform the pump is a plain per-packet loop behind the same call
 
     struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
 

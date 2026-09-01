@@ -98,7 +98,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
     // input is whole four-character groups, with one or two trailing '='
     // completing the last -- so each byte length has exactly one valid
     // spelling and the no-two-spellings-one-key property is real, not
-    // aspirational ("AA" no longer decodes beside "AA==")
+    // aspirational ("AA" is refused beside "AA==")
 
     if ( ( input_length % 4 ) != 0 )
         return 0;
@@ -143,7 +143,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
 
     // canonical tails only: leftover bits below the last whole byte must
     // be zero, so two distinct strings can never decode to the same bytes
-    // ("AB" and "AC" both used to yield 0x00)
+    // (without it "AB" and "AC" would both yield 0x00)
 
     if ( bits > 0 && ( accumulator & ( ( 1u << bits ) - 1 ) ) != 0 )
         return 0;

@@ -10440,9 +10440,9 @@ void rocketnet_test_server_driver_pin_portable()
 // it back. the portable and msgx rungs discover through the platform
 // socket's bind_address parameter, the gso rung through its own; the xdp
 // rung takes an address STRING and hands nothing back, so a port-zero
-// address granted on xdp used to advertise port 0 -- connect tokens minted
-// from rocketnet_server_transport_port() named port 0, the cookie gate
-// never matched, and nothing said why.
+// address granted on xdp would advertise port 0 -- connect tokens minted
+// from rocketnet_server_transport_port() would name port 0, the cookie gate
+// would never match, and nothing would say why.
 //
 // the question is per DRIVER, not per build: #110 made create a loop over
 // candidates, so the rule asks every candidate the same question at the
@@ -10572,8 +10572,8 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         // commit barrier -- the suite never mutates a host. That refusal
         // is asserted by its message rather than merely tolerated: it is
         // the one path in this test that enters the xdp driver at all, and
-        // it is what keeps the BARRIER exercised now that the rule
-        // short-circuits the port-zero pins that used to reach it.
+        // it is what keeps the BARRIER exercised, since the rule
+        // short-circuits the port-zero pins that would otherwise reach it.
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
