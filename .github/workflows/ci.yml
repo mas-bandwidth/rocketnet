@@ -768,3 +768,95 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/soak 20000
+
+  # THE PINNED-SODIUM LEG (GAP 5, the gate half). rocketnet builds on SYSTEM
+  # libsodium (the crypto ruling's interim -- the gutted two-file vendor
+  # replaces it before anything ships), which every other leg here gets from
+  # apt or brew, and those bump the version silently across runner images. A
+  # version drift is invisible: the suite goes green on whatever sodium the
+  # image happened to ship that morning, and a behaviour this code leans on
+  # could change under it without anything going red. The build-and-test legs
+  # RECORD the version they linked so a drift is legible after the fact; THIS
+  # leg is the gate that goes red WHEN it happens, by building the suite
+  # against a sodium pinned to a known-good version, from source, on a leg
+  # where nothing else can substitute a different one.
+  #
+  # The pin is by CONTENT, not by URL: the release tarball is verified against
+  # a recorded SHA-256 before it is unpacked, so a moved tag or a swapped
+  # mirror fails closed rather than building something else. The built prefix
+  # is cached by version, so the autotools build runs once and later commits
+  # restore it.
+  #
+  # PKG_CONFIG_LIBDIR (not PATH) points cmake's pkg_check_modules at ONLY the
+  # pinned prefix -- sodium is the one dependency this project resolves through
+  # pkg-config (libbpf and libxdp are named libraries, linked directly), so
+  # replacing the search path cannot starve anything else, and it guarantees
+  # the system libsodium-dev that the xdp packages pull in cannot be picked by
+  # accident. The premise is then PROVEN, not assumed: the resolved version is
+  # asserted equal to the pin before the build, so a leg that silently found
+  # the wrong sodium reddens here rather than passing for the wrong reason.
+  #
+  # To bump the pin: change SODIUM_VERSION and SODIUM_SHA256 together. That is
+  # the deliberate act the silent apt/brew bump is not.
+
+  sodium-pinned:
+    name: pinned libsodium (built from source)
+    runs-on: ubuntu-24.04
+    env:
+      SODIUM_VERSION: "1.0.20"
+      SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
+      # a user-writable prefix: make install needs no sudo, and the cache save
+      # reads a tree the runner user owns.
+      SODIUM_PREFIX: ${{ github.workspace }}/sodium-pin
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies (no libsodium-dev)
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential pkg-config libbpf-dev libxdp-dev libcurl4-openssl-dev xxd
+
+      - name: Restore the pinned sodium prefix
+        id: sodium-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SODIUM_PREFIX }}
+          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}
+
+      - name: Build the pinned libsodium from source (content-verified)
+        if: steps.sodium-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
+          curl -fsSL -o sodium.tar.gz "$url"
+          echo "${SODIUM_SHA256}  sodium.tar.gz" | sha256sum -c -
+          mkdir sodium-src
+          tar xzf sodium.tar.gz -C sodium-src --strip-components=1
+          cd sodium-src
+          ./configure --prefix="${SODIUM_PREFIX}" --disable-dependency-tracking
+          make -j"$(nproc)"
+          make install
+
+      # PROVE THE PREMISE: pkg-config, restricted to the pinned prefix, must
+      # report exactly the pinned version. If it does not, the leg is finding
+      # the wrong sodium and every check below would pass for the wrong reason.
+      - name: Prove pkg-config resolves the pin
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          resolved="$(pkg-config --modversion libsodium)"
+          echo "pkg-config resolves libsodium ${resolved} (pin is ${SODIUM_VERSION})"
+          [ "$resolved" = "$SODIUM_VERSION" ]
+
+      - name: Configure against the pinned sodium
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build the suite
+        run: cmake --build build --target test --parallel
+
+      - name: Run tests (auto ladder) against the pinned sodium
+        run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
