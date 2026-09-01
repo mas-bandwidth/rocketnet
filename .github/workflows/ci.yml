@@ -698,3 +698,73 @@ jobs:
           name: sanitized-soak-log
           path: soak_sim.log
           if-no-files-found: ignore
+
+  # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
+  # story or leaves the threads to luck; this is the only leg that watches the
+  # transport's concurrency directly. rocketnet spawns real threads -- the
+  # client transport's receive thread behind an atomic-quit and a mutex, the
+  # server's GSO worker threads on the linux gso rung, and the suite's own
+  # multi-client hammer tests that pound a transport from several threads at
+  # once -- and a data race in any of those is invisible to asan, ubsan and
+  # inspection alike. tsan is the instrument that sees a race the run did not
+  # happen to lose, so a race becomes a red on a commit rather than a heisenbug
+  # in a soak months later.
+  #
+  # WHAT CARRIES THE THREADS, and what does not. bin/test on the auto ladder is
+  # the richest surface: on this linux runner the ladder falls to the gso rung
+  # (xdp refused for privilege, gso granted), so the server's GSO worker
+  # threads run, the client receive thread runs, frame_sync's timed wait runs,
+  # and the hammer tests drive the concurrent path on purpose. bin/soak adds
+  # the real-UDP loopback -- a client and a server transport, each with its
+  # receive thread and its socket, exchanging over the loopback -- bounded so
+  # the leg ends. soak_sim is DELIBERATELY NOT here: it drives the protocol
+  # layer in memory with no threads and no sockets, so under tsan it is a
+  # single-threaded program with no race surface at all, and a leg that cannot
+  # find the thing it names is decoration. The threaded soak is bin/soak.
+  #
+  # A REAL FINDING STOPS THE WORLD. halt_on_error=1 ends the run on the first
+  # race, and there is NO suppressions file -- a blanket suppression is how a
+  # race leg goes green while the race stays. If tsan reddens this leg, the
+  # finding is the work: read it, and fix the race or prove it benign one
+  # named site at a time. Do not add a suppression to get back to green.
+  #
+  # Both C and C++ flags are set (soak.c is C) so every translation unit that
+  # touches shared state is instrumented; an uninstrumented unit is where tsan
+  # goes quietly blind.
+
+  tsan:
+    name: tsan (threaded transport)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Record the libsodium version
+        run: |
+          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build the suite and the soak
+        run: cmake --build build --target test soak --parallel
+
+      - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ./bin/test
+
+      - name: Run the bounded loopback soak under tsan (real transport threads)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ./bin/soak 20000
