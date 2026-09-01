@@ -240,11 +240,15 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         }
 
         // inject pure garbage at the server: a fuzz-sized, fuzz-filled datagram
-        // straight into the receive entry (the pre-decrypt path)
+        // straight into the receive entry (the pre-decrypt path). the size is a
+        // legal wire size, [1, ROCKETNET_RECEIVE_CEILING] -- the simulator is
+        // the wire and a datagram off the wire is always within those bounds;
+        // the too-short and too-large rejections are the prefilter's, gated by
+        // the stateless target's corpus, not something the wire can carry here.
         if ( ( action & 0x30 ) == 0x10 )
         {
-            const int garbage_bytes = fuzz_u16( &r ) % ( ROCKETNET_RECEIVE_CEILING + 2 );
-            uint8_t garbage[ROCKETNET_RECEIVE_CEILING + 2];
+            const int garbage_bytes = 1 + fuzz_u16( &r ) % ROCKETNET_RECEIVE_CEILING;
+            uint8_t garbage[ROCKETNET_RECEIVE_CEILING];
             fuzz_bytes( &r, garbage, garbage_bytes );
             rocketnet_network_simulator_send( simulator, &client_address, &server_address, garbage, garbage_bytes, time );
         }
