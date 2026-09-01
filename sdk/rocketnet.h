@@ -43,7 +43,6 @@
 
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
-#define ROCKETNET_MTU                                               1450
 
 #define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 8 - 20 )
 
