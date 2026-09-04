@@ -91,11 +91,79 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+// THE SUITE RUNS SILENT. rocketnet_run_tests installs this sink, so every
+// line the library would have printed lands in the ring below instead of
+// on stdout, and the only thing a passing run prints is the test names --
+// which arrive here at level NONE and pass straight through as the bare
+// line the default log function writes.
+//
+// Nothing true is lost, which is the point: a failing check dumps the ring
+// before the check line, so the cause of an unexpected refusal is printed
+// exactly when it matters and never otherwise -- a create that returns
+// NULL still explains itself, which is what the port-collision flake of
+// #107 needed. RUN_TEST clears the ring, so a dump belongs to the failing
+// test alone.
+//
+// ROCKETNET_TEST_VERBOSE leaves the log live instead: no sink is
+// installed and the level test.cpp sets stands, so a developer watches the
+// library log as it happens.
+
+#define ROCKETNET_TEST_LOG_RING_LINES 32
+#define ROCKETNET_TEST_LOG_RING_LINE_BYTES 1024
+
+static char rocketnet_test_log_ring[ROCKETNET_TEST_LOG_RING_LINES][ROCKETNET_TEST_LOG_RING_LINE_BYTES];
+
+static int rocketnet_test_log_ring_lines;
+
+static void rocketnet_test_log_capture( int level, const char * format, ... )
+{
+    va_list args;
+    va_start( args, format );
+    char line[ROCKETNET_TEST_LOG_RING_LINE_BYTES];
+    vsnprintf( line, sizeof(line), format, args );
+    va_end( args );
+
+    if ( level == ROCKETNET_LOG_LEVEL_NONE )
+    {
+        printf( "%s\n", line );
+        fflush( stdout );
+        return;
+    }
+
+    char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_TEST_LOG_RING_LINES];
+    snprintf( slot, ROCKETNET_TEST_LOG_RING_LINE_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_string( level ), line );
+    rocketnet_test_log_ring_lines++;
+}
+
+// what the suite installed, so a test that swaps in its own capture puts
+// the suite's sink back rather than the default printer. NULL is the
+// ROCKETNET_TEST_VERBOSE state, and restores the default printer -- which
+// is what verbose wants.
+
+static void (*rocketnet_test_suite_log_function)( int level, const char * format, ... ) = NULL;
+
+static void rocketnet_test_log_ring_clear()
+{
+    rocketnet_test_log_ring_lines = 0;
+}
+
+static void rocketnet_test_log_ring_dump()
+{
+    const int lines = rocketnet_test_log_ring_lines < ROCKETNET_TEST_LOG_RING_LINES ? rocketnet_test_log_ring_lines : ROCKETNET_TEST_LOG_RING_LINES;
+    const int first = rocketnet_test_log_ring_lines - lines;
+    for ( int i = 0; i < lines; i++ )
+    {
+        printf( "%s\n", rocketnet_test_log_ring[( first + i ) % ROCKETNET_TEST_LOG_RING_LINES] );
+    }
+    rocketnet_test_log_ring_lines = 0;
+}
+
 static void rocketnet_check_handler( const char * condition,
                                 const char * function,
                                 const char * file,
                                 int line )
 {
+    rocketnet_test_log_ring_dump();
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
     fflush( stdout );
 #ifndef NDEBUG
@@ -10061,32 +10129,8 @@ void rocketnet_test_config_env_round_trip()
     rocketnet_check( server_has_driver );
 }
 
-// expected-refusal bracket: these tests PROVOKE refusals and assert them
-// by return value, so the error chatter of a refusal that is the point is
-// quieted for the provocation and the #107 posture (errors always print)
-// restored right after. nothing true is lost: when a provoked refusal
-// unexpectedly succeeds there was no error line to see anyway, and the
-// failing check names the spot.
-
-static int rocketnet_test_saved_log_level = ROCKETNET_LOG_LEVEL_ERROR;
-
-static void rocketnet_test_expect_refusals( bool expecting )
-{
-    if ( expecting )
-    {
-        rocketnet_test_saved_log_level = rocketnet_get_log_level();
-        rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
-    }
-    else
-    {
-        rocketnet_log_level( rocketnet_test_saved_log_level );
-    }
-}
-
 void rocketnet_test_config_validation()
 {
-    rocketnet_test_expect_refusals( true );
-
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
 
@@ -10176,7 +10220,7 @@ void rocketnet_test_config_validation()
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     rocketnet_log_level( empty_saved_level );
-    rocketnet_log_function( NULL );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
 
     rocketnet_check( config.max_clients == 64 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_MAX_CLIENTS" ) != NULL );
@@ -10216,14 +10260,10 @@ void rocketnet_test_config_validation()
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
-
-    rocketnet_test_expect_refusals( false );
 }
 
 void rocketnet_test_driver_ladder_parse()
 {
-    rocketnet_test_expect_refusals( true );
-
     const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
     const int mac_endpoint[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
 
@@ -10293,8 +10333,6 @@ void rocketnet_test_driver_ladder_parse()
 
     rocketnet_check( rocketnet_driver_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
-
-    rocketnet_test_expect_refusals( false );
 }
 
 void rocketnet_test_config_precedence()
@@ -10541,7 +10579,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
@@ -10561,7 +10599,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
@@ -10582,7 +10620,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
         server = rocketnet_server_transport_create( NULL, "127.0.0.1:40000", &config, rocketnet_platform_time() );
 
         rocketnet_log_level( saved_level );
-        rocketnet_log_function( NULL );
+        rocketnet_log_function( rocketnet_test_suite_log_function );
 
         rocketnet_check( server == NULL );
         rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
@@ -10624,9 +10662,7 @@ void rocketnet_test_server_driver_pin_gso()
     snprintf( config.driver, sizeof(config.driver), "gso" );
     config.num_xdp_queues = ROCKETNET_GSO_MAX_QUEUES + 1;
 
-    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
-    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &driver_guard );
 }
@@ -10656,9 +10692,7 @@ void rocketnet_test_server_driver_pin_xdp()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
 
-    rocketnet_test_expect_refusals( true );
     const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40000", 7 );
-    rocketnet_test_expect_refusals( false );
 
     if ( !provisioned )
     {
@@ -10666,9 +10700,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_test_expect_refusals( true );
         rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", &config, rocketnet_platform_time() ) == NULL );
-        rocketnet_test_expect_refusals( false );
     }
 
     rocketnet_test_env_restore( &driver_guard );
@@ -10701,9 +10733,7 @@ void rocketnet_test_server_driver_ladder_fall()
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
 
-    rocketnet_test_expect_refusals( true );
     const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40000", 7 );
-    rocketnet_test_expect_refusals( false );
 
     if ( !provisioned )
     {
@@ -10808,9 +10838,7 @@ void rocketnet_test_driver_pump_alias()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
 
-    rocketnet_test_expect_refusals( true );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
-    rocketnet_test_expect_refusals( false );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
     rocketnet_server_transport_stop( server );
@@ -10823,9 +10851,7 @@ void rocketnet_test_driver_pump_alias()
     struct rocketnet_server_transport_config_t pinned_config;
     rocketnet_server_transport_dev_config( &pinned_config );
     snprintf( pinned_config.driver, sizeof(pinned_config.driver), "msgx" );
-    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &pinned_config, rocketnet_platform_time() ) == NULL );
-    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &pump_guard );
     rocketnet_test_env_restore( &driver_guard );
@@ -10873,9 +10899,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_server_transport_destroy( server );
 
     snprintf( config.driver, sizeof(config.driver), "protable" );
-    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
-    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &driver_guard );
 }
@@ -10917,7 +10941,7 @@ void rocketnet_test_config_override_logging()
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     rocketnet_log_level( saved_level );
-    rocketnet_log_function( NULL );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
 
     rocketnet_check( config.max_clients == 77 );
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) == 0 );
@@ -10941,7 +10965,7 @@ void rocketnet_test_config_override_logging()
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     rocketnet_log_level( saved_level );
-    rocketnet_log_function( NULL );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
     rocketnet_check( strstr( rocketnet_test_captured_log, "not!valid!base64!secret!material!!" ) == NULL );
 
     rocketnet_test_env_restore( &clients_guard );
@@ -10980,9 +11004,7 @@ void rocketnet_test_config_env_aliases()
     // ...parsed strictly...
 
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
-    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
-    rocketnet_test_expect_refusals( false );
 
     // ...and yields to the successor when both are set
 
@@ -11014,9 +11036,7 @@ void rocketnet_test_config_env_aliases()
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
     rocketnet_server_transport_destroy( server );
 
-    rocketnet_test_expect_refusals( true );
     rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() ) == NULL );
-    rocketnet_test_expect_refusals( false );
 
     rocketnet_test_env_restore( &address_guard );
     rocketnet_test_env_restore( &driver_guard );
@@ -11612,6 +11632,7 @@ void rocketnet_test_server_gso_send_overflow()
 #define RUN_TEST( test_function )                                           \
     do                                                                      \
     {                                                                       \
+        rocketnet_test_log_ring_clear();                                    \
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, #test_function );                 \
         fflush( stdout );                                                   \
         rocketnet_##test_function();                                             \
@@ -11620,6 +11641,18 @@ void rocketnet_test_server_gso_send_overflow()
 
 void rocketnet_run_tests()
 {
+    // SILENCE, WITH THE CAUSE KEPT: the library's log goes to the ring at
+    // the top of this file rather than to stdout, at whatever level the
+    // caller chose -- test.cpp's ERROR floor -- so a passing run prints
+    // only test names and a failing check prints the lines that led to it.
+    // ROCKETNET_TEST_VERBOSE installs nothing and leaves the log live.
+
+    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_VERBOSE" ) == NULL )
+    {
+        rocketnet_test_suite_log_function = rocketnet_test_log_capture;
+        rocketnet_log_function( rocketnet_test_suite_log_function );
+    }
+
     // THE COMMIT BARRIER (#110 gate, both readers): the suite must never
     // commit an XDP data plane -- not by per-test discipline, which two
     // readers proved decorative, but structurally: installed once here,
