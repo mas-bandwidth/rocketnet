@@ -281,11 +281,16 @@ ROCKETNET_EXPORT_FUNC void rocketnet_quiet( bool flag );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_level( int level );
 
-// the level currently in force, so a caller that lowers the level for a
-// bounded stretch (the test suite's expected-refusal brackets) can restore
-// what it found rather than guessing
+// the level currently in force, so a caller that moves the level for a
+// bounded stretch (the test suite's log-asserting tests) can restore what
+// it found rather than guessing
 
 ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level( void );
+
+// the name of a level, so a replacement log function renders it the way the
+// default one does
+
+ROCKETNET_EXPORT_FUNC const char * rocketnet_log_level_string( int level );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 

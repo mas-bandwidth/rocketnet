@@ -11,10 +11,13 @@
 
 int main()
 {
-    // quiet the info chatter, never the errors: a create that returns NULL
-    // explains itself through rocketnet_error, and a test binary that
-    // swallows that explanation fails with a bare check line and no cause
-    // (the port-collision flake of #107 hid exactly that way)
+    // the captured floor. the suite runs silent -- rocketnet_run_tests
+    // captures the library's log into a ring instead of printing it, and a
+    // failing check dumps that ring before the check line -- so this level
+    // is what a failure gets to show: errors are kept, so a create that
+    // returns NULL always explains itself where it matters, and a passing
+    // run prints test names and nothing else. ROCKETNET_TEST_VERBOSE=1
+    // skips the capture and leaves the log live at this level.
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
