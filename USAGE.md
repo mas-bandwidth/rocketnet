@@ -1,5 +1,10 @@
 # Using rocketnet
 
+Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
+digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.
+Bare IPv6 and `[address]` have port zero. A zero server bind port requests an
+ephemeral port; read the actual port after creation when minting a token.
+
 The authority for the API is [sdk/rocketnet.h](sdk/rocketnet.h), and it is worth
 knowing how it is written before you go looking in it: **contracts are prose
 blocks covering a surface** — the send path, the delivered batch, the config

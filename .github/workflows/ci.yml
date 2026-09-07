@@ -128,6 +128,14 @@ jobs:
           ROCKETNET_DRIVER: portable
         run: ./bin/test_serialize
 
+      - name: Check production library boundary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
+          else
+            python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
+          fi
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured
@@ -229,6 +237,9 @@ jobs:
         env:
           ROCKETNET_DRIVER: portable
         run: ./bin/${{ matrix.build_type }}/test_serialize.exe
+
+      - name: Check production library boundary
+        run: python tools/check_exports.py bin/${{ matrix.build_type }}/rocketnet.dll build/${{ matrix.build_type }}/rocketnet.lib
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers

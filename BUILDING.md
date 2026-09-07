@@ -1,5 +1,12 @@
 # Building rocketnet
 
+Production libraries use an explicit source list. The SDK test suite is linked
+only into `test` through `rocketnet_test_support`. Shared builds hide unannotated
+implementation symbols; `tools/exports.txt` lists the supported C exports. CI
+compares the built shared library with that list and checks that the static
+archive contains no test suite. Review intentional ABI changes in the list as
+part of the same change; passing this check does not establish ABI versioning.
+
 rocketnet builds on Linux, macOS and Windows with CMake. On Linux and macOS the
 Makefile is the front door:
 

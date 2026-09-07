@@ -19,107 +19,83 @@ void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t
     address->port = rocketnet_platform_ntohs( big_endian_port );
 }
 
+static bool rocketnet_address_parse_port( const char * text, uint16_t & port )
+{
+    if ( !*text )
+        return false;
+    unsigned int value = 0;
+    for ( ; *text; ++text )
+    {
+        if ( *text < '0' || *text > '9' )
+            return false;
+        value = value * 10 + (unsigned int) ( *text - '0' );
+        if ( value > 65535 )
+            return false;
+    }
+    port = (uint16_t) value;
+    return true;
+}
+
 bool rocketnet_address_parse( rocketnet_address_t * address, const char * address_string_in )
 {
     rocketnet_assert( address );
     rocketnet_assert( address_string_in );
-
     if ( !address )
         return false;
-
+    memset( address, 0, sizeof( rocketnet_address_t ) );
     if ( !address_string_in )
         return false;
 
-    memset( address, 0, sizeof( rocketnet_address_t ) );
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    size_t length = 0;
+    while ( length < sizeof(buffer) && address_string_in[length] )
+        ++length;
+    if ( !length || length == sizeof(buffer) )
+        return false;
+    memcpy( buffer, address_string_in, length + 1 );
 
-    // first try to parse the string as an IPv6 address:
-    // 1. if the first character is '[' then it's probably an ipv6 in form "[addr6]:portnum"
-    // 2. otherwise try to parse as an IPv6 address using inet_pton
-
-    #define ROCKETNET_ADDRESS_BUFFER_SAFETY 32
-
-    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH + ROCKETNET_ADDRESS_BUFFER_SAFETY*2];
-
-    char * address_string = buffer + ROCKETNET_ADDRESS_BUFFER_SAFETY;
-    rocketnet_copy_string( address_string, address_string_in, ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
-
-    int address_string_length = (int) strlen( address_string );
-
-    if ( address_string[0] == '[' )
+    char * host = buffer;
+    uint16_t port = 0;
+    const bool bracketed = buffer[0] == '[';
+    if ( bracketed )
     {
-        const int base_index = address_string_length - 1;
-
-        // note: no need to search past 6 characters as ":65535" is longest possible port value
-        for ( int i = 0; i < 6; ++i )
-        {
-            const int index = base_index - i;
-            if ( index < 0 )
-            {
-                return false;
-            }
-            if ( address_string[index] == ':' )
-            {
-                address->port = (uint16_t) ( atoi( &address_string[index + 1] ) );
-                address_string[index-1] = '\0';
-                break;
-            }
-            else if ( address_string[index] == ']' )
-            {
-                // no port number
-                address->port = 0;
-                address_string[index] = '\0';
-                break;
-            }
-        }
-        address_string += 1;
+        host++;
+        char * close = strchr( host, ']' );
+        if ( !close )
+            return false;
+        if ( close[1] && ( close[1] != ':' || !rocketnet_address_parse_port( close + 2, port ) ) )
+            return false;
+        *close = '\0';
     }
 
     uint16_t addr6[8];
-    if ( rocketnet_platform_inet_pton6( address_string, addr6 ) )
+    if ( rocketnet_platform_inet_pton6( host, addr6 ) )
     {
         address->type = ROCKETNET_ADDRESS_IPV6;
+        address->port = port;
         for ( int i = 0; i < 8; ++i )
-        {
             address->data.ipv6[i] = rocketnet_platform_ntohs( addr6[i] );
-        }
         return true;
     }
+    if ( bracketed )
+        return false;
 
-    // otherwise it's probably an IPv4 address:
-    // 1. look for ":portnum", if found save the portnum and strip it out
-    // 2. parse remaining ipv4 address via inet_pton
-
-    address_string_length = (int) strlen( address_string );
-    const int base_index = address_string_length - 1;
-    for ( int i = 0; i < 6; ++i )
+    char * colon = strchr( host, ':' );
+    if ( colon )
     {
-        const int index = base_index - i;
-        if ( index < 0 )
-            break;
-        if ( address_string[index] == ':' )
-        {
-            address->port = (uint16_t)( atoi( &address_string[index + 1] ) );
-            address_string[index] = '\0';
-        }
+        if ( !rocketnet_address_parse_port( colon + 1, port ) )
+            return false;
+        *colon = '\0';
     }
-
     uint32_t addr4;
-    if ( rocketnet_platform_inet_pton4( address_string, &addr4 ) )
-    {
-        address->type = ROCKETNET_ADDRESS_IPV4;
+    if ( !rocketnet_platform_inet_pton4( host, &addr4 ) )
+        return false;
 
-        // inet_pton hands back s_addr, which is network order, and
-        // data.ipv4 stores network order -- rocketnet_address_load_ipv4
-        // says so in one memcpy. Pulling the bytes out by host arithmetic
-        // instead reproduced that order only by accident on a
-        // little-endian host, and reversed every parsed address on a
-        // big-endian one (#125, found by the big-endian leg).
-
-        memcpy( address->data.ipv4, &addr4, 4 );
-        return true;
-    }
-
-    return false;
+    address->type = ROCKETNET_ADDRESS_IPV4;
+    address->port = port;
+    // inet_pton returns network order, matching the byte-oriented IPv4 storage.
+    memcpy( address->data.ipv4, &addr4, 4 );
+    return true;
 }
 
 const char * rocketnet_address_to_string( const rocketnet_address_t * address, char * buffer )

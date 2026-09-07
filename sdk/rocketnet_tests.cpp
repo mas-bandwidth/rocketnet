@@ -408,6 +408,38 @@ void rocketnet_test_copy_string()
 void rocketnet_test_address()
 {
     {
+        const char * invalid[] = {
+            "127.0.0.1:", "127.0.0.1:abc", "127.0.0.1:-1", "127.0.0.1:+80",
+            "127.0.0.1: 80", "127.0.0.1:80x", "127.0.0.1:65536", "127.0.0.1:65537",
+            "127.0.0.1:99999999999999999999", "[::1]:", "[::1]:abc", "[::1]:-1",
+            "[::1]:+80", "[::1]: 80", "[::1]:80x", "[::1]:65536", "[::1]junk",
+            "[::1:80", "[::1]::80", "[127.0.0.1]:80", "::1]", "[::1]:80:90"
+        };
+        for ( size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i )
+        {
+            rocketnet_address_t address;
+            memset( &address, 0xFF, sizeof(address) );
+            rocketnet_check( !rocketnet_address_parse( &address, invalid[i] ) );
+            rocketnet_check( address.type == ROCKETNET_ADDRESS_NONE );
+            rocketnet_check( address.port == 0 );
+        }
+        const char * valid[] = { "127.0.0.1:0", "127.0.0.1:65535", "[::1]:0", "[::1]:65535", "[::1]", "::1" };
+        const int ports[] = { 0, 65535, 0, 65535, 0, 0 };
+        for ( size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i )
+        {
+            rocketnet_address_t address;
+            rocketnet_check( rocketnet_address_parse( &address, valid[i] ) );
+            rocketnet_check( address.port == ports[i] );
+        }
+        char oversized[ROCKETNET_MAX_ADDRESS_STRING_LENGTH + 16];
+        memset( oversized, '0', sizeof(oversized) );
+        memcpy( oversized, "127.0.0.1:", 10 );
+        oversized[sizeof(oversized) - 1] = '\0';
+        rocketnet_address_t address;
+        rocketnet_check( !rocketnet_address_parse( &address, oversized ) );
+    }
+
+    {
         struct rocketnet_address_t address;
         rocketnet_check( !rocketnet_address_parse( &address, "" ) );
         rocketnet_check( !rocketnet_address_parse( &address, "[" ) );

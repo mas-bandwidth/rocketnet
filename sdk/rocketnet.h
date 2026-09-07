@@ -77,34 +77,24 @@
 #define NOMINMAX
 #endif
 
-#if defined( ROCKETNET_SHARED )
-    #if defined( _WIN32 )
-        #ifdef ROCKETNET_EXPORT
-            #if __cplusplus
-            #define ROCKETNET_EXPORT_FUNC extern "C" __declspec(dllexport)
-            #else
-            #define ROCKETNET_EXPORT_FUNC extern __declspec(dllexport)
-            #endif
-        #else
-            #if __cplusplus
-            #define ROCKETNET_EXPORT_FUNC extern "C" __declspec(dllimport)
-            #else
-            #define ROCKETNET_EXPORT_FUNC extern __declspec(dllimport)
-            #endif
-        #endif
+#if defined( ROCKETNET_SHARED ) && defined( _WIN32 )
+    #ifdef ROCKETNET_EXPORT
+        #define ROCKETNET_SYMBOL __declspec(dllexport)
     #else
-        #if __cplusplus
-        #define ROCKETNET_EXPORT_FUNC extern "C"
-        #else
-        #define ROCKETNET_EXPORT_FUNC extern
-        #endif
+        #define ROCKETNET_SYMBOL __declspec(dllimport)
     #endif
+#elif defined( ROCKETNET_SHARED ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
+    #define ROCKETNET_SYMBOL __attribute__((visibility("default")))
 #else
-    #if __cplusplus
-    #define ROCKETNET_EXPORT_FUNC extern "C"
-    #else
-    #define ROCKETNET_EXPORT_FUNC extern
-    #endif
+    #define ROCKETNET_SYMBOL
+#endif
+
+#ifdef __cplusplus
+    #define ROCKETNET_EXPORT_FUNC extern "C" ROCKETNET_SYMBOL
+    #define ROCKETNET_EXPORT_DATA extern "C" ROCKETNET_SYMBOL
+#else
+    #define ROCKETNET_EXPORT_FUNC extern ROCKETNET_SYMBOL
+    #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
 #if defined(_WIN32)
@@ -250,7 +240,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_term();
 
 // -----------------------------------------
 
-extern void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
+ROCKETNET_EXPORT_DATA void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
 
 #ifndef ROCKETNET_ASSERTS
     #ifdef NDEBUG

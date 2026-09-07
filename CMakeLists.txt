@@ -70,7 +70,32 @@ else()
     add_compile_options(-ffp-contract=off)
 endif()
 
-file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
+set(ROCKETNET_SOURCE
+    sdk/rocketnet.cpp
+    sdk/rocketnet_ack.cpp
+    sdk/rocketnet_address.cpp
+    sdk/rocketnet_base64.cpp
+    sdk/rocketnet_client_protocol.cpp
+    sdk/rocketnet_client_slots.cpp
+    sdk/rocketnet_client_transport.cpp
+    sdk/rocketnet_config.cpp
+    sdk/rocketnet_connect_token.cpp
+    sdk/rocketnet_counters.cpp
+    sdk/rocketnet_encryption_map.cpp
+    sdk/rocketnet_fragment.cpp
+    sdk/rocketnet_frame_sync.cpp
+    sdk/rocketnet_hash.cpp
+    sdk/rocketnet_keys.cpp
+    sdk/rocketnet_network_simulator.cpp
+    sdk/rocketnet_platform.cpp
+    sdk/rocketnet_protocol.cpp
+    sdk/rocketnet_replay.cpp
+    sdk/rocketnet_server_gso_linux.cpp
+    sdk/rocketnet_server_protocol.cpp
+    sdk/rocketnet_server_socket_linux.cpp
+    sdk/rocketnet_server_transport.cpp
+    sdk/rocketnet_token_tables.cpp
+)
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
 find_package(Threads REQUIRED)
@@ -111,7 +136,12 @@ endif()
 
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
 add_dependencies(rocketnet_shared rocketnet)
-set_target_properties(rocketnet_shared PROPERTIES OUTPUT_NAME rocketnet)
+set_target_properties(rocketnet_shared PROPERTIES
+    OUTPUT_NAME rocketnet
+    ARCHIVE_OUTPUT_NAME rocketnet_import
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+)
 target_compile_definitions(rocketnet_shared PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
 target_include_directories(rocketnet_shared PUBLIC ${SODIUM_INCLUDE_DIRS})
 target_link_directories(rocketnet_shared PUBLIC ${SODIUM_LIBRARY_DIRS})
@@ -155,8 +185,9 @@ project(test)
 enable_language(CXX)
 add_executable(test test.cpp)
 target_include_directories(test PRIVATE sdk)
-add_dependencies(test rocketnet)
-target_link_libraries(test rocketnet)
+add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
+target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
+target_link_libraries(test rocketnet_test_support)
 
 
 # soak
