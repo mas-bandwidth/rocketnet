@@ -45,6 +45,10 @@ def main():
         consumer = root / "consumer build"
         command = ["cmake", "-S", Path(__file__).parent / "package_consumer", "-B", consumer,
                    f"-DCMAKE_PREFIX_PATH={installed}", f"-DCMAKE_BUILD_TYPE={args.config}",
+                   # Multi-config generators otherwise generate uninstalled configs too.
+                   # In particular, vcpkg maps RelWithDebInfo/MinSizeRel to Release,
+                   # which does not exist in this independently installed Debug prefix.
+                   f"-DCMAKE_CONFIGURATION_TYPES={args.config}",
                    "-G", cache["CMAKE_GENERATOR"]]
         for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
             if cache.get(key):

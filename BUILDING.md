@@ -61,6 +61,13 @@ libsodium, Threads and the Linux bpf/xdp dependencies on the consuming machine;
 it does not embed the producer's absolute dependency paths or bundle those
 third-party runtimes. Shared consumers inherit the Windows DLL import definition.
 The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
+Use a separate install prefix for each build configuration. With Visual Studio
+or another multi-config generator, pass `--config Debug` or `--config Release`
+to build/install and select the same configuration in the consumer. A
+Debug-only prefix should be consumed with `-DCMAKE_CONFIGURATION_TYPES=Debug`,
+so toolchains do not try to generate other configurations requiring uninstalled
+Release artifacts. Installing another configuration into the same prefix
+overwrites the libraries; side-by-side Debug/Release installation is not supported.
 
 `add_subdirectory(path/to/rocketnet)` exposes the same two namespaced targets.
 Examples, tests and tools default off when embedded, and the parent's
