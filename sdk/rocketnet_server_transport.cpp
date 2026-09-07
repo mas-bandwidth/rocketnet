@@ -43,10 +43,8 @@
 // The staged drivers share one shape behind one set of names: packets stage
 // into the driver from any thread between flushes (start/finish/abort), the
 // main thread flushes with send_packets and drains with receive_packets/
-// process_packets. The XDP socket and the GSO driver both satisfy it; the
-// portable socket keeps its own per-packet path below. Both staged drivers
-// are linux; everywhere else the staged paths compile out and the portable
-// path is the whole story.
+// process_packets. Linux XDP/GSO and Windows IOCP satisfy it; the portable
+// socket (including Mac msgx batching) keeps its own path below.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #define ROCKETNET_SERVER_HAS_STAGED 1
@@ -312,7 +310,7 @@ static struct rocketnet_server_socket_process_packets_t * rocketnet_server_drive
 // seal complete wire bytes into, commit stamps its length, abort returns it
 // unused. The portable driver batches frames and flushes them through the
 // socket at the end of update; the staged drivers seal straight into their
-// own send staging -- the af_xdp umem path or the GSO sendmmsg batch --
+// own send staging -- AF_XDP UMEM, a GSO batch, or an IOCP operation -- with
 // zero copies between the seal and the flush.
 
 struct rocketnet_server_frame_t
@@ -848,7 +846,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
 
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (portable, msgx, gso). raise the log level to WARN to see why each candidate refused",
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (portable, msgx, gso, iocp). raise the log level to WARN to see why each candidate refused",
                              port_zero_refused_names );
         }
 
