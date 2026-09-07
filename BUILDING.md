@@ -35,6 +35,18 @@ vcpkg, and the binaries land under `bin/<config>/`:
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
 
+## History memory budget
+
+`cmake -B build -DROCKETNET_HISTORY_PACKETS=8192` chooses the per-connection
+sequence-history depth. The minimum and default are 4096, the maximum 32768;
+values must be multiples of 64. CMake propagates the value consistently to both
+libraries and consumers of internal headers. Rebuild all such consumers together.
+This does not change packet encoding and does not configure a send or ACK rate.
+Increasing it increases both per-connection memory and bounded ACK processing.
+
+Separate build trees may select `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
+`CMAKE_LIBRARY_OUTPUT_DIRECTORY` to keep sanitizer/configuration outputs apart.
+
 ## Server transport drivers
 
 Driver selection is runtime (#106): one build carries every driver its platform

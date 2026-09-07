@@ -15,8 +15,12 @@ set(CMAKE_TARGET_MESSAGES OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+if(NOT DEFINED CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+endif()
+if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
@@ -47,6 +51,15 @@ endif()
 
 project(rocketnet)
 enable_language(CXX)
+
+set(ROCKETNET_HISTORY_PACKETS 4096 CACHE STRING "Per-connection sequence history memory budget (4096..32768, multiple of 64)")
+if(NOT ROCKETNET_HISTORY_PACKETS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be an integer")
+endif()
+math(EXPR ROCKETNET_HISTORY_REMAINDER "${ROCKETNET_HISTORY_PACKETS} % 64")
+if(ROCKETNET_HISTORY_PACKETS LESS 4096 OR ROCKETNET_HISTORY_PACKETS GREATER 32768 OR NOT ROCKETNET_HISTORY_REMAINDER EQUAL 0)
+    message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768")
+endif()
 
 # strict floating point. Estate policy for mas-bandwidth network libraries: "generally
 # speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
@@ -98,6 +111,7 @@ set(ROCKETNET_SOURCE
 )
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
+target_compile_definitions(rocketnet PUBLIC ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS})
 find_package(Threads REQUIRED)
 
 # libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
@@ -135,6 +149,7 @@ endif()
 # attaching the custom command to two targets.
 
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
+target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS})
 add_dependencies(rocketnet_shared rocketnet)
 set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet

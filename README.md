@@ -1,6 +1,6 @@
 # RocketNet
 
-Low-level network transport library. It's fucking fast!
+Low-level client/server UDP transport library.
 
 RocketNet is a client/server UDP transport with zero copy send and receive, an
 AF_XDP kernel-bypass fast path on Linux, and portable socket paths everywhere
@@ -15,6 +15,12 @@ runtime-selected drivers — AF_XDP and GSO on Linux, a batch pump on macOS,
 portable UDP everywhere. The requirements are locked in
 [REQUIREMENTS.md](REQUIREMENTS.md); next per its order: reliability, flows
 and broadcast on top.
+
+The SDK is an **advanced prerelease**. The `1.0.0` protocol version describes the
+wire standard, not a frozen SDK ABI or production certification. See
+[TRANSPORT_READINESS.md](TRANSPORT_READINESS.md) for the hardening evidence and
+remaining release gates. Application frame, send and ACK rates are independent;
+finite history and staging limits are explicit memory budgets.
 
 ## Building
 

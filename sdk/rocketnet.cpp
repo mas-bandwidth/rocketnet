@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet.h"
+#include "rocketnet_packet_lease.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
@@ -511,3 +512,15 @@ void rocketnet_term()
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
+
+uint64_t rocketnet_next_packet_lease_id()
+{
+    static std::atomic<uint64_t> next{1};
+    uint64_t ticket = next.load(std::memory_order_relaxed);
+    while ( ticket != UINT64_MAX )
+    {
+        if ( next.compare_exchange_weak(ticket, ticket + 1, std::memory_order_relaxed) )
+            return ticket;
+    }
+    return 0;
+}

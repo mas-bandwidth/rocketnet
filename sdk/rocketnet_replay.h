@@ -12,7 +12,7 @@
 #include "rocketnet_encryption_map.h"
 
 // Replay protection over the struct the encryption mapping already carries:
-// a high-water mark and a 256-entry window at the standard's floor. Within
+// a high-water mark and a packet-count-bounded history window. Within
 // the window a sequence is accepted exactly once; below the window it is
 // refused; above the high-water mark it always passes and advances. The
 // check is separate from the advance so a packet is marked received only
@@ -23,7 +23,7 @@
 // ack block builder enumerates it -- the same received state, per the
 // standard, so the two can never disagree.
 
-#define ROCKETNET_REPLAY_WINDOW_BITS 256
+#define ROCKETNET_REPLAY_WINDOW_BITS ROCKETNET_HISTORY_PACKETS
 
 static_assert( ROCKETNET_REPLAY_WINDOW_BITS ==
                64 * (int) ( sizeof( ((struct rocketnet_replay_protection_t*) 0)->window ) / sizeof(uint64_t) ),

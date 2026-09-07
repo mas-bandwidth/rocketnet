@@ -2,7 +2,12 @@
 #include "rocketnet.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
+#include "rocketnet_ack.h"
+#include "rocketnet_replay.h"
+#include "rocketnet_packet_lease.h"
+#include "rocketnet_stats_window.h"
 #include <atomic>
+#include <initializer_list>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +55,198 @@ static void * refuse_allocation( void *, size_t ) { return NULL; }
 static void refuse_free( void *, void * ) { check(false); }
 static void thread_body( void * ) {}
 
+struct ack_writer
+{
+    rocketnet_ack_endpoint_t * endpoint;
+    std::atomic<bool> * go;
+    uint64_t sequence;
+    bool accepted;
+};
+
+static void ack_thread( void * data )
+{
+    auto * writer = (ack_writer*) data;
+    while ( !writer->go->load(std::memory_order_acquire) ) {}
+    writer->accepted = rocketnet_ack_endpoint_record_sent( writer->endpoint, writer->sequence, 100, writer->sequence, 1, 0, 10.0 );
+}
+
+static void check_ack_retention( allocator_state & state )
+{
+    auto * endpoint = (rocketnet_ack_endpoint_t*) rocketnet_malloc( &state, sizeof(rocketnet_ack_endpoint_t) );
+    check( endpoint );
+    rocketnet_ack_endpoint_reset( endpoint );
+    const uint64_t depth = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    uint64_t * ids = (uint64_t*) rocketnet_malloc(&state, depth * sizeof(uint64_t));
+    check(ids);
+    // Identical, fast, slow and irregular caller time. No return traffic until
+    // the complete retained burst has arrived, then one ACK describes it all.
+    for ( int cadence = 0; cadence < 4; ++cadence )
+    {
+        rocketnet_ack_endpoint_reset(endpoint);
+        rocketnet_replay_protection_t replay{};
+        double last_time = 0.0;
+        for ( uint64_t sequence = 1; sequence <= depth; ++sequence )
+        {
+            last_time += cadence == 0 ? 0.0 : cadence == 1 ? 0.000001 :
+                         cadence == 2 ? 0.1 : (sequence % 7 == 0 ? 0.3 : 0.0001);
+            check(rocketnet_ack_endpoint_record_sent(endpoint, sequence, 100, sequence, 1, 0, last_time));
+            rocketnet_replay_advance(&replay, sequence);
+        }
+        uint8_t data[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+        rocketnet_ack_block_t block{};
+        int bytes = rocketnet_ack_block_build(data, sizeof(data), &replay);
+        check(rocketnet_ack_block_read(&block, data, bytes, depth) == bytes);
+        check(block.first_range_length == depth);
+        int count = 0;
+        uint64_t unknown = 0, full = 0;
+        check(rocketnet_ack_endpoint_process_block(endpoint, &block, last_time + 2.0,
+              ids, (int)depth, &count, &unknown, &full) == (int)depth);
+        check(count == (int)depth && unknown == 0 && full == 0);
+        for ( uint64_t i = 0; i < depth; ++i ) check(ids[i] == depth - i);
+        check(rocketnet_ack_endpoint_process_block(endpoint, &block, last_time + 3.0,
+              ids, (int)depth, &count, &unknown, &full) == 0);
+    }
+    rocketnet_free(&state, ids);
+
+    rocketnet_ack_endpoint_reset(endpoint);
+    for ( uint64_t sequence = 1; sequence <= depth; ++sequence )
+        check(rocketnet_ack_endpoint_record_sent(endpoint, sequence, 100, sequence, 1, 0, 10.0));
+    const uint64_t next = depth + 1;
+    // Overflow is advisory, not a refusal or time-based wait. The newer
+    // sequence is recorded immediately even with zero elapsed time.
+    check(!rocketnet_ack_endpoint_record_sent(endpoint, next, 100, next, 1, 0, 10.0));
+    check(endpoint->sent[1].sequence == next && endpoint->sent[1].packet_id == next);
+    check(!rocketnet_ack_endpoint_record_sent(endpoint, 1, 100, 1, 1, 0, 12.0));
+    check(endpoint->sent[1].sequence == next);
+
+    rocketnet_ack_endpoint_reset( endpoint );
+    std::atomic<bool> go{false};
+    ack_writer writers[2] = {{ endpoint, &go, 1, false }, { endpoint, &go, next, false }};
+    auto * first = rocketnet_platform_thread_create( &state, ack_thread, &writers[0] );
+    auto * second = rocketnet_platform_thread_create( &state, ack_thread, &writers[1] );
+    check( first && second );
+    go.store( true, std::memory_order_release );
+    rocketnet_platform_thread_join( first );
+    rocketnet_platform_thread_join( second );
+    rocketnet_platform_thread_destroy( first );
+    rocketnet_platform_thread_destroy( second );
+    check( writers[0].accepted != writers[1].accepted );
+    const uint64_t winner = next;
+    check( endpoint->sent[1].sequence == winner && endpoint->sent[1].packet_id == winner );
+    rocketnet_free( &state, endpoint );
+    auto * acks = rocketnet_server_acks_create( &state, 2 );
+    check( acks && acks->acked_capacity == 2 * ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    rocketnet_server_acks_destroy( acks );
+}
+
+struct lease_consumer
+{
+    rocketnet_packet_leases_t<8> * leases;
+    rocketnet_packet_context_t context;
+    std::atomic<bool> * go;
+    bool consumed;
+};
+
+static void lease_thread(void * data)
+{
+    auto * consumer = (lease_consumer*)data;
+    while (!consumer->go->load(std::memory_order_acquire)) {}
+    rocketnet_packet_context_t trusted{};
+    uint64_t backend = 0;
+    consumer->consumed = consumer->leases->take(consumer->context, trusted, backend);
+}
+
+static void check_packet_leases(allocator_state & state)
+{
+    rocketnet_packet_leases_t<8> leases{}, other{};
+    uint8_t frame[128]{};
+    rocketnet_packet_context_t context{};
+    context.frame = frame;
+    context.packet_id = 77;
+    context.sequence = 100;
+    context.client_index = 2;
+    context.payload_index = 32;
+    context.payload_capacity = 64;
+    check(leases.insert(context));
+    rocketnet_packet_context_t original = context, trusted{};
+    uint64_t backend = 0;
+    check(!other.take(context, trusted, backend));
+    for (int field = 0; field < 6; ++field)
+    {
+        auto changed = original;
+        switch(field)
+        {
+            case 0: changed.frame++; break;
+            case 1: changed.packet_id++; break;
+            case 2: changed.sequence++; break;
+            case 3: changed.client_index++; break;
+            case 4: changed.payload_index = -1; break;
+            case 5: changed.payload_capacity = INT32_MAX; break;
+        }
+        check(!leases.take(changed, trusted, backend));
+    }
+    std::atomic<bool> go{false};
+    lease_consumer consumers[2] = {{&leases, original, &go, false}, {&leases, original, &go, false}};
+    auto * first = rocketnet_platform_thread_create(&state, lease_thread, &consumers[0]);
+    auto * second = rocketnet_platform_thread_create(&state, lease_thread, &consumers[1]);
+    check(first && second);
+    go.store(true, std::memory_order_release);
+    rocketnet_platform_thread_join(first);
+    rocketnet_platform_thread_join(second);
+    rocketnet_platform_thread_destroy(first);
+    rocketnet_platform_thread_destroy(second);
+    check(consumers[0].consumed != consumers[1].consumed);
+    check(!leases.take(original, trusted, backend));
+    // Backends may hand an aborted frame out again in the same fill.
+    context = original;
+    context.packet_id = 88;
+    check(leases.insert(context) && context.packet_id != original.packet_id);
+    check(!leases.take(original, trusted, backend));
+    check(leases.take(context, trusted, backend) && backend == 88);
+    leases.reset();
+    check(!leases.take(context, trusted, backend));
+    context = original;
+    context.packet_id = 99;
+    check(leases.insert(context));
+    check(!leases.take(original, trusted, backend));
+    check(leases.take(context, trusted, backend) && backend == 99);
+    // Capacity is explicit and exhaustion leaves the caller's metadata alone.
+    leases.reset();
+    for (int i = 0; i < 4; ++i) { context = original; check(leases.insert(context)); }
+    context = original;
+    check(!leases.insert(context) && context.packet_id == original.packet_id);
+}
+
+static void check_stats_cadence()
+{
+    struct bucket { double time; uint64_t frame; uint64_t packets; };
+    for (int updates : {16, 256, 2000, 10000})
+    {
+        bucket buckets[256]{};
+        int index = 0;
+        for (int i = 0; i < updates; ++i)
+        {
+            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)i + 1, 0.9 * i / updates);
+            buckets[index].packets++;
+        }
+        uint64_t total = 0;
+        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 0.9) total += b.packets;
+        check(total == (uint64_t)updates);
+        for (int i = 0; i < 10000; ++i)
+        {
+            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)updates + i + 1, 0.9);
+            buckets[index].packets++;
+        }
+        total = 0;
+        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 0.9) total += b.packets;
+        check(total == (uint64_t)updates + 10000);
+        index = rocketnet_stats_window_advance(buckets, index, 20001, 3.0);
+        total = 0;
+        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 3.0) total += b.packets;
+        check(total == 0);
+    }
+}
+
 int main()
 {
     allocator_state state;
@@ -78,6 +275,11 @@ int main()
     check( !rocketnet_init( NULL ) );
     rocketnet_free( &state, p );
     const int baseline = state.live;
+
+    check_ack_retention( state );
+    check_packet_leases( state );
+    check_stats_cadence();
+    check( state.live == baseline );
 
     rocketnet_address_t address;
     check( rocketnet_address_parse( &address, "127.0.0.1" ) );

@@ -290,7 +290,7 @@ section, and this table exists so an implementer never hunts for a number.
 | Cookie lifetime / key rotation | 3 s / 60 s defaults | _Timing_ |
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
-| Replay buffer | max(256, one second of max receive rate) | _Replay window sizing_ |
+| Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
 | Admitted-token set | >= 2x slot count, no unexpired eviction | _Processing Connection Requests_ |
 
@@ -1545,19 +1545,24 @@ the RFCs require it regardless, and it is four lines.
 
 ### Replay window sizing
 
-**One sizing rule: the buffer is at least one second of the maximum
-per-client receive rate the deployment intends to support, and never smaller
-than 256 entries.** The application decides its packet rate and this protocol
-does not constrain it, which is why the size derives from the deployment's
-own number rather than from any assumption made here. An undersized buffer discards
-legitimate packets; it never accepts a replay, so the failure is lost traffic
-rather than lost security.
+**Replay and delivery history are explicit memory budgets in sequence numbers,
+never frame-rate, send-rate or ACK-rate contracts.** A replay window MUST hold
+at least 4096 sequences. Implementations MUST document their retained depth and
+provide a way to choose a larger memory budget. The application does not need
+to declare a packets-per-second rate, and an implementation MUST NOT throttle
+application sends to preserve an assumed time span of history.
 
-*One second is far more than reordering needs — real reordering is milliseconds.
-The number is sized for recovering from a loss burst, where a gap in the window
-must still be fillable when the retransmissions arrive, and for the case where a
-receiver falls behind and catches up. Over-sizing costs only memory, which is
-the cheap side of this trade.*
+Within the retained window, delayed and reordered packets remain eligible
+regardless of elapsed time (subject to the connection's independent lifetime).
+An undersized window discards old legitimate packets; it never accepts a replay.
+The bound is sequence distance, not a deadline. Increasing the budget trades
+memory and bounded processing work for a deeper burst/reordering history.
+
+Finite history cannot promise delivery notifications after an unlimited number
+of later packets. Implementations MUST make that resource limit explicit and
+count overwritten unacknowledged send records. ACK generation and processing
+MUST work for a full retained window arriving in one batch; they MUST NOT assume
+one ACK per frame, per fixed number of sends, or per interval of time.
 
 ### Lookup complexity
 
@@ -1821,9 +1826,9 @@ traffic itself does not.
 
 A receiver of a block marks named sequences acknowledged in its own
 sent-packet bookkeeping, surfacing newly-acknowledged packets to the layer
-above. Bookkeeping is bounded: a sender MUST retain delivery state for at
-least one second of its own maximum send rate, sized the same way as the
-replay window and for the same reason. **The walk is bounded by the retained
+above. Bookkeeping is bounded by the explicit sequence-history memory budget
+described in _Replay window sizing_. Records do not expire merely because time
+passes, and lack of an ACK does not introduce a send-rate cap. **The walk is bounded by the retained
 window, never by the block's claims**: processing MUST cost no more than one
 pass over the retained window's entries — a valid block can name up to
 sixteen million sequences in a kilobyte, and iterating what a peer asserts

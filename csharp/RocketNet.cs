@@ -129,7 +129,7 @@ public static unsafe class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 189;
+    public const int NumCounters = 191;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -326,6 +326,8 @@ public static unsafe class RocketNet
         ClientFragmentPayloadBatchFull,
         SendArenaFull,
         ReceiveCursorTooSmall,
+        SendHistoryOverflow,
+        SendLeaseFull,
     }
 #pragma warning restore 1591
 
@@ -459,7 +461,7 @@ public static unsafe class RocketNet
 
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
     /// AbortPacket. The fields are read-only to the caller; the payload is written at
-    /// Frame + PayloadIndex, up to PayloadCapacity bytes — <see cref="PayloadSpan"/> is that span.</summary>
+    /// Frame + PayloadIndex, up to PayloadCapacity bytes — use the checked client/server packet payload span accessor.</summary>
     [StructLayout( LayoutKind.Sequential )]
     public struct PacketContext
     {
@@ -1076,14 +1078,36 @@ public static unsafe class RocketNet
     //                            span helpers
     // -----------------------------------------
 
-    /// <summary>The payload span of an acquired packet: PayloadCapacity bytes at
-    /// Frame + PayloadIndex. Empty when the context holds no frame.</summary>
-    public static Span<byte> PayloadSpan( in PacketContext context )
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
+    static extern byte* ClientPacketPayloadNative( IntPtr client, in PacketContext context, out int capacity );
+
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
+    static extern byte* ServerPacketPayloadNative( IntPtr server, in PacketContext context, out int capacity );
+
+    /// <summary>Validates the packet's owner, metadata and active lease before exposing memory.
+    /// Empty for invalid contexts. The span expires at finish, abort, update, flush or destroy;
+    /// callers must not retain it across those operations or race them.</summary>
+    public static Span<byte> ClientTransportPacketPayloadSpan( IntPtr client, in PacketContext context )
     {
-        return context.Frame == IntPtr.Zero
-            ? Span<byte>.Empty
-            : new Span<byte>( (byte*) context.Frame + context.PayloadIndex, context.PayloadCapacity );
+        byte* payload = ClientPacketPayloadNative(client, in context, out int capacity);
+        return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
+
+    /// <summary>The server counterpart of <see cref="ClientTransportPacketPayloadSpan"/>,
+    /// with the same lease validation and lifetime.</summary>
+    public static Span<byte> ServerTransportPacketPayloadSpan( IntPtr server, in PacketContext context )
+    {
+        byte* payload = ServerPacketPayloadNative(server, in context, out int capacity);
+        return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
+    }
+
+    /// <summary>Number of counters in the loaded native library.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_num_counters", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int CounterCount();
+
+    /// <summary>Reads a counter outside update/fill; an invalid index or null block yields zero.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_counter_value", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ulong CounterValue( IntPtr counters, int counter );
 
     /// <summary>A counters block as a span of <see cref="NumCounters"/> monotonic values,
     /// indexed by <see cref="Counter"/>.</summary>
@@ -1091,7 +1115,7 @@ public static unsafe class RocketNet
     {
         return counters == IntPtr.Zero
             ? ReadOnlySpan<ulong>.Empty
-            : new ReadOnlySpan<ulong>( (void*) counters, NumCounters );
+            : new ReadOnlySpan<ulong>( (void*) counters, CounterCount() );
     }
 
     /// <summary>A client receive batch: zero-copy spans over the library's payload storage.

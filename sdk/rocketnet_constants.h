@@ -9,10 +9,9 @@
 #define ROCKETNET_CONSTANTS_H
 
 #include "rocketnet.h"
+#include "rocketnet_history.h"
 
 #define ROCKETNET_FRAME_SIZE                                              2048
-
-#define ROCKETNET_SEND_PACKETS_PER_CLIENT                                   64
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
@@ -78,14 +77,9 @@
 
 #define ROCKETNET_NUM_CLIENT_PACKETS                                      1024
 
-// The sender's delivery bookkeeping, per the standard's _Acks_/Processing:
-// retained state for at least one second of the transport's own maximum
-// send rate -- the send rings cap a connection at 64 packets per frame,
-// which at 60Hz is 3840 per second, so 4096 covers the second -- sized the
-// same way as the replay window and for the same reason. The received ring
-// and rtt history follow the space reference's endpoint sizing.
-
-#define ROCKETNET_SENT_PACKET_BUFFER_SIZE                                 4096
+// Packet-count history budget, shared with receive-side ACK/replay history.
+// There is no time-based expiration, send quota or ACK cadence assumption.
+#define ROCKETNET_SENT_PACKET_BUFFER_SIZE                ROCKETNET_HISTORY_PACKETS
 #define ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE                             2048
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 

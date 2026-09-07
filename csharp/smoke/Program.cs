@@ -198,12 +198,23 @@ static class Smoke
         RocketNet.PacketContext context = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref context ) == IntPtr.Zero )
             Fail( "client start packet" );
-        Span<byte> payload = RocketNet.PayloadSpan( in context );
+        Span<byte> payload = RocketNet.ClientTransportPacketPayloadSpan( client, in context );
         if ( payload.Length < 256 || payload.Length % 8 != 0 )
             Fail( $"payload capacity {payload.Length}" );
+        RocketNet.PacketContext original = context;
+        RocketNet.PacketContext tampered = context;
+        tampered.PayloadCapacity = int.MaxValue;
+        if (!RocketNet.ClientTransportPacketPayloadSpan(client, in tampered).IsEmpty ||
+            !RocketNet.ServerTransportPacketPayloadSpan(server, in context).IsEmpty)
+            Fail("invalid packet owner or metadata exposed a payload span");
+        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) != 0)
+            Fail("tampered packet context was accepted");
         FillPattern( payload.Slice( 0, 256 ), 1 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) == 0 )
             Fail( "client finish packet" );
+        if (!RocketNet.ClientTransportPacketPayloadSpan(client, in original).IsEmpty ||
+            RocketNet.ClientTransportFinishPacket(client, ref original, 1) != 0)
+            Fail("a copied consumed context remained live");
         RocketNet.ClientTransportSendPackets( client );
 
         byte[] convenience = new byte[64];
@@ -256,7 +267,7 @@ static class Smoke
         RocketNet.PacketContext down = default;
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref down ) == IntPtr.Zero )
             Fail( "server start packet" );
-        FillPattern( RocketNet.PayloadSpan( in down ).Slice( 0, 256 ), 1 );
+        FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in down ).Slice( 0, 256 ), 1 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) == 0 )
             Fail( "server finish packet" );
         RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
@@ -318,7 +329,7 @@ static class Smoke
         RocketNet.PacketContext ackedUp = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref ackedUp ) == IntPtr.Zero )
             Fail( "client start packet (acked)" );
-        FillPattern( RocketNet.PayloadSpan( in ackedUp ).Slice( 0, 16 ), 4 );
+        FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in ackedUp ).Slice( 0, 16 ), 4 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) == 0 )
             Fail( "client finish packet (acked)" );
         RocketNet.ClientTransportSendPackets( client );
@@ -326,7 +337,7 @@ static class Smoke
         RocketNet.PacketContext ackedDown = default;
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref ackedDown ) == IntPtr.Zero )
             Fail( "server start packet (acked)" );
-        FillPattern( RocketNet.PayloadSpan( in ackedDown ).Slice( 0, 16 ), 5 );
+        FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in ackedDown ).Slice( 0, 16 ), 5 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) == 0 )
             Fail( "server finish packet (acked)" );
 
@@ -366,7 +377,7 @@ static class Smoke
             Fail( "client start packet (fragmented)" );
         if ( bigUp.PayloadCapacity != RocketNet.DefaultMaxPayloadBytes )
             Fail( $"fragmented payload capacity {bigUp.PayloadCapacity}" );
-        FillPattern( RocketNet.PayloadSpan( in bigUp ).Slice( 0, 5000 ), 6 );
+        FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in bigUp ).Slice( 0, 5000 ), 6 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref bigUp, 5000 ) == 0 )
             Fail( "client finish packet (fragmented)" );
         RocketNet.ClientTransportSendPackets( client );

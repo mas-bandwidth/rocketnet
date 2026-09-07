@@ -34,9 +34,9 @@ what a transport actually is at create.
 Build and driver-matrix instructions live in [BUILDING.md](BUILDING.md); the wire
 format lives in [STANDARD.md](STANDARD.md).
 
-## The frame
+## The transport cycle
 
-Both ends run the same four phases, in this order, once per frame:
+Both ends run the same four phases in order, at the application's chosen cadence:
 
     update( time )        // receive, decrypt, deliver; publish the batches
     ... drain ...         // read everything update delivered
@@ -49,7 +49,8 @@ the handoff from fill to flush must be a synchronizing operation — a join or a
 barrier, never a wall-clock wait. `disconnect`, `disconnect_client` and `stop` are
 main-thread too, and never while a fill is open.
 
-`send_packets` is required once per frame, after update. What a caller owns is the
+Call `send_packets` after each joined fill phase. There is no required frame,
+update, send or ACK rate. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
 sent by it, and nothing is guaranteed sent without it.
 
@@ -58,8 +59,7 @@ on the server the GSO rung flushes update's own staging — protocol responses,
 keep-alives — inline in update, and so do the portable and msgx rungs, which
 share that path; the XDP rung stages and sends nothing until `send_packets`
 (the driver fork in `rocketnet_server_transport_update`). Code against the
-guarantee, not against any of that. Calling `send_packets` twice in a frame is a
-no-op.
+guarantee, not against any of that. Calling `send_packets` again without newly staged packets is a no-op.
 
 ## Consuming what arrived
 
@@ -265,14 +265,40 @@ alongside `packet_loss`, which is what responds to that case. A client jitter of
 Loss is asymmetric too, and the difference matters when you compare the two ends:
 the client's `packet_loss` is **receive-side**, from gaps in the session sequence
 — the figure the burned-sequence rule above perturbs. The server's per-client
-`packet_loss` is **send-side**: the percentage of its own sent packets never
-acknowledged. Neither end reports both.
+`packet_loss` is **send-side**: the unacknowledged fraction of the older half of
+its retained sent history. It is an estimate, not proof of delivery loss: delayed
+ACKs can raise it. Neither end reports both. No rate or timeout policy should
+treat this estimate as proof of loss.
+
+Whole-transport packet and bandwidth rates use time-based buckets with about
+4 ms boundary resolution. Calling update thousands of times within a second,
+or repeatedly at one timestamp, does not shorten that history.
 
 Delivery notification is the primitive underneath all of it:
 `acked_packets` returns the packet ids newly acknowledged by the last update —
 valid until the next update, like everything else here. The transport informs and
 never resends; reliability policy is yours to build on top. Keep-alive, disconnect
 and standalone-ack sequences carry no packet id and never appear.
+
+ACK/replay history has a **4,096-sequence minimum and default**. A build may choose
+up to 32,768 entries with `-DROCKETNET_HISTORY_PACKETS=...` (a multiple of 64).
+This is a memory budget, not a packets-per-frame, packets-per-second or ACK-rate
+requirement. Records do not expire with elapsed time. Returned ACK batches cover
+the entire retained window for every configured client. Sending beyond that
+window overwrites older delivery history, counts `SEND_HISTORY_OVERFLOW`, and
+continues transmitting. Missing a notification therefore does not prove that a
+payload was lost. The remote peer's receive-history depth and the ACK block's
+255-range encoding bound also limit what it can describe after extreme loss.
+
+Packet contexts are validated against private leases before payload access,
+finish and abort. A copied context can be consumed once; changed fields, stale
+phases and wrong-owner contexts are refused. Native callers can use
+`rocketnet_*_transport_packet_payload` for a checked pointer/capacity pair.
+An acquired pointer/span expires at finish, abort, update, flush or destruction.
+Do not race those operations or retain their memory views afterward. The client
+has metadata for 512 acquisitions per fill, the server for 65,536; driver rings
+and the 16-slot fragmentation arena may exhaust first. `SEND_LEASE_FULL` reports
+metadata exhaustion. These are staging budgets, independent of elapsed time.
 
 ## Configuration
 

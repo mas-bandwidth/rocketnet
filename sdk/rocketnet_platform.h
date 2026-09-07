@@ -382,3 +382,25 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 #endif // #if defined(_MSC_VER)
 
 // ----------------------------------------------------------------
+
+// Short critical sections for bookkeeping whose ring slots can alias under a
+// concurrent burst. Unlike the independent counters above, these order data.
+inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
+{
+#if defined(_MSC_VER)
+    while ( _InterlockedCompareExchange64( (volatile long long*) value, 1, 0 ) != 0 ) {}
+#else
+    uint64_t expected = 0;
+    while ( !__atomic_compare_exchange_n( value, &expected, 1, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ) )
+        expected = 0;
+#endif
+}
+
+inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
+{
+#if defined(_MSC_VER)
+    _InterlockedCompareExchange64( (volatile long long*) value, 0, 1 );
+#else
+    __atomic_store_n( value, 0, __ATOMIC_RELEASE );
+#endif
+}

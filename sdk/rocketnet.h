@@ -573,6 +573,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_payloads( struct rocketnet_
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
+// Validates an active packet lease and returns its payload view. NULL/zero on
+// stale, consumed, modified or wrong-owner context. The view expires at finish,
+// abort, update, flush or destroy; callers must join before those operations.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
+
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
@@ -815,15 +820,20 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // of game threads strictly between an update and the following
 // send_packets, and the handoff between fill and flush must be a
 // synchronizing operation (a join or a barrier), not a wall-clock wait.
-// send_packets is required once per frame, after update. When staged
+// Call send_packets after each joined fill phase. There is no required frame,
+// update, send or ACK rate. When staged
 // packets actually leave is per driver, and a caller owns only the
 // guarantee: everything staged before send_packets is sent by it, and
 // nothing is guaranteed sent without it. The portable and GSO drivers
 // also flush update's own staging -- protocol responses and keep-alives
 // -- inline in update; the XDP driver sends nothing until send_packets.
 // Code against the guarantee, not a driver's eagerness. Calling
-// send_packets again in the same frame is a no-op. The fields of the
-// context are read-only to the caller.
+// send_packets again without newly staged packets is a no-op. The fields of the
+// context are read-only to the caller. The transport privately owns and checks
+// all metadata; a copy can be consumed once, and stale, modified or wrong-owner
+// contexts are refused before dereferencing a frame. packet_id is an opaque,
+// process-unique lease identifier, never driver bookkeeping. Active payload views
+// expire at finish/abort or the next update/flush; raw pointers cannot be revoked.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
 // dropped instead (payload out of range, the connection gone, or a wire
@@ -854,6 +864,11 @@ struct rocketnet_packet_context_t
 };
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
+
+// Validates an active packet lease and returns its payload view. NULL/zero on
+// stale, consumed, modified or wrong-owner context. The view expires at finish,
+// abort, update, flush or destroy; callers must join before those operations.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
@@ -888,8 +903,8 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct r
 // The server's whole-socket rates: packets and bandwidth per second, both
 // directions, over the trailing second. Accumulation rides the walks the
 // transport already makes -- the receive drain and the send flush -- into a
-// ring of per-frame buckets, and the published numbers sum only buckets
-// younger than one second, so the cost per frame is flat by construction:
+// ring of time-based buckets, and the published numbers sum only buckets
+// younger than one second (about 4 ms boundary resolution), at bounded cost:
 // no per-client sweep, no extra pass over any buffer. At 1000 clients the
 // update pays the same fixed bucket sum it pays at one. These numbers feed
 // time synchronization.
@@ -1051,6 +1066,13 @@ namespace rocketnet
 #endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
 
 // -----------------------------------------
+
+struct rocketnet_counters_t;
+
+// Runtime introspection avoids assuming a counters-struct length across FFI.
+// Read on the main thread outside update/fill, as for the counters view.
+ROCKETNET_EXPORT_FUNC int rocketnet_num_counters();
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_counter_value( const struct rocketnet_counters_t * counters, int counter );
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 

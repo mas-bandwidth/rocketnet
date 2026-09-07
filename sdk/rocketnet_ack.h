@@ -73,11 +73,10 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
 //                     sender bookkeeping
 // -----------------------------------------
 
-// Per-connection delivery state: a ring of sent session packets keyed by
-// sequence, retaining at least one second of the transport's maximum send
-// rate (the same sizing rule as the replay window), an rtt history filled
-// by first-ack samples, and a received ring for the per-client bandwidth
-// numbers. Fixed storage, spent up front.
+// Per-connection delivery state retains a bounded number of session sequences.
+// This is a memory budget, independent of frame, send and ACK cadence. Entries
+// do not expire with time. Capacity overflow evicts the oldest sequence history
+// without throttling transmission; lost history is counted explicitly.
 
 struct rocketnet_sent_packet_record_t
 {
@@ -94,14 +93,10 @@ struct rocketnet_sent_packet_record_t
 
 // A fragmented payload carries ONE application packet id, surfaced
 // acknowledged only when every fragment's wire packet is acknowledged --
-// sender-internal aggregation, nothing on the wire. An aggregate is opened
-// per fragmented payload; each fragment's sent record names it, and the
-// block processing decrements the outstanding count as fragments
-// acknowledge, surfacing the payload's packet id at zero. The ring is
-// sized to the sent window's worst case -- every packet a two-fragment
-// payload -- so an aggregate can never be recycled while a live member
-// record still names it; the monotonic id makes any recycling visible and
-// inert rather than a misfire.
+// sender-internal aggregation, nothing on the wire. A payload is surfaced once
+// all its recorded fragments acknowledge. Aggregate and sequence history are
+// finite: a lapped aggregate is recognized by its id, never misattributed to a
+// newer payload. Fill writers serialize reservation and publication.
 
 #define ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE      ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 )
 
@@ -123,6 +118,7 @@ struct rocketnet_received_packet_record_t
 
 struct rocketnet_ack_endpoint_t
 {
+    uint64_t sent_lock;                         // guards sent-record reservation and publication
     // highest_sequence folds under fill-phase threads with an atomic max;
     // ack_debt increments on the update thread alone and resets from fill
     // threads with an atomic store -- update and the fill phase never
@@ -172,10 +168,13 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 // has_packet_id is nonzero -- keep-alive, disconnect and standalone ack
 // sequences have none and surface nothing. aggregate_id names the
 // fragmented payload the packet belongs to, or zero; a fragment record
-// carries no packet id of its own. safe from fill-phase threads: distinct
-// sequences land in distinct ring entries.
+// carries no packet id of its own. Concurrent aliases are serialized, with the
+// newer sequence winning even if writers finish out of order. False reports
+// history overflow (an unacknowledged record was evicted, or this writer fell
+// behind the retained sequence). It is advisory: callers count it and still
+// transmit. It never imposes a send-rate or ACK-rate requirement.
 
-void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
+bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
                                          uint64_t aggregate_id, double time );
@@ -183,7 +182,7 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
 // opens one aggregate for a fragmented payload: fragment_count wire
 // packets stand between the payload's packet id and its acknowledgment.
 // returns the aggregate id the fragments' sent records carry. safe from
-// fill-phase threads: one atomic add claims the id and its ring slot.
+// fill-phase threads: reservation and publication share the endpoint lock.
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
                                                 uint64_t packet_id, int fragment_count );

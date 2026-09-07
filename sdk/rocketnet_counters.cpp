@@ -6,6 +6,14 @@
 #include "rocketnet_counters.h"
 #include "rocketnet.h"
 
+int rocketnet_num_counters() { return ROCKETNET_NUM_COUNTERS; }
+
+uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int counter )
+{
+    return counters && counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ?
+        counters->values[counter] : 0;
+}
+
 const char * rocketnet_counter_name( int counter )
 {
     switch ( counter )
@@ -199,6 +207,8 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL:             return "CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL";
         case ROCKETNET_COUNTER_SEND_ARENA_FULL:                                return "SEND_ARENA_FULL";
         case ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL:                       return "RECEIVE_CURSOR_TOO_SMALL";
+        case ROCKETNET_COUNTER_SEND_LEASE_FULL: return "SEND_LEASE_FULL";
+        case ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW:                            return "SEND_HISTORY_OVERFLOW";
         default:
             rocketnet_assert( 0 );
             return "???";
