@@ -184,6 +184,9 @@ jobs:
       - name: Bench harness failure-state selftest
         run: bash bench/selftest.sh
 
+      - name: Benchmark campaign result gate
+        run: python3 bench/test_campaign.py
+
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from

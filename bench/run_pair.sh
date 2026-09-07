@@ -18,14 +18,11 @@ EXTRA="$5"
 WARMUP=30
 WINDOW=60
 WINDOWS=5
-SEND_SECONDS=340        # outlives warm-up + windows; killed when the receiver exits
+SEND_SECONDS=$(( WARMUP + WINDOW * WINDOWS + 2 ))
 
-taskset -c "$RECV_CORE" nice -n 10 "./$BINARY" recv "$PORT" "$WARMUP" "$WINDOW" "$WINDOWS" &
-RECV_PID=$!
-sleep 1
-taskset -c "$SEND_CORE" nice -n 10 "./$BINARY" send 127.0.0.1 "$PORT" "$SEND_SECONDS" $EXTRA &
-SEND_PID=$!
+if [ -z "$BINARY" ] || [ -z "$PORT" ]; then
+    echo "pair: binary and port are required" >&2
+    exit 1
+fi
 
-wait "$RECV_PID"
-kill "$SEND_PID" 2>/dev/null || true
-wait "$SEND_PID" 2>/dev/null || true
+. "$(dirname "$0")/pair_common.sh"

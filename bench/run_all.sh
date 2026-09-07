@@ -13,9 +13,8 @@
 # this produces belongs to the machine it produced them on -- magnitude does not
 # travel, ordering sometimes does, and the report says so in its own header.
 #
-# What it does NOT do: decide anything. It writes files. The table is written by
-# a person reading them, and every claim in that table restates the ns-column
-# qualification below.
+# Every required control and result record is checked before it enters the
+# summary. Timing qualifications below still apply to the raw latency columns.
 
 set -e
 
@@ -114,10 +113,10 @@ say ""
 #                rate back. This is the one the rate instrument cannot fake --
 #                a flat-out sender saturates and pps does not move whatever the
 #                harness does wrong.
-#   drop-half    the sender skips every other batch. The receiver's pps must
-#                fall, roughly by half.
+#   pace=half    a second known rate checks that the rate instrument follows
+#                a changed input; skipping unpaced batches has no fixed ratio.
 #
-# A harness that passes neither has measured nothing and the campaign stops.
+# Each window must report the requested rate within 10%, or the campaign stops.
 
 PACE=100000
 
@@ -132,23 +131,30 @@ say ""
 
 say "--- harness honesty plants"
 for h in $HARNESSES; do
-    say "$h: pace plant at $PACE pps"
-    ./smoke_pair.sh "$h" $(( PORT_BASE + 1 )) "$RECV_CORE" "$SEND_CORE" "pace=$PACE" \
-        > "$RESULTS/honesty_${h}_pace.txt" 2>&1 || say "  $h aborted during the pace plant -- see the file"
-    grep -h '^WINDOW' "$RESULTS/honesty_${h}_pace.txt" | tee -a "$REPORT" || true
-
-    say "$h: drop-half plant"
-    ./smoke_pair.sh "$h" $(( PORT_BASE + 2 )) "$RECV_CORE" "$SEND_CORE" "drop-half" \
-        > "$RESULTS/honesty_${h}_drophalf.txt" 2>&1 || say "  $h aborted during the drop-half plant -- see the file"
-    grep -h '^WINDOW' "$RESULTS/honesty_${h}_drophalf.txt" | tee -a "$REPORT" || true
-    say ""
+    for rate in "$PACE" "$(( PACE / 2 ))"; do
+        output="$RESULTS/honesty_${h}_${rate}.txt"
+        say "$h: pace control at $rate pps"
+        if ! ./smoke_pair.sh "$h" $(( PORT_BASE + 1 )) "$RECV_CORE" "$SEND_CORE" "pace=$rate" > "$output" 2>&1; then
+            say "REFUSED: $h control process failed; see $output"
+            exit 1
+        fi
+        if ! summary=$(python3 ./check_windows.py "$output" --windows 1 --expected-rate "$rate"); then
+            say "REFUSED: $h pace control is invalid; see $output"
+            exit 1
+        fi
+        say "$summary"
+    done
 done
-
-say "Read those two blocks before reading anything below them. The pace plant's"
-say "pps must come back at $PACE for every harness; the drop-half plant's pps must"
-say "be visibly below the same harness's full-rate window. A harness that fails"
-say "either one is not measuring, and its rows in the matrix are void."
 say ""
+
+run_matrix_pair()
+{
+    if [ "$(uname -s)" = Darwin ]; then
+        ./run_pair_darwin.sh "$1" "$2" "${3:-}"
+    else
+        ./run_pair.sh "$1" "$2" "$RECV_CORE" "$SEND_CORE" "${3:-}"
+    fi
+}
 
 # ---------------------------------------------------------------------------
 # the matrix
@@ -161,9 +167,15 @@ say "--- the matrix (30 s warm-up, 5 x 60 s windows per harness)"
 PORT=$(( PORT_BASE + 100 ))
 for h in $HARNESSES; do
     say "$h -> $RESULTS/$h.txt"
-    ./run_pair.sh "$h" "$PORT" "${RECV_CORE:-0}" "${SEND_CORE:-0}" \
-        > "$RESULTS/$h.txt" 2>&1 || say "  $h aborted -- see $RESULTS/$h.txt"
-    grep -h '^WINDOW' "$RESULTS/$h.txt" | tee -a "$REPORT" || true
+    if ! run_matrix_pair "$h" "$PORT" > "$RESULTS/$h.txt" 2>&1; then
+        say "REFUSED: $h matrix process failed; see $RESULTS/$h.txt"
+        exit 1
+    fi
+    if ! summary=$(python3 ./check_windows.py "$RESULTS/$h.txt" --windows 5); then
+        say "REFUSED: $h matrix records are invalid"
+        exit 1
+    fi
+    say "$summary"
     PORT=$(( PORT + 1 ))
     say ""
 done
@@ -171,9 +183,15 @@ done
 # io_uring's zero-copy variant is a separate row, not a separate harness
 if [ -x ./bench_uring ]; then
     say "bench_uring zc -> $RESULTS/bench_uring_zc.txt"
-    ./run_pair.sh bench_uring "$PORT" "${RECV_CORE:-0}" "${SEND_CORE:-0}" zc \
-        > "$RESULTS/bench_uring_zc.txt" 2>&1 || say "  bench_uring zc aborted -- see the file"
-    grep -h '^WINDOW' "$RESULTS/bench_uring_zc.txt" | tee -a "$REPORT" || true
+    if ! run_matrix_pair bench_uring "$PORT" zc > "$RESULTS/bench_uring_zc.txt" 2>&1; then
+        say "REFUSED: bench_uring zc matrix process failed"
+        exit 1
+    fi
+    if ! summary=$(python3 ./check_windows.py "$RESULTS/bench_uring_zc.txt" --windows 5); then
+        say "REFUSED: bench_uring zc matrix records are invalid"
+        exit 1
+    fi
+    say "$summary"
     say ""
 fi
 

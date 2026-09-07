@@ -4,3 +4,4 @@ bin/
 tending/
 csharp/**/obj/
 csharp/**/bin/
+__pycache__/
