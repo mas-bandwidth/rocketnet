@@ -5800,17 +5800,27 @@ void rocketnet_test_transport_packet_loss_stats()
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
 
+    // This handshake uses real sockets and a real receive thread. Advancing
+    // virtual time by 1/60 per 1 ms wait gives that thread only ~300 ms before
+    // a five-second protocol deadline. Use actual elapsed time for connection;
+    // the controlled virtual cadence below still drives the statistics case.
+    const double connect_time = game_time;
     double wall_start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - wall_start < 5.0 )
     {
-        game_time += 1.0 / 60.0;
+        game_time = connect_time + rocketnet_platform_time() - wall_start;
         rocketnet_client_transport_update( client, game_time );
         rocketnet_server_transport_update( server, game_time );
+        rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
             break;
         rocketnet_platform_sleep( 0.001 );
     }
+    if (rocketnet_client_transport_state(client) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED)
+        printf("packet loss test connect failed: %s, server clients %d\n",
+            rocketnet_client_transport_state_name(rocketnet_client_transport_state(client)),
+            rocketnet_server_transport_num_connected_clients(server));
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     uint8_t payload_data[64];

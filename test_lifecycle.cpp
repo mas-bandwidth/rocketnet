@@ -284,12 +284,12 @@ static void check_memory_geometry(allocator_state & state)
     uint64_t total = UINT64_MAX - 3;
     check(!rocketnet_memory_add(total, 2, 2) && total == UINT64_MAX - 3);
     check(rocketnet_memory_add(total, 1, 3) && total == UINT64_MAX);
-    const uint64_t small = rocketnet_reassembly_memory_required(4, 8, 16384, 32);
-    const uint64_t huge = rocketnet_reassembly_memory_required(1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000);
-    check(small > 32 * 16384 && huge > UINT64_C(100) * 1024 * 1024 * 1024);
+    const uint64_t small_geometry_bytes = rocketnet_reassembly_memory_required(4, 8, 16384, 32);
+    const uint64_t large_geometry_bytes = rocketnet_reassembly_memory_required(1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000);
+    check(small_geometry_bytes > 32 * 16384 && large_geometry_bytes > UINT64_C(100) * 1024 * 1024 * 1024);
     check(!rocketnet_reassembly_memory_required(-1, 8, 16384, 32));
     const int before = state.calls;
-    if (huge > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
+    if (large_geometry_bytes > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
     {
         check(!rocketnet_reassembly_set_create(&state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000));
         rocketnet_server_transport_config_t config;
