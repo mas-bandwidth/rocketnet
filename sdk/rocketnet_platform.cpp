@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_platform.h"
+#include <limits.h>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
@@ -13,6 +14,7 @@
 // portable shape beside it.
 
 #include "rocketnet_platform.h"
+#include <limits.h>
 #include "rocketnet_address.h"
 
 #include <netdb.h>
@@ -226,7 +228,8 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     rocketnet_platform_socket_t * socket = (rocketnet_platform_socket_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
-    rocketnet_assert( socket );
+    if ( !socket )
+        return NULL;
 
     socket->context = context;
 
@@ -593,12 +596,12 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
 {
     rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
 
-    rocketnet_assert( thread );
+    if ( !thread )
+        return NULL;
 
     thread->context = context;
 
     thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    rocketnet_assert( shim_data );
     if ( !shim_data )
     {
         rocketnet_free( context, thread );
@@ -747,37 +750,43 @@ template <typename T> struct rocketnet_vector_t
         return *( data + i );
     }
 
-    void reserve( int size )
+    bool reserve( int size )
     {
-        rocketnet_assert( size >= 0 );
-        if ( size > reserved )
+        if ( size < 0 )
+            return false;
+        if ( size <= reserved )
+            return true;
+        int capacity = reserved ? reserved : 1;
+        while ( capacity < size )
         {
-            const double VECTOR_GROWTH_FACTOR = 1.5;
-            const int VECTOR_INITIAL_RESERVATION = 1;
-            unsigned int rocketnet_size = (unsigned int)( pow( VECTOR_GROWTH_FACTOR, int( log( double( size ) ) / log( double( VECTOR_GROWTH_FACTOR ) ) ) + 1 ) );
-            if ( !reserved )
+            const int growth = capacity / 2 + 1;
+            if ( capacity > INT_MAX - growth )
             {
-                rocketnet_size = rocketnet_size > VECTOR_INITIAL_RESERVATION ? rocketnet_size : VECTOR_INITIAL_RESERVATION;
-                data = (T*)( rocketnet_malloc( rocketnet_global_context, rocketnet_size * sizeof(T) ) );
-                rocketnet_assert( data );
+                capacity = size;
+                break;
             }
-            else
-            {
-                T * new_data = (T*)( rocketnet_malloc( rocketnet_global_context, rocketnet_size * sizeof(T) ) );
-                rocketnet_assert( data );
-                memcpy( new_data, data, reserved * sizeof(T) );
-                rocketnet_free( rocketnet_global_context, data );
-                data = new_data;
-            }
-            memset( (void*)( &data[reserved] ), 0, ( rocketnet_size - reserved ) * sizeof(T) );
-            reserved = rocketnet_size;
+            capacity += growth;
         }
+        if ( (size_t) capacity > SIZE_MAX / sizeof(T) )
+            return false;
+        T * new_data = (T*) rocketnet_malloc( rocketnet_global_context, (size_t) capacity * sizeof(T) );
+        if ( !new_data )
+            return false;
+        if ( data )
+            memcpy( new_data, data, (size_t) length * sizeof(T) );
+        memset( new_data + length, 0, (size_t) ( capacity - length ) * sizeof(T) );
+        rocketnet_free( rocketnet_global_context, data );
+        data = new_data;
+        reserved = capacity;
+        return true;
     }
 
-    void resize( int i )
+    bool resize( int size )
     {
-        reserve( i );
-        length = i;
+        if ( !reserve( size ) )
+            return false;
+        length = size;
+        return true;
     }
 
     void remove( int i )
@@ -802,7 +811,8 @@ template <typename T> struct rocketnet_vector_t
     T * insert( int i )
     {
         rocketnet_assert( i >= 0 && i <= length );
-        resize( length + 1 );
+        if ( length == INT_MAX || !resize( length + 1 ) )
+            return NULL;
         memmove( &data[i + 1], &data[i], sizeof( T ) * ( length - 1 - i ) );
         return &data[i];
     }
@@ -810,20 +820,23 @@ template <typename T> struct rocketnet_vector_t
     T * insert( int i, const T & t )
     {
         T * p = insert( i );
-        *p = t;
+        if ( p )
+            *p = t;
         return p;
     }
 
     T * add()
     {
-        reserve( ++length );
-        return &data[length - 1];
+        if ( length == INT_MAX || !reserve( length + 1 ) )
+            return NULL;
+        return &data[length++];
     }
 
     T * add( const T & t )
     {
         T * p = add();
-        *p = t;
+        if ( p )
+            *p = t;
         return p;
     }
 };
@@ -1020,6 +1033,12 @@ static int get_connection_type()
             }
 
             rocketnet_iftable_t * interface_entry = interface_list.add();
+            if ( !interface_entry )
+            {
+                close( sock );
+                freeifaddrs( ifaddr );
+                return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+            }
             interface_entry->if_index = if_index;
 
             struct iwreq pwrq;
@@ -1132,7 +1151,11 @@ static int get_connection_type()
                         rocketnet_ifforward4_t route;
                         if ( parse_kernel_route( msg_ptr, &route ) )
                         {
-                            route_table.add( route );
+                            if ( !route_table.add( route ) )
+                            {
+                                close( sock );
+                                return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+                            }
                         }
                     }
                     else if ( msg_ptr->nlmsg_type == 3 )
@@ -1469,7 +1492,8 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     rocketnet_platform_socket_t * socket = (rocketnet_platform_socket_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
-    rocketnet_assert( socket );
+    if ( !socket )
+        return NULL;
 
     socket->context = context;
 
@@ -1508,6 +1532,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     if ( setsockopt( socket->handle, SOL_SOCKET, SO_SNDBUF, (char*)( &send_buffer_size ), sizeof( int ) ) != 0 )
     {
         rocketnet_error( "failed to set socket send buffer size" );
+        rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
 
@@ -2228,12 +2253,12 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
 {
     rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t) );
 
-    rocketnet_assert( thread );
+    if ( !thread )
+        return NULL;
 
     thread->context = context;
 
     thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    rocketnet_assert( shim_data );
     if ( !shim_data )
     {
         rocketnet_free( context, thread );
@@ -2334,6 +2359,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 // windows
 
 #include "rocketnet_platform.h"
+#include <limits.h>
 #include "rocketnet_address.h"
 
 #if ROCKETNET_UNREAL_ENGINE
@@ -2435,12 +2461,12 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
 {
     rocketnet_platform_thread_t * thread = (rocketnet_platform_thread_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_thread_t ) );
 
-    rocketnet_assert( thread );
+    if ( !thread )
+        return NULL;
 
     thread->context = context;
 
     thread_shim_data_t * shim_data = (thread_shim_data_t*) rocketnet_malloc( context, sizeof(thread_shim_data_t) );
-    rocketnet_assert( shim_data );
     if ( !shim_data )
     {
         rocketnet_free( context, thread );
@@ -2667,7 +2693,8 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
-    rocketnet_assert( s );
+    if ( !s )
+        return NULL;
 
     s->context = context;
 

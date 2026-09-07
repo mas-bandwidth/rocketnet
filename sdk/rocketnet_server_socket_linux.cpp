@@ -1,3 +1,4 @@
+#include <new>
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.  
     Licensed under the GNU Affero General Public License v3.0
@@ -59,7 +60,7 @@ struct rocketnet_server_socket_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets;
+    std::atomic<int> num_packets{0};
 
     uint8_t padding_1[4096];
 
@@ -80,7 +81,7 @@ struct rocketnet_server_socket_receive_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<bool> ready;
+    std::atomic<bool> ready{0};
 
     uint8_t padding_1[4096];
 
@@ -113,7 +114,7 @@ struct rocketnet_server_xdp_socket_t
 
     uint8_t padding_2[4096];
 
-    std::atomic<bool> quit;
+    std::atomic<bool> quit{0};
 
     uint8_t padding_4[4096];
 
@@ -175,7 +176,7 @@ struct rocketnet_server_socket_t
     int socket_map_fd;
     int stats_map_fd;
 
-    std::atomic<uint64_t> packet_id;
+    std::atomic<uint64_t> packet_id{0};
 
     int num_queues;
     rocketnet_server_xdp_socket_t * socket;
@@ -1023,7 +1024,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !server_socket )
         return NULL;
 
-    memset( server_socket, 0, sizeof( rocketnet_server_socket_t) );
+    new ( server_socket ) rocketnet_server_socket_t();
 
     server_socket->context = context;
 
@@ -1362,6 +1363,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
+    // Construct every queue before any resource acquisition can fail.
+    for ( int queue = 0; queue < num_queues; queue++ )
+        new ( &server_socket->socket[queue] ) rocketnet_server_xdp_socket_t();
+
     for ( int queue = 0; queue < num_queues; queue++ )
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
@@ -1376,7 +1381,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         if ( posix_memalign( &socket->buffer, getpagesize(), buffer_size ) ) 
         {
-            rocketnet_error( "server could allocate buffer" );
+            rocketnet_error( "server could not allocate buffer" );
             rocketnet_server_socket_destroy( server_socket );
             return NULL;
         }
@@ -1510,7 +1515,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         rocketnet_info( "starting xdp thread for socket queue %d", socket->queue );
 
-        socket->xdp_thread = rocketnet_platform_thread_create( NULL, rocketnet_server_socket_xdp_thread_function, socket );
+        socket->xdp_thread = rocketnet_platform_thread_create( server_socket->context, rocketnet_server_socket_xdp_thread_function, socket );
         if ( !socket->xdp_thread )
         {
             rocketnet_error( "server could not create xdp thread %d", queue );
@@ -1608,11 +1613,14 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         }
 
         free( socket->buffer );
+        socket->~rocketnet_server_xdp_socket_t();
     }
 
     rocketnet_free( server_socket->context, server_socket->socket );
 
-    rocketnet_clear_and_free( server_socket->context, server_socket, sizeof(rocketnet_server_socket_t) );
+    void * allocation_context = server_socket->context;
+    server_socket->~rocketnet_server_socket_t();
+    rocketnet_clear_and_free( allocation_context, server_socket, sizeof(rocketnet_server_socket_t) );
 }
 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )

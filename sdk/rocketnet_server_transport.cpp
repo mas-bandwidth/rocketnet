@@ -1,3 +1,4 @@
+#include <new>
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -580,7 +581,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( !server_transport )
         return NULL;
 
-    memset( server_transport, 0, sizeof(struct rocketnet_server_transport_t) );
+    new ( server_transport ) rocketnet_server_transport_t();
 
     server_transport->context = context;
 
@@ -949,7 +950,9 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( server_transport->socket )
         rocketnet_platform_socket_destroy( server_transport->socket );
 
-    rocketnet_clear_and_free( server_transport->context, server_transport, sizeof(struct rocketnet_server_transport_t) );
+    void * allocation_context = server_transport->context;
+    server_transport->~rocketnet_server_transport_t();
+    rocketnet_clear_and_free( allocation_context, server_transport, sizeof(rocketnet_server_transport_t) );
 }
 
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )

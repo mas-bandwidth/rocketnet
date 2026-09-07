@@ -1,5 +1,12 @@
 # Using rocketnet
 
+Call `rocketnet_init` once before using transports and check its result. A second
+init returns false without resetting the live library. Destroy all objects and
+free RocketNet allocations before `rocketnet_term`; termination with live
+allocations is refused and logged. Repeated termination is a no-op. Startup,
+shutdown and global configuration must be serialized with application activity.
+Set custom allocator callbacks before initialization, with no live allocations.
+
 Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
 digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.
 Bare IPv6 and `[address]` have port zero. A zero server bind port requests an

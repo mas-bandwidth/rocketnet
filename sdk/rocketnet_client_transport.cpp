@@ -1,3 +1,4 @@
+#include <new>
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -106,7 +107,7 @@ struct rocketnet_client_transport_t
 
     rocketnet_platform_thread_t * thread;
     rocketnet_platform_mutex_t mutex;
-    std::atomic<bool> quit;
+    std::atomic<bool> quit{0};
 
     int receive_buffer_index;
     rocketnet_client_received_packets_t received_packets;
@@ -192,7 +193,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
         return NULL;
     }
 
-    memset( (char*) client_transport, 0, sizeof(rocketnet_client_transport_t) );
+    new ( client_transport ) rocketnet_client_transport_t();
 
     client_transport->context = context;
     client_transport->next_packet_id = 1;
@@ -360,7 +361,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
         return NULL;
     }
 
-    client_transport->thread = rocketnet_platform_thread_create( NULL, rocketnet_client_thread_function, client_transport );
+    client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
     if ( !client_transport->thread )
     {
         rocketnet_error( "client could not create thread" );
@@ -394,7 +395,9 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     if ( client_transport->reassembly )
         rocketnet_reassembly_set_destroy( client_transport->reassembly );
 
-    rocketnet_clear_and_free( client_transport->context, client_transport, sizeof(rocketnet_client_transport_t) );
+    void * allocation_context = client_transport->context;
+    client_transport->~rocketnet_client_transport_t();
+    rocketnet_clear_and_free( allocation_context, client_transport, sizeof(rocketnet_client_transport_t) );
 }
 
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time )

@@ -126,7 +126,9 @@ jobs:
       - name: Run serialization surface (portable)
         env:
           ROCKETNET_DRIVER: portable
-        run: ./bin/test_serialize
+        run: |
+          ./bin/test_serialize
+          ./bin/test_lifecycle
 
       - name: Check production library boundary
         run: |
@@ -236,7 +238,9 @@ jobs:
         shell: bash
         env:
           ROCKETNET_DRIVER: portable
-        run: ./bin/${{ matrix.build_type }}/test_serialize.exe
+        run: |
+          ./bin/${{ matrix.build_type }}/test_serialize.exe
+          ./bin/${{ matrix.build_type }}/test_lifecycle.exe
 
       - name: Check production library boundary
         run: python tools/check_exports.py bin/${{ matrix.build_type }}/rocketnet.dll build/${{ matrix.build_type }}/rocketnet.lib
@@ -290,6 +294,13 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
           ROCKETNET_DRIVER: portable
         run: ./bin/test
+
+      - name: Allocation lifecycle under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test_lifecycle
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #
@@ -779,7 +790,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite and the soak
-        run: cmake --build build --target test soak --parallel
+        run: cmake --build build --target test test_lifecycle soak --parallel
 
       - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
         env:
@@ -790,6 +801,12 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/soak 20000
+
+      - name: Allocation lifecycle under tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG (GAP 5, the gate half). rocketnet builds on SYSTEM
   # libsodium (the crypto ruling's interim -- the gutted two-file vendor

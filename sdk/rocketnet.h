@@ -298,8 +298,16 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 
 // ------------------------------------------
 
+// Configure before init, with no outstanding allocations. Invalid or late
+// replacements are refused and logged. Callbacks must be thread-safe and return
+// storage aligned for fundamental types. RocketNet adds alignment/ownership
+// metadata, so callbacks receive larger sizes and their original pointer on free.
 ROCKETNET_EXPORT_FUNC void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
+#define ROCKETNET_ALLOCATION_ALIGNMENT 64
+
+// Returns 64-byte-aligned storage, or NULL on overflow/allocation failure.
+// Free only through rocketnet_free; the original allocator/context are retained.
 ROCKETNET_EXPORT_FUNC void * rocketnet_malloc( void * context, size_t bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_free( void * context, void * p );

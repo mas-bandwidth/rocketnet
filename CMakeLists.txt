@@ -189,6 +189,10 @@ add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
 target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
 target_link_libraries(test rocketnet_test_support)
 
+add_executable(test_lifecycle test_lifecycle.cpp)
+target_include_directories(test_lifecycle PRIVATE sdk)
+target_link_libraries(test_lifecycle rocketnet)
+
 
 # soak
 
