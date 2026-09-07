@@ -70,8 +70,44 @@ static class Smoke
         Thread.Sleep( 1 );
     }
 
-    static int Main()
+    static void RejectToken( Action action, bool isNull = false )
     {
+        try
+        {
+            action();
+        }
+        catch ( ArgumentException e ) when ( e.ParamName == "connectToken" && ( e is ArgumentNullException ) == isNull )
+        {
+            return;
+        }
+        Fail( "invalid token buffer reached the native boundary" );
+    }
+
+    static void CheckTokenBoundaries()
+    {
+        RocketNet.ClientTransportConfig config = default;
+        RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, (byte[]) null! ), true );
+        RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, IntPtr.Zero, time ), true );
+        RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, ref config, time ), true );
+        foreach ( int length in new[] { 0, 1, RocketNet.ConnectTokenBytes - 1, RocketNet.ConnectTokenBytes + 1 } )
+        {
+            byte[] token = new byte[length];
+            RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token ) );
+            RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token.AsSpan() ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, IntPtr.Zero, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref config, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, IntPtr.Zero, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref config, time ) );
+        }
+        Ok( "token boundary: null, empty, short and long arrays/spans refused before native calls" );
+    }
+
+    static int Main( string[] args )
+    {
+        CheckTokenBoundaries();
+        if ( args.Length == 1 && args[0] == "--token-boundaries" )
+            return 0;
+
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );
@@ -125,13 +161,13 @@ static class Smoke
         ulong clientId = RocketNet.RandomUint64();
         byte[] token = new byte[RocketNet.ConnectTokenBytes];
         ulong unixNow = (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token ) == 0 )
+        if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token.AsSpan() ) == 0 )
             Fail( "write dev connect token" );
 
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
         if ( clientConfig.GetDriver() != "auto" )
             Fail( $"client default config driver is '{clientConfig.GetDriver()}', expected 'auto'" );
-        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref clientConfig, time );
+        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
         if ( client == IntPtr.Zero )
             Fail( "client create" );
         if ( RocketNet.ClientTransportDriver( client ).Length == 0 )

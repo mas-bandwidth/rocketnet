@@ -24,6 +24,7 @@ int main()
     if ( !rocketnet_init() )
     {
         printf( "error: failed to initialize rocketnet\n" );
+        return 1;
     }
 
     printf( "\nRunning SDK tests:\n\n" );

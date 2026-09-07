@@ -646,19 +646,68 @@ public static unsafe class RocketNet
     /// <summary>Mints a connect token locally against the published development keys.
     /// A production client is handed its token by a backend. The token buffer is
     /// <see cref="ConnectTokenBytes"/>. Returns nonzero on success.</summary>
+    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return WriteDevConnectToken( serverAddress, clientId, unixTimestamp, connectToken.AsSpan() );
+    }
+
+    /// <summary>Mints a development token into a buffer of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, Span<byte> connectToken )
+    {
+        ArgumentNullException.ThrowIfNull( serverAddress );
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return WriteDevConnectTokenNative( serverAddress, clientId, unixTimestamp, token );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int WriteDevConnectToken( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken );
+    private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
 
     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
     /// monotonic; pass the same clock to every call that takes one. Returns IntPtr.Zero on
     /// refusal — an invalid token refuses here.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, ref config, time );
+    }
+
+    /// <summary>Creates a client from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
+    {
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return ClientTransportCreateNative( context, token, ref config, time );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time );
+    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, ref ClientTransportConfig config, double time );
 
     /// <summary>Creates a client with the default (development) config.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, nullConfig, time );
+    }
+
+    /// <summary>Creates a client with default config from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
+    {
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return ClientTransportCreateNative( context, token, nullConfig, time );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time );
+    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, IntPtr nullConfig, double time );
+
+    private static void ValidateConnectTokenLength( int length )
+    {
+        if ( length != ConnectTokenBytes )
+            throw new ArgumentException( $"A connect token must contain exactly {ConnectTokenBytes} bytes.", "connectToken" );
+    }
 
     /// <summary>Destroys the client. Disconnect and pump a few updates first.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_destroy", CallingConvention = CallingConvention.Cdecl )]

@@ -123,6 +123,11 @@ jobs:
       - name: Run tests (portable rung pinned by env)
         run: ROCKETNET_DRIVER=portable ./bin/test
 
+      - name: Run serialization surface (portable)
+        env:
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test_serialize
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured
@@ -218,6 +223,12 @@ jobs:
       - name: Run tests
         shell: bash
         run: ./bin/${{ matrix.build_type }}/test.exe
+
+      - name: Run serialization surface (portable)
+        shell: bash
+        env:
+          ROCKETNET_DRIVER: portable
+        run: ./bin/${{ matrix.build_type }}/test_serialize.exe
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers

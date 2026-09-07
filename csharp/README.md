@@ -7,6 +7,13 @@ calls (`PayloadSpan`, the payload batch views, `CountersSpan`). Targets net8.0,
 zero package dependencies. `AllowUnsafeBlocks` is on for the fixed-size buffers
 and payload spans.
 
+Connect-token writers and client constructors accept exactly `ConnectTokenBytes`
+bytes. Array overloads reject null with `ArgumentNullException`; wrong-sized
+arrays and spans throw `ArgumentException` before a native call. The span writer
+pins writable storage; constructors pin a read-only token for the synchronous
+native call. Native token imports are private. Existing array call sites remain
+source compatible.
+
 The binding loads the shared library `librocketnet` (cmake target
 `rocketnet_shared`) by name: the runtime probes the executable's directory and
 the system paths, and `ROCKETNET_LIBRARY_PATH` — a file, or a directory holding
