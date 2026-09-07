@@ -132,6 +132,11 @@ struct rocketnet_reassembly_set_t
     int completed_bytes;
 };
 
+// Requested component bytes, excluding allocator overhead. Zero means invalid
+// geometry or integer overflow; estimation never allocates or touches storage.
+uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
+bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
+
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
 
 void rocketnet_reassembly_set_destroy( struct rocketnet_reassembly_set_t * set );

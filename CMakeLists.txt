@@ -61,6 +61,17 @@ if(ROCKETNET_HISTORY_PACKETS LESS 4096 OR ROCKETNET_HISTORY_PACKETS GREATER 3276
     message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768")
 endif()
 
+set(ROCKETNET_REASSEMBLY_MEMORY_MIB 512 CACHE STRING "Maximum reassembly component allocation in MiB")
+set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
+foreach(budget ROCKETNET_REASSEMBLY_MEMORY_MIB ROCKETNET_XDP_MEMORY_MIB)
+    if(NOT ${budget} MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "${budget} must be an integer")
+    endif()
+    if(${budget} LESS 1 OR ${budget} GREATER 1048576)
+        message(FATAL_ERROR "${budget} must be 1..1048576 MiB")
+    endif()
+endforeach()
+
 # strict floating point. Estate policy for mas-bandwidth network libraries: "generally
 # speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
 #   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
@@ -112,6 +123,7 @@ set(ROCKETNET_SOURCE
 file(GLOB ROCKETNET_HEADERS sdk/*.h)
 add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
 target_compile_definitions(rocketnet PUBLIC ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS})
+target_compile_definitions(rocketnet PUBLIC ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB} ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
 find_package(Threads REQUIRED)
 
 # libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
@@ -150,6 +162,7 @@ endif()
 
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS})
+target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB} ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
 add_dependencies(rocketnet_shared rocketnet)
 set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet

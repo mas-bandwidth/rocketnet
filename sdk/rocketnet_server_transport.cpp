@@ -496,6 +496,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     config = &effective_config;
 
+    // Refuse large cross-field allocations before sockets, drivers or arenas
+    // are acquired. Independent field maxima do not define a usable budget.
+    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    if (!rocketnet_reassembly_memory_allowed(requested_clients, requested_slots, requested_payload, requested_clients * requested_slots))
+        return NULL;
+
+
     // the config's public_address, when set, displaces the create call's
     // address parameter HERE, before anything reads it -- so the address
     // the ladder verifies, the address the granted driver binds, and the

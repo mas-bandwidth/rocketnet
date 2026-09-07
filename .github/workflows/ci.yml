@@ -138,6 +138,17 @@ jobs:
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
 
+      - name: Check larger history budget and reject undersized history
+        if: runner.os == 'Linux' && matrix.build_type == 'Release'
+        run: |
+          cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
+          cmake --build build-history --target test_lifecycle --parallel
+          ./build-history/bin/test_lifecycle
+          if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256; then
+            echo "undersized history was accepted"
+            exit 1
+          fi
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured

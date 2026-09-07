@@ -47,6 +47,16 @@ Increasing it increases both per-connection memory and bounded ACK processing.
 Separate build trees may select `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
 `CMAKE_LIBRARY_OUTPUT_DIRECTORY` to keep sanitizer/configuration outputs apart.
 
+Large allocation components have independent CMake budgets:
+`ROCKETNET_REASSEMBLY_MEMORY_MIB` defaults to 512 and `ROCKETNET_XDP_MEMORY_MIB`
+to 4096. Both accept 1 through 1048576 MiB. Reassembly includes its slot records,
+arena and delivered mirror; XDP includes userspace queue structs and UMEM.
+Oversized geometry is refused with required and permitted byte counts before
+allocation. These bounds are not an available-RAM check: reserve additional
+memory for ACK history, other transport objects, allocator overhead, stacks,
+kernel buffers and your application. The default seven-queue XDP geometry alone
+still requires roughly 3.5 GiB; select fewer queues or provision that explicitly.
+
 ## Server transport drivers
 
 Driver selection is runtime (#106): one build carries every driver its platform

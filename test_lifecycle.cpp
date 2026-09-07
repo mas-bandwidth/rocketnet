@@ -6,6 +6,12 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_stats_window.h"
+#include "rocketnet_pending_frames.h"
+#include "rocketnet_memory.h"
+#include "rocketnet_fragment.h"
+#if ROCKETNET_XDP
+#include "rocketnet_server_socket.h"
+#endif
 #include <atomic>
 #include <initializer_list>
 #include <stddef.h>
@@ -247,6 +253,64 @@ static void check_stats_cadence()
     }
 }
 
+static void check_frame_conservation()
+{
+    rocketnet_pending_frames_t<8> pending;
+    uint64_t first[] = {11, 12, 13, 14};
+    uint64_t second[] = {15, 16, 17, 18};
+    check(pending.append(first, 4));
+    uint64_t submitted[8]{};
+    int written = 0, published = 0;
+    auto write = [&](uint32_t index, uint64_t frame) {
+        check(index < 8 && !submitted[index]);
+        submitted[index] = frame;
+        ++written;
+    };
+    auto submit = [&](uint32_t count) { check(written == (int)count); published += count; };
+    for (int i = 0; i < 10; ++i)
+        check(!pending.flush([](uint32_t, uint32_t *) { return 0U; }, write, submit));
+    check(pending.count == 4 && written == 0 && published == 0);
+    check(pending.append(second, 4) && pending.available() == 0);
+    check(!pending.append(first, 1) && pending.count == 8);
+    check(pending.flush([](uint32_t count, uint32_t * index) { *index = 0; return count; }, write, submit));
+    check(pending.count == 0 && published == 8);
+    for (int i = 0; i < 8; ++i) check(submitted[i] == (uint64_t)(11 + i));
+    check(pending.flush([](uint32_t, uint32_t *) { check(false); return 0U; }, write, submit));
+    check(published == 8); // no frame submitted twice after successful retry
+}
+
+static void check_memory_geometry(allocator_state & state)
+{
+    uint64_t total = UINT64_MAX - 3;
+    check(!rocketnet_memory_add(total, 2, 2) && total == UINT64_MAX - 3);
+    check(rocketnet_memory_add(total, 1, 3) && total == UINT64_MAX);
+    const uint64_t small = rocketnet_reassembly_memory_required(4, 8, 16384, 32);
+    const uint64_t huge = rocketnet_reassembly_memory_required(1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000);
+    check(small > 32 * 16384 && huge > UINT64_C(100) * 1024 * 1024 * 1024);
+    check(!rocketnet_reassembly_memory_required(-1, 8, 16384, 32));
+    const int before = state.calls;
+    if (huge > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
+    {
+        check(!rocketnet_reassembly_set_create(&state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000));
+        rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config(&config);
+        config.max_clients = 1000;
+        config.num_reassembly_slots = 256;
+        config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
+        strcpy(config.driver, "portable");
+        check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config, 0.0));
+        check(state.calls == before); // refused before any allocation or socket
+    }
+#if ROCKETNET_XDP
+    check(!rocketnet_server_socket_memory_required(0));
+    check(rocketnet_server_socket_memory_required(7) > UINT64_C(3) * 1024 * 1024 * 1024);
+    const uint64_t xdp_huge = rocketnet_server_socket_memory_required(1024);
+    if (xdp_huge > (uint64_t)ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024)
+        check(!rocketnet_server_socket_preflight("127.0.0.1", 1024));
+    check(state.calls == before);
+#endif
+}
+
 int main()
 {
     allocator_state state;
@@ -279,6 +343,8 @@ int main()
     check_ack_retention( state );
     check_packet_leases( state );
     check_stats_cadence();
+    check_frame_conservation();
+    check_memory_geometry(state);
     check( state.live == baseline );
 
     rocketnet_address_t address;

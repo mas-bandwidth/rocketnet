@@ -179,6 +179,14 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     config = &effective_config;
 
+    // Refuse large cross-field allocations before sockets, drivers or arenas
+    // are acquired. Independent field maxima do not define a usable budget.
+    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, ROCKETNET_NUM_CLIENT_PACKETS / 2))
+        return NULL;
+
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 

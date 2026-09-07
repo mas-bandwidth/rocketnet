@@ -34,6 +34,15 @@ not a completed independent security audit or a production certification.
 - Packet-rate statistics use elapsed-time buckets, with about 4 ms boundary
   resolution. Tests cover 16 through 10000 updates and repeated frozen time.
 - Counter count and bounded-value introspection are available to FFI callers.
+- XDP returns follow libxdp's all-or-zero reservation contract. A pending-frame
+  conservation check covers repeated zero reservations then full success. Send
+  frame pressure retains the staged packet for retry; no worker calls exit.
+  The contract is verified against the [upstream xsk header](https://github.com/xdp-project/xdp-tools/blob/master/headers/xdp/xsk.h).
+- Reassembly geometry uses checked byte estimates and a 512 MiB component budget;
+  XDP queues plus UMEM use a 4096 MiB component budget. Both are explicit build
+  choices. Oversized cross-field configurations fail before allocation or XDP
+  preflight activity. The former 146 GiB reassembly configuration is rejected
+  without a single allocation; component budgets are not host-RAM estimates.
 
 The existing CI matrix includes native Debug/Release on Linux/macOS/Windows,
 portable and automatic driver selection, serialization, .NET 8 smoke, s390x,
@@ -47,8 +56,10 @@ privileged XDP commit; they do not validate privileged production traffic.
   kernels/NICs; real long-running multi-client and impaired-network campaigns.
 - Size/version-aware public structs, exhaustive ABI/binding generation, a
   lifetime-owning managed layer, structured create errors and FFI-safe logging.
-- Whole-transport memory estimates and cross-field budgets, particularly large
-  fragmentation configurations and XDP queue geometry (#155).
+- Whole-transport memory estimates and operator budgets that include all
+  components, kernel buffers, thread stacks, allocator overhead and application
+  memory. Component limits prevent the documented oversized geometry but do not
+  establish that a host can afford every configuration beneath them (#155).
 - Install/export packaging and external-consumer tests; reproducible release
   dependencies, supported-platform policy, security disclosure/release process.
 - Independent review of the complete repair diff. A review request sent to Rowan

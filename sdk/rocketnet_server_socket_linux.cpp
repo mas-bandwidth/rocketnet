@@ -38,6 +38,8 @@
 #include <unistd.h>   // mkdtemp (POSIX declares it in stdlib.h; unistd.h is the portable belt-and-braces)
 
 #include "rocketnet_server_xdp.h"
+#include "rocketnet_pending_frames.h"
+#include "rocketnet_memory.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -624,10 +626,31 @@ static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, con
 // checked from here are checked, so one run names every errand at once
 // rather than one per attempt.
 
+uint64_t rocketnet_server_socket_memory_required(int num_queues)
+{
+    if (num_queues < 1 || num_queues > 1024) return 0;
+    uint64_t bytes = sizeof(rocketnet_server_socket_t);
+    if (!rocketnet_memory_add(bytes, (uint64_t)num_queues, sizeof(rocketnet_server_xdp_socket_t)) ||
+        !rocketnet_memory_add(bytes, (uint64_t)num_queues, (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
+        return 0;
+    return bytes;
+}
+
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
 {
     rocketnet_assert( public_address_string );
     rocketnet_assert( num_queues >= 1 );
+
+    const uint64_t memory_bytes = rocketnet_server_socket_memory_required(num_queues);
+    const uint64_t memory_budget = (uint64_t)ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024;
+    if (!memory_bytes || memory_bytes > memory_budget)
+    {
+        rocketnet_warn("xdp geometry refused: requires %llu bytes, component budget %llu bytes",
+            (unsigned long long)memory_bytes, (unsigned long long)memory_budget);
+        return false;
+    }
+    rocketnet_info("xdp userspace queues and UMEM require %llu bytes before kernel and thread overhead",
+        (unsigned long long)memory_bytes);
 
     // R1: root. the data plane requires euid 0 -- the same refusal create
     // itself would give, checked here so the ladder can name it without
@@ -1975,8 +1998,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
     int batch_frames[ROCKETNET_XDP_SEND_BATCH_SIZE];
     int batch_packet_bytes[ROCKETNET_XDP_SEND_BATCH_SIZE];
 
-    int num_pending_return = 0;
-    uint64_t pending_return[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+    rocketnet_pending_frames_t<ROCKETNET_XDP_RECV_QUEUE_SIZE> pending_return;
+    auto return_pending_frames = [&]()
+    {
+        return pending_return.flush(
+            [&](uint32_t count, uint32_t * index) { return xsk_ring_prod__reserve(&socket->fill_queue, count, index); },
+            [&](uint32_t index, uint64_t frame) { *xsk_ring_prod__fill_addr(&socket->fill_queue, index) = frame; },
+            [&](uint32_t count) { xsk_ring_prod__submit(&socket->fill_queue, count); });
+    };
+    bool reported_frame_pressure = false;
 
     while ( !socket->quit )
     {
@@ -1986,39 +2016,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
         // return pending frames to the fill queue
 
-        if ( num_pending_return > 0 )
-        {
-            uint32_t fill_index;
-            int num_reserved = xsk_ring_prod__reserve( &socket->fill_queue, num_pending_return, &fill_index );
-            for ( int i = 0; i < num_reserved; i++ )
-            {
-                *xsk_ring_prod__fill_addr( &socket->fill_queue, fill_index + i ) = pending_return[i];
-            }
-
-            xsk_ring_prod__submit( &socket->fill_queue, num_reserved );
-
-            if ( num_reserved != num_pending_return )
-            {
-                int num_extra = num_pending_return - num_reserved;
-
-                rocketnet_assert( num_extra > 0 );
-
-                for ( int i = 0; i < num_extra; i++ )
-                {
-                    pending_return[i] = pending_return[num_reserved+i];
-                }
-            }
-            else
-            {
-                num_pending_return = 0;
-            }
-        }
+        // libxdp reserves the entire requested count or zero. A failed
+        // reservation retains the entire batch for a later iteration.
+        return_pending_frames();
 
         // see if there are any packets to receive
 
         uint32_t receive_index;
         
-        uint32_t num_packets = xsk_ring_cons__peek( &socket->receive_queue, ROCKETNET_XDP_RECV_QUEUE_SIZE, &receive_index );
+        uint32_t num_packets = xsk_ring_cons__peek( &socket->receive_queue, (uint32_t)pending_return.available(), &receive_index );
 
         if ( num_packets > 0 )
         {
@@ -2090,33 +2096,17 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
             xsk_ring_cons__release( &socket->receive_queue, num_consumed );
 
-            // return processed packets to fill queue
-
-            uint32_t fill_index;
-            
-            int num_reserved = xsk_ring_prod__reserve( &socket->fill_queue, num_consumed, &fill_index );
-
-            if ( num_reserved > 0 )
+            // The peek was bounded by available pending storage, so every
+            // consumed frame remains owned until a full fill reservation.
+            const bool retained = pending_return.append(frame, num_consumed);
+            rocketnet_assert(retained);
+            if (!retained)
             {
-                for ( int i = 0; i < num_reserved; i++ )
-                {
-                    *xsk_ring_prod__fill_addr( &socket->fill_queue, fill_index + i ) = frame[i];
-                }
-
-                xsk_ring_prod__submit( &socket->fill_queue, num_reserved );
+                rocketnet_error("xdp pending frame ownership invariant failed");
+                socket->quit = true;
+                break;
             }
-
-            // append frames we couldn't return to the pending return array
-
-            if ( num_reserved != (int) num_consumed )
-            {
-                rocketnet_assert( (int) num_consumed >= num_reserved );
-                const int num_extra = (int) num_consumed - num_reserved;
-                for ( int i = 0; i < num_extra; i++ )
-                {
-                    pending_return[num_pending_return++] = frame[num_reserved+i];
-                }
-            }
+            return_pending_frames();
         }
 
         // mark any completed send packet frames as free to be reused
@@ -2174,12 +2164,17 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                 {
                     int frame = alloc_send_frame( socket );
 
-                    rocketnet_assert( frame != INVALID_FRAME );
                     if ( frame == INVALID_FRAME )
                     {
-                        rocketnet_error( "out of frames" );
-                        exit( 1 );
+                        // Leave packet_start_index untouched. Completions in
+                        // the next iteration may release frames; never kill
+                        // the host or lose the staged packet on pressure.
+                        if (!reported_frame_pressure)
+                            rocketnet_error("xdp send frames exhausted; retaining staged packets for retry");
+                        reported_frame_pressure = true;
+                        break;
                     }
+                    reported_frame_pressure = false;
 
                     uint8_t * packet_data = (uint8_t*)socket->buffer + frame;
 
@@ -2210,13 +2205,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             uint32_t send_queue_index;
             int send_packets = xsk_ring_prod__reserve( &socket->send_queue, num_batch_packets, &send_queue_index );
 
-            if ( send_packets > 0 && send_packets != num_batch_packets )
-            {
-                rocketnet_error( "need more complicated logic for send batch packets" );
-                exit( 1 );
-            }
-
-            if ( send_packets > 0 )
+            // All-or-zero: zero keeps the batch intact for retry.
+            if ( send_packets == num_batch_packets )
             {
                 // setup descriptors for packets in batch to be sent
 
