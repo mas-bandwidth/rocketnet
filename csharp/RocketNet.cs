@@ -27,33 +27,13 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 /// <summary>The rocketnet C SDK surface: raw P/Invoke plus thin span helpers.</summary>
-public static unsafe class RocketNet
+public static unsafe partial class RocketNet
 {
     const string Lib = "rocketnet";
 
     static RocketNet()
     {
         NativeLibrary.SetDllImportResolver( typeof(RocketNet).Assembly, Resolve );
-    }
-
-    static IntPtr Resolve( string name, Assembly assembly, DllImportSearchPath? searchPath )
-    {
-        if ( name != Lib )
-            return IntPtr.Zero;
-        string fileName = OperatingSystem.IsWindows() ? "rocketnet.dll"
-                        : OperatingSystem.IsMacOS()   ? "librocketnet.dylib"
-                        :                               "librocketnet.so";
-        string? env = Environment.GetEnvironmentVariable( "ROCKETNET_LIBRARY_PATH" );
-        if ( env != null )
-        {
-            string candidate = Directory.Exists( env ) ? Path.Combine( env, fileName ) : env;
-            if ( File.Exists( candidate ) && NativeLibrary.TryLoad( Path.GetFullPath( candidate ), out IntPtr handle ) )
-                return handle;
-        }
-        string local = Path.Combine( AppContext.BaseDirectory, fileName );
-        if ( File.Exists( local ) && NativeLibrary.TryLoad( local, out IntPtr baseHandle ) )
-            return baseHandle;
-        return IntPtr.Zero;                     // fall through to the runtime's default probing
     }
 
     // -----------------------------------------

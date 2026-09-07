@@ -16,10 +16,11 @@ portable UDP everywhere. The requirements are locked in
 [REQUIREMENTS.md](REQUIREMENTS.md); next per its order: reliability, flows
 and broadcast on top.
 
-The SDK is an **advanced prerelease**. The `1.0.0` protocol version describes the
-wire standard, not a frozen SDK ABI or production certification. See
-[TRANSPORT_READINESS.md](TRANSPORT_READINESS.md) for the hardening evidence and
-remaining release gates. Application frame, send and ACK rates are independent;
+RocketNet runs in Space Game with XDP; Glenn reports successful load testing up
+to 10 Gbps. The `1.0.0` protocol version describes the wire standard; SDK ABI
+evolution is a separate compatibility concern. See
+[TRANSPORT_READINESS.md](TRANSPORT_READINESS.md) for the production baseline,
+hardening checks and follow-up work. Application frame, send and ACK rates are independent;
 finite history and staging limits are explicit memory budgets.
 
 ## Building

@@ -17,7 +17,18 @@ source compatible.
 The binding loads the shared library `librocketnet` (cmake target
 `rocketnet_shared`) by name: the runtime probes the executable's directory and
 the system paths, and `ROCKETNET_LIBRARY_PATH` — a file, or a directory holding
-the library — overrides.
+the library — overrides. An explicit missing or unloadable path fails; it never
+silently falls back to a different library.
+
+Before resolving the first native call, the binding validates the SDK ABI
+revision and all seven struct sizes, field counts, offsets and widths against
+compiler-derived native metadata. `ValidateAbi()` runs this check explicitly
+without initializing RocketNet. A mismatch or a library predating introspection
+throws `BadImageFormatException` before any config, stats or packet struct is
+passed to native code. Update the native library and binding together when
+adopting this change. Existing native struct layouts and packet encoding are
+unchanged. Validation happens once at loading, with no per-packet checks added.
+Invalid managed token buffers still fail before loading the library.
 
 Build the native library, then run the smoke test, from the repo root:
 
@@ -43,5 +54,13 @@ those operations. Native/managed struct layout remains unchanged.
 
 `CounterCount()` reports the loaded library's counter count; `CountersSpan` uses
 it instead of a compiled array length. `CounterValue` is bounds checked. Read
-counters outside update/fill. Native and managed builds remain a matched pair;
-a stable, versioned ABI is still a release gate.
+counters outside update/fill. Native and managed builds remain a matched pair.
+ABI revision checks reject incompatibility; they do not extend payload-view
+lifetimes or add automatic transport ownership.
+
+CI builds intentionally incompatible libraries and proves that revision, size,
+field-count, offset and width mismatches all refuse before a struct-writing
+entry point. A legacy library with no ABI queries also refuses; its config
+function aborts if the guard fails. Run these checks with
+`python3 tools/check_managed_abi.py bin` after building both ABI fixture targets
+and the Release smoke project.

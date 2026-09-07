@@ -37,7 +37,7 @@
 #include <poll.h>
 #include <unistd.h>   // mkdtemp (POSIX declares it in stdlib.h; unistd.h is the portable belt-and-braces)
 
-#include "rocketnet_server_xdp.h"
+#include <rocketnet_server_xdp.h>
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_memory.h"
 

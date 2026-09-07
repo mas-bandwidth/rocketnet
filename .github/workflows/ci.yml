@@ -149,6 +149,9 @@ jobs:
             exit 1
           fi
 
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured
@@ -258,6 +261,9 @@ jobs:
 
       - name: Check production library boundary
         run: python tools/check_exports.py bin/${{ matrix.build_type }}/rocketnet.dll build/${{ matrix.build_type }}/rocketnet.lib
+
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        run: python tools/check_package.py build --config ${{ matrix.build_type }}
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
@@ -653,6 +659,13 @@ jobs:
 
       - name: Build the C# binding and smoke test
         run: dotnet build csharp/smoke -c Release
+
+      - name: Build intentionally incompatible ABI fixtures
+        run: cmake --build build --config Release --target rocketnet_abi_mismatch rocketnet_abi_legacy --parallel
+
+      - name: Prove ABI refusal before struct writes
+        shell: bash
+        run: python3 tools/check_managed_abi.py ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
 
       - name: Run the smoke test
         shell: bash

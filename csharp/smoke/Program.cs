@@ -108,6 +108,36 @@ static class Smoke
         if ( args.Length == 1 && args[0] == "--token-boundaries" )
             return 0;
 
+        if ( args.Length == 1 && args[0] == "--load-refusal" )
+        {
+            try { RocketNet.ClientTransportDefaultConfig( out var unused ); }
+            catch ( System.DllNotFoundException ) { Ok( "explicit missing library refused" ); return 0; }
+            Fail( "explicit missing library silently fell back" );
+        }
+
+        if ( args.Length == 2 && args[0] == "--abi-refusal" )
+        {
+            try
+            {
+                // Deliberately before Init, through an actual struct-writing import.
+                RocketNet.ClientTransportDefaultConfig( out var unused );
+                Fail( "incompatible ABI reached a struct-writing entry point" );
+            }
+            catch ( BadImageFormatException e ) when ( e.Message.Contains("RocketNet ABI:") && e.Message.Contains(args[1]) )
+            {
+                Ok( e.Message );
+                return 0;
+            }
+            return 1;
+        }
+
+        // The first matching import also writes a struct before Init.
+        RocketNet.ClientTransportDefaultConfig( out var abiDefault );
+        if ( abiDefault.GetDriver() != "auto" ) Fail( "ABI-checked default config" );
+        RocketNet.ValidateAbi();
+        Ok( "native ABI revision, seven struct sizes and every field offset/width match" );
+        if ( args.Length == 1 && args[0] == "--abi-only" ) return 0;
+
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );

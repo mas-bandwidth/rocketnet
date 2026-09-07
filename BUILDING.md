@@ -5,9 +5,10 @@ only into `test` through `rocketnet_test_support`. Shared builds hide unannotate
 implementation symbols; `tools/exports.txt` lists the supported C exports. CI
 compares the built shared library with that list and checks that the static
 archive contains no test suite. Review intentional ABI changes in the list as
-part of the same change; passing this check does not establish ABI versioning.
+part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
+compatibility separately from the wire version; see the ABI rules below.
 
-rocketnet builds on Linux, macOS and Windows with CMake. On Linux and macOS the
+rocketnet builds on Linux, macOS and Windows with CMake 3.20 or later. On Linux and macOS the
 Makefile is the front door:
 
     make
@@ -34,6 +35,59 @@ vcpkg, and the binaries land under `bin/<config>/`:
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
+The generated header lives in each build tree, so concurrent configurations do
+not rewrite the checkout. Windows copies the committed header into its build tree.
+
+## Installing and embedding the SDK
+
+Build and install both libraries without examples, tests or tools:
+
+    cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release \
+      -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake --build build-sdk --parallel
+    cmake --install build-sdk --prefix /your/sdk/prefix
+
+An independent CMake project (enable CXX for the static library's C++ runtime)
+can then use:
+
+```cmake
+find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
+# Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
+```
+
+Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
+libsodium, Threads and the Linux bpf/xdp dependencies on the consuming machine;
+it does not embed the producer's absolute dependency paths or bundle those
+third-party runtimes. Shared consumers inherit the Windows DLL import definition.
+The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
+
+`add_subdirectory(path/to/rocketnet)` exposes the same two namespaced targets.
+Examples, tests and tools default off when embedded, and the parent's
+`BUILD_SHARED_LIBS` does not change the static target. Explicit
+`ROCKETNET_BUILD_*` options override those defaults.
+
+`python3 tools/check_package.py build --config Release --embedded` installs and
+moves the package, then builds and runs separate C/C++ consumers against both
+libraries. It also checks an embedded build with `BUILD_SHARED_LIBS=ON` and
+verifies that the XDP archive contains the current sources. These checks are in CI.
+
+## ABI compatibility
+
+The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
+queries expose the SDK revision, compiler-derived struct sizes, field counts,
+offsets and widths for both configs, packet context and all four stats structs.
+They are safe before init and write no caller-owned struct. Unknown names return
+`SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
+these before calling struct-writing functions; the C# binding does so automatically.
+
+An incompatible layout or calling-contract change must increment
+`ROCKETNET_ABI_VERSION` and update the matching binding. Additive functions alone
+do not require a revision change. Changes to public fields must also update the
+ABI metadata and binding checks. The existing unsized C entry points still
+require matching headers and library; this does not make an old native binary
+safe to use with an arbitrary newer library. Sized evolution APIs remain a
+separate compatibility project.
 
 ## History memory budget
 

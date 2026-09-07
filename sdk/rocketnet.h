@@ -230,6 +230,20 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 
 // -----------------------------------------
 
+// SDK ABI revision, independent of the wire version. Existing public layouts
+// remain unchanged. Increment on any incompatible layout/calling-contract change.
+#define ROCKETNET_ABI_VERSION 1
+
+// Safe before init; no allocation and no caller-owned struct writes. Type names
+// are the public C struct names. Unknown types/fields return SIZE_MAX for size
+// and offset, and -1 for field count. This describes the seven transport/config/
+// packet/frame-sync structs in this header, not opaque internal objects.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_abi_version( void );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_type_size( const char * type );
+ROCKETNET_EXPORT_FUNC int rocketnet_abi_field_count( const char * type );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset( const char * type, const char * field );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size( const char * type, const char * field );
+
 #ifdef __cplusplus
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context = NULL );
 #else
