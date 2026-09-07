@@ -600,8 +600,8 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_trans
 
 // The client's connection quality: rtt and jitter in milliseconds, packet
 // loss as a percentage, and the last second's packet rates and bandwidth
-// both ways. The rates come from a ring of per-frame buckets filled as the
-// existing send and receive walks run and summed over the trailing second,
+// both ways. The rates come from elapsed-time buckets (about 4 ms boundary
+// resolution), filled by existing send/receive walks over the trailing second,
 // so the cost per update is flat and no walk is added for them. rtt seeds
 // from the handshake's round trips and is continuously refreshed by the
 // acks -- the first block acknowledging each sent sequence yields a

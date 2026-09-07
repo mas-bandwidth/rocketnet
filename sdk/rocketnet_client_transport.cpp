@@ -493,7 +493,7 @@ static void rocketnet_client_update_swap_receive_buffers( rocketnet_client_trans
 }
 
 // process the previous stats frames into published per-second numbers, then
-// open the next bucket, then run the loss tracker's bounded sweep into it.
+// advance the bucket when due, then run the loss tracker's bounded sweep.
 // rtt and jitter live in the protocol and the jitter tracker and are read by
 // the getter; the windowed numbers -- rates, bandwidth, loss -- are computed
 // here, once per update, at flat cost.

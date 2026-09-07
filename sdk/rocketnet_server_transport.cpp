@@ -118,11 +118,10 @@ static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every s
 static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
 static_assert( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload pointer handed to the caller must be 16-aligned" );
 
-// the stats bucket ring, the space game's pattern: one bucket per frame,
-// accumulation riding the walks the transport already makes, published
-// per-second numbers summing only buckets younger than one second. the ring
-// is deep enough that a bucket outlives the second it contributes to at any
-// sane frame rate; a bucket with frame zero has never been written.
+// Statistics accumulate during the existing send/receive walks. Buckets
+// advance with elapsed time, independently of update cadence, and only the
+// trailing second contributes. The frame field marks initialized buckets;
+// it does not select their index or determine their retention.
 
 #define ROCKETNET_NUM_SERVER_STATS_FRAMES 256
 
@@ -988,8 +987,8 @@ const char * rocketnet_server_transport_driver( struct rocketnet_server_transpor
 }
 
 // process the previous stats frames into published per-second numbers, then
-// open the next bucket. the sum walks the whole fixed ring every update --
-// constant shape, ALWAYS BE LOADED -- and only buckets younger than one
+// advance the bucket when enough time has passed. The sum walks the fixed
+// ring every update at bounded cost, and only buckets younger than one
 // second contribute, so the published numbers are "per second" by window
 // rather than by division.
 
@@ -1273,8 +1272,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     acks->update_count++;
 
     // flush. the per-driver law is stated where callers read it, at
-    // send_packets in rocketnet.h: send_packets once per frame after
-    // update is the guarantee, and when staged packets actually leave is
+    // send_packets in rocketnet.h: flush after each joined fill phase,
+    // independently of application frames. When staged packets leave is
     // per driver. the portable driver has always ALSO sent update's own
     // responses and keep-alives inline right here, and much of the test
     // suite's pump loops lean on that without ever calling send_packets.
