@@ -5552,7 +5552,15 @@ void rocketnet_test_transport_udp_loopback()
 
     rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    // Stop may need to drain asynchronous I/O. The public contract requires
+    // waiting for STOPPED, not a particular number of updates.
+    start = rocketnet_platform_time();
+    while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED &&
+            rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
     rocketnet_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rocketnet_server_transport_destroy( server );
 }
