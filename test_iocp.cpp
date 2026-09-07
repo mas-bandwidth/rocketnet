@@ -219,14 +219,62 @@ static void test_datagrams_and_producers()
         ++count;
     }
     CHECK(count == 256);
-    // Shutdown with receives still posted and no further inbound traffic.
+    // Exercise cancellation while completion workers are actively reposting.
+    std::atomic<bool> sending{true};
+    std::thread incoming([&]() {
+        while (sending.load())
+            rocketnet_platform_socket_send_packet(peer, &destination, extra, sizeof(extra));
+    });
+    rocketnet_platform_sleep(0.01);
     wait_stopped(driver);
+    sending.store(false);
+    incoming.join();
     uint64_t stopped_id;
     CHECK(!rocketnet_server_iocp_start_packet(driver, &peer_address, &stopped_id));
     rocketnet_server_iocp_stop(driver);
     rocketnet_server_iocp_destroy(driver);
     rocketnet_platform_socket_destroy(peer);
     printf("test_iocp_datagrams_and_producers\n");
+}
+
+static void test_receive_boundaries()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(driver);
+    SOCKET peer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    CHECK(peer != INVALID_SOCKET);
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(bind.port);
+    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    char oversized[ROCKETNET_RECEIVE_CEILING + 64] = {};
+    CHECK(sendto(peer, oversized, 0, 0, (sockaddr*)&to, sizeof(to)) == 0);
+    CHECK(sendto(peer, oversized, sizeof(oversized), 0, (sockaddr*)&to, sizeof(to)) == sizeof(oversized));
+    CHECK(sendto(peer, "good", 4, 0, (sockaddr*)&to, sizeof(to)) == 4);
+    int received = 0;
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS] = {};
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets(driver);
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets(driver);
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            CHECK(batch->packet_bytes[i] == 4 && memcmp(batch->packet_data[i], "good", 4) == 0);
+            ++received;
+        }
+        rocketnet_server_iocp_counters(driver, counters);
+        if ( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2 &&
+             rocketnet_server_iocp_pending(driver) == ROCKETNET_IOCP_RECEIVES_PER_WORKER ) break;
+        rocketnet_platform_sleep(0.001);
+    }
+    CHECK(received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2);
+    CHECK(rocketnet_server_iocp_pending(driver) == ROCKETNET_IOCP_RECEIVES_PER_WORKER);
+    wait_stopped(driver); // Cancellation with idle, outstanding receives too.
+    rocketnet_server_iocp_destroy(driver);
+    closesocket(peer);
+    printf("test_iocp_receive_boundaries\n");
 }
 
 int main()
@@ -237,6 +285,7 @@ int main()
     test_create_cleanup();
     test_completion_owns_frames();
     test_datagrams_and_producers();
+    test_receive_boundaries();
     rocketnet_term();
     CHECK(live_allocations.load() == 0);
     return 0;

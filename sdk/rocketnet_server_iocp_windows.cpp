@@ -13,6 +13,7 @@
 
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_platform.h"
+#include <ws2tcpip.h>
 #include <mswsock.h>
 #include <mstcpip.h>
 #include <atomic>
@@ -168,10 +169,14 @@ static void rocketnet_iocp_worker( void * argument )
         ULONG count = 0;
         const DWORD timeout = QueryDepthSList( &iocp->retry_receives ) ? 1 : 50;
         const BOOL ok = GetQueuedCompletionStatusEx( iocp->port, entries, 64, &count, timeout, FALSE );
-        if ( !ok && GetLastError() != WAIT_TIMEOUT )
+        if ( !ok )
         {
-            rocketnet_error( "IOCP completion dequeue failed: %lu", GetLastError() );
-            rocketnet_platform_sleep( 0.001 );
+            count = 0;
+            if ( GetLastError() != WAIT_TIMEOUT )
+            {
+                rocketnet_error( "IOCP completion dequeue failed: %lu", GetLastError() );
+                rocketnet_platform_sleep( 0.001 );
+            }
         }
         if ( count )
             iocp->counters[ROCKETNET_IOCP_COMPLETION_BATCHES].fetch_add( 1, std::memory_order_relaxed );

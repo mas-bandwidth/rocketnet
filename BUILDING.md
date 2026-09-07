@@ -152,6 +152,27 @@ working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
 `ROCKETNET_NUM_OS_CPUS`. Run the same `./bin/test` against each rung — the suite is
 driver-blind.
 
+### Windows IOCP server
+
+Select `driver = "iocp"` in the existing server config, or set
+`ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
+send buffers are recycled only after completion, and stop cancels and drains
+outstanding operations. IPv6 binds accept both address families. The client
+continues to use the portable path.
+
+The existing `num_xdp_queues` field selects IOCP workers, following the GSO
+driver's reuse of this field: zero selects four workers; 1 through 32 are valid.
+There are 128 posted receives per worker, 1024 receive staging slots per worker
+per buffer, and 16384 send frames across all workers. These are resource bounds,
+not timing or packet-rate requirements. A send frame still owned by the OS is
+unavailable to the next fill, even after an application flush.
+
+IOCP is currently an explicit selection; Windows `auto` keeps portable first
+while this new driver is reviewed. Windows CI runs both configurations, plus
+completion-lifetime, allocation-failure and shutdown tests, and the C# smoke
+with IOCP selected. Compilation and loopback correctness do not establish NIC
+line-rate performance; that requires measurements on suitable Windows hardware.
+
 ## Deploying the XDP driver: provision, then verify-and-bind
 
 The library never mutates machine state. `rocketnet_server_transport_create()`

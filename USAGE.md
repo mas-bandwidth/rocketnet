@@ -385,8 +385,13 @@ The recommended orders — what `auto` expands to — are:
 | Linux    | xdp, gso, portable   | portable          |
 | macOS    | msgx, portable       | msgx, portable    |
 | iOS      | portable             | portable          |
-| Windows  | portable             | portable          |
+| Windows  | portable, iocp       | portable          |
 | BSDs     | portable             | portable          |
+
+The new Windows IOCP server driver is explicitly selectable with `"iocp"`.
+Its automatic preference remains behind portable during validation. See
+[Windows IOCP server](BUILDING.md#windows-iocp-server) for worker configuration,
+completion ownership and the scope of its checks.
 
 Four rules, and the distinctions between them are deliberate:
 

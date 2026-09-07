@@ -683,6 +683,13 @@ jobs:
           ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
         run: dotnet run --project csharp/smoke -c Release --no-build
 
+      - name: Run the C# smoke over IOCP
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ROCKETNET_LIBRARY_PATH: bin/Release
+        run: dotnet run --project csharp/smoke -c Release --no-build -- --iocp
+
   # THE SANITIZED SOAK, PER COMMIT. This is where the duration-split (see the
   # file header) is drawn tightest: the NIGHTLY soak (nightly-soak.yml) runs
   # soak_sim for tens of millions of iterations and belief comes after days;
