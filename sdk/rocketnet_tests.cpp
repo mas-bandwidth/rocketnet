@@ -10603,6 +10603,13 @@ void rocketnet_test_server_driver_pin_portable()
     rocketnet_test_driver_pin_exchange( "portable", "portable" );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_server_driver_pin_iocp()
+{
+    rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
+}
+#endif
+
 // #109: a port-zero public address asks the KERNEL for a port, so it only
 // means anything to a driver that discovers what it was granted and hands
 // it back. the portable and msgx rungs discover through the platform
@@ -11947,6 +11954,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_driver_ladder_parse );
         RUN_TEST( test_config_precedence );
         RUN_TEST( test_server_driver_pin_portable );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        RUN_TEST( test_server_driver_pin_iocp );
+#endif
         RUN_TEST( test_server_port_zero_needs_a_discovering_driver );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         RUN_TEST( test_server_driver_pin_gso );

@@ -397,6 +397,7 @@ static const char * rocketnet_driver_names[ROCKETNET_NUM_DRIVERS] =
     "gso",              // ROCKETNET_DRIVER_GSO
     "xdp",              // ROCKETNET_DRIVER_XDP
     "msgx",             // ROCKETNET_DRIVER_MSGX
+    "iocp",             // ROCKETNET_DRIVER_IOCP
 };
 
 const char * rocketnet_driver_name( int driver )
@@ -433,6 +434,7 @@ static const bool rocketnet_driver_discovers[ROCKETNET_NUM_DRIVERS] =
     true,               // ROCKETNET_DRIVER_GSO
     false,              // ROCKETNET_DRIVER_XDP
     true,               // ROCKETNET_DRIVER_MSGX
+    true,               // ROCKETNET_DRIVER_IOCP
 };
 
 bool rocketnet_driver_discovers_bound_port( int driver )
@@ -442,7 +444,7 @@ bool rocketnet_driver_discovers_bound_port( int driver )
     return rocketnet_driver_discovers[driver];
 }
 
-#define ROCKETNET_KNOWN_DRIVER_NAMES "xdp, gso, msgx, portable"
+#define ROCKETNET_KNOWN_DRIVER_NAMES "xdp, gso, msgx, portable, iocp"
 
 static int rocketnet_driver_id_from_name( const char * name, int name_length )
 {
@@ -604,6 +606,13 @@ static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
 
 static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
 static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
+
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// IOCP is explicitly selectable while its driver/performance pass is reviewed.
+// Keep the existing automatic preference until that validation is complete.
+static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_PORTABLE, ROCKETNET_DRIVER_IOCP };
+static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
 
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
