@@ -128,7 +128,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( packet, size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
-                const ssize_t result = sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) );
+                ssize_t result = sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) );
+                if ( bench_fault( "send-short" ) ) result = size - 1;
+                if ( bench_fault( "send-zero" ) ) result = 0;
                 if ( result != size )
                 {
                     syscalls++;

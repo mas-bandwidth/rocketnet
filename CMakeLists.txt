@@ -149,6 +149,9 @@ foreach(target rocketnet rocketnet_shared)
     target_link_libraries(${target} PRIVATE Threads::Threads)
     # Family strict floating-point floor, including callers compiling SDK inline code.
     if(MSVC)
+        # Static compiler symbols must not race the shared library linker PDB
+        # when both targets use the rocketnet output name in an embedded build.
+        set_target_properties(${target} PROPERTIES COMPILE_PDB_NAME "${target}_compile")
         target_compile_options(${target} PUBLIC /fp:precise)
     else()
         target_compile_options(${target} PUBLIC -ffp-contract=off)

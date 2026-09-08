@@ -5434,6 +5434,7 @@ void rocketnet_test_transport_start_finish_shape()
 
     frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES + arena, &context );
     rocketnet_check( frame );
+    rocketnet_check( context.payload_index == (arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET) );
     memcpy( frame + context.payload_index, "shape", 5 );
     rocketnet_server_transport_finish_packet( server, &context, 5 );
     rocketnet_server_transport_send_packets( server );
@@ -5459,6 +5460,7 @@ void rocketnet_test_transport_start_finish_shape()
     struct rocketnet_packet_context_t reply;
     uint8_t * reply_frame = rocketnet_client_transport_start_packet(client, ROCKETNET_MAX_PAYLOAD_BYTES + arena, &reply);
     rocketnet_check(reply_frame);
+    rocketnet_check(reply.payload_index == (arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET));
     memcpy(reply_frame + reply.payload_index, "reply", 5);
     rocketnet_check(rocketnet_client_transport_finish_packet(client, &reply, 5) > 0);
     rocketnet_client_transport_send_packets(client);
