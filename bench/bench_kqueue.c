@@ -128,15 +128,15 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( packet, size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
-                if ( sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) ) < 0 )
+                const ssize_t result = sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) );
+                if ( result != size )
                 {
                     syscalls++;
-                    bench_send_refused( &health, "sendto", errno );
+                    sent += bench_send_refused( &health, "sendto", result < 0 ? errno : EIO );
                     continue;
                 }
                 syscalls++;
-                bench_send_ok( &health, "sendto" );
-                sent++;
+                sent += bench_send_ok( &health, "sendto" );
             }
         }
     }

@@ -219,6 +219,8 @@ static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t *
 // consume the entire maintenance budget and servers can service >256 slots.
 static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t * server_transport )
 {
+    rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
+    rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
