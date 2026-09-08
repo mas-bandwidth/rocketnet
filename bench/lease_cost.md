@@ -48,6 +48,11 @@ Apple M3 Ultra on the shared Studio, unpinned, with other tasks active.
 Source `834bccf9e09392802f0f2a7e116bb694bee7459c`, Apple clang version 21.0.0 (clang-2100.1.1.101), libsodium 1.0.22.
 Release `-O3 -DNDEBUG -ffp-contract=off`, no LTO. Raw observations and source/header
 hashes are in [lease_cost_2026-09-08.json](lease_cost_2026-09-08.json).
+That retained file supplements the measured controller output with an independently
+computed `harness_sha256`, separately run `memory_profiles`, and a completed-run
+`status`; the measured 834bccf controller did not emit those fields. Later
+controller revisions write status themselves. `subsequent_setup_check` is a
+separately added record of a later diagnostic, not output a fresh run reproduces.
 Each cell is the median [minimum, maximum] ns per logical payload over five
 process runs. Overlapping ranges do not establish a stable difference here.
 
@@ -91,11 +96,14 @@ process runs. Overlapping ranges do not establish a stable difference here.
 | client | access | 4096 | 4 | 1097.61 [1016.28, 2083.51] | 1122.59 [743.83, 2343.62] |
 
 The server's single-thread 64-byte finish median was 432.17 ns with checks
-and 422.41 ns in the control: 9.76 ns (2.31%).
+and 422.41 ns in the control: 9.76 ns (2.31% relative to the control).
 The finish ranges overlap in this repeat, so the shared-host measurement does
-not establish a stable net finish advantage. The single-thread client abort
-cases do separate, demonstrating a cost in light workloads. Neither overlapping
-ranges nor these local medians establish zero cost or a NIC throughput result.
+not establish a stable net finish advantage. In this recorded repeat, the
+single-thread client abort ranges separate: at 64 bytes, medians are 13.98 vs
+7.40 ns, a 6.58 ns increase (89% relative to the control). An independent
+same-host reviewer rerun found overlapping 64/1192-byte abort ranges, so that
+separation is not a stable cross-run result. Neither overlapping ranges nor
+these local medians establish zero cost or a NIC throughput result.
 The access case deliberately repeats eight views and reports their combined
 cost with start/write/abort; do not read its ratio as ordinary packet throughput.
 
