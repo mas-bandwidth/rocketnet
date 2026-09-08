@@ -178,26 +178,24 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             memcpy( CMSG_DATA( cmsg ), &segment_size, sizeof(segment_size) );
 
             ssize_t result = sendmsg( fd, &msg, 0 );
+            const int error = errno;
             syscalls++;
-            if ( result >= 0 )
-            {
-                sent += BENCH_BATCH_SIZE;
-                bench_send_ok( &health, "sendmsg (UDP_SEGMENT)" );
-            }
-            else
-            {
-                /* EINVAL here is a kernel with no UDP_SEGMENT, which is the
-                   whole candidate absent -- not a slow one (#98 item 5) */
-                bench_send_refused( &health, "sendmsg (UDP_SEGMENT)", errno );
-            }
+            if ( bench_fault( "send-short" ) ) result = size;
+            if ( bench_fault( "send-zero" ) ) result = 0;
+            // sendmsg returns bytes. Only whole accepted segments count;
+            // any partial segment and the remaining messages are refusals.
+            sent += bench_send_batch_observe( &health, "sendmsg (UDP_SEGMENT)",
+                                             result >= 0 ? (int) (result / size) : 0, BENCH_BATCH_SIZE,
+                                             result < 0 ? error : EIO );
         }
 
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+    bench_send_validate( &health );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
-            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure, (unsigned long long) health.refused );
     close( fd );
 }
 

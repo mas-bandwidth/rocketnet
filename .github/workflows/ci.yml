@@ -380,8 +380,9 @@ jobs:
   # so a wrong ANSWER fails it too, not only a wrong access.
   #
   # The second step is a small fixed-seed mutation pass on top. It is bounded
-  # by wall clock and cannot fail on anything but a genuine crash, and it is
-  # NOT the gate's determinism argument -- the replay is.
+  # by a fixed mutation count and a failing step deadline: a slow runner
+  # must finish the count or fail visibly. It is not the gate's determinism
+  # argument -- the regression replay is.
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
@@ -426,16 +427,19 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
         run: ./bin/fuzz fuzz/corpus/*
 
+      - name: Exact-field oracle rejects memory-safe truncation
+        run: python3 tools/check_fuzz_oracle.py build-fuzz
+
       # The bounded pass: fixed seed, FIXED EXECUTION COUNT, and the corpus
       # copied out first so the source tree is not mutated. -runs, not
       # -max_total_time, is what makes this repeatable: a wall-clock bound
       # makes the number of inputs tried a function of how fast the runner
       # is that morning, so a latent crash reddens whichever pull request
       # happens to draw a quick machine, on code it did not touch. A fixed
-      # seed and a fixed count try the same inputs everywhere. The time cap
-      # stays only as a runaway guard, well above the measured cost of the
-      # count; if it ever bites, the count is too high and wants lowering
-      # rather than the cap raising. Two million executions measured at
+      # seed and a fixed count try the same inputs everywhere. The step's
+      # timeout is the runaway guard and fails red if the count cannot finish;
+      # libFuzzer's wall-clock cap would instead return success early.
+      # Two million executions measured at
       # roughly thirty seconds on this runner, which is the same depth the
       # wall-clock bound was reaching before -- the change buys determinism,
       # it does not buy less fuzzing.
@@ -446,7 +450,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cp -r fuzz/corpus /tmp/fuzz-corpus
-          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=2000000 -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()

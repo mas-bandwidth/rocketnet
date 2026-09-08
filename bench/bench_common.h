@@ -97,6 +97,12 @@ static inline uint64_t bench_time_ns( void )
                       EAGAIN, as a kernel with a broken socket would
       send-refused    every send is treated as refused, as a host
                       without the feature under test would behave
+      send-partial    31 of every 32 sends become hard refusals,
+                      so the consecutive-refusal limit never trips
+      send-short      a batch call reports just one message/segment sent
+      send-zero       a batch call reports zero messages/bytes sent
+      send-backpressure 31 of every 32 sends report ENOBUFS; the accepted
+                      count must exclude them, while validation permits it
       sqe-exhausted   the io_uring submission queue reports empty, the
                       NULL that bench_uring used to dereference
 
@@ -111,7 +117,7 @@ static inline void bench_fault_init( void )
     bench_fault_name = getenv( "BENCH_FAULT" );
     if ( bench_fault_name )
     {
-        printf( "FAULT ARMED: %s -- this run must abort\n", bench_fault_name );
+        printf( "FAULT ARMED: %s -- synthetic results, never a measurement\n", bench_fault_name );
         fflush( stdout );
     }
 }
@@ -178,44 +184,88 @@ static inline void bench_receive_refused_or_empty( const char * call, int error 
 
 struct bench_send_health_t
 {
+    uint64_t refused;
     uint64_t back_pressure;
     uint64_t consecutive_refusals;
+    uint64_t fault_sends;
+    int last_refusal_error;
 };
 
-static inline void bench_send_refused( struct bench_send_health_t * health, const char * call, int error );
-
-/* every send reports its outcome here, success included: the fault switch has
-   to be able to turn a healthy host's successful sends into the refusals a
-   feature-less host would produce, or the abort path has no negative control */
-
-static inline void bench_send_ok( struct bench_send_health_t * health, const char * call )
-{
-    if ( bench_fault( "send-refused" ) )
-    {
-        bench_send_refused( health, call, EINVAL );
-        return;
-    }
-    health->consecutive_refusals = 0;
-}
-
-static inline void bench_send_refused( struct bench_send_health_t * health, const char * call, int error )
+// Fault injection observes both successful and refused calls, so the partial
+// failure plant has the same 31-of-32 pattern regardless of the host outcome.
+static inline int bench_send_observe( struct bench_send_health_t * health, const char * call, int error )
 {
     if ( bench_fault( "send-refused" ) )
         error = EINVAL;
+    else if ( bench_fault( "send-partial" ) )
+        error = ++health->fault_sends % 32 != 0 ? EINVAL : 0;
+    else if ( bench_fault( "send-backpressure" ) )
+        error = ++health->fault_sends % 32 != 0 ? ENOBUFS : 0;
+    if ( error == 0 )
+    {
+        health->consecutive_refusals = 0;
+        return 1;
+    }
+    health->refused++;
     if ( error == ENOBUFS || error == EAGAIN || error == EWOULDBLOCK || error == EINTR )
     {
         health->back_pressure++;
         health->consecutive_refusals = 0;
-        return;
+        return 0;
     }
+    health->last_refusal_error = error;
     health->consecutive_refusals++;
     if ( health->consecutive_refusals < BENCH_SEND_REFUSAL_LIMIT )
-        return;
+        return 0;
     char detail[224];
     snprintf( detail, sizeof(detail),
               "%llu sends in a row refused with errno %d (%s) -- this host cannot do what this harness measures, and a silent spin here reports pps=0 as if the driver were merely slow",
               (unsigned long long) health->consecutive_refusals, error, strerror( error ) );
     bench_fatal( call, detail );
+    return 0;
+}
+
+static inline int bench_send_ok( struct bench_send_health_t * health, const char * call )
+{
+    return bench_send_observe( health, call, 0 );
+}
+
+static inline int bench_send_refused( struct bench_send_health_t * health, const char * call, int error )
+{
+    return bench_send_observe( health, call, error ? error : EIO );
+}
+
+// Count accepted messages and every unsent member of a batch. Normal full
+// batches take one health update; per-message fault simulation is test-only.
+static inline int bench_send_batch_observe( struct bench_send_health_t * health, const char * call,
+                                            int accepted, int attempted, int error )
+{
+    if ( accepted < 0 || accepted > attempted )
+        bench_fatal( call, "invalid accepted-message count" );
+    int sent = 0;
+    if ( !bench_fault_name && accepted > 0 )
+    {
+        health->consecutive_refusals = 0;
+        sent = accepted;
+    }
+    else
+        for ( int i = 0; i < accepted; ++i ) sent += bench_send_ok( health, call );
+    for ( int i = accepted; i < attempted; ++i ) sent += bench_send_refused( health, call, error );
+    return sent;
+}
+
+// Any non-back-pressure refusal invalidates the completed sample, even when
+// intervening successes kept the early consecutive-refusal abort from firing.
+static inline void bench_send_validate( const struct bench_send_health_t * health )
+{
+    if ( health->refused == health->back_pressure )
+        return;
+    char detail[224];
+    snprintf( detail, sizeof(detail),
+              "refused=%llu back_pressure=%llu last_errno=%d (%s) -- non-back-pressure send failures invalidate this sample",
+              (unsigned long long) health->refused, (unsigned long long) health->back_pressure,
+              health->last_refusal_error, strerror( health->last_refusal_error ) );
+    bench_fatal( "send health", detail );
 }
 
 /*

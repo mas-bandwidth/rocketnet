@@ -112,27 +112,30 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( packet, size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
-                if ( sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) ) < 0 )
+                ssize_t result = sendto( fd, packet, (size_t) size, 0, (struct sockaddr*) &to, sizeof(to) );
+                if ( bench_fault( "send-short" ) ) result = size - 1;
+                if ( bench_fault( "send-zero" ) ) result = 0;
+                if ( result != size )
                 {
                     /* ENOBUFS et al is back pressure: count the syscall, drop
                        the packet, keep going. A long unbroken run of any other
                        refusal is a host that cannot do this, and aborts. */
                     syscalls++;
-                    bench_send_refused( &health, "sendto", errno );
+                    sent += bench_send_refused( &health, "sendto", result < 0 ? errno : EIO );
                     continue;
                 }
                 syscalls++;
-                bench_send_ok( &health, "sendto" );
-                sent++;
+                sent += bench_send_ok( &health, "sendto" );
             }
         }
 
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+    bench_send_validate( &health );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
-            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure, (unsigned long long) health.refused );
     close( fd );
 }
 

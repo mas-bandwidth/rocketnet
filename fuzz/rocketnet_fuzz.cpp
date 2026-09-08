@@ -41,8 +41,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <memory>
 
 static const uint8_t rocketnet_fuzz_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+
+static void rocketnet_fuzz_require( bool condition, const char * property )
+{
+    if ( condition ) return;
+    fprintf( stderr, "fuzz oracle failed: %s\n", property );
+    abort();
+}
 
 // the counter table the reassembly engine fires into: the server's family,
 // the same one the suite's fragment tests use
@@ -77,7 +85,11 @@ static void rocketnet_fuzz_prefilter( const uint8_t * data, size_t bytes )
     if ( bytes > ROCKETNET_RECEIVE_CEILING + 1 )
         bytes = ROCKETNET_RECEIVE_CEILING + 1;
 
-    const int result = rocketnet_prefilter_check( data, (int) bytes, rocketnet_fuzz_filter_value );
+    // Give ASan a boundary at the declared slice, not at the end of the
+    // larger libFuzzer input from which it was taken.
+    std::unique_ptr<uint8_t[]> packet( new uint8_t[bytes] );
+    memcpy( packet.get(), data, bytes );
+    const int result = rocketnet_prefilter_check( packet.get(), (int) bytes, rocketnet_fuzz_filter_value );
 
     if ( result < 0 )
     {
@@ -146,9 +158,11 @@ static void rocketnet_fuzz_fragment( const uint8_t * data, size_t bytes )
 
         if ( record_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 )
         {
+            std::unique_ptr<uint8_t[]> fragment( new uint8_t[record_bytes] );
+            memcpy( fragment.get(), data + offset, record_bytes );
             rocketnet_reassembly_process_fragment( rocketnet_fuzz_reassembly,
                                                    connection,
-                                                   data + offset,
+                                                   fragment.get(),
                                                    record_bytes,
                                                    counters_storage.values,
                                                    &rocketnet_fuzz_fragment_counters );
@@ -163,10 +177,12 @@ static void rocketnet_fuzz_fragment( const uint8_t * data, size_t bytes )
 
     if ( bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES )
     {
+        uint8_t header[ROCKETNET_FRAGMENT_HEADER_BYTES];
+        memcpy( header, data, sizeof(header) );
         uint32_t payload_id = 0;
         int fragment_index = 0;
         int fragment_count = 0;
-        rocketnet_read_fragment_header( data, &payload_id, &fragment_index, &fragment_count );
+        rocketnet_read_fragment_header( header, &payload_id, &fragment_index, &fragment_count );
 
         int plan_count = 0;
         int plan_stride = 0;
@@ -199,12 +215,16 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     if ( bytes > 4096 )
         bytes = 4096;
 
+    std::unique_ptr<uint8_t[]> input( new uint8_t[bytes] );
+    memcpy( input.get(), data, bytes );
+    data = input.get();
+
     char text[4097];
     memcpy( text, data, bytes );
     text[bytes] = '\0';
 
     uint8_t decoded[4097];
-    rocketnet_base64_decode_data( text, decoded, sizeof( decoded ) );
+    const int wide_bytes = rocketnet_base64_decode_data( text, decoded, sizeof( decoded ) );
 
     char decoded_string[4097];
     rocketnet_base64_decode_string( text, decoded_string, sizeof( decoded_string ) );
@@ -222,6 +242,19 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     const int key_bytes = rocketnet_base64_decode_data( text, key_field, sizeof( key_field ) );
     if ( key_bytes < 0 || key_bytes > (int) sizeof( key_field ) )
         abort();
+    if ( wide_bytes > (int) sizeof( key_field ) )
+        rocketnet_fuzz_require( key_bytes == 0, "base64 overlong field must refuse" );
+    if ( wide_bytes > 0 && wide_bytes <= (int) sizeof( key_field ) )
+        rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, wide_bytes ) == 0,
+                               "base64 fitting field must preserve all bytes" );
+
+    char small_string[8];
+    const int small_string_bytes = rocketnet_base64_decode_string( text, small_string, sizeof( small_string ) );
+    if ( wide_bytes >= (int) sizeof( small_string ) )
+        rocketnet_fuzz_require( small_string_bytes == 0, "base64 string must reserve its terminator" );
+    if ( wide_bytes > 0 && wide_bytes < (int) sizeof( small_string ) )
+        rocketnet_fuzz_require( small_string_bytes == wide_bytes && memcmp( small_string, decoded, wide_bytes ) == 0 && small_string[wide_bytes] == '\0',
+                               "base64 fitting string must preserve bytes and terminator" );
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
     // whatever these bytes are, encoding then decoding them must return
@@ -230,6 +263,13 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
 
     char encoded[8192];
     const int encoded_length = rocketnet_base64_encode_data( data, bytes, encoded, sizeof( encoded ) );
+    char small_encoded[8];
+    const int small_encoded_length = rocketnet_base64_encode_data( data, bytes, small_encoded, sizeof( small_encoded ) );
+    if ( encoded_length >= (int) sizeof( small_encoded ) )
+        rocketnet_fuzz_require( small_encoded_length == -1, "base64 encode must refuse insufficient capacity" );
+    if ( encoded_length > 0 && encoded_length < (int) sizeof( small_encoded ) )
+        rocketnet_fuzz_require( small_encoded_length == encoded_length && memcmp( small_encoded, encoded, encoded_length + 1 ) == 0,
+                               "base64 fitting encode must preserve bytes and terminator" );
     if ( encoded_length > 0 )
     {
         uint8_t round_trip[4097];
