@@ -1,0 +1,100 @@
+{
+  "upstream_version": "1.0.22",
+  "upstream_commit": "77e1ce5d6dee871c49ef211222ba18ef0c486bda",
+  "archive_sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349",
+  "baseline_commit": "fc473eb628e080acaaebed2659e1f9ee85c6a7c2",
+  "baseline_sha256": {
+    "sodium.c": "b2bf049faccbcf18725c6805cdafe409f332604477e17e4224df152ee3eb0dd5",
+    "sodium.h": "393663bfe1905a262c2828dd41a79136cf9024477433466c66586a48bd0e6876"
+  },
+  "public_headers": [
+    "crypto_box.h",
+    "crypto_generichash.h",
+    "crypto_hash_sha512.h",
+    "crypto_scalarmult.h",
+    "crypto_secretbox.h",
+    "crypto_shorthash.h",
+    "crypto_sign.h"
+  ],
+  "sources": [
+    "crypto_box/crypto_box.c",
+    "crypto_box/crypto_box_easy.c",
+    "crypto_box/crypto_box_seal.c",
+    "crypto_box/curve25519xsalsa20poly1305/box_curve25519xsalsa20poly1305.c",
+    "crypto_core/ed25519/ref10/ed25519_ref10.c",
+    "crypto_core/hsalsa20/ref2/core_hsalsa20_ref2.c",
+    "crypto_core/salsa/ref/core_salsa_ref.c",
+    "crypto_generichash/crypto_generichash.c",
+    "crypto_generichash/blake2b/generichash_blake2.c",
+    "crypto_generichash/blake2b/ref/blake2b-compress-ref.c",
+    "crypto_generichash/blake2b/ref/blake2b-compress-ssse3.c",
+    "crypto_generichash/blake2b/ref/blake2b-compress-sse41.c",
+    "crypto_generichash/blake2b/ref/blake2b-compress-avx2.c",
+    "crypto_generichash/blake2b/ref/blake2b-ref.c",
+    "crypto_generichash/blake2b/ref/generichash_blake2b.c",
+    "crypto_hash/sha512/cp/hash_sha512_cp.c",
+    "crypto_hash/sha512/hash_sha512.c",
+    "crypto_scalarmult/crypto_scalarmult.c",
+    "crypto_scalarmult/curve25519/ref10/x25519_ref10.c",
+    "crypto_scalarmult/curve25519/scalarmult_curve25519.c",
+    "crypto_secretbox/crypto_secretbox.c",
+    "crypto_secretbox/crypto_secretbox_easy.c",
+    "crypto_secretbox/xsalsa20poly1305/secretbox_xsalsa20poly1305.c",
+    "crypto_shorthash/crypto_shorthash.c",
+    "crypto_shorthash/siphash24/shorthash_siphash24.c",
+    "crypto_shorthash/siphash24/ref/shorthash_siphash24_ref.c",
+    "crypto_sign/crypto_sign.c",
+    "crypto_sign/ed25519/sign_ed25519.c",
+    "crypto_sign/ed25519/ref10/keypair.c",
+    "crypto_sign/ed25519/ref10/sign.c",
+    "crypto_sign/ed25519/ref10/open.c",
+    "crypto_stream/salsa20/ref/salsa20_ref.c",
+    "crypto_stream/salsa20/xmm6int/salsa20_xmm6int-sse2.c",
+    "crypto_stream/salsa20/xmm6int/salsa20_xmm6int-avx2.c",
+    "crypto_stream/salsa20/stream_salsa20.c",
+    "crypto_stream/xsalsa20/stream_xsalsa20.c"
+  ],
+  "renames": {
+    "crypto_generichash/blake2b/ref/blake2b-ref.c": [
+      "blake2b_IV"
+    ],
+    "crypto_stream/salsa20/ref/salsa20_ref.c": [
+      "stream_ref",
+      "stream_ref_xor_ic"
+    ],
+    "crypto_scalarmult/curve25519/scalarmult_curve25519.c": [
+      "implementation"
+    ],
+    "crypto_stream/salsa20/stream_salsa20.c": [
+      "implementation"
+    ],
+    "crypto_generichash/blake2b/ref/blake2b-compress-ssse3.c": [
+      "blake2b_IV"
+    ],
+    "crypto_generichash/blake2b/ref/blake2b-compress-sse41.c": [
+      "blake2b_IV"
+    ],
+    "crypto_generichash/blake2b/ref/blake2b-compress-avx2.c": [
+      "blake2b_IV"
+    ],
+    "crypto_stream/salsa20/xmm6int/salsa20_xmm6int-avx2.c": [
+      "salsa_ctx",
+      "TR",
+      "salsa_keysetup",
+      "salsa_ivsetup",
+      "salsa20_encrypt_bytes"
+    ]
+  },
+  "local_macro_headers": [
+    "crypto_generichash/blake2b/ref/blake2b-compress-avx2.h",
+    "crypto_generichash/blake2b/ref/blake2b-compress-sse41.h",
+    "crypto_generichash/blake2b/ref/blake2b-compress-ssse3.h",
+    "crypto_generichash/blake2b/ref/blake2b-load-avx2.h",
+    "crypto_generichash/blake2b/ref/blake2b-load-sse2.h",
+    "crypto_generichash/blake2b/ref/blake2b-load-sse41.h",
+    "crypto_stream/salsa20/xmm6int/u0.h",
+    "crypto_stream/salsa20/xmm6int/u1.h",
+    "crypto_stream/salsa20/xmm6int/u4.h",
+    "crypto_stream/salsa20/xmm6int/u8.h"
+  ]
+}

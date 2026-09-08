@@ -8,6 +8,7 @@ set(ROCKETNET_TOP_LEVEL OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(ROCKETNET_TOP_LEVEL ON)
 endif()
+option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
@@ -52,6 +53,17 @@ endforeach()
 
 
 include(cmake/RocketNetDependencies.cmake)
+
+if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+    set(ROCKETNET_SODIUM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sodium/sodium.c")
+endif()
+function(rocketnet_use_sodium target)
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_link_libraries(${target} PRIVATE RocketNet::Sodium)
+    else()
+        target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sodium")
+    endif()
+endfunction()
 
 # Generate into this build tree. Multiple builds never rewrite the source header.
 include(cmake/XdpSources.cmake)
@@ -104,8 +116,8 @@ set(ROCKETNET_SOURCE
 )
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
-add_library(rocketnet STATIC ${ROCKETNET_SOURCE})
-add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
+add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(RocketNet::rocketnet ALIAS rocketnet)
 add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
 
@@ -115,7 +127,7 @@ string(REGEX REPLACE ".* ([0-9]+)$" "\\1" ROCKETNET_ABI_SOVERSION "${ROCKETNET_A
 set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
     VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
-    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
 foreach(target rocketnet rocketnet_shared)
     add_dependencies(${target} rocketnet_xdp_header)
@@ -133,7 +145,8 @@ foreach(target rocketnet rocketnet_shared)
     target_include_directories(${target} PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
-    target_link_libraries(${target} PRIVATE RocketNet::Sodium Threads::Threads)
+    rocketnet_use_sodium(${target})
+    target_link_libraries(${target} PRIVATE Threads::Threads)
     # Family strict floating-point floor, including callers compiling SDK inline code.
     if(MSVC)
         target_compile_options(${target} PUBLIC /fp:precise)
@@ -154,9 +167,15 @@ if(ROCKETNET_BUILD_EXAMPLES)
     endforeach()
 endif()
 if(ROCKETNET_BUILD_TESTS)
+    add_executable(test_sodium test_sodium.c)
+    target_link_libraries(test_sodium PRIVATE rocketnet)
+    rocketnet_use_sodium(test_sodium)
+    # Isolated parity oracle only: never installed or linked into the SDK.
+    add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
+    set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
-    target_link_libraries(rocketnet_test_support PRIVATE RocketNet::Sodium)
+    rocketnet_use_sodium(rocketnet_test_support)
     add_executable(test test.cpp)
     target_link_libraries(test PRIVATE rocketnet_test_support)
     foreach(test_target test_lifecycle test_serialize test_driver test_transport_control)
@@ -164,17 +183,18 @@ if(ROCKETNET_BUILD_TESTS)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
     endforeach()
-    target_link_libraries(test_transport_control PRIVATE RocketNet::Sodium)
+    rocketnet_use_sodium(test_transport_control)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
-            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp)
+            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         add_dependencies(test_xdp rocketnet_xdp_header)
         target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
         target_include_directories(test_xdp PRIVATE sdk "${CMAKE_CURRENT_BINARY_DIR}/generated")
         target_compile_features(test_xdp PRIVATE cxx_std_11)
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
-        target_link_libraries(test_xdp PRIVATE RocketNet::Sodium RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        rocketnet_use_sodium(test_xdp)
+        target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
     endif()
     if(APPLE)
         add_executable(test_msgx test_msgx.cpp)
@@ -184,13 +204,14 @@ if(ROCKETNET_BUILD_TESTS)
         # Isolate the test-instrumented driver: never link another copy from
         # the production archive. Only its ordinary runtime dependencies enter.
         add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp
-            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp)
+            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
         target_compile_features(test_iocp PRIVATE cxx_std_11)
         target_compile_options(test_iocp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
-        target_link_libraries(test_iocp PRIVATE RocketNet::Sodium Threads::Threads)
+        rocketnet_use_sodium(test_iocp)
+        target_link_libraries(test_iocp PRIVATE Threads::Threads)
     endif()
     add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
     target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
@@ -207,8 +228,8 @@ if(ROCKETNET_BUILD_TOOLS)
     foreach(tool soak soak_sim keygen)
         target_link_libraries(${tool} PRIVATE rocketnet)
     endforeach()
-    target_link_libraries(soak_sim PRIVATE RocketNet::Sodium)
-    target_link_libraries(keygen PRIVATE RocketNet::Sodium)
+    rocketnet_use_sodium(soak_sim)
+    rocketnet_use_sodium(keygen)
 endif()
 
 install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
@@ -219,6 +240,7 @@ install(FILES sdk/rocketnet.h sdk/rocketnet_address.h sdk/rocketnet_connect_toke
     sdk/rocketnet_platform.h sdk/rocketnet_counters.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
+install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)
 set(ROCKETNET_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/RocketNet")
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"

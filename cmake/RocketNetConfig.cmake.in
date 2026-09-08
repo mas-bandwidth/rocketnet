@@ -1,4 +1,5 @@
 @PACKAGE_INIT@
+set(ROCKETNET_USE_SYSTEM_SODIUM @ROCKETNET_USE_SYSTEM_SODIUM@)
 include("${CMAKE_CURRENT_LIST_DIR}/RocketNetDependencies.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/RocketNetTargets.cmake")
 check_required_components(RocketNet)

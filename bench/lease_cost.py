@@ -30,11 +30,11 @@ env = {k: v for k, v in os.environ.items() if not k.startswith("ROCKETNET_")}
 revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 archived = subprocess.check_output(["git", "archive", revision], cwd=root)
 compiler = shlex.split(os.environ.get("CXX", "c++"))
-libs = shlex.split(subprocess.check_output(["pkg-config", "--libs", "libsodium"], text=True))
+libs = [] # The archived default SDK contains its pinned sodium implementation.
 libs += ["-framework", "CoreFoundation", "-framework", "SystemConfiguration"] if platform.system() == "Darwin" else ["-lbpf", "-lxdp", "-pthread"]
 results = {"revision": revision, "platform": platform.platform(),
            "compiler": subprocess.check_output(compiler + ["--version"], text=True).splitlines()[0],
-           "sodium": subprocess.check_output(["pkg-config", "--modversion", "libsodium"], text=True).strip(),
+           "sodium": json.loads((root / "sodium/manifest.json").read_text())["upstream_version"] + " vendored",
            "samples": args.samples, "batches": args.batches, "status": "running", "results": []}
 for variant in ("checked", "control"):
     source = work / variant

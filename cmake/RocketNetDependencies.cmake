@@ -1,7 +1,7 @@
 # Resolved on the consuming machine: no producer's absolute dependency paths
 # are written into the installed package.
 find_package(Threads REQUIRED)
-if(NOT TARGET RocketNet::Sodium)
+if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
     add_library(RocketNet::Sodium INTERFACE IMPORTED)
     if(WIN32)
         find_path(ROCKETNET_SODIUM_INCLUDE_DIR sodium.h REQUIRED)

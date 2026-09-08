@@ -77,21 +77,8 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
-      # RECORD THE CRYPTO VERSION EVERY JOB LINKS AGAINST. rocketnet builds on
-      # SYSTEM libsodium (the crypto ruling's interim), and apt and brew drift
-      # the version silently across runner images -- the failure that record
-      # exists to make legible is a green CI on a sodium the shipped targets
-      # never see. The pinned-sodium job below is the gate that goes red on a
-      # behaviour change; this line is the log evidence that says which
-      # version a given run actually used.
-      - name: Record the libsodium version
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            brew list --versions libsodium || true
-          else
-            dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
-          fi
-
+      # System sodium is installed only as an independent parity reference;
+      # the production targets compile the committed, namespaced vendor.
       # The Makefile IS the Release build -- it configures CMAKE_BUILD_TYPE=Release
       # and nothing else -- and it is the front door BUILDING.md sends a new
       # consumer through, so the Release rows go through it rather than around
@@ -117,6 +104,19 @@ jobs:
       # silent fall cannot hollow this leg out. The second run pins the
       # portable floor by env, proving the floor rung carries the suite too
       # and exercising the env > struct precedence over every create.
+
+      - name: Sodium known answers
+        run: ./bin/test_sodium
+
+      - name: Reproduce the committed sodium pair
+        if: runner.os == 'Linux' && matrix.build_type == 'Release'
+        run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
+
+      - name: Sodium parity against the independent system library
+        if: matrix.build_type == 'Release'
+        run: |
+          cmake --build build --target rocketnet_sodium_oracle --parallel
+          python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
       - name: Run tests (auto ladder — the fall, on Linux)
         run: ./bin/test
@@ -233,7 +233,7 @@ jobs:
   # MSVC — the first machine ever to compile the windows arm — and the full
   # test suite run on the runner, Debug and Release. /fp:precise comes from
   # CMakeLists.txt's MSVC branch, the family's floor per the -ffp-contract=off
-  # policy. libsodium comes from vcpkg (preinstalled on the runner); the
+  # policy. Sodium is compiled from the pinned vendor with the same CRT; the
   # multi-config generator puts binaries under bin/<config>. The #106
   # config and driver tests run here too -- setenv/unsetenv are shimmed
   # over _putenv_s in the test file, so the windows leg proves the env
@@ -245,14 +245,6 @@ jobs:
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
   #
-  # TWO KNOWN WARTS, owned on #111 and NOT fixed here (both need CMakeLists.txt,
-  # which three in-flight branches also touch): the vcpkg port baseline is
-  # whatever the runner image ships, so the libsodium version floats run to
-  # run; and the Debug leg links the release import library, because the
-  # single find_library at configure time hits the vcpkg release tree first.
-  # Functional for an opaque C API, a latent CRT-mixing wart. The installed
-  # version is printed below so the float is at least visible in the log.
-
   build-and-test-windows:
     name: windows-2025 / ${{ matrix.build_type }}
     runs-on: windows-2025
@@ -268,20 +260,17 @@ jobs:
         # Uses Python and CMake preinstalled on the windows-2025 runner.
         run: python tools/check_xdp_archive.py --committed-only
 
-      - name: Install libsodium (vcpkg)
-        run: |
-          vcpkg install libsodium:x64-windows
-          vcpkg list libsodium
-
       - name: Configure
-        run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        run: cmake -B build -A x64
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       - name: Run tests
         shell: bash
-        run: ./bin/${{ matrix.build_type }}/test.exe
+        run: |
+          ./bin/${{ matrix.build_type }}/test.exe
+          ./bin/${{ matrix.build_type }}/test_sodium.exe
 
       - name: IOCP allocation, completion lifetime, concurrency and shutdown
         timeout-minutes: 5
@@ -350,6 +339,7 @@ jobs:
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build
@@ -378,6 +368,7 @@ jobs:
           ./bin/test_driver
           ./bin/test_transport_control
           ./bin/test_xdp
+          ./bin/test_sodium
 
       - name: Inactive XDP index negative control
         run: python3 tools/check_xdp_guard_control.py
@@ -420,7 +411,9 @@ jobs:
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
@@ -431,7 +424,7 @@ jobs:
           clang++ -g -O1 -std=c++17 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
-            $(pkg-config --libs libsodium) -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -lpthread \
             -o bin/fuzz
 
       # THE GATE: each committed input, once, in order. libFuzzer given files
@@ -610,14 +603,14 @@ jobs:
       # ran (__builtin_bswap64 handed a pointer does not compile).
 
       - name: Build the library and the suite for s390x
-        run: cmake --build build --target rocketnet test --parallel
+        run: cmake --build build --target rocketnet test test_sodium --parallel
 
       - name: Build the big-endian wire check
         run: |
           s390x-linux-gnu-g++ -std=c++11 -Wall -Isdk \
             tools/bigendian/wire_check.cpp build/librocketnet.a \
             -L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu \
-            -lsodium -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -lpthread \
             -o bin/wire_check
 
       # A LEG THAT CANNOT PROVE ITS OWN PREMISE IS NOT A GATE. If this ever
@@ -629,7 +622,7 @@ jobs:
       - name: Prove the binaries are big-endian s390x
         run: |
           set -euo pipefail
-          for binary in bin/test bin/wire_check; do
+          for binary in bin/test bin/wire_check bin/test_sodium; do
             readelf -h "$binary" | grep -E "Class|Data|Machine"
             readelf -h "$binary" | grep -q "2's complement, big endian"
             readelf -h "$binary" | grep -qi "s/390"
@@ -646,7 +639,9 @@ jobs:
         env:
           QEMU_LD_PREFIX: /
           LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
-        run: qemu-s390x-static ./bin/wire_check
+        run: |
+          qemu-s390x-static ./bin/wire_check
+          qemu-s390x-static ./bin/test_sodium
 
   # STANDARD.md against the implementation, per serialize's tools/conformance.
   # The checker reads the specification as a DOCUMENT -- its published tables,
@@ -682,7 +677,7 @@ jobs:
   # library. The smoke exits nonzero on any failure, which fails the job.
   # On windows the shared library is rocketnet.dll under bin/Release (the
   # multi-config generator), which the binding's resolver already handles;
-  # vcpkg's applocal step drops libsodium.dll beside it.
+  # no additional crypto DLL is needed.
 
   csharp-smoke:
     name: csharp smoke / ${{ matrix.os }}
@@ -705,10 +700,6 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: vcpkg install libsodium:x64-windows
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -719,7 +710,7 @@ jobs:
 
       - name: Build the shared library (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" && cmake --build build --config Release --target rocketnet_shared --parallel
+        run: cmake -B build -A x64 && cmake --build build --config Release --target rocketnet_shared --parallel
 
       - name: Build the C# binding and smoke test
         run: dotnet build csharp/smoke -c Release
@@ -788,14 +779,11 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
 
-      - name: Record the libsodium version
-        run: |
-          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
-
       - name: Configure
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build soak_sim
@@ -875,10 +863,6 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
 
-      - name: Record the libsodium version
-        run: |
-          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
-
       - name: Configure
         run: >
           cmake -B build
@@ -906,36 +890,10 @@ jobs:
           ROCKETNET_DRIVER: portable
         run: ./bin/test_lifecycle
 
-  # THE PINNED-SODIUM LEG (GAP 5, the gate half). rocketnet builds on SYSTEM
-  # libsodium (the crypto ruling's interim -- the gutted two-file vendor
-  # replaces it before anything ships), which every other leg here gets from
-  # apt or brew, and those bump the version silently across runner images. A
-  # version drift is invisible: the suite goes green on whatever sodium the
-  # image happened to ship that morning, and a behaviour this code leans on
-  # could change under it without anything going red. The build-and-test legs
-  # RECORD the version they linked so a drift is legible after the fact; THIS
-  # leg is the gate that goes red WHEN it happens, by building the suite
-  # against a sodium pinned to a known-good version, from source, on a leg
-  # where nothing else can substitute a different one.
-  #
-  # The pin is by CONTENT, not by URL: the release tarball is verified against
-  # a recorded SHA-256 before it is unpacked, so a moved tag or a swapped
-  # mirror fails closed rather than building something else. The built prefix
-  # is cached by version, so the autotools build runs once and later commits
-  # restore it.
-  #
-  # PKG_CONFIG_LIBDIR (not PATH) points cmake's pkg_check_modules at ONLY the
-  # pinned prefix -- sodium is the one dependency this project resolves through
-  # pkg-config (libbpf and libxdp are named libraries, linked directly), so
-  # replacing the search path cannot starve anything else, and it guarantees
-  # the system libsodium-dev that the xdp packages pull in cannot be picked by
-  # accident. The premise is then PROVEN, not assumed: the resolved version is
-  # asserted equal to the pin before the build, so a leg that silently found
-  # the wrong sodium reddens here rather than passing for the wrong reason.
-  #
-  # To bump the pin: change SODIUM_VERSION and SODIUM_SHA256 together. That is
-  # the deliberate act the silent apt/brew bump is not.
-
+  # THE PINNED-SODIUM LEG.
+  # Explicit system-sodium integration mode against a content-verified
+  # 1.0.20 reference. Ordinary jobs use the pinned two-file vendor. Keeping
+  # this older backend checks interoperability across supported deployments.
   sodium-pinned:
     name: pinned libsodium (built from source)
     runs-on: ubuntu-24.04
@@ -990,10 +948,15 @@ jobs:
       - name: Configure against the pinned sodium
         env:
           PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_USE_SYSTEM_SODIUM=ON
 
       - name: Build the suite
         run: cmake --build build --target test --parallel
 
       - name: Run tests (auto ladder) against the pinned sodium
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
+
+      - name: Vendor parity against the pinned backend
+        run: |
+          cmake --build build --target rocketnet_sodium_oracle --parallel
+          python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"

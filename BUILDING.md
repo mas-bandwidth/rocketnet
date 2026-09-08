@@ -21,15 +21,14 @@ Dependencies, per platform, as CI installs them:
 
     # Linux -- the build links the XDP dataplane, and liburing is the bench
     # harness's io_uring rung
-    sudo apt install cmake build-essential libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+    sudo apt install cmake build-essential libbpf-dev libxdp-dev liburing-dev xxd
 
     # macOS
-    brew install libsodium pkgconf
+    brew install cmake
 
-Windows has no Makefile path; CMake is driven directly, with libsodium from
-vcpkg, and the binaries land under `bin/<config>/`:
+Windows has no Makefile path; CMake is driven directly, and the binaries land under `bin/<config>/`:
 
-    cmake -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+    cmake -B build -A x64
     cmake --build build --config Release --parallel
     ./bin/Release/test.exe
 
@@ -37,6 +36,20 @@ The embedded XDP program (`server_xdp/`) is packed as a source tarball by the bu
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
 The generated header lives in each build tree, so concurrent configurations do
 not rewrite the checkout. Windows copies the committed header into its build tree.
+
+## Pinned sodium
+
+The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
+pair. It needs no crypto download, code generator or system libsodium.
+`sodium/README.md` records provenance, licenses, exact regeneration and parity
+checks. The fixed-vector test is `bin/test_sodium`.
+
+For integration testing against an independently supplied libsodium, configure
+with `-DROCKETNET_USE_SYSTEM_SODIUM=ON`. That opt-in uses pkg-config on POSIX,
+or `ROCKETNET_SODIUM_INCLUDE_DIR` and `ROCKETNET_SODIUM_LIBRARY` on Windows.
+A Windows caller must select a library for its configuration and CRT. Packages
+built in this mode retain that external dependency. The default vendor is built
+with the same compiler and Debug/Release runtime as RocketNet.
 
 ## Installing and embedding the SDK
 
@@ -57,9 +70,10 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 ```
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
-libsodium, Threads and the Linux bpf/xdp dependencies on the consuming machine;
-it does not embed the producer's absolute dependency paths or bundle those
-third-party runtimes. Shared consumers inherit the Windows DLL import definition.
+Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
+is compiled into each SDK library with private symbol names; no sodium header,
+DLL or package is required by consumers. Dependency metadata contains no
+producer paths. Shared consumers inherit the Windows DLL import definition.
 The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
