@@ -380,8 +380,9 @@ jobs:
   # so a wrong ANSWER fails it too, not only a wrong access.
   #
   # The second step is a small fixed-seed mutation pass on top. It is bounded
-  # by wall clock and cannot fail on anything but a genuine crash, and it is
-  # NOT the gate's determinism argument -- the replay is.
+  # by a fixed mutation count and a failing step deadline: a slow runner
+  # must finish the count or fail visibly. It is not the gate's determinism
+  # argument -- the regression replay is.
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
