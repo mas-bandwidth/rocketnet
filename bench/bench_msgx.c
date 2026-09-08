@@ -168,20 +168,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             }
 
             ssize_t result = msgx_send( fd, msg, BENCH_BATCH_SIZE, 0 );
+            const int error = errno;
             syscalls++;
-            if ( result > 0 )
-            {
-                sent += (uint64_t) result;
-                bench_send_ok( &health, "sendmsg_x" );
-            }
-            else
-            {
-                /* a short or back-pressured batch drops the remainder and
-                   keeps going, the portable harness's own discipline. A long
-                   unbroken run of any other refusal is a host that cannot do
-                   this and aborts rather than reporting pps=0 (#98 item 5). */
-                bench_send_refused( &health, "sendmsg_x", errno );
-            }
+            if ( bench_fault( "send-short" ) ) result = 1;
+            if ( bench_fault( "send-zero" ) ) result = 0;
+            sent += bench_send_batch_observe( &health, "sendmsg_x",
+                                             result >= 0 ? (int) result : 0, BENCH_BATCH_SIZE,
+                                             result < 0 ? error : EIO );
         }
     }
 
