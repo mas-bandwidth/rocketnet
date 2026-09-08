@@ -12,7 +12,9 @@
 #include "rocketnet_drivers.inc"
 #undef ROCKETNET_DRIVER
 
-static const rocketnet_driver_definition_t definitions[] =
+// Require constant initialization. In particular, unavailable platform rows
+// must contain null pointers without emitting references to absent backends.
+static constexpr rocketnet_driver_definition_t definitions[] =
 {
 #define ROCKETNET_DRIVER(symbol, name, discovers, operations, platforms, server, client) \
     { name, discovers, platforms, server, client, (platforms & ROCKETNET_DRIVER_HERE) ? &operations : NULL },
