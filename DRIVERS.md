@@ -101,3 +101,6 @@ runs it independently. `test_driver` checks registry ordering, factory refusal,
 address isolation, lifecycle and buffered I/O. Existing GSO/IOCP and complete
 transport tests cover the real staged paths; hosted tests do not replace XDP
 hardware failure tests or per-platform line-rate measurements.
+
+Dispatch measurements and their limits are recorded in
+[bench/transport_fill.md](bench/transport_fill.md).
