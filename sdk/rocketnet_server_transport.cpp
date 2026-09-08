@@ -169,6 +169,7 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_transport_stats_t server_stats;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
     int current_stats_index;
+    int maintenance_next_client;                       // first unserved slot after staged backpressure
 
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
@@ -213,10 +214,32 @@ static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t *
     transport->io.operations->flush( transport->io.instance );
 }
 
+// Control frames borrow this buffer only during synchronous send_batch.
+// Drain full batches as update fills them, so receive responses cannot
+// consume the entire maintenance budget and servers can service >256 slots.
+static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t * server_transport )
+{
+    struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    int num_sends = 0;
+    for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
+    {
+        if ( server_transport->send_buffer.packet_bytes[i] > 0 )
+        {
+            sends[num_sends].to = &server_transport->send_buffer.to[i];
+            sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
+            sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
+            num_sends++;
+        }
+    }
+    if ( num_sends > 0 )
+        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+    server_transport->send_buffer.num_packets = 0;
+}
+
 // The send frame seam every driver serves: reserve hands back a frame to
 // seal complete wire bytes into, commit stamps its length, abort returns it
 // unused. The portable driver batches frames and flushes them through the
-// socket at the end of update; the staged drivers seal straight into their
+// socket in bounded batches during update; the staged drivers seal into their
 // own send staging -- AF_XDP UMEM, a GSO batch, or an IOCP operation -- with
 // zero copies between the seal and the flush.
 
@@ -244,9 +267,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 
     if ( send_buffer->num_packets >= ROCKETNET_SERVER_MAX_SEND_PACKETS )
     {
-        rocketnet_spam( "server transport send buffer full. packet dropped" );
-        frame->data = NULL;
-        return NULL;
+        rocketnet_server_flush_control_buffer( server_transport );
     }
 
     const int index = send_buffer->num_packets;
@@ -1068,11 +1089,17 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
+    // Statistics must cover every slot even when the driver's send pool is
+    // exhausted. Their six-update schedule is independent of send progress.
     for ( int i = 0; i < max_clients; i++ )
-    {
         if ( ( (uint64_t) ( i % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) ) == ( acks->update_count % ROCKETNET_CLIENT_STATS_UPDATE_PHASES ) )
             rocketnet_ack_endpoint_update_stats( &acks->endpoints[i] );
 
+    const int first_client = server_transport->maintenance_next_client;
+    for ( int offset = 0; offset < max_clients; offset++ )
+    {
+        const int i = (first_client + offset) % max_clients;
+        server_transport->maintenance_next_client = i;
         if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
             continue;
         int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
@@ -1088,6 +1115,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             rocketnet_server_commit_send_frame( server_transport, &frame, send_bytes );
         else
             rocketnet_server_abort_send_frame( server_transport, &frame );
+        server_transport->maintenance_next_client = (i + 1) % max_clients;
     }
 
     acks->update_count++;
@@ -1110,21 +1138,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         return;
     }
 
-    struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
-    int num_sends = 0;
-    for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
-    {
-        if ( server_transport->send_buffer.packet_bytes[i] > 0 )
-        {
-            sends[num_sends].to = &server_transport->send_buffer.to[i];
-            sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
-            sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
-            num_sends++;
-        }
-    }
-    if ( num_sends > 0 )
-        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
-    server_transport->send_buffer.num_packets = 0;
+    rocketnet_server_flush_control_buffer( server_transport );
 }
 
 int rocketnet_server_transport_num_payloads( struct rocketnet_server_transport_t * server_transport )

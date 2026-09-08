@@ -63,6 +63,8 @@ do                                                                              
 }                                                                                       \
 while ( 0 )
 
+#include "../../test/route_checks.h"
+
 // the standard's wire order, little-endian, as literal bytes: every value
 // below is checked against THESE, never against a host integer, so each
 // check means the same thing on either endianness
@@ -370,6 +372,8 @@ int main()
     printf( "\nbig-endian wire check (%s):\n\n",
             ROCKETNET_BIG_ENDIAN ? "big-endian host" : "little-endian host" );
 
+    test_route_prefixes();
+    test_route_netlink();
     check_endian_helpers();
     check_read_write();
     check_addresses();

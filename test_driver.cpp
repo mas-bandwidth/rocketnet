@@ -9,6 +9,8 @@
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "driver check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
+#include "route_checks.h"
+
 struct lifecycle_t { bool fail; int creates; int destroys; int stops; };
 static void * create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
 {
@@ -181,6 +183,10 @@ int main()
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init());
     rocketnet_forbid_xdp_commit();
+    test_route_prefixes();
+#if defined(__linux__)
+    test_route_netlink();
+#endif
     test_driver_registry();
     test_driver_lifecycle();
     test_buffered_driver();
