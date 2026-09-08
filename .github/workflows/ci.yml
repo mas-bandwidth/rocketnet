@@ -159,10 +159,7 @@ jobs:
 
       - name: Compile the embedded XDP program without attaching it
         if: runner.os == 'Linux'
-        run: |
-          clang -D__linux__ -D__BPF__ -O2 -g -target bpf \
-            -I"/usr/include/$(gcc -dumpmachine)" \
-            -c build/generated/source/server_xdp.c -o build/server_xdp_ci.o
+        run: make -C build/generated/source server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions

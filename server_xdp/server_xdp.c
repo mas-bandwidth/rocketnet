@@ -30,7 +30,6 @@
 #include <linux/ipv6.h>
 #include <linux/udp.h>
 #include <linux/bpf.h>
-#include <linux/string.h>
 #include <bpf/bpf_helpers.h>
 
 #include "rocketnet_wire.h"
