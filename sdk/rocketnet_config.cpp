@@ -391,66 +391,11 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 //                        the driver ladder
 // ----------------------------------------------------------------
 
-static const char * rocketnet_driver_names[ROCKETNET_NUM_DRIVERS] =
-{
-    "portable",         // ROCKETNET_DRIVER_PORTABLE
-    "gso",              // ROCKETNET_DRIVER_GSO
-    "xdp",              // ROCKETNET_DRIVER_XDP
-    "msgx",             // ROCKETNET_DRIVER_MSGX
-    "iocp",             // ROCKETNET_DRIVER_IOCP
-};
-
-const char * rocketnet_driver_name( int driver )
-{
-    if ( driver < 0 || driver >= ROCKETNET_NUM_DRIVERS )
-        return "???";
-    return rocketnet_driver_names[driver];
-}
-
-// #109: does this driver's create discover the port the kernel granted and
-// hand it back to the transport? the answer is a property of each driver's
-// bind, so it is declared once here rather than tested for at the one call
-// site that happens to care.
-//
-//   portable, msgx    rocketnet_platform_socket_create_with_pump takes the
-//                     bind address by pointer and writes the getsockname
-//                     port into it (rocketnet_platform.cpp, "if bound to
-//                     port 0 find the actual port we got")
-//   gso               rocketnet_server_gso_create takes it by pointer too;
-//                     the first reuseport socket discovers and the rest
-//                     join it, and the group's port comes back out
-//   xdp               rocketnet_server_socket_create takes an address
-//                     STRING. It binds the port it is given and discovers
-//                     nothing, so there is nothing to hand back.
-//
-// the table is sized to the driver count beside the name table, and an
-// entry never filled in reads false -- which fails SAFE: a fifth driver
-// that nobody classified refuses port-zero addresses loudly, naming
-// itself, instead of quietly advertising zero.
-
-static const bool rocketnet_driver_discovers[ROCKETNET_NUM_DRIVERS] =
-{
-    true,               // ROCKETNET_DRIVER_PORTABLE
-    true,               // ROCKETNET_DRIVER_GSO
-    false,              // ROCKETNET_DRIVER_XDP
-    true,               // ROCKETNET_DRIVER_MSGX
-    true,               // ROCKETNET_DRIVER_IOCP
-};
-
-bool rocketnet_driver_discovers_bound_port( int driver )
-{
-    if ( driver < 0 || driver >= ROCKETNET_NUM_DRIVERS )
-        return false;
-    return rocketnet_driver_discovers[driver];
-}
-
-#define ROCKETNET_KNOWN_DRIVER_NAMES "xdp, gso, msgx, portable, iocp"
-
 static int rocketnet_driver_id_from_name( const char * name, int name_length )
 {
     for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; i++ )
     {
-        if ( (int) strlen( rocketnet_driver_names[i] ) == name_length && memcmp( rocketnet_driver_names[i], name, (size_t) name_length ) == 0 )
+        if ( (int) strlen( rocketnet_driver_name( i ) ) == name_length && memcmp( rocketnet_driver_name( i ), name, (size_t) name_length ) == 0 )
             return i;
     }
     return -1;
@@ -507,7 +452,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
         if ( name_length == 0 )
         {
-            rocketnet_error( "empty driver name in driver list \"%s\" (valid names: " ROCKETNET_KNOWN_DRIVER_NAMES ")", value );
+            rocketnet_error( "empty driver name in driver list \"%s\" (valid names: %s)", value, rocketnet_driver_names() );
             return false;
         }
 
@@ -520,7 +465,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         const int driver = rocketnet_driver_id_from_name( name, name_length );
         if ( driver < 0 )
         {
-            rocketnet_error( "unknown driver \"%.*s\" in driver list \"%s\" (valid names: " ROCKETNET_KNOWN_DRIVER_NAMES ")", name_length, name, value );
+            rocketnet_error( "unknown driver \"%.*s\" in driver list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_driver_names() );
             return false;
         }
 
@@ -591,46 +536,4 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
     }
 
     return true;
-}
-
-// availability per platform and endpoint, in recommended order -- the one
-// table "auto" expands from. the darwin batch pump is macOS only (the
-// probe never grants it on iOS); the staged linux drivers are server-side.
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
-static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
-
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
-static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_MSGX, ROCKETNET_DRIVER_PORTABLE };
-
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-// IOCP is explicitly selectable while its driver/performance pass is reviewed.
-// Keep the existing automatic preference until that validation is complete.
-static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_PORTABLE, ROCKETNET_DRIVER_IOCP };
-static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
-
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-static const int rocketnet_server_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
-static const int rocketnet_client_drivers[] = { ROCKETNET_DRIVER_PORTABLE };
-
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-const int * rocketnet_server_driver_availability( int * num_available )
-{
-    rocketnet_assert( num_available );
-    *num_available = (int) ( sizeof(rocketnet_server_drivers) / sizeof(rocketnet_server_drivers[0]) );
-    return rocketnet_server_drivers;
-}
-
-const int * rocketnet_client_driver_availability( int * num_available )
-{
-    rocketnet_assert( num_available );
-    *num_available = (int) ( sizeof(rocketnet_client_drivers) / sizeof(rocketnet_client_drivers[0]) );
-    return rocketnet_client_drivers;
 }

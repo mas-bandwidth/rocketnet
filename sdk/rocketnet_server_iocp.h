@@ -4,7 +4,8 @@
 */
 #pragma once
 
-#include "rocketnet_server_socket.h"
+#include "rocketnet_packet_batch.h"
+#include "rocketnet_wire.h"
 
 // Windows server driver. The public transport API is unchanged. Fill threads
 // acquire and seal directly into driver-owned frames. Flush posts overlapped
@@ -55,5 +56,9 @@ void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * 
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
 
 #if defined(ROCKETNET_IOCP_TESTS)
+// Hold/release must be paired on the same thread. Do not call stop there while
+// holding: Windows CRITICAL_SECTION is recursive. A different thread must stop.
 void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp, bool hold );
+bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view );
+bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp );
 #endif

@@ -382,14 +382,20 @@ failed:
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) ) return NULL;
-    const uint64_t slot = iocp->num_staged.fetch_add( 1, std::memory_order_relaxed );
-    if ( slot >= ROCKETNET_IOCP_SEND_QUEUE_SIZE ) return NULL;
-    iocp->staged[slot] = -1;
     SLIST_ENTRY * entry = InterlockedPopEntrySList( &iocp->free_sends );
     if ( !entry ) return NULL;
     rocketnet_iocp_operation_t * op = CONTAINING_RECORD( entry, rocketnet_iocp_operation_t, free_entry );
     op->address_bytes = rocketnet_iocp_address_write( to, iocp->ipv6, &op->address );
     if ( !op->address_bytes )
+    {
+        InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
+        return NULL;
+    }
+    // Reserve a staging slot only after acquiring a usable frame. A failed
+    // pop/address must not consume capacity while completions return frames
+    // during this same fill phase. Every accepted slot owns one pool entry.
+    const uint64_t slot = iocp->num_staged.fetch_add( 1, std::memory_order_relaxed );
+    if ( slot >= ROCKETNET_IOCP_SEND_QUEUE_SIZE )
     {
         InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
         return NULL;
@@ -500,6 +506,30 @@ void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp
         if ( hold ) rocketnet_platform_mutex_acquire( &iocp->workers[i].mutex );
         else rocketnet_platform_mutex_release( &iocp->workers[i].mutex );
     }
+}
+
+bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view )
+{
+    bool published = false;
+    const uintptr_t pointer = (uintptr_t) view;
+    for ( int i = 0; i < iocp->num_workers; ++i )
+    {
+        rocketnet_iocp_worker_t * worker = &iocp->workers[i];
+        rocketnet_platform_mutex_acquire( &worker->mutex );
+        for ( int j = 0; j < 2; ++j )
+        {
+            const uintptr_t begin = (uintptr_t) worker->buffers[j].data;
+            if ( pointer >= begin && pointer < begin + sizeof(worker->buffers[j].data) )
+                published = j != (int) (worker->receive_counter % 2);
+        }
+        rocketnet_platform_mutex_release( &worker->mutex );
+    }
+    return published;
+}
+
+bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
+{
+    return iocp->stopping.load( std::memory_order_acquire );
 }
 #endif
 

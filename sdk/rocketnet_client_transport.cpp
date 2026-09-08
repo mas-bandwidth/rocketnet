@@ -106,7 +106,7 @@ struct rocketnet_client_transport_t
 
     int driver;                     // the granted driver (ROCKETNET_DRIVER_*), decided by the ladder at create
 
-    rocketnet_platform_socket_t * socket;
+    rocketnet_client_driver_t io;
 
     rocketnet_platform_thread_t * thread;
     rocketnet_platform_mutex_t mutex;
@@ -308,23 +308,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         const int candidate = ladder.candidates[i];
 
-        if ( candidate == ROCKETNET_DRIVER_MSGX || candidate == ROCKETNET_DRIVER_PORTABLE )
-        {
-            // each attempt binds its own copy of the address, so a refused
-            // attempt's discovered ephemeral port never constrains the next
-
-            rocketnet_address_t attempt_address = bind_address;
-
-            client_transport->socket = rocketnet_platform_socket_create_with_pump( client_transport->context, &attempt_address,
-                                                                                   ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-                                                                                   ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE,
-                                                                                   rocketnet_driver_name( candidate ) );
-            if ( client_transport->socket )
-            {
-                bind_address = attempt_address;
-                granted_driver = candidate;
-            }
-        }
+        const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
+        const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
+        if ( rocketnet_client_driver_open( definition && definition->backend ? definition->backend->client : NULL,
+                client_transport->context, &driver_config, &bind_address, &client_transport->io ) )
+            granted_driver = candidate;
 
         if ( granted_driver < 0 )
         {
@@ -393,10 +381,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         rocketnet_platform_thread_destroy( client_transport->thread );
     }
 
-    if ( client_transport->socket )
-    {
-        rocketnet_platform_socket_destroy( client_transport->socket );
-    }
+    rocketnet_client_driver_close( &client_transport->io );
 
     rocketnet_platform_mutex_destroy( &client_transport->mutex );
 
@@ -609,7 +594,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->stats_frames[stats_index].packets_sent++;
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address, packet, packet_bytes );
+        client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address, packet, packet_bytes );
     }
 
     // one callback per update crossing: enough to observe every terminal,
@@ -941,7 +926,7 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
             client_transport->stats_frames[stats_index].packets_sent++;
             client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-            rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
+            client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
                                                    ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET,
                                                    ring->info[i].wire_bytes );
         }
@@ -1066,7 +1051,7 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
         client_transport->stats_frames[stats_index].packets_sent++;
         client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( burst_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        rocketnet_platform_socket_send_packet( client_transport->socket, &client_transport->protocol.server_address,
+        client_transport->io.operations->send( client_transport->io.instance, &client_transport->protocol.server_address,
                                                burst + i * ROCKETNET_SEND_BUDGET,
                                                burst_bytes );
     }
@@ -1129,7 +1114,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         uint8_t * packet_data = receive_buffer->data + receive_buffer->num_packets * ROCKETNET_FRAME_SIZE;
 
         struct rocketnet_address_t from;
-        int packet_bytes = rocketnet_platform_socket_receive_packet( client_transport->socket, &from, packet_data, ROCKETNET_MAX_PACKET_BYTES );
+        int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, packet_data, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
 

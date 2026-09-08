@@ -11,6 +11,14 @@ endif()
 option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
+set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
+set(ROCKETNET_DRIVER_SOURCES "" CACHE STRING "Additional native driver source files")
+if(ROCKETNET_DRIVER_REGISTRY_HEADER)
+    get_filename_component(ROCKETNET_DRIVER_REGISTRY_HEADER "${ROCKETNET_DRIVER_REGISTRY_HEADER}" ABSOLUTE)
+    if(NOT EXISTS "${ROCKETNET_DRIVER_REGISTRY_HEADER}")
+        message(FATAL_ERROR "Driver registry header does not exist: ${ROCKETNET_DRIVER_REGISTRY_HEADER}")
+    endif()
+endif()
 set(CMAKE_TARGET_MESSAGES OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(ROCKETNET_TOP_LEVEL)
@@ -72,6 +80,8 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_client_slots.cpp
     sdk/rocketnet_client_transport.cpp
     sdk/rocketnet_config.cpp
+    sdk/rocketnet_driver.cpp
+    sdk/rocketnet_driver_builtin.cpp
     sdk/rocketnet_connect_token.cpp
     sdk/rocketnet_counters.cpp
     sdk/rocketnet_encryption_map.cpp
@@ -89,6 +99,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_server_socket_linux.cpp
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
+    ${ROCKETNET_DRIVER_SOURCES}
 )
 
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
@@ -110,6 +121,9 @@ foreach(target rocketnet rocketnet_shared)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
     target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
+    if(ROCKETNET_DRIVER_REGISTRY_HEADER)
+        target_compile_definitions(${target} PRIVATE "ROCKETNET_DRIVER_REGISTRY_HEADER=\"${ROCKETNET_DRIVER_REGISTRY_HEADER}\"")
+    endif()
     target_compile_definitions(${target} PUBLIC
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
         ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
@@ -144,17 +158,22 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(rocketnet_test_support PRIVATE RocketNet::Sodium)
     add_executable(test test.cpp)
     target_link_libraries(test PRIVATE rocketnet_test_support)
-    foreach(test_target test_lifecycle test_serialize)
+    foreach(test_target test_lifecycle test_serialize test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
     endforeach()
     if(WIN32)
-        # Compile the same driver with a test-only retirement barrier. The
-        # production library has neither this helper nor a test branch in I/O.
-        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp)
-        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS)
-        target_link_libraries(test_iocp PRIVATE rocketnet)
+        # Isolate the test-instrumented driver: never link another copy from
+        # the production archive. Only its ordinary runtime dependencies enter.
+        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp
+            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp)
+        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS
+            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+        target_include_directories(test_iocp PRIVATE sdk)
+        target_compile_features(test_iocp PRIVATE cxx_std_11)
+        target_compile_options(test_iocp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        target_link_libraries(test_iocp PRIVATE RocketNet::Sodium Threads::Threads)
     endif()
     add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
     target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)

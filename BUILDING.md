@@ -154,6 +154,9 @@ driver-blind.
 
 ### Windows IOCP server
 
+Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,
+capabilities, ownership and the independently built extension example.
+
 Select `driver = "iocp"` in the existing server config, or set
 `ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
 send buffers are recycled only after completion, and stop cancels and drains
@@ -172,6 +175,9 @@ while this new driver is reviewed. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests, and the C# smoke
 with IOCP selected. Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
+The current implementation shares one UDP socket between completion workers.
+Its receive-queue contention must be measured before choosing whether Windows
+needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
 ## Deploying the XDP driver: provision, then verify-and-bind
 

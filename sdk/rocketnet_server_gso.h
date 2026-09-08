@@ -11,7 +11,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
-#include "rocketnet_server_socket.h"        // rocketnet_server_socket_process_packets_t: the process batch shape both staged drivers hand the transport
+#include "rocketnet_packet_batch.h"
 
 // The GSO transport driver (#97): the best non-root path Linux has, per the
 // #81 measurements -- an SO_REUSEPORT socket group with one worker thread

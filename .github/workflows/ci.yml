@@ -152,6 +152,11 @@ jobs:
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      - name: Native driver contract and external backend
+        run: |
+          ./bin/test_driver
+          python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured
@@ -274,6 +279,12 @@ jobs:
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         run: python tools/check_package.py build --config ${{ matrix.build_type }}
+
+      - name: Native driver contract and external backend
+        run: |
+          ./bin/${{ matrix.build_type }}/test_driver.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
