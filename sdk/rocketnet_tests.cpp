@@ -51,6 +51,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <string>
+#include <vector>
 
 // the zero-length chaff injection test drives a raw socket beside the
 // platform socket, so it can send what the platform surface refuses to
@@ -11723,7 +11725,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
         }
         else
         {
-            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "    skipped GRO_BATCHES assertion: this host delivers UDP_SEGMENT super-datagrams uncoalesced over loopback (tx-udp-segmentation off?) -- segments still surfaced byte-exact above" );
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_gso_super_datagram_split [SKIPPED GRO_BATCHES assertion: this host delivers UDP_SEGMENT super-datagrams uncoalesced over loopback (tx-udp-segmentation off?); segments still surfaced byte-exact above]" );
         }
     }
 
@@ -11833,6 +11835,71 @@ void rocketnet_test_server_gso_send_overflow()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+// The suite isolates config overrides, while preserving the driver's
+// deliberate CI pin and the optional verbose-output switch. Names come
+// from both descriptor tables; duplicate fields are saved only once.
+class rocketnet_test_environment_t
+{
+    struct entry_t { std::string name, value; bool present; };
+    std::vector<entry_t> entries;
+    void clear(const char * name)
+    {
+        if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
+        for (const auto & entry : entries) if (entry.name == name) return;
+        const char * value = getenv(name);
+        entries.push_back({name, value ? value : "", value != NULL});
+        rocketnet_check(unsetenv(name) == 0);
+    }
+public:
+    rocketnet_test_environment_t()
+    {
+        for (int side = 0; side < 2; ++side)
+        {
+            int count = 0;
+            const auto * fields = side ? rocketnet_server_transport_config_fields(&count)
+                                       : rocketnet_client_transport_config_fields(&count);
+            for (int i = 0; i < count; ++i)
+            {
+                char name[128];
+                rocketnet_check(rocketnet_config_env_var_name(fields[i].name, name, sizeof(name)));
+                clear(name);
+            }
+        }
+        clear("ROCKETNET_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_SERVER_NUM_QUEUES");
+        clear("ROCKETNET_SERVER_NUM_OS_CPUS");
+        clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
+        clear("ROCKETNET_PUMP");
+    }
+    ~rocketnet_test_environment_t()
+    {
+        for (const auto & entry : entries)
+            rocketnet_check((entry.present ? setenv(entry.name.c_str(), entry.value.c_str(), 1)
+                                           : unsetenv(entry.name.c_str())) == 0);
+    }
+};
+
+void rocketnet_test_suite_environment()
+{
+    const std::string original_driver = getenv("ROCKETNET_DRIVER") ? getenv("ROCKETNET_DRIVER") : "";
+    const bool driver_present = getenv("ROCKETNET_DRIVER") != NULL;
+    const std::string long_value(4096, 'x');
+    rocketnet_check(setenv("ROCKETNET_MAX_CLIENTS", long_value.c_str(), 1) == 0);
+    rocketnet_check(setenv("ROCKETNET_PUMP", "portable", 1) == 0);
+    {
+        rocketnet_test_environment_t isolated;
+        rocketnet_check(getenv("ROCKETNET_MAX_CLIENTS") == NULL);
+        rocketnet_check(getenv("ROCKETNET_PUMP") == NULL);
+        rocketnet_check((getenv("ROCKETNET_DRIVER") != NULL) == driver_present);
+        if (driver_present) rocketnet_check(original_driver == getenv("ROCKETNET_DRIVER"));
+    }
+    rocketnet_check(long_value == getenv("ROCKETNET_MAX_CLIENTS"));
+    rocketnet_check(strcmp(getenv("ROCKETNET_PUMP"), "portable") == 0);
+    unsetenv("ROCKETNET_MAX_CLIENTS");
+    unsetenv("ROCKETNET_PUMP");
+}
+
 #define RUN_TEST( test_function )                                           \
     do                                                                      \
     {                                                                       \
@@ -11868,16 +11935,11 @@ void rocketnet_run_tests()
 
     rocketnet_forbid_xdp_commit();
 
-    // ambient address overrides would redirect the suite's first create
-    // (their designed scope) at whatever test happens to run first: the
-    // suite owns its process environment, so they are cleared here rather
-    // than defended against in every test
-
-    unsetenv( "ROCKETNET_PUBLIC_ADDRESS" );
-    unsetenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    rocketnet_test_environment_t isolated_environment;
 
     // while ( true )
     {
+        RUN_TEST( test_suite_environment );
         RUN_TEST( test_time );
         RUN_TEST( test_endian );
         RUN_TEST( test_read_write );

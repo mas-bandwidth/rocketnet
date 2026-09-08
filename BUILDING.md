@@ -152,6 +152,12 @@ working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
 `ROCKETNET_NUM_OS_CPUS`. Run the same `./bin/test` against each rung — the suite is
 driver-blind.
 
+The SDK test suite temporarily clears config overrides derived from both
+config tables and their legacy aliases, then restores them on return.
+`ROCKETNET_DRIVER` remains an intentional test pin; `ROCKETNET_TEST_VERBOSE`
+keeps its diagnostic meaning. Passing ordinary runs print test names and
+explicitly named platform skips. Failures retain the captured diagnostic log.
+
 ### Windows IOCP server
 
 Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,

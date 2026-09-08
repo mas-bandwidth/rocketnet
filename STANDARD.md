@@ -2788,6 +2788,11 @@ the interval depending on the absolute clock value, so even a stream
 constructed to have gaps of exactly one interval is not determinate. Do not
 infer from a gap in the outbound stream that the client is being served.
 
+Here the update tick is a bound on a non-uniform game loop, not a fixed
+period. With a uniform tick and the transport's check-then-send ordering,
+the top edge (one send interval plus one tick) is determinate; the closed
+band above preserves the general guarantee when update intervals vary.
+
 *Do not restate this as a relationship between the keep-alive rate and the
 application's send rate.* No such relationship holds: the residual keep-alive
 rate below total suppression is a sawtooth in the ratio of the two intervals,

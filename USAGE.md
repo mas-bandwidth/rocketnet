@@ -319,15 +319,13 @@ described below. Reading every `getenv` in `sdk/`, these sit outside it:
   `ROCKETNET_PUBLIC_ADDRESS`. Each is honored only where its successor is unset,
   and every use is logged naming the successor.
 
-**`ROCKETNET_PUMP=portable` can defeat a driver pin, and nothing in the driver
-section says so.** It is the pre-#106 override, kept working with its exact old
-meaning: it suppresses the Darwin msgx probe outright. So a config that pins
-`driver = "msgx"` — which the rules below define as "that driver or a loud
-failure" — becomes the failure whenever that variable is set to `portable`,
-for a reason the pin itself never mentions. If a pinned msgx create refuses on a
-Mac and the ladder logs look wrong, check `ROCKETNET_PUMP` before anything else.
-Whether that variable retires or gains an explicit interaction rule is #128; this
-paragraph is the workaround, not the resolution.
+**`ROCKETNET_PUMP=portable` refuses the Darwin msgx candidate**, including
+an explicit msgx pin. The deprecated switch retains its original pump-disable
+meaning: `auto` may continue to portable, while `driver = "msgx"` fails loudly
+because its only candidate refused. It never silently changes a pin to portable.
+Unset the legacy variable to allow msgx, or use `ROCKETNET_DRIVER=portable` to
+request portable through the current driver selector. The refusal log names
+both the old switch and its successor.
 
 **Precedence is default < struct < env.** The struct you pass is the middle layer,
 and the environment overlays it. Every environment override is logged loudly,

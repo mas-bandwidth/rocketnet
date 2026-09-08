@@ -27,13 +27,9 @@ int main()
         return 1;
     }
 
-    printf( "\nRunning SDK tests:\n\n" );
-
     rocketnet_run_tests();
 
     rocketnet_term();
-
-    printf( "\n" );
 
     fflush( stdout );
 

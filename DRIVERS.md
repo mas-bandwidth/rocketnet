@@ -39,7 +39,7 @@ The flags express the differences the transport needs:
 | Flag | Meaning |
 | --- | --- |
 | `STAGED` | Use driver-owned frames and receive views instead of borrowed transport buffers. |
-| `FLUSH_ON_UPDATE` | Flush staged control traffic at the end of update. Buffered control traffic always completes its synchronous send there. |
+| `FLUSH_ON_UPDATE` | Flush staged control traffic at the end of update. Buffered control traffic completes by the end of update; full batches may flush during the update walk. |
 | `FINISH_FINAL` | A finished frame cannot be withdrawn. Otherwise abort may withdraw it before flush. Unfinished reservations can always be aborted. |
 | `BINDS_PUBLIC_ADDRESS` | The factory binds the advertised address rather than the transport's ordinary bind address. |
 

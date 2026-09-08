@@ -1,9 +1,9 @@
 # rocketnet CI: THE PER-COMMIT GATE (#111).
 #
 # The split this file's existence rests on is DURATION-DEPENDENCE. Everything
-# here gates and fits in minutes; a check whose value comes from TIME -- deep
-# fuzz with a persisted corpus, TSAN, a bounded soak, a leak pass -- belongs
-# in the nightly half, which is specified but deliberately unbuilt (#124).
+# here gates and fits in minutes, including bounded TSAN, soak and leak
+# checks. Duration-dependent discovery and multi-day acceptance belong to
+# the separate work in #124; no unattended nightly is configured here.
 # The line is not "cheap here, expensive there": asan+ubsan is not cheap and
 # it is here, because a sanitizer finding on THIS commit is what stops the
 # defect from being merged. Anything that only finds what an hour finds is
@@ -32,7 +32,8 @@
 # The Linux build links the XDP dataplane against libbpf/libxdp, so those dev
 # packages are installed there; the XDP program itself (server_xdp) is
 # embedded as a source tarball by the build and compiles on the target kernel,
-# so compiling it needs a kernel with BTF and stays outside this workflow.
+# so CI compiles the extracted archive unprivileged against its runner BTF.
+# Attaching the program and exercising a real NIC stay outside this workflow.
 
 name: CI
 
@@ -122,6 +123,9 @@ jobs:
 
       - name: Run tests (portable rung pinned by env)
         run: ROCKETNET_DRIVER=portable ./bin/test
+
+      - name: Ambient config isolation and passing output
+        run: python3 tools/check_test_environment.py ./bin/test
 
       - name: Run serialization surface (portable)
         env:
@@ -299,9 +303,13 @@ jobs:
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         run: python tools/check_package.py build --config ${{ matrix.build_type }}
 
+      - name: Ambient config isolation and passing output
+        run: python tools/check_test_environment.py ./bin/${{ matrix.build_type }}/test.exe
+
       - name: Native driver contract and external backend
         run: |
           ./bin/${{ matrix.build_type }}/test_driver.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./bin/${{ matrix.build_type }}/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_driver_extension.py build --config ${{ matrix.build_type }}
@@ -384,8 +392,9 @@ jobs:
   # so a wrong ANSWER fails it too, not only a wrong access.
   #
   # The second step is a small fixed-seed mutation pass on top. It is bounded
-  # by wall clock and cannot fail on anything but a genuine crash, and it is
-  # NOT the gate's determinism argument -- the replay is.
+  # by a fixed mutation count and a failing step deadline: a slow runner
+  # must finish the count or fail visibly. It is not the gate's determinism
+  # argument -- the regression replay is.
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
