@@ -25,6 +25,11 @@ def main():
             key, value = line.split("=", 1)
             cache[key.split(":", 1)[0]] = value
     source = Path(cache["rocketnet_SOURCE_DIR"])
+    # Reusable MSBuild workers can retain the temporary build directory after
+    # a successful build. These consumers have no subsequent build to reuse
+    # them for; let the workers exit so TemporaryDirectory can remove the tree.
+    native_build_options = (["--", "-nodeReuse:false"]
+                            if cache["CMAKE_GENERATOR"].startswith("Visual Studio") else [])
     archive = build / "generated/rocketnet_server_xdp.tar.gz"
     if archive.exists():
         with tarfile.open(archive) as packed:
@@ -54,7 +59,7 @@ def main():
             if cache.get(key):
                 command.append(f"-D{key}={cache[key]}")
         run(*command)
-        run("cmake", "--build", consumer, "--config", args.config, "--parallel", "4")
+        run("cmake", "--build", consumer, "--config", args.config, "--parallel", "4", *native_build_options)
         env = os.environ.copy()
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
@@ -65,7 +70,7 @@ def main():
             command[command.index("-B") + 1] = embedded
             command += [f"-DROCKETNET_SOURCE_PATH={source}", "-DBUILD_SHARED_LIBS=ON"]
             run(*command)
-            run("cmake", "--build", embedded, "--config", args.config, "--parallel", "4")
+            run("cmake", "--build", embedded, "--config", args.config, "--parallel", "4", *native_build_options)
             run("ctest", "--test-dir", embedded, "-C", args.config, "--output-on-failure", env=env)
     print("Relocated SDK: C/C++ static/shared consumers passed")
 

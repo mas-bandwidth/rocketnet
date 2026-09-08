@@ -5552,7 +5552,15 @@ void rocketnet_test_transport_udp_loopback()
 
     rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    // Stop may need to drain asynchronous I/O. The public contract requires
+    // waiting for STOPPED, not a particular number of updates.
+    start = rocketnet_platform_time();
+    while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED &&
+            rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
     rocketnet_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rocketnet_server_transport_destroy( server );
 }
@@ -10603,6 +10611,13 @@ void rocketnet_test_server_driver_pin_portable()
     rocketnet_test_driver_pin_exchange( "portable", "portable" );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_server_driver_pin_iocp()
+{
+    rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
+}
+#endif
+
 // #109: a port-zero public address asks the KERNEL for a port, so it only
 // means anything to a driver that discovers what it was granted and hands
 // it back. the portable and msgx rungs discover through the platform
@@ -11947,6 +11962,9 @@ void rocketnet_run_tests()
         RUN_TEST( test_driver_ladder_parse );
         RUN_TEST( test_config_precedence );
         RUN_TEST( test_server_driver_pin_portable );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        RUN_TEST( test_server_driver_pin_iocp );
+#endif
         RUN_TEST( test_server_port_zero_needs_a_discovering_driver );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         RUN_TEST( test_server_driver_pin_gso );

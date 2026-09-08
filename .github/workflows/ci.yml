@@ -251,6 +251,16 @@ jobs:
         shell: bash
         run: ./bin/${{ matrix.build_type }}/test.exe
 
+      - name: IOCP allocation, completion lifetime, concurrency and shutdown
+        timeout-minutes: 5
+        run: ./bin/${{ matrix.build_type }}/test_iocp.exe
+
+      - name: Full transport suite with IOCP selected
+        timeout-minutes: 10
+        env:
+          ROCKETNET_DRIVER: iocp
+        run: ./bin/${{ matrix.build_type }}/test.exe
+
       - name: Run serialization surface (portable)
         shell: bash
         env:
@@ -672,6 +682,13 @@ jobs:
         env:
           ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
         run: dotnet run --project csharp/smoke -c Release --no-build
+
+      - name: Run the C# smoke over IOCP
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ROCKETNET_LIBRARY_PATH: bin/Release
+        run: dotnet run --project csharp/smoke -c Release --no-build -- --iocp
 
   # THE SANITIZED SOAK, PER COMMIT. This is where the duration-split (see the
   # file header) is drawn tightest: the NIGHTLY soak (nightly-soak.yml) runs

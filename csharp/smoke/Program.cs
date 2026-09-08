@@ -176,12 +176,13 @@ static class Smoke
 
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig serverConfig );
         serverConfig.MaxClientSlots = 4;
-        serverConfig.SetDriver( "portable" );
+        string serverDriver = args.Length == 1 && args[0] == "--iocp" ? "iocp" : "portable";
+        serverConfig.SetDriver( serverDriver );
         IntPtr server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
         if ( server == IntPtr.Zero )
             Fail( $"server create on {address}" );
-        if ( RocketNet.ServerTransportDriver( server ) != "portable" )
-            Fail( $"granted driver is '{RocketNet.ServerTransportDriver( server )}', expected the pinned 'portable'" );
+        if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
+            Fail( $"granted driver is '{RocketNet.ServerTransportDriver( server )}', expected the pinned '{serverDriver}'" );
         Ok( $"server up on {address} [{RocketNet.ServerTransportDriver( server )}]" );
 
         // connect with an explicitly defaulted config: the config struct layout

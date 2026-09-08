@@ -2497,6 +2497,7 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
+    CloseHandle( thread->handle );
     rocketnet_free( thread->context, thread );
 }
 

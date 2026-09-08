@@ -92,7 +92,8 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 #define ROCKETNET_DRIVER_GSO            1
 #define ROCKETNET_DRIVER_XDP            2
 #define ROCKETNET_DRIVER_MSGX           3
-#define ROCKETNET_NUM_DRIVERS           4
+#define ROCKETNET_DRIVER_IOCP           4
+#define ROCKETNET_NUM_DRIVERS           5
 
 const char * rocketnet_driver_name( int driver );
 
