@@ -186,7 +186,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     dispatch_semaphore_wait( ready, DISPATCH_TIME_FOREVER );
 
     uint8_t packet[BENCH_MAX_PACKET];
-    uint64_t sent = 0;
+    __block uint64_t sent = 0;
     uint64_t completions = 0;
     uint64_t batch_index = 0;
     uint64_t sequence = 0;
@@ -222,9 +222,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                     /* a send completion that failed is not a sent packet, and
                        a long run of them is a host that cannot do this */
                     if ( error == NULL )
-                        bench_send_ok( &nw_send_health, "nw_connection_send" );
+                        sent += bench_send_ok( &nw_send_health, "nw_connection_send" );
                     else
-                        bench_send_refused( &nw_send_health, "nw_connection_send",
+                        sent += bench_send_refused( &nw_send_health, "nw_connection_send",
                                             nw_error_get_error_domain( error ) == nw_error_domain_posix
                                                 ? nw_error_get_error_code( error ) : EIO );
                     dispatch_semaphore_signal( batch_done );
@@ -233,7 +233,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             }
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
                 dispatch_semaphore_wait( batch_done, DISPATCH_TIME_FOREVER );
-            sent += BENCH_BATCH_SIZE;
+
         }
     }
 

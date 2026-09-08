@@ -11079,12 +11079,12 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
         const rocketnet_config_field_t * field = &fields[i];
         if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES )
             continue;
-        rocketnet_check( field->size > 1 && field->size <= 256 );
+        rocketnet_check( field->size >= 1 && field->size <= 256 );
         char env_name[256];
         rocketnet_check( rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) );
         rocketnet_test_env_guard_t guard;
         rocketnet_test_env_save( &guard, env_name );
-        for ( int delta = -1; delta <= 1; ++delta )
+        for ( int delta = field->size == 1 ? 0 : -1; delta <= 1; ++delta )
         {
             uint8_t bytes[257];
             for ( int j = 0; j < (int) sizeof(bytes); ++j ) bytes[j] = (uint8_t) ( j * 13 + 7 );
@@ -11112,6 +11112,9 @@ void rocketnet_test_config_bytes_exact()
     rocketnet_test_config_bytes_exact_fields( "client", &client, fields, count );
     fields = rocketnet_server_transport_config_fields( &count );
     rocketnet_test_config_bytes_exact_fields( "server", &server, fields, count );
+    uint8_t tiny = 0;
+    const rocketnet_config_field_t tiny_field = { "test_one_byte", ROCKETNET_CONFIG_KIND_BYTES, 0, 1, 0, 0, 0 };
+    rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, &tiny_field, 1 );
 }
 
 // Every override logs the variable and displaced value while keeping secret

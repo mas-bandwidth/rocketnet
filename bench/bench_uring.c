@@ -279,14 +279,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    if ( cqe->res > 0 )
+                    if ( cqe->res == size )
                     {
-                        sent++;
-                        bench_send_ok( &health, "io_uring send completion" );
+                        sent += bench_send_ok( &health, "io_uring send completion" );
                     }
-                    else if ( cqe->res < 0 )
+                    else
                     {
-                        bench_send_refused( &health, "io_uring send completion", -cqe->res );
+                        sent += bench_send_refused( &health, "io_uring send completion", cqe->res < 0 ? -cqe->res : EIO );
                     }
                 }
             }
@@ -304,17 +303,16 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    if ( cqe->res > 0 )
+                    if ( cqe->res == size )
                     {
-                        sent++;
-                        bench_send_ok( &health, "io_uring send completion (zc)" );
+                        sent += bench_send_ok( &health, "io_uring send completion (zc)" );
                     }
-                    else if ( cqe->res < 0 )
+                    else
                     {
                         /* the zero-copy drain discarded this outright: a
                            SEND_ZC row could report pps=0 with every send
                            refused and never say a word */
-                        bench_send_refused( &health, "io_uring send completion (zc)", -cqe->res );
+                        sent += bench_send_refused( &health, "io_uring send completion (zc)", cqe->res < 0 ? -cqe->res : EIO );
                     }
                 }
                 io_uring_cqe_seen( &ring, cqe );

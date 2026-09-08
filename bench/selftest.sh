@@ -26,14 +26,14 @@ cd "$( dirname "${BASH_SOURCE[0]}" )" || exit 1
 failures=0
 skipped=0
 
-# Every harness that calls bench_fault_init announces "FAULT ARMED -- this run
-# must abort", so every one of them owes at least one leg proving it can. The
+# Every harness that calls bench_fault_init announces synthetic results,
+# so every one of them owes a refusal leg proving it can fail. The
 # coverage check at the bottom fails if a BUILT harness got neither a leg nor
 # a skip: an untested abort path is how #98 item 5 happened the first time.
 
 # Derived from the source, not typed. A hardcoded list only covers the
 # harnesses someone remembered, and a new one added later passes this script
-# green while announcing "FAULT ARMED -- this run must abort" and then
+# green while announcing synthetic results and then
 # printing a rate. Anything that calls bench_fault_init owes a leg, so the
 # list of things that call bench_fault_init IS the list.
 
@@ -199,6 +199,43 @@ leg bench_nw       send send-refused nw_connection_send "a send completion carry
 for partial_harness in bench_portable bench_kqueue bench_msgx bench_gso bench_uring bench_nw; do
     leg "$partial_harness" send send-partial "send health: refused=" "31 of every 32 sends refused"
 done
+
+# ---------------------------------------------------------------------------
+# Positive short batch results must account for each unsent message. Zero
+# results have no successful prefix and must also fail instead of earning credit.
+leg bench_msgx send send-short "send health: refused=" "one accepted message from a full batch"
+leg bench_gso  send send-short "send health: refused=" "one accepted segment from a full GSO write"
+leg bench_msgx send send-zero sendmsg_x "zero accepted messages from a batch"
+leg bench_gso  send send-zero UDP_SEGMENT "zero accepted bytes from a GSO write"
+
+# Back-pressure remains legal, but failed completions earn no sent credit.
+# The plant accepts exactly one of every 32 completed sends.
+if [ -x ./bench_nw ]; then
+    next_port
+    BENCH_FAULT=send-backpressure ./bench_nw send 127.0.0.1 "$PORT" 1 > "$WORK/nw-backpressure.txt" 2>&1
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        fail "nw back-pressure control failed with exit $status"
+    elif python3 - "$WORK/nw-backpressure.txt" <<'PYCONTROL'
+import pathlib, sys
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+rows = [line for line in lines if line.startswith('SENDER ')]
+if len(rows) != 1:
+    sys.exit('missing sender count')
+fields = dict(value.split('=', 1) for value in rows[0].split()[1:])
+sent, refused, pressure = (int(fields[name]) for name in ('pkts', 'refused', 'back_pressure'))
+if sent <= 0 or refused != 31 * sent or refused != pressure:
+    sys.exit('failed completions were credited as sent packets')
+PYCONTROL
+    then
+        echo "leg   bench_nw back-pressure completion accounting: green"
+    else
+        fail "nw back-pressure completion accounting credited refused packets"
+    fi
+else
+    echo "SKIP  bench_nw back-pressure completion accounting -- not built on this host"
+    skipped=$(( skipped + 1 ))
+fi
 
 # ---------------------------------------------------------------------------
 # and the control on the control: with NO fault armed, a short healthy pair
