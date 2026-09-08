@@ -63,13 +63,6 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
 
-      # the version of the crypto every target links against, printed so a
-      # red night on a distro sodium bump is legible from the log rather than
-      # a mystery (the sodium-version gate lives in ci.yml; this only records)
-      - name: Record the libsodium version
-        run: |
-          dpkg-query -W -f='libsodium: ${Version}\n' libsodium-dev || true
-
       # persist the discovered corpus across runs: restore the newest prior
       # cache for this target, save a fresh entry keyed by run id. cache
       # entries are immutable, so a unique key each run plus a prefix
@@ -86,7 +79,9 @@ jobs:
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
@@ -98,8 +93,8 @@ jobs:
           mkdir -p bin
           clang++ -g -O1 -std=c++17 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet.a \
-            $(pkg-config --libs libsodium) -lbpf -lxdp -lpthread \
+            -Isodium -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet.a \
+            -lbpf -lxdp -lpthread \
             -o "bin/${{ matrix.target }}"
 
       - name: Fuzz ${{ matrix.target }}

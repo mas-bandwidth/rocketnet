@@ -15,7 +15,8 @@ compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
 flags = [compiler, '-g', '-O1', '-std=c++17',
          '-fsanitize=fuzzer-no-link,address,undefined',
          '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-I' + str(ROOT / 'sdk')]
-libs = shlex.split(subprocess.check_output(['pkg-config', '--libs', 'libsodium'], text=True))
+libs = (shlex.split(subprocess.check_output(['pkg-config', '--libs', 'libsodium'], text=True))
+        if 'ROCKETNET_USE_SYSTEM_SODIUM:BOOL=ON' in cache else [])
 libs += ['-pthread']
 if sys.platform == 'darwin':
     libs += ['-framework', 'CoreFoundation', '-framework', 'SystemConfiguration']
