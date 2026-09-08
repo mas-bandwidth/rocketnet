@@ -302,6 +302,7 @@ jobs:
       - name: Native driver contract and external backend
         run: |
           ./bin/${{ matrix.build_type }}/test_driver.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./bin/${{ matrix.build_type }}/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_driver_extension.py build --config ${{ matrix.build_type }}
