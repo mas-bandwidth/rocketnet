@@ -5,6 +5,7 @@ import hashlib
 import io
 import itertools
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -34,7 +35,7 @@ libs += ["-framework", "CoreFoundation", "-framework", "SystemConfiguration"] if
 results = {"revision": revision, "platform": platform.platform(),
            "compiler": subprocess.check_output(compiler + ["--version"], text=True).splitlines()[0],
            "sodium": subprocess.check_output(["pkg-config", "--modversion", "libsodium"], text=True).strip(),
-           "samples": args.samples, "batches": args.batches, "results": []}
+           "samples": args.samples, "batches": args.batches, "status": "running", "results": []}
 for variant in ("checked", "control"):
     source = work / variant
     source.mkdir()
@@ -75,10 +76,12 @@ def run(variant, endpoint, operation, size, threads, sample, plant=False):
     command = [str(work / (variant + "-bench")), endpoint, operation, str(size), str(threads), str(args.batches)]
     if plant:
         command.append("plant")
-    completed = subprocess.run(command, env=env, text=True, capture_output=True)
+    completed = subprocess.run(command, env=env, text=True, capture_output=True, timeout=120)
     if completed.returncode:
         raise RuntimeError(f"benchmark failed: {command}\n{completed.stdout}\n{completed.stderr}")
     row = json.loads(completed.stdout)
+    if not math.isfinite(row["ns_per_packet"]) or row["ns_per_packet"] <= 0:
+        raise RuntimeError(f"invalid timing result: {row}")
     row.update(variant=variant, sample=sample)
     results["results"].append(row)
     (work / "results.json").write_text(json.dumps(results, indent=2) + "\n")
@@ -97,4 +100,6 @@ for variant in ("checked", "control"):
               and r["payload_bytes"] == 64 and r["threads"] == 1 and not r["plant"]]
     if results["results"][-1]["ns_per_packet"] <= 2 * max(values):
         raise RuntimeError(f"{variant}: planted workload did not clearly move timing")
+results["status"] = "complete"
+(work / "results.json").write_text(json.dumps(results, indent=2) + "\n")
 print(work / "results.json")
