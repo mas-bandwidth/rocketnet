@@ -9,11 +9,11 @@ import sys
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else "bin/test").resolve()
 env = os.environ.copy()
 env.pop("ROCKETNET_TEST_VERBOSE", None)
-env.pop("ROCKETNET_LOG_LEVEL", None)
-# Preserve the CI leg's explicit ROCKETNET_DRIVER pin. Other values exercise
+# Preserve any caller's explicit ROCKETNET_DRIVER pin. Other values exercise
 # exact names, legacy aliases, an invalid key and a long value without ever
 # printing their contents. The suite derives its cleanup list from the tables.
 env.update({
+    "ROCKETNET_LOG_LEVEL": "4",
     "ROCKETNET_MAX_CLIENTS": "77",
     "ROCKETNET_NUM_REASSEMBLY_SLOTS": "3",
     "ROCKETNET_SERVER_NUM_QUEUES": "invalid",
@@ -23,8 +23,11 @@ env.update({
     "ROCKETNET_PUBLIC_ADDRESS": "invalid",
     "ROCKETNET_PUMP": "portable",
 })
-result = subprocess.run([str(binary)], env=env, text=True, stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT, timeout=180)
+try:
+    result = subprocess.run([str(binary)], env=env, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, timeout=180)
+except subprocess.TimeoutExpired:
+    sys.exit("SDK suite exceeded its 180-second deadline")
 print(result.stdout, end="")
 if result.returncode:
     sys.exit(f"SDK suite failed with ambient config overrides: {result.returncode}")

@@ -7,10 +7,19 @@
 #include "rocketnet_tests.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main()
 {
+    // init reads this before the suite installs its config isolation.
+#if defined(_WIN32)
+    const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
+#else
+    const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
+#endif
+    if ( cleared != 0 ) return 1;
+
     // the captured floor. the suite runs silent -- rocketnet_run_tests
     // captures the library's log into a ring instead of printing it, and a
     // failing check dumps that ring before the check line -- so this level
