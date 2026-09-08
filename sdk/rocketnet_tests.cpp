@@ -11887,6 +11887,7 @@ void rocketnet_test_suite_environment()
 {
     const std::string original_driver = getenv("ROCKETNET_DRIVER") ? getenv("ROCKETNET_DRIVER") : "";
     const bool driver_present = getenv("ROCKETNET_DRIVER") != NULL;
+    rocketnet_check(unsetenv("ROCKETNET_PUBLIC_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
     rocketnet_check(setenv("ROCKETNET_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     rocketnet_check(setenv("ROCKETNET_PUMP", "portable", 1) == 0);
@@ -11894,9 +11895,13 @@ void rocketnet_test_suite_environment()
         rocketnet_test_environment_t isolated;
         rocketnet_check(getenv("ROCKETNET_MAX_CLIENTS") == NULL);
         rocketnet_check(getenv("ROCKETNET_PUMP") == NULL);
+        rocketnet_check(setenv("ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
         rocketnet_check((getenv("ROCKETNET_DRIVER") != NULL) == driver_present);
         if (driver_present) rocketnet_check(original_driver == getenv("ROCKETNET_DRIVER"));
     }
+    rocketnet_check(getenv("ROCKETNET_PUBLIC_ADDRESS") == NULL);
+    rocketnet_check(getenv("ROCKETNET_MAX_CLIENTS") != NULL);
+    rocketnet_check(getenv("ROCKETNET_PUMP") != NULL);
     rocketnet_check(long_value == getenv("ROCKETNET_MAX_CLIENTS"));
     rocketnet_check(strcmp(getenv("ROCKETNET_PUMP"), "portable") == 0);
     unsetenv("ROCKETNET_MAX_CLIENTS");

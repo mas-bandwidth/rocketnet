@@ -95,6 +95,11 @@ fallback the operator did not choose can mask a provisioning error
 indefinitely, which is why the default ladder logs every fall loudly and a
 pin refuses instead of falling.
 
+In RocketNet, `ROCKETNET_PUMP=portable` disables the Darwin `msgx`
+candidate. With `auto`, selection may continue to `portable`; an explicit
+`msgx`-only pin MUST fail loudly, naming the conflicting pump override.
+The override MUST NOT silently retarget that pin.
+
 **Two tiers of unknown.** A name in the known driver set but not available
 to this endpoint on this platform MUST be ignored with one soft log line —
 this is what lets a single fleet-wide configuration line such as

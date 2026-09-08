@@ -3,7 +3,7 @@
 # The split this file's existence rests on is DURATION-DEPENDENCE. Everything
 # here gates and fits in minutes, including bounded TSAN, soak and leak
 # checks. Duration-dependent discovery and multi-day acceptance belong to
-# the separate work in #124; no unattended nightly is configured here.
+# nightly-soak.yml and fuzz-nightly.yml, tracked in #124.
 # The line is not "cheap here, expensive there": asan+ubsan is not cheap and
 # it is here, because a sanitizer finding on THIS commit is what stops the
 # defect from being merged. Anything that only finds what an hour finds is
