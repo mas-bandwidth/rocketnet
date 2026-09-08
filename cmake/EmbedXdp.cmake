@@ -1,7 +1,17 @@
+include("${CMAKE_CURRENT_LIST_DIR}/XdpSources.cmake")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}/source")
-file(COPY "${SOURCE_DIR}/server_xdp/Makefile" "${SOURCE_DIR}/server_xdp/server_xdp.c"
-    "${SOURCE_DIR}/sdk/rocketnet_wire.h" "${SOURCE_DIR}/sdk/rocketnet_xdp_limits.h" DESTINATION "${OUTPUT_DIR}/source")
-execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${OUTPUT_DIR}/rocketnet_server_xdp.tar.gz" .
+set(archive_paths)
+foreach(source IN LISTS ROCKETNET_XDP_SOURCES)
+    get_filename_component(name "${source}" NAME)
+    list(FIND archive_paths "./${name}" existing_index)
+    if(NOT existing_index EQUAL -1)
+        message(FATAL_ERROR "Duplicate XDP archive basename: ${name}")
+    endif()
+    configure_file("${SOURCE_DIR}/${source}" "${OUTPUT_DIR}/source/${name}" COPYONLY)
+    list(APPEND archive_paths "./${name}")
+endforeach()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${OUTPUT_DIR}/rocketnet_server_xdp.tar.gz" --format=gnutar
+    ${archive_paths}
     WORKING_DIRECTORY "${OUTPUT_DIR}/source" RESULT_VARIABLE tar_result)
 if(NOT tar_result EQUAL 0)
     message(FATAL_ERROR "XDP source archive failed: ${tar_result}")

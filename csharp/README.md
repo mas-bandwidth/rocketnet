@@ -64,3 +64,31 @@ entry point. A legacy library with no ABI queries also refuses; its config
 function aborts if the guard fails. Run these checks with
 `python3 tools/check_managed_abi.py bin` after building both ABI fixture targets
 and the Release smoke project.
+
+## Managed/native combinations
+
+| Managed binding | Native library | Current behavior |
+| --- | --- | --- |
+| Current binding | ABI revision 1 with every queried layout matching | Validates once, then runs the transport API; exercised by the three-platform smoke. |
+| Current binding | No ABI introspection exports | Refuses at load with `BadImageFormatException`, before passing a struct to native code. |
+| Current binding | Different revision, type size, field count, field offset or field width | Refuses at load with `BadImageFormatException`; each mismatch has an independent fixture. |
+| Current binding | Explicit path is missing or unloadable | Load fails; the resolver does not choose another library. |
+| Older binding without the load gate | Newer native library | That binding does not perform these checks. This matrix does not certify the combination; rebuild the binding and native library together. |
+
+The packet wire version is independent of this SDK compatibility check. Matching
+wire bytes do not establish compatible managed/native layouts. A future change
+to sized structs or the revision policy requires its own compatibility decision.
+
+For the removed ownerless helper, keep the transport handle alongside the packet
+context and pass it to the new accessor:
+
+```csharp
+Span<byte> payload = RocketNet.ServerTransportPacketPayloadSpan(server, in context);
+// Fill the view before finishing/aborting the packet or advancing its owner.
+```
+
+An already-returned span is borrowed memory: validation cannot revoke it when
+another call finishes the packet. Do not retain it past the documented lifetime.
+The ownerless helper is not restored by this migration note. Any compatibility
+adapter for an existing consumer needs that consumer's usage and lifetime
+requirements first; an obsolete annotation alone cannot validate ownership.

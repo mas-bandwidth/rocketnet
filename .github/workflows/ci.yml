@@ -157,9 +157,19 @@ jobs:
           ./bin/test_driver
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
+      - name: Native XDP staging without kernel resources
+        if: runner.os == 'Linux'
+        run: ./bin/test_xdp
+
+      - name: XDP source archive excludes incremental build output
+        run: python3 tools/check_xdp_archive.py
+
       - name: Compile the embedded XDP program without attaching it
         if: runner.os == 'Linux'
-        run: make -C build/generated/source server_xdp.o
+        run: |
+          xdp_compile_dir=$(mktemp -d "$PWD/build/xdp-archive.XXXXXX")
+          tar -xzf build/generated/rocketnet_server_xdp.tar.gz -C "$xdp_compile_dir"
+          make -C "$xdp_compile_dir" server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
@@ -244,6 +254,10 @@ jobs:
     steps:
 
       - uses: actions/checkout@v4
+
+      - name: Check committed XDP fallback source on Windows
+        # Uses Python and CMake preinstalled on the windows-2025 runner.
+        run: python tools/check_xdp_archive.py --committed-only
 
       - name: Install libsodium (vcpkg)
         run: |
@@ -345,7 +359,12 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
           ROCKETNET_DRIVER: portable
-        run: ./bin/test_lifecycle
+        run: |
+          ./bin/test_lifecycle
+          ./bin/test_xdp
+
+      - name: Inactive XDP index negative control
+        run: python3 tools/check_xdp_guard_control.py
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #

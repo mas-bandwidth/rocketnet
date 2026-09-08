@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-import tarfile
+from check_xdp_archive import check_archive, embedded_bytes, inputs_for
 
 
 def run(*args, **kwargs):
@@ -31,13 +31,11 @@ def main():
     native_build_options = (["--", "-nodeReuse:false"]
                             if cache["CMAKE_GENERATOR"].startswith("Visual Studio") else [])
     archive = build / "generated/rocketnet_server_xdp.tar.gz"
-    if archive.exists():
-        with tarfile.open(archive) as packed:
-            for name, original in (("Makefile", "server_xdp/Makefile"), ("server_xdp.c", "server_xdp/server_xdp.c"), ("rocketnet_wire.h", "sdk/rocketnet_wire.h"), ("rocketnet_xdp_limits.h", "sdk/rocketnet_xdp_limits.h")):
-                if packed.extractfile("./" + name).read() != (source / original).read_bytes():
-                    raise RuntimeError(f"Embedded XDP source differs: {name}")
     with tempfile.TemporaryDirectory(prefix="package check ", dir=build) as directory:
         root = Path(directory)
+        inputs = inputs_for(source, root)
+        data = archive.read_bytes() if archive.exists() else embedded_bytes(source / "sdk/rocketnet_server_xdp.h")
+        check_archive(data, inputs)
         stage, installed = root / "stage", root / "relocated SDK"
         run("cmake", "--install", build, "--config", args.config, "--prefix", stage)
         stage.rename(installed)
