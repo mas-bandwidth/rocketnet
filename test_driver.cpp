@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "rocketnet_driver.h"
 #include "rocketnet_config.h"
+#include "rocketnet_xdp_limits.h"
 #include "rocketnet_platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,6 +75,16 @@ static void test_driver_lifecycle()
 
 static void test_driver_registry()
 {
+    int field_count;
+    const auto * fields = rocketnet_server_transport_config_fields(&field_count);
+    bool found_queues = false;
+    for (int i = 0; i < field_count; ++i)
+        if (strcmp(fields[i].name, "num_xdp_queues") == 0)
+        {
+            CHECK(fields[i].max_value == ROCKETNET_XDP_MAX_QUEUES);
+            found_queues = true;
+        }
+    CHECK(found_queues); // The BPF map must cover every admitted queue index.
     CHECK(ROCKETNET_DRIVER_PORTABLE == 0 && ROCKETNET_DRIVER_GSO == 1 &&
           ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4);
     for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; ++i )

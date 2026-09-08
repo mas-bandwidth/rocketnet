@@ -30,10 +30,10 @@
 #include <linux/ipv6.h>
 #include <linux/udp.h>
 #include <linux/bpf.h>
-#include <linux/string.h>
 #include <bpf/bpf_helpers.h>
 
 #include "rocketnet_wire.h"
+#include "rocketnet_xdp_limits.h"
 
 struct {
     __uint( type, BPF_MAP_TYPE_ARRAY );
@@ -47,7 +47,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_XSKMAP);
     __type(key, __u32);
     __type(value, __u32);
-    __uint(max_entries, 64);
+    __uint(max_entries, ROCKETNET_XDP_MAX_QUEUES);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } server_xdp_socket_map SEC(".maps");
 

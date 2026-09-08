@@ -70,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -156,6 +156,10 @@ jobs:
         run: |
           ./bin/test_driver
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+
+      - name: Compile the embedded XDP program without attaching it
+        if: runner.os == 'Linux'
+        run: make -C build/generated/source server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions

@@ -1,6 +1,6 @@
 file(MAKE_DIRECTORY "${OUTPUT_DIR}/source")
 file(COPY "${SOURCE_DIR}/server_xdp/Makefile" "${SOURCE_DIR}/server_xdp/server_xdp.c"
-    "${SOURCE_DIR}/sdk/rocketnet_wire.h" DESTINATION "${OUTPUT_DIR}/source")
+    "${SOURCE_DIR}/sdk/rocketnet_wire.h" "${SOURCE_DIR}/sdk/rocketnet_xdp_limits.h" DESTINATION "${OUTPUT_DIR}/source")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E tar czf "${OUTPUT_DIR}/rocketnet_server_xdp.tar.gz" .
     WORKING_DIRECTORY "${OUTPUT_DIR}/source" RESULT_VARIABLE tar_result)
 if(NOT tar_result EQUAL 0)
