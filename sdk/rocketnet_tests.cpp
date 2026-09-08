@@ -11069,12 +11069,51 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-// the STANDARD's logging MUSTs, asserted rather than trusted: every env
-// override logs the variable and the displaced value, and secret material
-// never reaches a log line -- not the new value, not the displaced one
-// (the capture sink itself lives up beside the env guards, because the
-// validation test asserts a log line too)
+static void rocketnet_test_config_bytes_exact_fields( const char * name, void * config,
+                                                     const rocketnet_config_field_t * fields, int num_fields )
+{
+    for ( int i = 0; i < num_fields; ++i )
+    {
+        const rocketnet_config_field_t * field = &fields[i];
+        if ( field->kind != ROCKETNET_CONFIG_KIND_BYTES )
+            continue;
+        rocketnet_check( field->size > 1 && field->size <= 256 );
+        char env_name[256];
+        rocketnet_check( rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) );
+        rocketnet_test_env_guard_t guard;
+        rocketnet_test_env_save( &guard, env_name );
+        for ( int delta = -1; delta <= 1; ++delta )
+        {
+            uint8_t bytes[257];
+            for ( int j = 0; j < (int) sizeof(bytes); ++j ) bytes[j] = (uint8_t) ( j * 13 + 7 );
+            char encoded[512];
+            rocketnet_check( rocketnet_base64_encode_data( bytes, field->size + delta, encoded, sizeof(encoded) ) > 0 );
+            setenv( env_name, encoded, 1 );
+            uint8_t * destination = (uint8_t*) config + field->offset;
+            uint8_t before[256];
+            memset( before, 0xA5, field->size );
+            memcpy( destination, before, field->size );
+            const bool accepted = rocketnet_config_apply_env( name, config, field, 1 );
+            rocketnet_check( accepted == ( delta == 0 ) );
+            rocketnet_check( memcmp( destination, accepted ? bytes : before, field->size ) == 0 );
+        }
+        rocketnet_test_env_restore( &guard );
+    }
+}
 
+void rocketnet_test_config_bytes_exact()
+{
+    rocketnet_client_transport_config_t client = {};
+    rocketnet_server_transport_config_t server = {};
+    int count = 0;
+    const rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &count );
+    rocketnet_test_config_bytes_exact_fields( "client", &client, fields, count );
+    fields = rocketnet_server_transport_config_fields( &count );
+    rocketnet_test_config_bytes_exact_fields( "server", &server, fields, count );
+}
+
+// Every override logs the variable and displaced value while keeping secret
+// material out of both success and refusal diagnostics.
 void rocketnet_test_config_override_logging()
 {
     struct rocketnet_test_env_guard_t clients_guard;
@@ -11978,6 +12017,7 @@ void rocketnet_run_tests()
         // the config table and the driver ladder (#106)
 
         RUN_TEST( test_config_env_round_trip );
+        RUN_TEST( test_config_bytes_exact );
         RUN_TEST( test_config_validation );
         RUN_TEST( test_driver_ladder_parse );
         RUN_TEST( test_config_precedence );

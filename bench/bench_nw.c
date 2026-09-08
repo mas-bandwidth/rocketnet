@@ -238,9 +238,10 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=0 back_pressure=%llu\n",
+    bench_send_validate( &nw_send_health );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=0 back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
-            (unsigned long long) nw_send_health.back_pressure );
+            (unsigned long long) nw_send_health.back_pressure, (unsigned long long) nw_send_health.refused );
     exit( 0 );
 }
 

@@ -324,9 +324,10 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
-    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu\n",
+    bench_send_validate( &health );
+    printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
-            (unsigned long long) syscalls, (unsigned long long) health.back_pressure );
+            (unsigned long long) syscalls, (unsigned long long) health.back_pressure, (unsigned long long) health.refused );
 
     io_uring_queue_exit( &ring );
     close( fd );

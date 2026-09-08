@@ -194,6 +194,13 @@ leg bench_uring    send send-refused io_uring "a refused submission, which used 
 leg bench_nw       send send-refused nw_connection_send "a send completion carrying an error, which used to be discarded"
 
 # ---------------------------------------------------------------------------
+# Partial failures must invalidate a sample even when each success resets the
+# consecutive-refusal counter. The final health check is shared by every sender.
+for partial_harness in bench_portable bench_kqueue bench_msgx bench_gso bench_uring bench_nw; do
+    leg "$partial_harness" send send-partial "send health: refused=" "31 of every 32 sends refused"
+done
+
+# ---------------------------------------------------------------------------
 # and the control on the control: with NO fault armed, a short healthy pair
 # must complete and report a window. A selftest whose legs all abort because
 # the harness aborts unconditionally would otherwise pass.
