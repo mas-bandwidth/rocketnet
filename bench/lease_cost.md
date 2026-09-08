@@ -145,3 +145,16 @@ compatibility decision; these numbers do not justify silently weakening it.
 No history, cadence, resource-budget default, ABI or C# API changes accompany
 these measurements. Hardware line-rate validation remains #167/#168; broader
 memory estimation remains #155.
+
+## Subsequent setup diagnostic
+
+A later one-sample controller check at `876548d` stopped after 67 successful
+rows when one portable client/server handshake missed its 10-second setup
+deadline. It retained `status: running` and exited nonzero; it did not certify
+an incomplete timing matrix. The same case passed immediately afterward, and
+100 alternating checked/control setup-and-access probes with added state/counter
+diagnostics all passed. The cause remains unresolved; this observation is
+recorded with the existing unreproduced portable-run evidence in #122, without
+claiming the same root cause. The completed five-pair data above are retained.
+The harness now prints client state and nonzero endpoint counters on setup
+failure; it does not lengthen the deadline or retry failed samples silently.

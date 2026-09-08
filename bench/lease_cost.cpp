@@ -128,7 +128,23 @@ int main(int argc, char ** argv)
         }
         rocketnet_sleep(0.001);
     }
-    CHECK(client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index));
+    if (client_index < 0 || !rocketnet_server_transport_is_client_connected(server, client_index))
+    {
+        fprintf(stderr, "handshake deadline: client state %d, slot %d\n",
+                rocketnet_client_transport_state(client), client_index);
+        const rocketnet_counters_t * counters[] = {
+            rocketnet_client_transport_counters(client), rocketnet_server_transport_counters(server)
+        };
+        for (int side = 0; side < 2; ++side)
+            for (int counter = 0; counter < rocketnet_num_counters(); ++counter)
+            {
+                const uint64_t value = rocketnet_counter_value(counters[side], counter);
+                if (value)
+                    fprintf(stderr, "%s %s=%llu\n", side ? "server" : "client",
+                            rocketnet_counter_name(counter), (unsigned long long)value);
+            }
+        return 1;
+    }
     const int batch_size = payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES ? 64 : 16;
     std::atomic<uint64_t> committed{0}, accessed{0};
     double elapsed_ns = 0;

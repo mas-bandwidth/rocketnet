@@ -5844,5 +5844,24 @@
       "peak_allocator_bytes": 510407896,
       "live_allocations": 40
     }
-  ]
+  ],
+  "subsequent_setup_check": {
+    "controller_revision": "876548d50dca8f6468944cceed377ca79d0a1156",
+    "completed_rows_before_failure": 67,
+    "failed_case": {
+      "variant": "control",
+      "endpoint": "client",
+      "operation": "access",
+      "payload_bytes": 1192,
+      "threads": 4,
+      "batches": 20
+    },
+    "error": "lease bench failed: client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index), line 131",
+    "status_on_failure": "running",
+    "immediate_repeat": "passed",
+    "alternating_diagnostic_probes": 100,
+    "diagnostic_probe_failures": 0,
+    "diagnostic_harness_sha256": "5dcd37d58c035e62f0953fc15efb8abbb6d297847929bf497a18c7a924b37fa2",
+    "cause": "unresolved; no claim of the same root cause as issue 122"
+  }
 }
