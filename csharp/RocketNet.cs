@@ -893,6 +893,10 @@ public static unsafe partial class RocketNet
     /// list. Performance claims attach to what this returns.</summary>
     public static string ServerTransportDriver( IntPtr server ) => Marshal.PtrToStringUTF8( server_transport_driver( server ) ) ?? string.Empty;
 
+    /// <summary>The server's actual bound UDP port, including a port selected from zero.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_port", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ushort ServerTransportPort( IntPtr server );
+
     /// <summary>Advances the server one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ServerTransportUpdate( IntPtr server, double time );

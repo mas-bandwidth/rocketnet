@@ -95,6 +95,11 @@ fallback the operator did not choose can mask a provisioning error
 indefinitely, which is why the default ladder logs every fall loudly and a
 pin refuses instead of falling.
 
+In RocketNet, `ROCKETNET_PUMP=portable` disables the Darwin `msgx`
+candidate. With `auto`, selection may continue to `portable`; an explicit
+`msgx`-only pin MUST fail loudly, naming the conflicting pump override.
+The override MUST NOT silently retarget that pin.
+
 **Two tiers of unknown.** A name in the known driver set but not available
 to this endpoint on this platform MUST be ignored with one soft log line —
 this is what lets a single fleet-wide configuration line such as
@@ -2787,6 +2792,11 @@ first: an elapsed time computed from wall-clock doubles lands either side of
 the interval depending on the absolute clock value, so even a stream
 constructed to have gaps of exactly one interval is not determinate. Do not
 infer from a gap in the outbound stream that the client is being served.
+
+Here the update tick is a bound on a non-uniform game loop, not a fixed
+period. With a uniform tick and the transport's check-then-send ordering,
+the top edge (one send interval plus one tick) is determinate; the closed
+band above preserves the general guarantee when update intervals vary.
 
 *Do not restate this as a relationship between the keep-alive rate and the
 application's send rate.* No such relationship holds: the residual keep-alive

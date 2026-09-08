@@ -15,8 +15,6 @@
 */
 
 using System;
-using System.Net;
-using System.Net.Sockets;
 using System.Threading;
 
 static class Smoke
@@ -52,14 +50,7 @@ static class Smoke
         return true;
     }
 
-    static int FreePort()
-    {
-        using Socket socket = new Socket( AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp );
-        socket.Bind( new IPEndPoint( IPAddress.Loopback, 0 ) );
-        return ( (IPEndPoint) socket.LocalEndPoint! ).Port;
-    }
 
-    // one pump iteration: advance the clock, update both endpoints, flush the server
     static void Pump( IntPtr client, IntPtr server )
     {
         time += TimeStep;
@@ -149,8 +140,7 @@ static class Smoke
         RocketNet.ForbidXdpCommit();
         Ok( $"init (protocol version {RocketNet.ProtocolVersion():x}, native time {RocketNet.Time():F2}, user id {RocketNet.UserIdString( 0x1234567812345678UL )})" );
 
-        int port = FreePort();
-        string address = $"127.0.0.1:{port}";
+        string address = "127.0.0.1:0";
 
         // the config table mirror (#106): the default carries driver "auto",
         // the struct round-trips a pinned list through the binding, a typo
@@ -183,6 +173,9 @@ static class Smoke
             Fail( $"server create on {address}" );
         if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
             Fail( $"granted driver is '{RocketNet.ServerTransportDriver( server )}', expected the pinned '{serverDriver}'" );
+        ushort port = RocketNet.ServerTransportPort( server );
+        if ( port == 0 ) Fail( "server bound port remains zero" );
+        address = $"127.0.0.1:{port}";
         Ok( $"server up on {address} [{RocketNet.ServerTransportDriver( server )}]" );
 
         // connect with an explicitly defaulted config: the config struct layout
@@ -222,6 +215,21 @@ static class Smoke
         if ( RocketNet.ServerTransportClientId( server, clientIndex ) != clientId )
             Fail( "server client id" );
         Ok( $"connected in {iterations} iterations (client index {clientIndex})" );
+
+        // Both abort entry points consume the lease without a payload.
+        RocketNet.PacketContext abortUp = default, abortDown = default;
+        if ( RocketNet.ClientTransportStartPacket( client, 64, ref abortUp ) == IntPtr.Zero ||
+             RocketNet.ServerTransportStartPacket( server, clientIndex, 64, ref abortDown ) == IntPtr.Zero )
+            Fail( "start packets for explicit abort" );
+        RocketNet.PacketContext abortUpCopy = abortUp, abortDownCopy = abortDown;
+        RocketNet.ClientTransportAbortPacket( client, ref abortUp );
+        RocketNet.ServerTransportAbortPacket( server, ref abortDown );
+        if ( !RocketNet.ClientTransportPacketPayloadSpan( client, in abortUpCopy ).IsEmpty ||
+             !RocketNet.ServerTransportPacketPayloadSpan( server, in abortDownCopy ).IsEmpty ||
+             RocketNet.ClientTransportFinishPacket( client, ref abortUpCopy, 1 ) != 0 ||
+             RocketNet.ServerTransportFinishPacket( server, ref abortDownCopy, 1 ) != 0 )
+            Fail( "explicit abort left a live lease" );
+        Ok( "client and server abort consume their leases" );
 
         // client -> server: one payload through acquire/commit, one through the
         // convenience send
@@ -273,6 +281,9 @@ static class Smoke
                 if ( batch.ClientIndex( j ) != clientIndex )
                     Fail( "payload from wrong client index" );
                 ReadOnlySpan<byte> received = batch[j];
+                ReadOnlySpan<byte> indexed = RocketNet.ServerTransportPayloadSpan( server, j, out int indexedClient );
+                if ( indexedClient != clientIndex || !received.SequenceEqual( indexed ) )
+                    Fail( "server payload mismatch between accessors" );
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
                     got256 = true;
                 else if ( received.Length == 64 && MatchesPattern( received, 2 ) )
@@ -303,6 +314,11 @@ static class Smoke
             Fail( "server finish packet" );
         RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
 
+        byte[] receiveCopy = new byte[RocketNet.ClientTransportMaxPayloadBytes( client )];
+        bool shortReceiveRefused = false;
+        try { RocketNet.ClientTransportReceivePacket( client, new byte[1].AsSpan() ); }
+        catch ( ArgumentException ) { shortReceiveRefused = true; }
+        if ( !shortReceiveRefused ) Fail( "copying receive accepted an undersized span" );
         bool gotEcho = false, gotDown = false;
         for ( int i = 0; i < 1000 && !( gotEcho && gotDown ); i++ )
         {
@@ -314,6 +330,9 @@ static class Smoke
             for ( int j = 0; j < batch.Count; j++ )
             {
                 ReadOnlySpan<byte> received = batch[j];
+                int copied = RocketNet.ClientTransportReceivePacket( client, receiveCopy.AsSpan() );
+                if ( copied != received.Length || !received.SequenceEqual( receiveCopy.AsSpan( 0, copied ) ) )
+                    Fail( "copying receive differs from the client batch" );
                 if ( !received.SequenceEqual( RocketNet.ClientTransportPayloadSpan( client, j ) ) )
                     Fail( "client payload mismatch between accessors" );
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
@@ -324,6 +343,8 @@ static class Smoke
                     Fail( $"unexpected payload at client: {received.Length} bytes" );
             }
         }
+        if ( RocketNet.ClientTransportReceivePacket( client, receiveCopy.AsSpan() ) != 0 )
+            Fail( "copying receive cursor did not drain" );
         if ( !gotEcho || !gotDown )
             Fail( $"client did not receive both payloads (acquire/commit {gotEcho}, convenience {gotDown})" );
         Ok( "server -> client: acquire/commit and convenience payloads byte-exact" );

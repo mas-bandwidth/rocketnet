@@ -1,10 +1,7 @@
-# The nightly deep fuzz (#124's discovery half). ci.yml's fuzz-smoke is a
-# REPLAY -- the same committed inputs, same order, same verdict, seconds,
-# no randomness -- and that is what a per-commit gate must be. This is its
-# opposite and its complement: a long, coverage-guided HUNT per target, with
-# the discovered corpus persisted (and grown) across nights via the cache, the
-# committed seed corpus reused, the wire's own dictionary applied, and any
-# crash reddening that target's job and uploaded as a reproducer.
+# The nightly deep fuzz (#124's discovery half) runs longer campaigns per
+# target and persists discovered inputs across nights. ci.yml gates each
+# commit with corpus replay and a bounded full-count mutation campaign.
+# Both fail on findings; this workflow adds duration and stateful targets.
 #
 # Separate workflow from ci.yml so it never blocks a pull request. A red night
 # is a found bug, read by whoever is on the estate that morning, not a gate on
