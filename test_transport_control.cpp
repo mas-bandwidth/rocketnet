@@ -1,9 +1,32 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
 // deterministic driver. No test hook or additional export enters the SDK.
+#include "sdk/rocketnet_server_protocol.h"
+static bool fail_seal;
+static int checked_seals;
+static bool check_arena_copy;
+static int arena_pattern;
+static int controlled_seal(rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
+    uint64_t packet_id, uint8_t * wire, int bytes, double time);
+#define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "sdk/rocketnet_server_transport.cpp"
+#undef rocketnet_server_protocol_seal_payload_frame
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
+
+static int controlled_seal(rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
+    uint64_t packet_id, uint8_t * wire, int bytes, double time)
+{
+    if (check_arena_copy)
+    {
+        CHECK(bytes == 64);
+        for (int i = 0; i < bytes; ++i)
+            CHECK(wire[ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + i] == uint8_t(i + arena_pattern));
+        ++checked_seals;
+    }
+    if (fail_seal) return 0;
+    return rocketnet_server_protocol_seal_payload_frame(server, client_index, sequence, packet_id, wire, bytes, time);
+}
 
 struct control_fixture_t
 {
@@ -11,6 +34,8 @@ struct control_fixture_t
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     int requests;
     int responses;
+    int payloads;
+    int aborts;
     int keep_alives[300];
     int acks[300];
     int capacity;
@@ -27,6 +52,7 @@ static void record(control_fixture_t * f, const rocketnet_address_t * to, const 
     CHECK(client >= 0 && client < 300);
     if (packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET) ++f->keep_alives[client];
     else if (packet[0] == ROCKETNET_CONNECTION_ACK_PACKET) ++f->acks[client];
+    else if (packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET) ++f->payloads;
     else CHECK(false);
 }
 static void fixture_destroy(void *) {}
@@ -60,16 +86,16 @@ static void finish_packet(void * p, uint64_t, uint8_t * frame, int)
     auto * f = (control_fixture_t*)p;
     record(f, &f->reserved_to, frame + ROCKETNET_FRAME_WIRE_OFFSET); ++f->used;
 }
-static void abort_packet(void *, uint64_t, uint8_t *) {}
+static void abort_packet(void * p, uint64_t, uint8_t *) { ++((control_fixture_t*)p)->aborts; }
 static void flush(void * p) { ((control_fixture_t*)p)->used = 0; }
 static rocketnet_server_socket_process_packets_t * receive(void * p) { return &((control_fixture_t*)p)->received; }
 
-static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_driver_operations_t * operations, int clients, bool staged)
+static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_driver_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
 {
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = clients;
-    config.max_payload_bytes = ROCKETNET_MAX_PAYLOAD_BYTES;
+    config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
     strcpy(config.driver, "portable");
     auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, 0.0);
@@ -156,6 +182,43 @@ static void test_staged_control_fairness()
     printf("test_staged_control_fairness\n");
 }
 
+static void test_single_frame_arena()
+{
+    for (int staged = 0; staged < 2; ++staged)
+    {
+        auto * f = new control_fixture_t(); f->capacity = 1;
+        rocketnet_server_driver_operations_t operations;
+        auto * server = make_server(f, &operations, 1, staged != 0, 5000);
+        checked_seals = 0; check_arena_copy = true;
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            rocketnet_packet_context_t context;
+            CHECK(rocketnet_server_transport_start_packet(server, 0, 5000, &context));
+            CHECK(context.payload_index == 0); // The oversized reservation selected the arena.
+            int capacity;
+            uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
+            CHECK(payload && capacity >= 5000);
+            arena_pattern = 37 + attempt * 17;
+            for (int i = 0; i < 64; ++i) payload[i] = uint8_t(i + arena_pattern);
+            fail_seal = attempt == 0;
+            int bytes = rocketnet_server_transport_finish_packet(server, &context, 64);
+            CHECK((bytes > 0) == (attempt == 1) && !context.frame);
+            if (staged)
+            {
+                CHECK(f->aborts == 1);
+                CHECK(f->used == attempt);
+            }
+            else if (attempt == 0) CHECK(server->payload_ring.info[0].wire_bytes == 0);
+            rocketnet_server_transport_send_packets(server);
+            CHECK(f->payloads == attempt); // Failed seal never reached the driver.
+        }
+        CHECK(checked_seals == 2);
+        check_arena_copy = false; fail_seal = false;
+        rocketnet_server_transport_destroy(server); delete f;
+    }
+    printf("test_single_frame_arena_seal_and_abort\n");
+}
+
 int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -163,5 +226,6 @@ int main()
     rocketnet_forbid_xdp_commit();
     test_buffered_control_pressure();
     test_staged_control_fairness();
+    test_single_frame_arena();
     rocketnet_term();
 }

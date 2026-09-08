@@ -326,6 +326,26 @@ void rocketnet_test_read_write()
 
 void rocketnet_test_base64()
 {
+    const char * vectors[] = { "", "AA==", "AAE=", "AAEC", "AAECAw==", "AAECAwQ=", "AAECAwQF", "AAECAwQFBg==", "AAECAwQFBgc=" };
+    uint8_t source[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    for (int length = 0; length <= 8; ++length)
+    {
+        char text[14]; memset(text, 0x5a, sizeof(text));
+        const int chars = (int) strlen(vectors[length]);
+        rocketnet_check(rocketnet_base64_encode_data(source, length, text, chars + 1) == chars);
+        rocketnet_check(strcmp(text, vectors[length]) == 0 && text[chars + 1] == 0x5a);
+        if (chars > 0) rocketnet_check(rocketnet_base64_encode_data(source, length, text, chars) == -1);
+        uint8_t output[9]; memset(output, 0xa5, sizeof(output));
+        rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, length ? length : 1) == length);
+        rocketnet_check(memcmp(output, source, length) == 0 && output[length] == 0xa5);
+        if (length > 1)
+        {
+            memset(output, 0xa5, sizeof(output));
+            rocketnet_check(rocketnet_base64_decode_data(vectors[length], output, length - 1) == 0);
+            for (int i = 0; i < 9; ++i) rocketnet_check(output[i] == 0xa5);
+        }
+    }
+
     const char * input = "a test string. let's see if it works properly";
     char encoded[1024];
     char decoded[1024];
@@ -5407,11 +5427,14 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check( frame );
     rocketnet_server_transport_abort_packet( server, &context );
 
+    for (int arena = 0; arena < 2; ++arena)
+    {
     // commit: write at the payload pointer, finish, flush, and the client
     // receives exactly those bytes
 
-    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES + arena, &context );
     rocketnet_check( frame );
+    rocketnet_check( context.payload_index == (arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET) );
     memcpy( frame + context.payload_index, "shape", 5 );
     rocketnet_server_transport_finish_packet( server, &context, 5 );
     rocketnet_server_transport_send_packets( server );
@@ -5433,6 +5456,34 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( received );
+
+    struct rocketnet_packet_context_t reply;
+    uint8_t * reply_frame = rocketnet_client_transport_start_packet(client, ROCKETNET_MAX_PAYLOAD_BYTES + arena, &reply);
+    rocketnet_check(reply_frame);
+    rocketnet_check(reply.payload_index == (arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET));
+    memcpy(reply_frame + reply.payload_index, "reply", 5);
+    rocketnet_check(rocketnet_client_transport_finish_packet(client, &reply, 5) > 0);
+    rocketnet_client_transport_send_packets(client);
+    bool replied = false;
+    start = rocketnet_platform_time();
+    while (!replied && rocketnet_platform_time() - start < 5.0)
+    {
+        rocketnet_client_transport_update(client, rocketnet_platform_time());
+        rocketnet_server_transport_update(server, rocketnet_platform_time());
+        if (rocketnet_server_transport_num_payloads(server))
+        {
+            int index, bytes;
+            uint8_t * payload = rocketnet_server_transport_payload(server, 0, &index, &bytes);
+            rocketnet_check(payload && index == 0 && bytes == 5 && memcmp(payload, "reply", 5) == 0);
+            rocketnet_check(rocketnet_server_transport_num_payloads(server) == 1);
+            replied = true;
+        }
+        if (!replied) rocketnet_platform_sleep(0.001);
+    }
+    rocketnet_check(replied);
+
+
+    }
 
     rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_destroy( server );
@@ -5964,6 +6015,16 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
 
     rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_hostname_resolve_localhost()
+{
+    rocketnet_address_t address, ipv6;
+    rocketnet_check(rocketnet_platform_hostname_resolve("localhost", "40000", &address));
+    rocketnet_check(address.port == 40000);
+    rocketnet_check(rocketnet_address_parse(&ipv6, "[::1]:40000"));
+    rocketnet_check((address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127) ||
+                   rocketnet_address_equal(&address, &ipv6));
 }
 
 void rocketnet_test_platform_socket()
@@ -12025,6 +12086,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_request_path_config_branches );
         RUN_TEST( test_replay_protection );
         RUN_TEST( test_client_slots );
+        RUN_TEST( test_hostname_resolve_localhost );
         RUN_TEST( test_platform_socket );
         RUN_TEST( test_platform_batch_pump );
         RUN_TEST( test_platform_batch_pump_degraded );

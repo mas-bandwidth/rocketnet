@@ -142,6 +142,10 @@ jobs:
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
 
+      - name: Darwin msgx refusal, fallback and re-probe
+        if: runner.os == 'macOS'
+        run: ./bin/test_msgx
+
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release'
         run: |
