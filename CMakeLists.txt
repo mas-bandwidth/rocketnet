@@ -54,6 +54,7 @@ endforeach()
 include(cmake/RocketNetDependencies.cmake)
 
 # Generate into this build tree. Multiple builds never rewrite the source header.
+include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 if(WIN32)
     configure_file(sdk/rocketnet_server_xdp.h "${ROCKETNET_XDP_HEADER}" COPYONLY)
@@ -65,7 +66,7 @@ else()
             "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
             "-DXXD=${ROCKETNET_XXD}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
-        DEPENDS server_xdp/Makefile server_xdp/server_xdp.c sdk/rocketnet_wire.h sdk/rocketnet_xdp_limits.h cmake/EmbedXdp.cmake
+        DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
         VERBATIM)
 endif()
 add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")

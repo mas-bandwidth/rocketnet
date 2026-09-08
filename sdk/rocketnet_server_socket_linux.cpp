@@ -1917,8 +1917,11 @@ bool rocketnet_server_socket_test_inactive_generation()
     valid &= socket->send_flow_index.load() == -1;
     if (valid)
     {
-        // Both generations belong to the worker. Late native calls must not
-        // form an inactive-buffer pointer or alter either published packet.
+        // Both generations belong to the worker. The sanitizer negative control
+        // detects inactive-buffer pointer formation; the length assertions
+        // below separately check preservation of published packet metadata.
+        uint64_t refused_id;
+        valid &= rocketnet_server_socket_start_packet(server, &to, &refused_id) == NULL;
         rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
         rocketnet_server_socket_abort_packet(server, ids[1], packets[1]);
         for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)

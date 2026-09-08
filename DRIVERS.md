@@ -105,3 +105,26 @@ hardware failure tests or per-platform line-rate measurements.
 
 Dispatch measurements and their limits are recorded in
 [bench/transport_fill.md](bench/transport_fill.md).
+
+## Embedded XDP source maintenance
+
+`cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
+dependencies and verification. Add a new runtime BPF source/header there; archive
+entries use basenames, which must be unique. The checker also exercises adding
+one future input to this list while unrelated files remain in staging.
+
+Windows uses the committed `sdk/rocketnet_server_xdp.h` without requiring xxd.
+Whenever a listed input changes, refresh that fallback on a development host
+with xxd, then run the same decoded-content check used by package tests and
+Windows CI:
+
+```sh
+cmake --build build --target rocketnet_xdp_header
+cp build/generated/rocketnet_server_xdp.h sdk/rocketnet_server_xdp.h
+python3 tools/check_xdp_archive.py
+```
+
+`--committed-only` verifies the fallback without requiring xxd. The generated
+header must contain the exact generated archive bytes; the committed fallback's
+archive must contain the exact current source bytes, independently of archive
+timestamps. Neither check loads a program or attaches to a network interface.

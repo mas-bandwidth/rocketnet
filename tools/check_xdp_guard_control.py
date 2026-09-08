@@ -28,10 +28,15 @@ with tempfile.TemporaryDirectory(prefix="xdp guard control ", dir=build) as dire
                     "-DCMAKE_BUILD_TYPE=Debug", f"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={output}",
                     "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer",
                     "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"], check=True)
+    cache = (work / "build/CMakeCache.txt").read_text().splitlines()
+    compiler = next(line.split("=", 1)[1] for line in cache if line.startswith("CMAKE_CXX_COMPILER:"))
+    print("Inactive-index negative control compiler:", flush=True)
+    subprocess.run([compiler, "--version"], check=True)
     subprocess.run(["cmake", "--build", str(work / "build"), "--target", "test_xdp", "--parallel", "2"], check=True)
     env = os.environ.copy()
     env.update(ASAN_OPTIONS="detect_leaks=0", UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     result = subprocess.run([str(output / "test_xdp")], env=env, text=True, capture_output=True)
     if result.returncode == 0 or "index -1 out of bounds" not in result.stderr:
         raise SystemExit(f"inactive-index control did not produce the expected sanitizer failure: {result.returncode}\n{result.stdout}\n{result.stderr}")
+    print(next(line for line in result.stderr.splitlines() if "index -1 out of bounds" in line))
 print("test_xdp_inactive_generation_control")

@@ -252,6 +252,9 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Check committed XDP fallback source on Windows
+        run: python tools/check_xdp_archive.py --committed-only
+
       - name: Install libsodium (vcpkg)
         run: |
           vcpkg install libsodium:x64-windows
