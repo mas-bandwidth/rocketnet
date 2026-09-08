@@ -501,6 +501,30 @@ void rocketnet_server_iocp_test_hold_completions( rocketnet_server_iocp_t * iocp
         else rocketnet_platform_mutex_release( &iocp->workers[i].mutex );
     }
 }
+
+bool rocketnet_server_iocp_test_receive_view_published( rocketnet_server_iocp_t * iocp, const uint8_t * view )
+{
+    bool published = false;
+    const uintptr_t pointer = (uintptr_t) view;
+    for ( int i = 0; i < iocp->num_workers; ++i )
+    {
+        rocketnet_iocp_worker_t * worker = &iocp->workers[i];
+        rocketnet_platform_mutex_acquire( &worker->mutex );
+        for ( int j = 0; j < 2; ++j )
+        {
+            const uintptr_t begin = (uintptr_t) worker->buffers[j].data;
+            if ( pointer >= begin && pointer < begin + sizeof(worker->buffers[j].data) )
+                published = j != (int) (worker->receive_counter % 2);
+        }
+        rocketnet_platform_mutex_release( &worker->mutex );
+    }
+    return published;
+}
+
+bool rocketnet_server_iocp_test_stopping( rocketnet_server_iocp_t * iocp )
+{
+    return iocp->stopping.load( std::memory_order_acquire );
+}
 #endif
 
 #endif // ROCKETNET_PLATFORM_WINDOWS

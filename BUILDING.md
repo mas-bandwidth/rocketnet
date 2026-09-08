@@ -175,6 +175,9 @@ while this new driver is reviewed. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests, and the C# smoke
 with IOCP selected. Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
+The current implementation shares one UDP socket between completion workers.
+Its receive-queue contention must be measured before choosing whether Windows
+needs RSS-sharded sockets or a different native backend for the line-rate tier.
 
 ## Deploying the XDP driver: provision, then verify-and-bind
 

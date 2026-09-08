@@ -189,9 +189,20 @@ static void test_datagrams_and_producers()
         rocketnet_platform_sleep(0.001);
     }
     CHECK(received);
+    CHECK(rocketnet_server_iocp_test_receive_view_published(driver, received));
+    uint64_t before[ROCKETNET_IOCP_NUM_COUNTERS], after[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters(driver, before);
     uint8_t extra[32]; memset(extra, 0x44, sizeof(extra));
     for ( int i = 0; i < 100; ++i ) rocketnet_platform_socket_send_packet(peer, &destination, extra, sizeof(extra));
-    rocketnet_platform_sleep(0.05);
+    const double receive_deadline = rocketnet_platform_time() + 5.0;
+    do
+    {
+        rocketnet_server_iocp_counters(driver, after);
+        if (after[ROCKETNET_IOCP_RECEIVE_COMPLETED] > before[ROCKETNET_IOCP_RECEIVE_COMPLETED]) break;
+        rocketnet_platform_sleep(0.001);
+    } while (rocketnet_platform_time() < receive_deadline);
+    CHECK(after[ROCKETNET_IOCP_RECEIVE_COMPLETED] > before[ROCKETNET_IOCP_RECEIVE_COMPLETED]);
+    CHECK(rocketnet_server_iocp_test_receive_view_published(driver, received));
     CHECK(memcmp(received, marker, sizeof(marker)) == 0); // View lifetime until next receive.
 
     std::vector<std::thread> producers;
@@ -223,13 +234,28 @@ static void test_datagrams_and_producers()
         ++count;
     }
     CHECK(count == 256);
-    // Exercise cancellation while completion workers are actively reposting.
+    // Force stop to join the same mutex used by completion/repost. The stop
+    // thread sets stopping while the publication locks are held here; only
+    // releasing them can let cancellation proceed. No scheduler warm-up sleep.
+    rocketnet_server_iocp_test_hold_completions(driver, true);
     std::atomic<bool> sending{true};
     std::thread incoming([&]() {
         while (sending.load())
             rocketnet_platform_socket_send_packet(peer, &destination, extra, sizeof(extra));
     });
-    rocketnet_platform_sleep(0.01);
+    std::atomic<bool> stop_returned{false};
+    std::thread stopping([&]() {
+        rocketnet_server_iocp_stop(driver);
+        stop_returned.store(true);
+    });
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while (!rocketnet_server_iocp_test_stopping(driver) && rocketnet_platform_time() < stop_deadline)
+        rocketnet_platform_sleep(0.001);
+    CHECK(rocketnet_server_iocp_test_stopping(driver));
+    CHECK(!stop_returned.load());
+    rocketnet_server_iocp_test_hold_completions(driver, false);
+    stopping.join();
+    CHECK(stop_returned.load());
     wait_stopped(driver);
     sending.store(false);
     incoming.join();

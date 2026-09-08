@@ -164,11 +164,16 @@ if(ROCKETNET_BUILD_TESTS)
         target_link_libraries(${test_target} PRIVATE rocketnet)
     endforeach()
     if(WIN32)
-        # Compile the same driver with a test-only retirement barrier. The
-        # production library has neither this helper nor a test branch in I/O.
-        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp)
-        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS)
-        target_link_libraries(test_iocp PRIVATE rocketnet)
+        # Isolate the test-instrumented driver: never link another copy from
+        # the production archive. Only its ordinary runtime dependencies enter.
+        add_executable(test_iocp test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp
+            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp)
+        target_compile_definitions(test_iocp PRIVATE ROCKETNET_IOCP_TESTS
+            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+        target_include_directories(test_iocp PRIVATE sdk)
+        target_compile_features(test_iocp PRIVATE cxx_std_11)
+        target_compile_options(test_iocp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        target_link_libraries(test_iocp PRIVATE RocketNet::Sodium Threads::Threads)
     endif()
     add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
     target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
