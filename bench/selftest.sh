@@ -188,6 +188,12 @@ leg bench_nw       recv-pair recv-errno nw_connection_receive_message "a Network
 
 leg bench_portable send send-refused sendto    "a persistently refused send"
 leg bench_kqueue   send send-refused sendto    "a persistently refused send"
+leg bench_portable send send-short "sendto" "a short datagram send must refuse"
+leg bench_portable send send-zero "sendto" "a zero datagram send must refuse"
+leg bench_kqueue send send-short "sendto" "a short datagram send must refuse"
+leg bench_kqueue send send-zero "sendto" "a zero datagram send must refuse"
+leg bench_uring send send-short "io_uring send completion" "a short completion must refuse"
+leg bench_uring send send-zero "io_uring send completion" "a zero completion must refuse"
 leg bench_msgx     send send-refused sendmsg_x "a persistently refused batch send"
 leg bench_gso      send send-refused UDP_SEGMENT "a GSO-less host, the pps=0 case #98 named"
 leg bench_uring    send send-refused io_uring "a refused submission, which used to be a silent continue"
