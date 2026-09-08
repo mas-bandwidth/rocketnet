@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_platform.h"
+#include "rocketnet_route.h"
 #include <limits.h>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
@@ -852,97 +853,9 @@ struct rocketnet_iftable_t
     int connection_type;
 };
 
-struct rocketnet_ifforward4_t
-{
-    uint32_t if_index;
-    uint32_t forward_dest;
-    uint32_t forward_mask;
-    uint32_t forward_metric;
-};
-
-static bool parse_kernel_route( struct nlmsghdr * msg_ptr, rocketnet_ifforward4_t * out )
-{
-    struct rtmsg * route_entry = (struct rtmsg *)( NLMSG_DATA( msg_ptr ) );
-
-    if ( route_entry->rtm_table != RT_TABLE_MAIN )
-        return false;
-
-    // a host route has a prefix length of 32, and shifting a 32-bit int by
-    // 32 is undefined -- ubsan on the #111 sanitizers leg, first run (#123).
-    // every defined case keeps the value it had; the undefined one takes the
-    // value the arithmetic was reaching for.
-
-    out->forward_mask = route_entry->rtm_dst_len >= 32 ? 0xFFFFFFFFu : ( ( 1u << route_entry->rtm_dst_len ) - 1 );
-
-    // read all attributes
-    int route_attribute_len = RTM_PAYLOAD( msg_ptr );
-    for ( struct rtattr * route_attribute = (struct rtattr *)( RTM_RTA( route_entry ) );
-        RTA_OK( route_attribute, route_attribute_len );
-        route_attribute = RTA_NEXT( route_attribute, route_attribute_len ) )
-    {
-        switch ( route_attribute->rta_type )
-        {
-            case RTA_DST:
-            {
-                memcpy( &out->forward_dest, RTA_DATA( route_attribute ), sizeof( out->forward_dest ) );
-                break;
-            }
-            case RTA_OIF:
-            {
-                memcpy( &out->if_index, RTA_DATA( route_attribute ), sizeof( out->if_index ) );
-                break;
-            }
-            case RTA_METRICS:
-            {
-                memcpy( &out->forward_metric, RTA_DATA( route_attribute ), sizeof( out->forward_metric ) );
-                break;
-            }
-        }
-    }
-
-    return true;
-}
-
-#define CHECK_BIT( _num, _bit ) ( ( _num ) & ( uint32_t(1) << ( _bit ) ) )
-
-static bool better_match( rocketnet_ifforward4_t * a, rocketnet_ifforward4_t * b, uint32_t ip )
-{
-    int matching_bits_a = 0;
-    int matching_bits_b = 0;
-
-    if ( a )
-    {
-        for ( int i = 0; i < 32; i++ )
-        {
-            if ( CHECK_BIT( a->forward_mask, i )
-                && CHECK_BIT( a->forward_dest, i ) == CHECK_BIT( ip, i ) )
-            {
-                matching_bits_a++;
-            }
-        }
-    }
-
-    if ( b )
-    {
-        for ( int i = 0; i < 32; i++ )
-        {
-            if ( CHECK_BIT( b->forward_mask, i )
-                && CHECK_BIT( b->forward_dest, i ) == CHECK_BIT( ip, i ) )
-            {
-                matching_bits_b++;
-            }
-        }
-    }
-    
-    return matching_bits_a > matching_bits_b;
-}
-
 static int classify_connection_type( rocketnet_vector_t<rocketnet_ifforward4_t> * route_table, rocketnet_vector_t<rocketnet_iftable_t> * interface_list, const rocketnet_address_t * addr )
 {
-    uint32_t ip = ( ( (uint32_t) addr->data.ipv4[0] ) )        | 
-                  ( ( (uint32_t) addr->data.ipv4[1] ) << 8 )   | 
-                  ( ( (uint32_t) addr->data.ipv4[2] ) << 16 )  | 
-                  ( ( (uint32_t) addr->data.ipv4[3] ) << 24 );
+    const uint32_t ip = rocketnet_route_ip( addr->data.ipv4 );
     rocketnet_ifforward4_t * best_match = NULL;
     for ( int i = 0; i < route_table->length; i++ )
     {

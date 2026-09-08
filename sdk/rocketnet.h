@@ -893,8 +893,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packets( struct rocke
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
-// burst goes out on the next flush and the slot frees immediately. Why is
-// the game's decision; this is only the mechanism. Main thread only, never
+// burst is staged and the slot frees immediately. Buffered drivers may send
+// full batches during this call; remaining packets leave on the next flush.
+// Why is the game's decision; this is only the mechanism. Main thread only, never
 // while a fill phase is open -- it tears down the connection state the
 // fill relies on.
 

@@ -155,6 +155,7 @@ jobs:
       - name: Native driver contract and external backend
         run: |
           ./bin/test_driver
+          ./bin/test_transport_control
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
       - name: Native XDP staging without kernel resources
@@ -302,6 +303,8 @@ jobs:
         run: |
           ./bin/${{ matrix.build_type }}/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./bin/${{ matrix.build_type }}/test_transport_control.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
@@ -361,6 +364,8 @@ jobs:
           ROCKETNET_DRIVER: portable
         run: |
           ./bin/test_lifecycle
+          ./bin/test_driver
+          ./bin/test_transport_control
           ./bin/test_xdp
 
       - name: Inactive XDP index negative control

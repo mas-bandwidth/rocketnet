@@ -133,3 +133,8 @@ timestamps and ownership metadata. The conditional copy avoids changing the
 fallback solely because archive metadata differs. CI compiles a fresh extraction
 of the archive, so a removed input cannot be supplied by old staging files.
 Neither check loads a program or attaches to a network interface.
+
+The Linux connection-type label is an IPv4 main-table heuristic. It does not
+model policy routing or multipath entries without a direct output-interface
+attribute, and may report the wired fallback for those configurations. This
+label does not choose the transport route or limit IPv6 endpoint support.
