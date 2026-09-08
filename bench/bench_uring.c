@@ -253,7 +253,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 /* a refused submission used to be stepped over in silence,
                    so a ring that never accepted anything reported pps=0 */
-                bench_send_refused( &health, "io_uring_submit_and_wait", -result );
+                bench_send_batch_observe( &health, "io_uring_submit_and_wait", 0, BENCH_BATCH_SIZE, -result );
                 continue;
             }
 
@@ -279,13 +279,15 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    if ( cqe->res == size )
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
+                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion" );
                     }
                     else
                     {
-                        sent += bench_send_refused( &health, "io_uring send completion", cqe->res < 0 ? -cqe->res : EIO );
+                        sent += bench_send_refused( &health, "io_uring send completion", completed_bytes < 0 ? -completed_bytes : EIO );
                     }
                 }
             }
@@ -303,7 +305,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    if ( cqe->res == size )
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
+                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion (zc)" );
                     }
@@ -312,7 +316,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                         /* the zero-copy drain discarded this outright: a
                            SEND_ZC row could report pps=0 with every send
                            refused and never say a word */
-                        sent += bench_send_refused( &health, "io_uring send completion (zc)", cqe->res < 0 ? -cqe->res : EIO );
+                        sent += bench_send_refused( &health, "io_uring send completion (zc)", completed_bytes < 0 ? -completed_bytes : EIO );
                     }
                 }
                 io_uring_cqe_seen( &ring, cqe );
