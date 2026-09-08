@@ -11,6 +11,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_packet_batch.h"
 
 struct rocketnet_server_socket_t;
 
@@ -100,13 +101,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );
 
-struct rocketnet_server_socket_process_packets_t
-{
-    int num_packets;
-    rocketnet_address_t from[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS];
-    int packet_bytes[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS];
-    uint8_t * packet_data[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS];
-};
+
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 

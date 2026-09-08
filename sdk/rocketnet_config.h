@@ -9,6 +9,7 @@
 #define ROCKETNET_CONFIG_H
 
 #include "rocketnet.h"
+#include "rocketnet_driver.h"
 
 // The config engine (#106): the machinery behind the per-transport config
 // tables declared in rocketnet.h. Each table declares every field once;
@@ -87,13 +88,6 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 // typo and fails loudly at parse listing the valid names (spelling errors
 // stay catchable). An applicable one-element list is a pin: that driver or
 // loud failure.
-
-#define ROCKETNET_DRIVER_PORTABLE       0
-#define ROCKETNET_DRIVER_GSO            1
-#define ROCKETNET_DRIVER_XDP            2
-#define ROCKETNET_DRIVER_MSGX           3
-#define ROCKETNET_DRIVER_IOCP           4
-#define ROCKETNET_NUM_DRIVERS           5
 
 const char * rocketnet_driver_name( int driver );
 

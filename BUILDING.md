@@ -154,6 +154,9 @@ driver-blind.
 
 ### Windows IOCP server
 
+Native driver authors: [DRIVERS.md](DRIVERS.md) describes registration,
+capabilities, ownership and the independently built extension example.
+
 Select `driver = "iocp"` in the existing server config, or set
 `ROCKETNET_DRIVER=iocp`. The driver uses overlapped UDP with completion batches;
 send buffers are recycled only after completion, and stop cancels and drains

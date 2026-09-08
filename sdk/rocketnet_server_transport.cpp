@@ -40,25 +40,6 @@
 #error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_DRIVER
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
-// The staged drivers share one shape behind one set of names: packets stage
-// into the driver from any thread between flushes (start/finish/abort), the
-// main thread flushes with send_packets and drains with receive_packets/
-// process_packets. Linux XDP/GSO and Windows IOCP satisfy it; the portable
-// socket (including Mac msgx batching) keeps its own path below.
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-#define ROCKETNET_SERVER_HAS_STAGED 1
-#include "rocketnet_server_socket.h"
-#include "rocketnet_server_gso.h"
-#include <sys/types.h>
-#include <unistd.h>
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#define ROCKETNET_SERVER_HAS_STAGED 1
-#include "rocketnet_server_iocp.h"
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-#define ROCKETNET_SERVER_HAS_STAGED 0
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
 #define ROCKETNET_SERVER_MAX_SEND_PACKETS    256
 
@@ -161,14 +142,7 @@ struct rocketnet_server_transport_t
 
     int driver;
 
-    rocketnet_platform_socket_t * socket;               // the portable path's socket, live on the portable and msgx grants
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    struct rocketnet_server_socket_t * xdp_socket;      // live on the xdp grant
-    struct rocketnet_server_gso_t * gso_socket;         // live on the gso grant
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    struct rocketnet_server_iocp_t * iocp_socket;
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
+    rocketnet_server_driver_t io;
 
     struct rocketnet_counters_t counters;
     struct rocketnet_server_protocol_t protocol;
@@ -196,7 +170,6 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
     int current_stats_index;
 
-#if ROCKETNET_SERVER_HAS_STAGED
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
     uint64_t send_flushed;                              // main thread only
 
@@ -208,7 +181,6 @@ struct rocketnet_server_transport_t
     // thread.
     volatile uint64_t stats_pending_packets_sent;
     volatile uint64_t stats_pending_bytes_sent;
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_server_payloads_t payloads;
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
@@ -217,94 +189,29 @@ struct rocketnet_server_transport_t
     uint8_t payload_storage[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
 };
 
-// The runtime fork's inner seam: the staged drivers share one shape, so
-// every staged call dispatches on which staged socket is live. One branch
-// per call, resolved the same way for a transport's whole life -- the
-// per-batch calls pay it once per batch, and the per-packet staging calls
-// pay one predicted branch where the compile-time build paid none.
-
-#if ROCKETNET_SERVER_HAS_STAGED
-
-static bool rocketnet_server_transport_staged( struct rocketnet_server_transport_t * server_transport )
+// Dispatch is immutable for the transport lifetime. Drivers own their native
+// resources; the transport selects behavior through the declared capabilities.
+static bool rocketnet_server_transport_staged( const rocketnet_server_transport_t * transport )
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    return server_transport->driver == ROCKETNET_DRIVER_XDP || server_transport->driver == ROCKETNET_DRIVER_GSO;
-#else
-    return server_transport->driver == ROCKETNET_DRIVER_IOCP;
-#endif
+    return rocketnet_server_driver_has( transport->io, ROCKETNET_DRIVER_STAGED );
 }
 
-static uint8_t * rocketnet_server_driver_start_packet( struct rocketnet_server_transport_t * server_transport, const rocketnet_address_t * to, uint64_t * packet_id )
+static uint8_t * rocketnet_server_driver_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        return rocketnet_server_socket_start_packet( server_transport->xdp_socket, to, packet_id );
-    return rocketnet_server_gso_start_packet( server_transport->gso_socket, to, packet_id );
-#else
-    return rocketnet_server_iocp_start_packet( server_transport->iocp_socket, to, packet_id );
-#endif
+    return transport->io.operations->start_packet( transport->io.instance, to, id );
 }
-
-static void rocketnet_server_driver_finish_packet( struct rocketnet_server_transport_t * server_transport, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
+static void rocketnet_server_driver_finish_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int bytes )
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        rocketnet_server_socket_finish_packet( server_transport->xdp_socket, packet_id, packet_data, packet_bytes );
-    else
-        rocketnet_server_gso_finish_packet( server_transport->gso_socket, packet_id, packet_data, packet_bytes );
-#else
-    rocketnet_server_iocp_finish_packet( server_transport->iocp_socket, packet_id, packet_data, packet_bytes );
-#endif
+    transport->io.operations->finish_packet( transport->io.instance, id, frame, bytes );
 }
-
-static void rocketnet_server_driver_abort_packet( struct rocketnet_server_transport_t * server_transport, uint64_t packet_id, uint8_t * packet_data )
+static void rocketnet_server_driver_abort_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame )
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        rocketnet_server_socket_abort_packet( server_transport->xdp_socket, packet_id, packet_data );
-    else
-        rocketnet_server_gso_abort_packet( server_transport->gso_socket, packet_id, packet_data );
-#else
-    rocketnet_server_iocp_abort_packet( server_transport->iocp_socket, packet_id, packet_data );
-#endif
+    transport->io.operations->abort_packet( transport->io.instance, id, frame );
 }
-
-static void rocketnet_server_driver_send_packets( struct rocketnet_server_transport_t * server_transport )
+static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t * transport )
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        rocketnet_server_socket_send_packets( server_transport->xdp_socket );
-    else
-        rocketnet_server_gso_send_packets( server_transport->gso_socket );
-#else
-    rocketnet_server_iocp_send_packets( server_transport->iocp_socket );
-#endif
+    transport->io.operations->flush( transport->io.instance );
 }
-
-static void rocketnet_server_driver_receive_packets( struct rocketnet_server_transport_t * server_transport )
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        rocketnet_server_socket_receive_packets( server_transport->xdp_socket );
-    else
-        rocketnet_server_gso_receive_packets( server_transport->gso_socket );
-#else
-    rocketnet_server_iocp_receive_packets( server_transport->iocp_socket );
-#endif
-}
-
-static struct rocketnet_server_socket_process_packets_t * rocketnet_server_driver_process_packets( struct rocketnet_server_transport_t * server_transport )
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( server_transport->xdp_socket )
-        return rocketnet_server_socket_process_packets( server_transport->xdp_socket );
-    return rocketnet_server_gso_process_packets( server_transport->gso_socket );
-#else
-    return rocketnet_server_iocp_process_packets( server_transport->iocp_socket );
-#endif
-}
-
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
 // The send frame seam every driver serves: reserve hands back a frame to
 // seal complete wire bytes into, commit stamps its length, abort returns it
@@ -323,7 +230,6 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
                                                                 const rocketnet_address_t * to,
                                                                 struct rocketnet_server_frame_t * frame )
 {
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         frame->data = rocketnet_server_driver_start_packet( server_transport, to, &frame->packet_id );
@@ -333,7 +239,6 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
         }
         return frame->data;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
 
@@ -367,13 +272,11 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     server_transport->stats_frames[stats_index].packets_sent++;
     server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
         return;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
@@ -386,10 +289,8 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
     if ( !frame->data )
         return;
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
         rocketnet_server_driver_abort_packet( server_transport, frame->packet_id, frame->data );
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     // on the portable path the reserved slot is reused by the next
     // reserve; nothing to undo
@@ -627,9 +528,6 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
-    uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES];
-    memcpy( tag, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
-
     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0;
     (void) development_keys;
 
@@ -709,93 +607,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
         }
-        else switch ( candidate )
+        else
         {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-            case ROCKETNET_DRIVER_XDP:
-            {
-                // create is verify-and-bind (Glenn's ruling on #106: "Do
-                // an early check to see if we have XDP before changing the
-                // machine"): its first act is the non-mutating pre-flight,
-                // which verifies the machine is provisioned --
-                // scripts/rocketnet-provision does the provisioning, the
-                // library never does -- naming each unmet condition as its
-                // own operator errand, against the same resolved address
-                // this rung would bind. a refusal falls through here.
-
-                const int num_xdp_queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : 7;
-                const int num_os_cpus = config->num_os_cpus > 0 ? config->num_os_cpus : 1;
-
-                server_transport->xdp_socket = rocketnet_server_socket_create( context, public_address_string, tag, num_xdp_queues, num_os_cpus );
-                if ( server_transport->xdp_socket )
-                    granted_driver = ROCKETNET_DRIVER_XDP;
-            }
-            break;
-
-            case ROCKETNET_DRIVER_GSO:
-            {
-                // the queue count rides the config's num_xdp_queues field:
-                // it is the staged drivers' queue count whichever grants,
-                // kept under its historic name for ABI stability with the
-                // language bindings. zero means the driver default. bounds
-                // are per driver (#110 review): the table's range is
-                // structural, and this rung refuses -- never clamps -- a
-                // count past the gso driver's own geometry.
-
-                if ( config->num_xdp_queues > ROCKETNET_GSO_MAX_QUEUES )
-                {
-                    rocketnet_warn( "gso driver refused: num_xdp_queues %d is past the gso driver's %d queue geometry", config->num_xdp_queues, ROCKETNET_GSO_MAX_QUEUES );
-                    break;
-                }
-
-                rocketnet_address_t gso_bind_address = bind_address;
-
-                server_transport->gso_socket = rocketnet_server_gso_create( context, &gso_bind_address, config->num_xdp_queues, 0 );
-                if ( server_transport->gso_socket )
-                {
-                    bind_address = gso_bind_address;
-                    granted_driver = ROCKETNET_DRIVER_GSO;
-                }
-            }
-            break;
-
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-            case ROCKETNET_DRIVER_IOCP:
-            {
-                rocketnet_address_t attempt_address = bind_address;
-                server_transport->iocp_socket = rocketnet_server_iocp_create( context, &attempt_address, config->num_xdp_queues );
-                if ( server_transport->iocp_socket )
-                {
-                    bind_address = attempt_address;
-                    granted_driver = candidate;
-                }
-            }
-            break;
-#endif
-
-            case ROCKETNET_DRIVER_MSGX:
-            case ROCKETNET_DRIVER_PORTABLE:
-            {
-                // each attempt binds its own copy of the address, so a
-                // refused attempt's discovered ephemeral port never
-                // constrains the next
-
-                rocketnet_address_t attempt_address = bind_address;
-
-                server_transport->socket = rocketnet_platform_socket_create_with_pump( context, &attempt_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, rocketnet_driver_name( candidate ) );
-                if ( server_transport->socket )
-                {
-                    bind_address = attempt_address;
-                    granted_driver = candidate;
-                }
-            }
-            break;
-
-            default:
-            break;
+            const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
+            const rocketnet_server_driver_config_t driver_config = { rocketnet_driver_name(candidate), config, public_address_string };
+            if ( rocketnet_server_driver_open( definition && definition->backend ? definition->backend->server : NULL, context,
+                    &driver_config, &bind_address, &server_transport->io ) )
+                granted_driver = candidate;
         }
 
         if ( granted_driver < 0 )
@@ -846,8 +664,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
 
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (portable, msgx, gso, iocp). raise the log level to WARN to see why each candidate refused",
-                             port_zero_refused_names );
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
+                             port_zero_refused_names, rocketnet_driver_discovering_names() );
         }
 
         rocketnet_server_transport_destroy( server_transport );
@@ -865,7 +683,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // to what this says, never to what was requested
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-    const rocketnet_address_t * started_address = granted_driver == ROCKETNET_DRIVER_XDP ? &public_address : &bind_address;
+    const rocketnet_address_t * started_address = rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS ) ? &public_address : &bind_address;
     rocketnet_info( "server transport started on %s [%s] (%s keys)", rocketnet_address_to_string( started_address, address_string ),
                     rocketnet_driver_name( granted_driver ), development_keys ? "development" : "production" );
 
@@ -887,7 +705,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = config->protocol_id;
     protocol->send_rate = 10.0;
-    memcpy( protocol->filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    memcpy( protocol->filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
@@ -964,32 +782,7 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     // teardown branches on which socket is live, so a partial create --
     // any rung granted or none -- destroys cleanly
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-    if ( server_transport->xdp_socket )
-    {
-        // the xdp socket requires stop then a pump to stopped before destroy
-
-        if ( rocketnet_server_socket_state( server_transport->xdp_socket ) != ROCKETNET_SERVER_SOCKET_STOPPED )
-        {
-            rocketnet_server_socket_stop( server_transport->xdp_socket );
-            rocketnet_server_socket_update( server_transport->xdp_socket );
-        }
-        rocketnet_server_socket_destroy( server_transport->xdp_socket );
-    }
-
-    // the gso driver joins its workers and closes its sockets inline
-
-    if ( server_transport->gso_socket )
-        rocketnet_server_gso_destroy( server_transport->gso_socket );
-
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( server_transport->iocp_socket )
-        rocketnet_server_iocp_destroy( server_transport->iocp_socket );
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
-
-    if ( server_transport->socket )
-        rocketnet_platform_socket_destroy( server_transport->socket );
+    rocketnet_server_driver_close( &server_transport->io );
 
     void * allocation_context = server_transport->context;
     server_transport->~rocketnet_server_transport_t();
@@ -1012,17 +805,6 @@ uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * 
 {
     rocketnet_assert( server_transport );
     return server_transport->bind_address.port;
-}
-
-// the commit barrier, exported: a host process (the C# smoke, an embedding
-// that must never commit an XDP data plane) installs it without reaching
-// into the linux driver header; a no-op where there is no xdp driver
-
-void rocketnet_forbid_xdp_commit( void )
-{
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    rocketnet_server_socket_forbid_commit();
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 }
 
 // the granted-tier report: the driver that won the ladder at create, by
@@ -1088,20 +870,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     if ( server_transport->state == ROCKETNET_SERVER_TRANSPORT_STOPPING )
     {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-        if ( server_transport->xdp_socket )
-        {
-            rocketnet_server_socket_stop( server_transport->xdp_socket );
-            rocketnet_server_socket_update( server_transport->xdp_socket );
-        }
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( server_transport->iocp_socket )
-        {
-            rocketnet_server_iocp_stop( server_transport->iocp_socket );
-            if ( !rocketnet_server_iocp_stopped( server_transport->iocp_socket ) )
-                return;
-        }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
+        if ( !rocketnet_server_driver_stop( &server_transport->io ) )
+            return;
         server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPED;
         return;
     }
@@ -1123,13 +893,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // receive and process, responses sealed straight into send frames
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
 
-    rocketnet_server_driver_receive_packets( server_transport );
-
-    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_driver_process_packets( server_transport );
+    struct rocketnet_server_socket_process_packets_t * received = server_transport->io.operations->receive( server_transport->io.instance );
 
     const int stats_index = server_transport->current_stats_index;
 
@@ -1202,7 +969,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     }
     else
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     {
 
     // one pump call drains the batch, then processing walks it -- the batch
@@ -1211,7 +977,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     struct rocketnet_server_receive_buffer_t * receive_buffer = &server_transport->receive_buffer;
 
-    const int num_received = rocketnet_platform_socket_receive_packets( server_transport->socket,
+    const int num_received = server_transport->io.operations->receive_batch( server_transport->io.instance,
                                                                         receive_buffer->from,
                                                                         receive_buffer->data,
                                                                         ROCKETNET_RECEIVE_CEILING,
@@ -1343,25 +1109,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // destructive to run twice on one staging generation, which is what
     // the staged/flushed guard below protects.
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         server_transport->send_staged++;
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-        if ( server_transport->gso_socket )
+        if ( rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_FLUSH_ON_UPDATE ) )
         {
             server_transport->send_flushed = server_transport->send_staged;
-            rocketnet_server_gso_send_packets( server_transport->gso_socket );
+            rocketnet_server_driver_send_packets( server_transport );
         }
-#else
-        server_transport->send_flushed = server_transport->send_staged;
-        rocketnet_server_iocp_send_packets( server_transport->iocp_socket );
-#endif
 
         return;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
@@ -1376,7 +1135,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         }
     }
     if ( num_sends > 0 )
-        rocketnet_platform_socket_send_packets( server_transport->socket, sends, num_sends );
+        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
     server_transport->send_buffer.num_packets = 0;
 }
 
@@ -1487,7 +1246,6 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return frame;
     }
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         uint64_t packet_id;
@@ -1501,7 +1259,6 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         context->packet_id = packet_id;
     }
     else
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     {
         struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1558,13 +1315,11 @@ static void rocketnet_server_transport_abort_packet_unchecked( struct rocketnet_
         return;
     }
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_abort_packet( server_transport, backend_id, context->frame );
     }
     else
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     {
         const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
         server_transport->payload_ring.info[slot].wire_bytes = 0;
@@ -1613,7 +1368,6 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
                                                 const rocketnet_address_t * to, int client_index,
                                                 struct rocketnet_server_fill_frame_t * frame )
 {
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         (void) client_index;
@@ -1626,7 +1380,6 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         return 1;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1649,7 +1402,6 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
 static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
 {
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
@@ -1657,7 +1409,6 @@ static void rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
         return;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
 }
 
@@ -1666,14 +1417,12 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
 {
     if ( !frame->data )
         return;
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_abort_packet( server_transport, frame->socket_packet_id, frame->data );
         frame->data = NULL;
         return;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     server_transport->payload_ring.info[frame->slot].wire_bytes = 0;
     frame->data = NULL;
 }
@@ -1785,11 +1534,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
             // stagings are untouched until the main-thread flush, so the
             // whole reservation withdraws
 
-            const int first_withdrawn =
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-                server_transport->xdp_socket ? i :
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
-                0;
+            const int first_withdrawn = rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_FINISH_FINAL ) ? i : 0;
             for ( int j = first_withdrawn; j < fragment_count; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
             context->frame = NULL;
@@ -1830,7 +1575,6 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         return 0;
     }
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
@@ -1838,7 +1582,6 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
     }
     else
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
     {
         const uint64_t slot = (uint64_t) ( context->frame - server_transport->payload_ring.data ) / ROCKETNET_FRAME_STRIDE;
         server_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
@@ -1872,7 +1615,6 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
     const int stats_index = server_transport->current_stats_index;
 
-#if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         // fold the fill phase's payload sends into the current bucket. the fill
@@ -1897,7 +1639,6 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         rocketnet_send_arena_reset( server_transport->send_arena );
         return;
     }
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1926,7 +1667,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     }
 
     if ( num_sends > 0 )
-        rocketnet_platform_socket_send_packets( server_transport->socket, sends, num_sends );
+        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
 
     ring->num_packets = 0;
 
