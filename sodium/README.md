@@ -17,12 +17,16 @@ we do not claim to reconstruct its historical local patches from upstream.
 The extension comes from the official libsodium 1.0.22 release archive, whose
 SHA256 is `adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349`
 and release commit is `77e1ce5d6dee871c49ef211222ba18ef0c486bda`.
-`manifest.json` records both input pins and the exact 36 added C sources.
+`manifest.json` records both input pins and the exact 34 added C sources.
 They supply BLAKE2b, SHA-512, SipHash-2-4, X25519, Ed25519, XSalsa20,
 secretbox and sealed boxes. Unneeded password hashes, AEAD families and
 external assembly are omitted. X25519 uses upstream ref10 (51-bit limbs when
-the compiler has 128-bit arithmetic, 25.5-bit otherwise); BLAKE2b and Salsa20
-retain their upstream runtime-selected C intrinsics implementations. ChaCha20
+the compiler has 128-bit arithmetic, 25.5-bit otherwise); BLAKE2b retains its upstream runtime-selected C intrinsics implementations.
+Salsa20 uses upstream's portable reference implementation: the x86 SIMD tail
+uses unaligned typed loads that UBSan correctly rejects on frozen token input.
+Selecting the reference avoids that C alignment violation without changing
+cryptographic arithmetic or suppressing sanitizer checks. Salsa20 serves sealed
+boxes; the packet AEAD remains on optimized ChaCha20/Poly1305. ChaCha20
 and Poly1305 retain the baseline's optimized paths.
 
 The ISC license is in `LICENSE`; original source notices and the BLAKE2 CC0

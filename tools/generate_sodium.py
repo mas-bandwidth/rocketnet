@@ -137,6 +137,8 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
     for path in manifest['sources']:
         names = manifest['renames'].get(path, [])
         tag = re.sub(r'\W', '_', path)
+        disabled = manifest.get('disabled_features', {}).get(path, [])
+        source += ''.join(f'#pragma push_macro("{name}")\n#undef {name}\n' for name in disabled)
         local_macros.clear()
         source += '\n' + ''.join(f'#define {name} rn_{tag}_{name}\n' for name in names)
         source += '#if defined(__GNUC__) && !defined(__clang__)\n#pragma GCC push_options\n#endif\n'
@@ -146,6 +148,7 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
         # unit. Header guards and public constants keep their usual lifetime.
         macros = set(DEFINE.findall(files[path])) | set(names) | local_macros
         source += '\n' + ''.join(f'#undef {name}\n' for name in sorted(macros))
+        source += ''.join(f'#pragma pop_macro("{name}")\n' for name in reversed(disabled))
 
     # Namespace both public and internal symbols so a static consumer may
     # link its own libsodium. Constants and function-like macros stay as
