@@ -279,3 +279,15 @@ architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-6
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
 flag.
+
+### XDP transmit staging pressure
+
+Each queue retains published staging generations until its worker has copied
+all their packets into owned UMEM frames. Repeated application flushes cannot
+reset an undrained generation. If both staging buffers remain owned by the
+worker, new reservations return null and the transport's send-ring-full counter
+records the refusal. Once the worker retires a buffer, a later reservation can
+acquire it without requiring an extra update or flush. The ordinary fill path
+adds an acquire load of the producer-buffer index; only recovery after both
+buffers were queued takes the publication mutex. Hardware throughput and
+pressure measurements are required for this changed XDP path.

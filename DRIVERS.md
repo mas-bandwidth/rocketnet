@@ -49,7 +49,8 @@ decision; it must never hand a still-owned frame to another producer.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
-once for a staging generation; this preserves XDP's buffer-flip behavior. None
+once for a staging generation; the backend retains ownership until it can
+safely reuse that storage. None
 of these rules sets a frame, packet-send or ACK rate.
 
 ## Creation and shutdown

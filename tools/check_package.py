@@ -33,7 +33,7 @@ def main():
     archive = build / "generated/rocketnet_server_xdp.tar.gz"
     if archive.exists():
         with tarfile.open(archive) as packed:
-            for name, original in (("Makefile", "server_xdp/Makefile"), ("server_xdp.c", "server_xdp/server_xdp.c"), ("rocketnet_wire.h", "sdk/rocketnet_wire.h")):
+            for name, original in (("Makefile", "server_xdp/Makefile"), ("server_xdp.c", "server_xdp/server_xdp.c"), ("rocketnet_wire.h", "sdk/rocketnet_wire.h"), ("rocketnet_xdp_limits.h", "sdk/rocketnet_xdp_limits.h")):
                 if packed.extractfile("./" + name).read() != (source / original).read_bytes():
                     raise RuntimeError(f"Embedded XDP source differs: {name}")
     with tempfile.TemporaryDirectory(prefix="package check ", dir=build) as directory:

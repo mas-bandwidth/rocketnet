@@ -65,7 +65,7 @@ else()
             "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
             "-DXXD=${ROCKETNET_XXD}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
-        DEPENDS server_xdp/Makefile server_xdp/server_xdp.c sdk/rocketnet_wire.h cmake/EmbedXdp.cmake
+        DEPENDS server_xdp/Makefile server_xdp/server_xdp.c sdk/rocketnet_wire.h sdk/rocketnet_xdp_limits.h cmake/EmbedXdp.cmake
         VERBATIM)
 endif()
 add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
