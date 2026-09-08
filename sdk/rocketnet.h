@@ -77,34 +77,24 @@
 #define NOMINMAX
 #endif
 
-#if defined( ROCKETNET_SHARED )
-    #if defined( _WIN32 )
-        #ifdef ROCKETNET_EXPORT
-            #if __cplusplus
-            #define ROCKETNET_EXPORT_FUNC extern "C" __declspec(dllexport)
-            #else
-            #define ROCKETNET_EXPORT_FUNC extern __declspec(dllexport)
-            #endif
-        #else
-            #if __cplusplus
-            #define ROCKETNET_EXPORT_FUNC extern "C" __declspec(dllimport)
-            #else
-            #define ROCKETNET_EXPORT_FUNC extern __declspec(dllimport)
-            #endif
-        #endif
+#if defined( ROCKETNET_SHARED ) && defined( _WIN32 )
+    #ifdef ROCKETNET_EXPORT
+        #define ROCKETNET_SYMBOL __declspec(dllexport)
     #else
-        #if __cplusplus
-        #define ROCKETNET_EXPORT_FUNC extern "C"
-        #else
-        #define ROCKETNET_EXPORT_FUNC extern
-        #endif
+        #define ROCKETNET_SYMBOL __declspec(dllimport)
     #endif
+#elif defined( ROCKETNET_SHARED ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
+    #define ROCKETNET_SYMBOL __attribute__((visibility("default")))
 #else
-    #if __cplusplus
-    #define ROCKETNET_EXPORT_FUNC extern "C"
-    #else
-    #define ROCKETNET_EXPORT_FUNC extern
-    #endif
+    #define ROCKETNET_SYMBOL
+#endif
+
+#ifdef __cplusplus
+    #define ROCKETNET_EXPORT_FUNC extern "C" ROCKETNET_SYMBOL
+    #define ROCKETNET_EXPORT_DATA extern "C" ROCKETNET_SYMBOL
+#else
+    #define ROCKETNET_EXPORT_FUNC extern ROCKETNET_SYMBOL
+    #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
 #if defined(_WIN32)
@@ -240,6 +230,20 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 
 // -----------------------------------------
 
+// SDK ABI revision, independent of the wire version. Existing public layouts
+// remain unchanged. Increment on any incompatible layout/calling-contract change.
+#define ROCKETNET_ABI_VERSION 1
+
+// Safe before init; no allocation and no caller-owned struct writes. Type names
+// are the public C struct names. Unknown types/fields return SIZE_MAX for size
+// and offset, and -1 for field count. This describes the seven transport/config/
+// packet/frame-sync structs in this header, not opaque internal objects.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_abi_version( void );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_type_size( const char * type );
+ROCKETNET_EXPORT_FUNC int rocketnet_abi_field_count( const char * type );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset( const char * type, const char * field );
+ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size( const char * type, const char * field );
+
 #ifdef __cplusplus
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context = NULL );
 #else
@@ -250,7 +254,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_term();
 
 // -----------------------------------------
 
-extern void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
+ROCKETNET_EXPORT_DATA void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
 
 #ifndef ROCKETNET_ASSERTS
     #ifdef NDEBUG
@@ -308,8 +312,16 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 
 // ------------------------------------------
 
+// Configure before init, with no outstanding allocations. Invalid or late
+// replacements are refused and logged. Callbacks must be thread-safe and return
+// storage aligned for fundamental types. RocketNet adds alignment/ownership
+// metadata, so callbacks receive larger sizes and their original pointer on free.
 ROCKETNET_EXPORT_FUNC void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
+#define ROCKETNET_ALLOCATION_ALIGNMENT 64
+
+// Returns 64-byte-aligned storage, or NULL on overflow/allocation failure.
+// Free only through rocketnet_free; the original allocator/context are retained.
 ROCKETNET_EXPORT_FUNC void * rocketnet_malloc( void * context, size_t bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_free( void * context, void * p );
@@ -575,6 +587,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_payloads( struct rocketnet_
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
+// Validates an active packet lease and returns its payload view. NULL/zero on
+// stale, consumed, modified or wrong-owner context. The view expires at finish,
+// abort, update, flush or destroy; callers must join before those operations.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
+
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
@@ -597,8 +614,8 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_trans
 
 // The client's connection quality: rtt and jitter in milliseconds, packet
 // loss as a percentage, and the last second's packet rates and bandwidth
-// both ways. The rates come from a ring of per-frame buckets filled as the
-// existing send and receive walks run and summed over the trailing second,
+// both ways. The rates come from elapsed-time buckets (about 4 ms boundary
+// resolution), filled by existing send/receive walks over the trailing second,
 // so the cost per update is flat and no walk is added for them. rtt seeds
 // from the handshake's round trips and is continuously refreshed by the
 // acks -- the first block acknowledging each sent sequence yields a
@@ -817,15 +834,20 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // of game threads strictly between an update and the following
 // send_packets, and the handoff between fill and flush must be a
 // synchronizing operation (a join or a barrier), not a wall-clock wait.
-// send_packets is required once per frame, after update. When staged
+// Call send_packets after each joined fill phase. There is no required frame,
+// update, send or ACK rate. When staged
 // packets actually leave is per driver, and a caller owns only the
 // guarantee: everything staged before send_packets is sent by it, and
 // nothing is guaranteed sent without it. The portable and GSO drivers
 // also flush update's own staging -- protocol responses and keep-alives
 // -- inline in update; the XDP driver sends nothing until send_packets.
 // Code against the guarantee, not a driver's eagerness. Calling
-// send_packets again in the same frame is a no-op. The fields of the
-// context are read-only to the caller.
+// send_packets again without newly staged packets is a no-op. The fields of the
+// context are read-only to the caller. The transport privately owns and checks
+// all metadata; a copy can be consumed once, and stale, modified or wrong-owner
+// contexts are refused before dereferencing a frame. packet_id is an opaque,
+// process-unique lease identifier, never driver bookkeeping. Active payload views
+// expire at finish/abort or the next update/flush; raw pointers cannot be revoked.
 //
 // finish_packet returns the sealed wire size, or zero when the packet was
 // dropped instead (payload out of range, the connection gone, or a wire
@@ -856,6 +878,11 @@ struct rocketnet_packet_context_t
 };
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
+
+// Validates an active packet lease and returns its payload view. NULL/zero on
+// stale, consumed, modified or wrong-owner context. The view expires at finish,
+// abort, update, flush or destroy; callers must join before those operations.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
@@ -890,8 +917,8 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct r
 // The server's whole-socket rates: packets and bandwidth per second, both
 // directions, over the trailing second. Accumulation rides the walks the
 // transport already makes -- the receive drain and the send flush -- into a
-// ring of per-frame buckets, and the published numbers sum only buckets
-// younger than one second, so the cost per frame is flat by construction:
+// ring of time-based buckets, and the published numbers sum only buckets
+// younger than one second (about 4 ms boundary resolution), at bounded cost:
 // no per-client sweep, no extra pass over any buffer. At 1000 clients the
 // update pays the same fixed bucket sum it pays at one. These numbers feed
 // time synchronization.
@@ -1053,6 +1080,13 @@ namespace rocketnet
 #endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
 
 // -----------------------------------------
+
+struct rocketnet_counters_t;
+
+// Runtime introspection avoids assuming a counters-struct length across FFI.
+// Read on the main thread outside update/fill, as for the counters view.
+ROCKETNET_EXPORT_FUNC int rocketnet_num_counters();
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_counter_value( const struct rocketnet_counters_t * counters, int counter );
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 

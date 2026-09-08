@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Install, relocate, and build/run independent C and C++ consumers of both libraries."""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import tarfile
+
+
+def run(*args, **kwargs):
+    subprocess.run([str(arg) for arg in args], check=True, **kwargs)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("build", type=Path)
+    parser.add_argument("--config", default="Release")
+    parser.add_argument("--embedded", action="store_true")
+    args = parser.parse_args()
+    build = args.build.resolve()
+    cache = {}
+    for line in (build / "CMakeCache.txt").read_text().splitlines():
+        if "=" in line and not line.startswith(("//", "#")):
+            key, value = line.split("=", 1)
+            cache[key.split(":", 1)[0]] = value
+    source = Path(cache["rocketnet_SOURCE_DIR"])
+    archive = build / "generated/rocketnet_server_xdp.tar.gz"
+    if archive.exists():
+        with tarfile.open(archive) as packed:
+            for name, original in (("Makefile", "server_xdp/Makefile"), ("server_xdp.c", "server_xdp/server_xdp.c"), ("rocketnet_wire.h", "sdk/rocketnet_wire.h")):
+                if packed.extractfile("./" + name).read() != (source / original).read_bytes():
+                    raise RuntimeError(f"Embedded XDP source differs: {name}")
+    with tempfile.TemporaryDirectory(prefix="package check ", dir=build) as directory:
+        root = Path(directory)
+        stage, installed = root / "stage", root / "relocated SDK"
+        run("cmake", "--install", build, "--config", args.config, "--prefix", stage)
+        stage.rename(installed)
+        # No absolute source/build/original install path may leak into package metadata.
+        for config in installed.rglob("*.cmake"):
+            text = config.read_text().replace("\\", "/")
+            for forbidden in (build, stage, Path(cache["rocketnet_SOURCE_DIR"])):
+                if forbidden.as_posix() in text:
+                    raise RuntimeError(f"{config.name} embeds producer path {forbidden}")
+        consumer = root / "consumer build"
+        command = ["cmake", "-S", Path(__file__).parent / "package_consumer", "-B", consumer,
+                   f"-DCMAKE_PREFIX_PATH={installed}", f"-DCMAKE_BUILD_TYPE={args.config}",
+                   # Multi-config generators otherwise generate uninstalled configs too.
+                   # In particular, vcpkg maps RelWithDebInfo/MinSizeRel to Release,
+                   # which does not exist in this independently installed Debug prefix.
+                   f"-DCMAKE_CONFIGURATION_TYPES={args.config}",
+                   "-G", cache["CMAKE_GENERATOR"]]
+        for key in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
+            if cache.get(key):
+                command.append(f"-D{key}={cache[key]}")
+        run(*command)
+        run("cmake", "--build", consumer, "--config", args.config, "--parallel", "4")
+        env = os.environ.copy()
+        # Installed DLL plus vcpkg's copied runtime dependency on Windows.
+        env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
+        run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
+        if args.embedded:
+            embedded = root / "embedded build"
+            # Reuse generator/toolchain selection, replacing only producer-specific arguments.
+            command[command.index("-B") + 1] = embedded
+            command += [f"-DROCKETNET_SOURCE_PATH={source}", "-DBUILD_SHARED_LIBS=ON"]
+            run(*command)
+            run("cmake", "--build", embedded, "--config", args.config, "--parallel", "4")
+            run("ctest", "--test-dir", embedded, "-C", args.config, "--output-on-failure", env=env)
+    print("Relocated SDK: C/C++ static/shared consumers passed")
+
+
+if __name__ == "__main__":
+    main()

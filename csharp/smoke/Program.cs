@@ -70,8 +70,74 @@ static class Smoke
         Thread.Sleep( 1 );
     }
 
-    static int Main()
+    static void RejectToken( Action action, bool isNull = false )
     {
+        try
+        {
+            action();
+        }
+        catch ( ArgumentException e ) when ( e.ParamName == "connectToken" && ( e is ArgumentNullException ) == isNull )
+        {
+            return;
+        }
+        Fail( "invalid token buffer reached the native boundary" );
+    }
+
+    static void CheckTokenBoundaries()
+    {
+        RocketNet.ClientTransportConfig config = default;
+        RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, (byte[]) null! ), true );
+        RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, IntPtr.Zero, time ), true );
+        RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, ref config, time ), true );
+        foreach ( int length in new[] { 0, 1, RocketNet.ConnectTokenBytes - 1, RocketNet.ConnectTokenBytes + 1 } )
+        {
+            byte[] token = new byte[length];
+            RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token ) );
+            RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token.AsSpan() ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, IntPtr.Zero, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref config, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, IntPtr.Zero, time ) );
+            RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref config, time ) );
+        }
+        Ok( "token boundary: null, empty, short and long arrays/spans refused before native calls" );
+    }
+
+    static int Main( string[] args )
+    {
+        CheckTokenBoundaries();
+        if ( args.Length == 1 && args[0] == "--token-boundaries" )
+            return 0;
+
+        if ( args.Length == 1 && args[0] == "--load-refusal" )
+        {
+            try { RocketNet.ClientTransportDefaultConfig( out var unused ); }
+            catch ( System.DllNotFoundException ) { Ok( "explicit missing library refused" ); return 0; }
+            Fail( "explicit missing library silently fell back" );
+        }
+
+        if ( args.Length == 2 && args[0] == "--abi-refusal" )
+        {
+            try
+            {
+                // Deliberately before Init, through an actual struct-writing import.
+                RocketNet.ClientTransportDefaultConfig( out var unused );
+                Fail( "incompatible ABI reached a struct-writing entry point" );
+            }
+            catch ( BadImageFormatException e ) when ( e.Message.Contains("RocketNet ABI:") && e.Message.Contains(args[1]) )
+            {
+                Ok( e.Message );
+                return 0;
+            }
+            return 1;
+        }
+
+        // The first matching import also writes a struct before Init.
+        RocketNet.ClientTransportDefaultConfig( out var abiDefault );
+        if ( abiDefault.GetDriver() != "auto" ) Fail( "ABI-checked default config" );
+        RocketNet.ValidateAbi();
+        Ok( "native ABI revision, seven struct sizes and every field offset/width match" );
+        if ( args.Length == 1 && args[0] == "--abi-only" ) return 0;
+
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );
@@ -125,13 +191,13 @@ static class Smoke
         ulong clientId = RocketNet.RandomUint64();
         byte[] token = new byte[RocketNet.ConnectTokenBytes];
         ulong unixNow = (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token ) == 0 )
+        if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token.AsSpan() ) == 0 )
             Fail( "write dev connect token" );
 
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
         if ( clientConfig.GetDriver() != "auto" )
             Fail( $"client default config driver is '{clientConfig.GetDriver()}', expected 'auto'" );
-        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref clientConfig, time );
+        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
         if ( client == IntPtr.Zero )
             Fail( "client create" );
         if ( RocketNet.ClientTransportDriver( client ).Length == 0 )
@@ -162,12 +228,23 @@ static class Smoke
         RocketNet.PacketContext context = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref context ) == IntPtr.Zero )
             Fail( "client start packet" );
-        Span<byte> payload = RocketNet.PayloadSpan( in context );
+        Span<byte> payload = RocketNet.ClientTransportPacketPayloadSpan( client, in context );
         if ( payload.Length < 256 || payload.Length % 8 != 0 )
             Fail( $"payload capacity {payload.Length}" );
+        RocketNet.PacketContext original = context;
+        RocketNet.PacketContext tampered = context;
+        tampered.PayloadCapacity = int.MaxValue;
+        if (!RocketNet.ClientTransportPacketPayloadSpan(client, in tampered).IsEmpty ||
+            !RocketNet.ServerTransportPacketPayloadSpan(server, in context).IsEmpty)
+            Fail("invalid packet owner or metadata exposed a payload span");
+        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) != 0)
+            Fail("tampered packet context was accepted");
         FillPattern( payload.Slice( 0, 256 ), 1 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) == 0 )
             Fail( "client finish packet" );
+        if (!RocketNet.ClientTransportPacketPayloadSpan(client, in original).IsEmpty ||
+            RocketNet.ClientTransportFinishPacket(client, ref original, 1) != 0)
+            Fail("a copied consumed context remained live");
         RocketNet.ClientTransportSendPackets( client );
 
         byte[] convenience = new byte[64];
@@ -220,7 +297,7 @@ static class Smoke
         RocketNet.PacketContext down = default;
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref down ) == IntPtr.Zero )
             Fail( "server start packet" );
-        FillPattern( RocketNet.PayloadSpan( in down ).Slice( 0, 256 ), 1 );
+        FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in down ).Slice( 0, 256 ), 1 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) == 0 )
             Fail( "server finish packet" );
         RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
@@ -282,7 +359,7 @@ static class Smoke
         RocketNet.PacketContext ackedUp = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref ackedUp ) == IntPtr.Zero )
             Fail( "client start packet (acked)" );
-        FillPattern( RocketNet.PayloadSpan( in ackedUp ).Slice( 0, 16 ), 4 );
+        FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in ackedUp ).Slice( 0, 16 ), 4 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) == 0 )
             Fail( "client finish packet (acked)" );
         RocketNet.ClientTransportSendPackets( client );
@@ -290,7 +367,7 @@ static class Smoke
         RocketNet.PacketContext ackedDown = default;
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref ackedDown ) == IntPtr.Zero )
             Fail( "server start packet (acked)" );
-        FillPattern( RocketNet.PayloadSpan( in ackedDown ).Slice( 0, 16 ), 5 );
+        FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in ackedDown ).Slice( 0, 16 ), 5 );
         if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) == 0 )
             Fail( "server finish packet (acked)" );
 
@@ -330,7 +407,7 @@ static class Smoke
             Fail( "client start packet (fragmented)" );
         if ( bigUp.PayloadCapacity != RocketNet.DefaultMaxPayloadBytes )
             Fail( $"fragmented payload capacity {bigUp.PayloadCapacity}" );
-        FillPattern( RocketNet.PayloadSpan( in bigUp ).Slice( 0, 5000 ), 6 );
+        FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in bigUp ).Slice( 0, 5000 ), 6 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref bigUp, 5000 ) == 0 )
             Fail( "client finish packet (fragmented)" );
         RocketNet.ClientTransportSendPackets( client );

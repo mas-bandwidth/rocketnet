@@ -1,3 +1,4 @@
+#include <new>
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -69,12 +70,8 @@
 // different thread, and without the walls those fields would share cache
 // lines. Nothing goes wrong if you remove them -- it just gets slow.
 
-// one slot's info per 64-byte line by explicit padding rather than
-// alignas: the allocation comes from rocketnet_malloc, which guarantees
-// only max_align_t alignment, and an over-aligned type on a plain malloc
-// is the known defect CLAUDE.md already records against the xdp driver --
-// not repeated here. concurrent finishes on adjacent slots still never
-// share a line, which is all the padding is for.
+// Each slot's info occupies one cache line so adjacent concurrent finishes
+// do not share a line. The owning allocation is aligned by rocketnet_malloc.
 
 struct rocketnet_server_gso_send_info_t
 {
@@ -89,7 +86,7 @@ struct rocketnet_server_gso_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets;
+    std::atomic<int> num_packets{0};
 
     uint8_t padding_1[4096];
 
@@ -131,7 +128,7 @@ struct rocketnet_server_gso_queue_t
 
     uint8_t padding_1[4096];
 
-    std::atomic<bool> quit;
+    std::atomic<bool> quit{0};
 
     uint8_t padding_2[4096];
 
@@ -167,7 +164,7 @@ struct rocketnet_server_gso_t
 
     struct rocketnet_server_gso_queue_t * queues;
 
-    std::atomic<uint64_t> packet_id;
+    std::atomic<uint64_t> packet_id{0};
 
     uint64_t send_rotation;                     // main thread only: rotates transmit batches across the group's sockets
 
@@ -579,7 +576,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     if ( !gso )
         return NULL;
 
-    memset( (void*) gso, 0, sizeof(struct rocketnet_server_gso_t) );
+    new ( gso ) rocketnet_server_gso_t();
 
     gso->context = context;
     gso->num_queues = num_queues;
@@ -589,14 +586,15 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->queues = (struct rocketnet_server_gso_queue_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_gso_queue_t) * num_queues );
     if ( !gso->queues )
     {
+        gso->~rocketnet_server_gso_t();
         rocketnet_free( context, gso );
         return NULL;
     }
 
-    memset( (void*) gso->queues, 0, sizeof(struct rocketnet_server_gso_queue_t) * num_queues );
 
     for ( int i = 0; i < num_queues; i++ )
     {
+        new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
         gso->queues[i].fd = -1;
     }
 
@@ -743,11 +741,15 @@ void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
             }
         }
 
+        for ( int i = 0; i < gso->num_queues; i++ )
+            gso->queues[i].~rocketnet_server_gso_queue_t();
         rocketnet_free( gso->context, gso->queues );
         gso->queues = NULL;
     }
 
-    rocketnet_free( gso->context, gso );
+    void * allocation_context = gso->context;
+    gso->~rocketnet_server_gso_t();
+    rocketnet_clear_and_free( allocation_context, gso, sizeof(rocketnet_server_gso_t) );
 }
 
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso )

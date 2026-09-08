@@ -1,3 +1,6 @@
+#include <new>
+#include "rocketnet_packet_lease.h"
+#include "rocketnet_stats_window.h"
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -115,11 +118,10 @@ static_assert( ROCKETNET_FRAME_STRIDE % 16 == 0, "frame stride must keep every s
 static_assert( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING, "a slot must hold the slack and a full wire packet" );
 static_assert( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload pointer handed to the caller must be 16-aligned" );
 
-// the stats bucket ring, the space game's pattern: one bucket per frame,
-// accumulation riding the walks the transport already makes, published
-// per-second numbers summing only buckets younger than one second. the ring
-// is deep enough that a bucket outlives the second it contributes to at any
-// sane frame rate; a bucket with frame zero has never been written.
+// Statistics accumulate during the existing send/receive walks. Buckets
+// advance with elapsed time, independently of update cadence, and only the
+// trailing second contributes. The frame field marks initialized buckets;
+// it does not select their index or determine their retention.
 
 #define ROCKETNET_NUM_SERVER_STATS_FRAMES 256
 
@@ -146,6 +148,7 @@ struct rocketnet_server_payloads_t
 
 struct rocketnet_server_transport_t
 {
+    rocketnet_packet_leases_t<131072> packet_leases;
     void * context;
     int state;
     rocketnet_address_t bind_address;
@@ -177,14 +180,7 @@ struct rocketnet_server_transport_t
     struct rocketnet_server_payload_ring_t payload_ring;
 
     double time;                                        // the game's clock, last seen
-    uint64_t frame;                                     // advanced once per update; indexes the stats ring
-
-    // the packet id counter behind the acquire/commit surface on the
-    // portable driver: unique and monotonic, the join key the acked-packet
-    // batch surfaces. the xdp driver's own packet id is already a global
-    // monotonic fetch_add and is used directly.
-
-    volatile uint64_t next_packet_id;
+    uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
 
     // the fragmentation shape from the config, and the send arena for
     // over-wire-capacity requests -- allocated once at create, to the
@@ -195,6 +191,7 @@ struct rocketnet_server_transport_t
 
     struct rocketnet_server_transport_stats_t server_stats;
     struct rocketnet_server_stats_frame_t stats_frames[ROCKETNET_NUM_SERVER_STATS_FRAMES];
+    int current_stats_index;
 
 #if ROCKETNET_SERVER_HAS_STAGED
     volatile uint64_t send_staged;                      // bumped by every producer; fills use the atomic add
@@ -335,7 +332,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     // bursts -- runs on the main thread, so it lands in the current stats
     // bucket directly
 
-    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+    const int stats_index = server_transport->current_stats_index;
     server_transport->stats_frames[stats_index].packets_sent++;
     server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
@@ -498,6 +495,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     config = &effective_config;
 
+    // Refuse large cross-field allocations before sockets, drivers or arenas
+    // are acquired. Independent field maxima do not define a usable budget.
+    const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
+    if (!rocketnet_reassembly_memory_allowed(requested_clients, requested_slots, requested_payload, requested_clients * requested_slots))
+        return NULL;
+
+
     // the config's public_address, when set, displaces the create call's
     // address parameter HERE, before anything reads it -- so the address
     // the ladder verifies, the address the granted driver binds, and the
@@ -580,7 +586,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( !server_transport )
         return NULL;
 
-    memset( server_transport, 0, sizeof(struct rocketnet_server_transport_t) );
+    new ( server_transport ) rocketnet_server_transport_t();
 
     server_transport->context = context;
 
@@ -880,18 +886,6 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
-    // the staged drivers assign their own packet ids to ordinary sends from
-    // a separate monotonic counter, so the transport's ids for fragmented
-    // payloads start in the high half of the space -- the join keys can
-    // never collide
-
-    server_transport->next_packet_id = 1;
-
-#if ROCKETNET_SERVER_HAS_STAGED
-    if ( rocketnet_server_transport_staged( server_transport ) )
-        server_transport->next_packet_id = 1ULL << 63;
-#endif // #if ROCKETNET_SERVER_HAS_STAGED
-
     // the env public_address is consumed only now, with the create whole
 
     if ( consuming_env_public_address )
@@ -949,7 +943,9 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( server_transport->socket )
         rocketnet_platform_socket_destroy( server_transport->socket );
 
-    rocketnet_clear_and_free( server_transport->context, server_transport, sizeof(struct rocketnet_server_transport_t) );
+    void * allocation_context = server_transport->context;
+    server_transport->~rocketnet_server_transport_t();
+    rocketnet_clear_and_free( allocation_context, server_transport, sizeof(rocketnet_server_transport_t) );
 }
 
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )
@@ -991,8 +987,8 @@ const char * rocketnet_server_transport_driver( struct rocketnet_server_transpor
 }
 
 // process the previous stats frames into published per-second numbers, then
-// open the next bucket. the sum walks the whole fixed ring every update --
-// constant shape, ALWAYS BE LOADED -- and only buckets younger than one
+// advance the bucket when enough time has passed. The sum walks the fixed
+// ring every update at bounded cost, and only buckets younger than one
 // second contribute, so the published numbers are "per second" by window
 // rather than by division.
 
@@ -1027,21 +1023,16 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     // setup next stats frame
     {
         server_transport->frame++;
-
-        const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
-
-        server_transport->stats_frames[stats_index].time = time;
-        server_transport->stats_frames[stats_index].frame = server_transport->frame;
-        server_transport->stats_frames[stats_index].packets_sent = 0;
-        server_transport->stats_frames[stats_index].packets_received = 0;
-        server_transport->stats_frames[stats_index].bytes_sent = 0;
-        server_transport->stats_frames[stats_index].bytes_received = 0;
+        server_transport->current_stats_index = rocketnet_stats_window_advance(
+            server_transport->stats_frames, server_transport->current_stats_index,
+            server_transport->frame, time);
     }
 }
 
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
+    server_transport->packet_leases.reset();
 
     server_transport->time = time;
 
@@ -1085,7 +1076,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_driver_process_packets( server_transport );
 
-    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+    const int stats_index = server_transport->current_stats_index;
 
     for ( int i = 0; i < received->num_packets; i++ )
     {
@@ -1172,7 +1163,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                                                                         receive_buffer->packet_bytes,
                                                                         ROCKETNET_SERVER_MAX_RECEIVE_PACKETS );
 
-    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+    const int stats_index = server_transport->current_stats_index;
 
     for ( int i = 0; i < num_received; i++ )
     {
@@ -1281,8 +1272,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     acks->update_count++;
 
     // flush. the per-driver law is stated where callers read it, at
-    // send_packets in rocketnet.h: send_packets once per frame after
-    // update is the guarantee, and when staged packets actually leave is
+    // send_packets in rocketnet.h: flush after each joined fill phase,
+    // independently of application frames. When staged packets leave is
     // per driver. the portable driver has always ALSO sent update's own
     // responses and keep-alives inline right here, and much of the test
     // suite's pump loops lean on that without ever calling send_packets.
@@ -1378,6 +1369,8 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 // for the sequence, sealing runs on the caller's thread in place in the
 // frame, and the flush walks finished slots single-threaded.
 
+static void rocketnet_server_transport_abort_packet_unchecked( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, uint64_t backend_id );
+
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
 {
     rocketnet_assert( server_transport );
@@ -1405,8 +1398,8 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     {
         // above the wire's capacity: the arena backs the write, and
         // finish_packet splits into fragments -- or collapses to one wire
-        // packet when the write turns out small. the packet id comes from
-        // the transport's own counter on both drivers.
+        // packet when the write turns out small. The lease supplies its
+        // public packet id independently of the driver.
 
         frame = rocketnet_send_arena_acquire( server_transport->send_arena );
         if ( !frame )
@@ -1421,10 +1414,16 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         context->frame = frame;
         context->payload_index = 0;
         context->payload_capacity = server_transport->max_payload_bytes;
-        context->packet_id = rocketnet_platform_atomic_add_u64( &server_transport->next_packet_id, 1 );
+        context->packet_id = 0; // private lease supplies the public identifier
         context->sequence = sequence;
         context->client_index = client_index;
 
+        if ( !server_transport->packet_leases.insert(*context) )
+        {
+            rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
+            rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
+            return NULL;
+        }
         return frame;
     }
 
@@ -1464,7 +1463,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         // monotonic, never a ring slot. the slot is recovered from the frame
         // pointer wherever it is needed.
 
-        context->packet_id = rocketnet_platform_atomic_add_u64( &server_transport->next_packet_id, 1 );
+        context->packet_id = 0; // private lease supplies the public identifier
     }
 
     rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
@@ -1475,10 +1474,16 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     context->sequence = sequence;
     context->client_index = client_index;
 
+    if ( !server_transport->packet_leases.insert(*context) )
+    {
+        rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
+        rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
+        return NULL;
+    }
     return frame;
 }
 
-void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context )
+static void rocketnet_server_transport_abort_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
@@ -1496,7 +1501,7 @@ void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_
 #if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        rocketnet_server_driver_abort_packet( server_transport, context->packet_id, context->frame );
+        rocketnet_server_driver_abort_packet( server_transport, backend_id, context->frame );
     }
     else
 #endif // #if ROCKETNET_SERVER_HAS_STAGED
@@ -1505,6 +1510,28 @@ void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_
         server_transport->payload_ring.info[slot].wire_bytes = 0;
     }
 
+    context->frame = NULL;
+}
+
+uint8_t * rocketnet_server_transport_packet_payload( rocketnet_server_transport_t * transport, const rocketnet_packet_context_t * context, int * capacity )
+{
+    if (capacity) *capacity = 0;
+    if (!transport || !context || !capacity) return NULL;
+    rocketnet_packet_context_t trusted;
+    uint64_t backend_id = 0;
+    if (!transport->packet_leases.resolve(*context, trusted, backend_id, false)) return NULL;
+    *capacity = trusted.payload_capacity;
+    return trusted.frame + trusted.payload_index;
+}
+
+void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context )
+{
+    if ( !server_transport || !context )
+        return;
+    rocketnet_packet_context_t trusted;
+    uint64_t backend_id;
+    if ( server_transport->packet_leases.take(*context, trusted, backend_id) )
+        rocketnet_server_transport_abort_packet_unchecked( server_transport, &trusted, backend_id );
     context->frame = NULL;
 }
 
@@ -1716,7 +1743,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     return total_wire_bytes;
 }
 
-int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
@@ -1726,7 +1753,7 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
-        rocketnet_server_transport_abort_packet( server_transport, context );
+        rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
         return 0;
     }
 
@@ -1739,14 +1766,14 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
                                                                    payload_bytes, server_transport->time );
     if ( wire_bytes == 0 )
     {
-        rocketnet_server_transport_abort_packet( server_transport, context );
+        rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
         return 0;
     }
 
 #if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        rocketnet_server_driver_finish_packet( server_transport, context->packet_id, context->frame, wire_bytes );
+        rocketnet_server_driver_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_packets_sent, 1 );
         rocketnet_platform_atomic_add_u64( &server_transport->stats_pending_bytes_sent, (uint64_t) ( wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES ) );
     }
@@ -1762,11 +1789,28 @@ int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_
     return wire_bytes;
 }
 
+int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    if ( !server_transport || !context )
+        return 0;
+    rocketnet_packet_context_t trusted;
+    uint64_t backend_id;
+    if ( !server_transport->packet_leases.take(*context, trusted, backend_id) )
+    {
+        context->frame = NULL;
+        return 0;
+    }
+    const int result = rocketnet_server_transport_finish_packet_unchecked( server_transport, &trusted, payload_bytes, backend_id );
+    context->frame = NULL;
+    return result;
+}
+
 void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
+    server_transport->packet_leases.reset();
 
-    const int stats_index = (int) ( server_transport->frame % ROCKETNET_NUM_SERVER_STATS_FRAMES );
+    const int stats_index = server_transport->current_stats_index;
 
 #if ROCKETNET_SERVER_HAS_STAGED
     if ( rocketnet_server_transport_staged( server_transport ) )

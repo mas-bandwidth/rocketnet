@@ -239,7 +239,10 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
 
     client->send_sequence_session++;
 
-    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time );
+    if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time ) )
+    {
+        rocketnet_platform_atomic_add_u64( &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
+    }
     client->ack.ack_debt = 0;
 
     return bytes;
@@ -1064,11 +1067,14 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     if ( wire_bytes == 0 )
         return 0;
 
-    rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
 
-    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, wire_bytes, packet_id, 1, 0, current_time );
+    if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, wire_bytes, packet_id, 1, 0, current_time ) )
+    {
+        rocketnet_platform_atomic_add_u64( &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
+    }
     rocketnet_platform_atomic_store_u64( &client->ack.ack_debt, 0 );        // fill-phase threads reset concurrently
 
+    rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
     return wire_bytes;
 }
 
@@ -1084,8 +1090,6 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
     if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return 0;
-
-    client->last_send_time = current_time;
 
     if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
         return 0;
@@ -1110,7 +1114,11 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
     client->send_sequence_session++;
 
-    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time );
+    if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time ) )
+    {
+        rocketnet_platform_atomic_add_u64( &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
+    }
+    client->last_send_time = current_time;
     client->ack.ack_debt = 0;
 
     rocketnet_spam( "client sent payload (%d bytes)", payload_bytes );
@@ -1197,11 +1205,14 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-    rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
 
-    rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, aggregate_id, current_time );
+    if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, aggregate_id, current_time ) )
+    {
+        rocketnet_platform_atomic_add_u64( &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
+    }
     rocketnet_platform_atomic_store_u64( &client->ack.ack_debt, 0 );        // fill-phase threads reset concurrently
 
+    rocketnet_platform_atomic_store_double( &client->last_send_time, current_time );
     return bytes;
 }
 

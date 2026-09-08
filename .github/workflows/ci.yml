@@ -123,6 +123,35 @@ jobs:
       - name: Run tests (portable rung pinned by env)
         run: ROCKETNET_DRIVER=portable ./bin/test
 
+      - name: Run serialization surface (portable)
+        env:
+          ROCKETNET_DRIVER: portable
+        run: |
+          ./bin/test_serialize
+          ./bin/test_lifecycle
+
+      - name: Check production library boundary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
+          else
+            python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
+          fi
+
+      - name: Check larger history budget and reject undersized history
+        if: runner.os == 'Linux' && matrix.build_type == 'Release'
+        run: |
+          cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
+          cmake --build build-history --target test_lifecycle --parallel
+          ./build-history/bin/test_lifecycle
+          if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256; then
+            echo "undersized history was accepted"
+            exit 1
+          fi
+
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
+
       # the provisioning script's selftest: the awk IRQ matcher held to the
       # C test's case set, transcribed, plus the R3/R7 enforcement functions
       # driven end to end in both modes against stubs replaying captured
@@ -168,6 +197,9 @@ jobs:
 
       - name: Bench harness failure-state selftest
         run: bash bench/selftest.sh
+
+      - name: Benchmark campaign result gate
+        run: python3 bench/test_campaign.py
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -219,6 +251,20 @@ jobs:
         shell: bash
         run: ./bin/${{ matrix.build_type }}/test.exe
 
+      - name: Run serialization surface (portable)
+        shell: bash
+        env:
+          ROCKETNET_DRIVER: portable
+        run: |
+          ./bin/${{ matrix.build_type }}/test_serialize.exe
+          ./bin/${{ matrix.build_type }}/test_lifecycle.exe
+
+      - name: Check production library boundary
+        run: python tools/check_exports.py bin/${{ matrix.build_type }}/rocketnet.dll build/${{ matrix.build_type }}/rocketnet.lib
+
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        run: python tools/check_package.py build --config ${{ matrix.build_type }}
+
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
   # into frames, and reads bytes it did not write, which is the shape of
@@ -268,6 +314,13 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
           ROCKETNET_DRIVER: portable
         run: ./bin/test
+
+      - name: Allocation lifecycle under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test_lifecycle
 
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #
@@ -607,6 +660,13 @@ jobs:
       - name: Build the C# binding and smoke test
         run: dotnet build csharp/smoke -c Release
 
+      - name: Build intentionally incompatible ABI fixtures
+        run: cmake --build build --config Release --target rocketnet_abi_mismatch rocketnet_abi_legacy --parallel
+
+      - name: Prove ABI refusal before struct writes
+        shell: bash
+        run: python3 tools/check_managed_abi.py ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
+
       - name: Run the smoke test
         shell: bash
         env:
@@ -757,7 +817,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite and the soak
-        run: cmake --build build --target test soak --parallel
+        run: cmake --build build --target test test_lifecycle soak --parallel
 
       - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
         env:
@@ -768,6 +828,12 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/soak 20000
+
+      - name: Allocation lifecycle under tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          ROCKETNET_DRIVER: portable
+        run: ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG (GAP 5, the gate half). rocketnet builds on SYSTEM
   # libsodium (the crypto ruling's interim -- the gutted two-file vendor

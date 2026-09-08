@@ -105,13 +105,16 @@ Still open, highest first:
 1. **The umem fill-ring refill path's edges are unverified**: the common
    release/refill accounting has run live (the space-box bring-up echoed
    1800 payloads through the AF_XDP rings), but the pending-return spill —
-   taken when the fill ring cannot absorb a full drain's frames — has never
-   been driven.
+   taken when the fill ring cannot absorb a full drain's frames — has not
+   been driven on hardware. The worker now shares a tested all-or-zero pending
+   frame helper: repeated zero reservations retain every frame and full success
+   submits each exactly once. That model is not a hardware saturation result.
 
-2. **Lower:** the per-queue XDP socket array is never zeroed after its
-   `malloc`, so a `create()` that fails mid-loop hands `destroy()`
-   uninitialized sockets past the failure point; it works only because a
-   ~271 MiB `malloc` lands in `mmap` (a glibc detail, not a guarantee).
+2. **XDP construction validation remains incomplete:** queues are now value-
+   constructed before resource acquisition, with explicitly initialized atomics.
+   Portable allocation-failure tests exercise the shared allocator and transport
+   cleanup. Privileged XDP syscall-failure coverage still requires its own lab;
+   construction fixes do not establish a tested committing dataplane.
 
 Refuted on inspection, recorded so nobody re-hunts it:
 

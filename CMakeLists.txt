@@ -1,198 +1,187 @@
+cmake_minimum_required(VERSION 3.20)
+project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
-cmake_minimum_required(VERSION 3.10)
-add_compile_definitions(ROCKETNET_DEVELOPMENT=0)
-
-# A no-op build prints nothing. The per-target "Built target" lines were the only
-# output a rebuild-with-nothing-to-do produced, and they carry no information; a
-# real build still prints its [ x%] progress lines, and errors are untouched.
+# Defaults preserve the checkout's make workflow; embedded consumers build only libraries.
+set(ROCKETNET_TOP_LEVEL OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(ROCKETNET_TOP_LEVEL ON)
+endif()
+option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
+option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
+option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 set(CMAKE_TARGET_MESSAGES OFF)
-
-# server transport driver selection is runtime (#106): one build carries every
-# driver its platform has -- linux carries xdp, gso and portable -- and the
-# transport walks the config's candidate list at create (config driver field,
-# ROCKETNET_DRIVER env). the old ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO
-# compile options are gone; passing them now errors in the transport source.
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
-
-# server xdp — the XDP program source is packed as a tarball into a generated
-# header; the SDK builds and loads it on the target kernel at runtime.
-# regeneration needs bash/tar/xxd, which windows doesn't reliably have; the
-# header is committed and the XDP dataplane is linux-only, so the windows
-# build consumes the committed artifact as-is.
-
-if(NOT WIN32)
-add_custom_command(
-    COMMENT "Generating rocketnet_server_xdp.h"
-    OUTPUT ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
-    COMMAND bash -c "mkdir -p rocketnet_server_xdp"
-    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/Makefile rocketnet_server_xdp"
-    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c rocketnet_server_xdp"
-    COMMAND bash -c "cp ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h rocketnet_server_xdp"
-    COMMAND bash -c "tar -zcvf rocketnet_server_xdp.tar.gz -C rocketnet_server_xdp ." >/dev/null 2>&1
-    COMMAND bash -c "rm -rf rocketnet_server_xdp"
-    COMMAND bash -c "xxd -i rocketnet_server_xdp.tar.gz" > ${CMAKE_SOURCE_DIR}/sdk/rocketnet_server_xdp.h
-    COMMAND bash -c "rm -f rocketnet_server_xdp.tar.gz"
-    DEPENDS ${CMAKE_SOURCE_DIR}/server_xdp/Makefile ${CMAKE_SOURCE_DIR}/server_xdp/server_xdp.c ${CMAKE_SOURCE_DIR}/sdk/rocketnet_wire.h
-)
+if(ROCKETNET_TOP_LEVEL)
+    if(NOT DEFINED CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+    endif()
+    if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+    endif()
 endif()
 
-
-# rocketnet
-
-project(rocketnet)
-enable_language(CXX)
-
-# strict floating point. Estate policy for mas-bandwidth network libraries: "generally
-# speaking, network libraries we work on require -ffp-contract=off" (Glenn, 2026-08-24).
-#   - GCC/Clang: -ffp-contract=off. Not merely "no -ffast-math" -- GCC's default is
-#     -ffp-contract=fast, which contracts across statements, and clang's default =on still
-#     fuses within a single expression.
-#   - MSVC: /fp:precise, which since VS 2022 does not imply contraction.
-# rocketnet's float wire encoding is a bit copy (memcpy of the bits), so
-# this is the family floor rather than a wire fix: the float arithmetic here is the RTT,
-# jitter and bandwidth tracking. Contraction is architecture-dependent (FMA is in the
-# aarch64 baseline and absent from the x86-64 one), so any float arithmetic that ever
-# nears the wire diverges bit-wise between architectures without it. Set here, directly
-# after the first project() call -- the MSVC variable is undefined before the compiler
-# is detected, and testing it earlier silently handed every compiler the gcc/clang
-# branch (the windows leg's D9002 "ignoring unknown option -ffp-contract=off" caught
-# it). Every target in this file -- C and C++ -- is created after this line, so all
-# of them build with the floor; CI builds through this file.
-if(MSVC)
-    add_compile_options(/fp:precise)
-else()
-    add_compile_options(-ffp-contract=off)
+set(ROCKETNET_HISTORY_PACKETS 4096 CACHE STRING "Per-connection sequence history memory budget (4096..32768, multiple of 64)")
+if(NOT ROCKETNET_HISTORY_PACKETS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be an integer")
+endif()
+math(EXPR ROCKETNET_HISTORY_REMAINDER "${ROCKETNET_HISTORY_PACKETS} % 64")
+if(ROCKETNET_HISTORY_PACKETS LESS 4096 OR ROCKETNET_HISTORY_PACKETS GREATER 32768 OR NOT ROCKETNET_HISTORY_REMAINDER EQUAL 0)
+    message(FATAL_ERROR "ROCKETNET_HISTORY_PACKETS must be a multiple of 64 between 4096 and 32768")
 endif()
 
-file(GLOB ROCKETNET_SOURCE sdk/*.cpp)
-file(GLOB ROCKETNET_HEADERS sdk/*.h)
-add_library(rocketnet ${ROCKETNET_SOURCE} ${ROCKETNET_HEADERS} sdk/rocketnet_server_xdp.h)
-find_package(Threads REQUIRED)
+set(ROCKETNET_REASSEMBLY_MEMORY_MIB 512 CACHE STRING "Maximum reassembly component allocation in MiB")
+set(ROCKETNET_XDP_MEMORY_MIB 4096 CACHE STRING "Maximum XDP queues plus UMEM allocation in MiB")
+foreach(budget ROCKETNET_REASSEMBLY_MEMORY_MIB ROCKETNET_XDP_MEMORY_MIB)
+    if(NOT ${budget} MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "${budget} must be an integer")
+    endif()
+    if(${budget} LESS 1 OR ${budget} GREATER 1048576)
+        message(FATAL_ERROR "${budget} must be 1..1048576 MiB")
+    endif()
+endforeach()
 
-# libsodium, per the crypto ruling in REQUIREMENTS.md. Interim: the system
-# package (brew on mac, libsodium-dev on linux, vcpkg on windows) so
-# construction moves quickly; the gutted two-file vendor replaces this before
-# anything ships. Windows has no pkg-config, so the library is found directly
-# there -- vcpkg's toolchain file puts its installed tree on the find path,
-# and find_library returns a full path so SODIUM_LIBRARY_DIRS stays empty.
+
+include(cmake/RocketNetDependencies.cmake)
+
+# Generate into this build tree. Multiple builds never rewrite the source header.
+set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 if(WIN32)
-    find_path(SODIUM_INCLUDE_DIRS sodium.h REQUIRED)
-    find_library(SODIUM_LIBRARIES NAMES libsodium sodium REQUIRED)
+    configure_file(sdk/rocketnet_server_xdp.h "${ROCKETNET_XDP_HEADER}" COPYONLY)
 else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SODIUM REQUIRED libsodium)
+    find_program(ROCKETNET_XXD xxd REQUIRED)
+    add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
+            "-DXXD=${ROCKETNET_XXD}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
+        DEPENDS server_xdp/Makefile server_xdp/server_xdp.c sdk/rocketnet_wire.h cmake/EmbedXdp.cmake
+        VERBATIM)
 endif()
-target_include_directories(rocketnet PUBLIC ${SODIUM_INCLUDE_DIRS})
-target_link_directories(rocketnet PUBLIC ${SODIUM_LIBRARY_DIRS})
-target_link_libraries(rocketnet ${SODIUM_LIBRARIES})
-if (APPLE)
-    target_link_libraries(rocketnet Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # every linux consumer inherits the XDP dataplane's libraries now that
-    # the driver ladder is runtime and one build carries all three drivers
-    target_link_libraries(rocketnet Threads::Threads bpf xdp)
-else()
-    target_link_libraries(rocketnet Threads::Threads)
-endif()
+add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 
+set(ROCKETNET_SOURCE
+    sdk/rocketnet.cpp
+    sdk/rocketnet_abi.cpp
+    sdk/rocketnet_ack.cpp
+    sdk/rocketnet_address.cpp
+    sdk/rocketnet_base64.cpp
+    sdk/rocketnet_client_protocol.cpp
+    sdk/rocketnet_client_slots.cpp
+    sdk/rocketnet_client_transport.cpp
+    sdk/rocketnet_config.cpp
+    sdk/rocketnet_connect_token.cpp
+    sdk/rocketnet_counters.cpp
+    sdk/rocketnet_encryption_map.cpp
+    sdk/rocketnet_fragment.cpp
+    sdk/rocketnet_frame_sync.cpp
+    sdk/rocketnet_hash.cpp
+    sdk/rocketnet_keys.cpp
+    sdk/rocketnet_network_simulator.cpp
+    sdk/rocketnet_platform.cpp
+    sdk/rocketnet_protocol.cpp
+    sdk/rocketnet_replay.cpp
+    sdk/rocketnet_server_gso_linux.cpp
+    sdk/rocketnet_server_protocol.cpp
+    sdk/rocketnet_server_socket_linux.cpp
+    sdk/rocketnet_server_transport.cpp
+    sdk/rocketnet_token_tables.cpp
+)
 
-# rocketnet shared -- the same sources built as a shared library, for language
-# bindings that load librocketnet at runtime (the C# binding in csharp/).
-# ROCKETNET_SHARED + ROCKETNET_EXPORT select the header's export machinery on
-# the build side; consumers define only ROCKETNET_SHARED. The add_dependencies
-# on the static target orders the generated rocketnet_server_xdp.h without
-# attaching the custom command to two targets.
-
+# Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
+add_library(rocketnet STATIC ${ROCKETNET_SOURCE})
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE})
-add_dependencies(rocketnet_shared rocketnet)
-set_target_properties(rocketnet_shared PROPERTIES OUTPUT_NAME rocketnet)
-target_compile_definitions(rocketnet_shared PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
-target_include_directories(rocketnet_shared PUBLIC ${SODIUM_INCLUDE_DIRS})
-target_link_directories(rocketnet_shared PUBLIC ${SODIUM_LIBRARY_DIRS})
-target_link_libraries(rocketnet_shared ${SODIUM_LIBRARIES})
-if (APPLE)
-    target_link_libraries(rocketnet_shared Threads::Threads "-framework CoreFoundation" "-framework SystemConfiguration")
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_libraries(rocketnet_shared Threads::Threads bpf xdp)
-else()
-    target_link_libraries(rocketnet_shared Threads::Threads)
+add_library(RocketNet::rocketnet ALIAS rocketnet)
+add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
+
+# The soname follows SDK layout/calling compatibility, independently of wire version.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_ABI_LINE REGEX "^#define ROCKETNET_ABI_VERSION [0-9]+$")
+string(REGEX REPLACE ".* ([0-9]+)$" "\\1" ROCKETNET_ABI_SOVERSION "${ROCKETNET_ABI_LINE}")
+set_target_properties(rocketnet_shared PROPERTIES
+    OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
+    VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
+foreach(target rocketnet rocketnet_shared)
+    add_dependencies(${target} rocketnet_xdp_header)
+    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_features(${target} PRIVATE cxx_std_11)
+    target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
+    target_compile_definitions(${target} PUBLIC
+        ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
+        ROCKETNET_REASSEMBLY_MEMORY_MIB=${ROCKETNET_REASSEMBLY_MEMORY_MIB}
+        ROCKETNET_XDP_MEMORY_MIB=${ROCKETNET_XDP_MEMORY_MIB})
+    target_include_directories(${target} BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_include_directories(${target} PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+    target_link_libraries(${target} PRIVATE RocketNet::Sodium Threads::Threads)
+    # Family strict floating-point floor, including callers compiling SDK inline code.
+    if(MSVC)
+        target_compile_options(${target} PUBLIC /fp:precise)
+    else()
+        target_compile_options(${target} PUBLIC -ffp-contract=off)
+    endif()
+    if(APPLE)
+        target_link_libraries(${target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
+    endif()
+endforeach()
+
+if(ROCKETNET_BUILD_EXAMPLES)
+    foreach(example client server)
+        add_executable(${example} ${example}.c)
+        target_link_libraries(${example} PRIVATE rocketnet)
+    endforeach()
+endif()
+if(ROCKETNET_BUILD_TESTS)
+    add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
+    target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
+    target_link_libraries(rocketnet_test_support PRIVATE RocketNet::Sodium)
+    add_executable(test test.cpp)
+    target_link_libraries(test PRIVATE rocketnet_test_support)
+    foreach(test_target test_lifecycle test_serialize)
+        add_executable(${test_target} ${test_target}.cpp)
+        target_include_directories(${test_target} PRIVATE test)
+        target_link_libraries(${test_target} PRIVATE rocketnet)
+    endforeach()
+    add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
+    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
+    target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
+    set_target_properties(rocketnet_abi_mismatch PROPERTIES
+        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+    add_library(rocketnet_abi_legacy SHARED EXCLUDE_FROM_ALL tools/abi_legacy.cpp)
+    target_compile_definitions(rocketnet_abi_legacy PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
+endif()
+if(ROCKETNET_BUILD_TOOLS)
+    add_executable(soak soak.c)
+    add_executable(soak_sim soak_sim.cpp)
+    add_executable(keygen keygen.cpp)
+    foreach(tool soak soak_sim keygen)
+        target_link_libraries(${tool} PRIVATE rocketnet)
+    endforeach()
+    target_link_libraries(soak_sim PRIVATE RocketNet::Sodium)
+    target_link_libraries(keygen PRIVATE RocketNet::Sodium)
 endif()
 
-
-# client
-
-project(client)
-enable_language(CXX)
-add_executable(client client.c)
-target_include_directories(client PRIVATE sdk)
-add_dependencies(client rocketnet)
-target_link_libraries(client rocketnet)
-
-
-# server
-
-project(server)
-enable_language(CXX)
-add_executable(server server.c)
-target_include_directories(server PRIVATE sdk)
-add_dependencies(server rocketnet)
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_libraries(server rocketnet bpf xdp)
-else()
-    target_link_libraries(server rocketnet)
-endif()
-
-
-# test
-
-project(test)
-enable_language(CXX)
-add_executable(test test.cpp)
-target_include_directories(test PRIVATE sdk)
-add_dependencies(test rocketnet)
-target_link_libraries(test rocketnet)
-
-
-# soak
-
-project(soak)
-enable_language(C)
-# test_serialize -- the only build that sees the C++ stream surface
-
-project(test_serialize)
-
-add_executable(test_serialize test_serialize.cpp)
-target_include_directories(test_serialize PRIVATE sdk test)
-add_dependencies(test_serialize rocketnet)
-target_link_libraries(test_serialize rocketnet)
-
-add_executable(soak soak.c)
-target_include_directories(soak PRIVATE sdk)
-add_dependencies(soak rocketnet)
-target_link_libraries(soak rocketnet)
-
-
-# soak_sim
-
-project(soak_sim)
-enable_language(CXX)
-add_executable(soak_sim soak_sim.cpp)
-target_include_directories(soak_sim PRIVATE sdk)
-add_dependencies(soak_sim rocketnet)
-target_link_libraries(soak_sim rocketnet)
-
-
-# keygen
-
-project(keygen)
-enable_language(CXX)
-add_executable(keygen keygen.cpp)
-target_include_directories(keygen PRIVATE sdk)
-add_dependencies(keygen rocketnet)
-target_link_libraries(keygen rocketnet)
+install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES sdk/rocketnet.h sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
+    sdk/rocketnet_platform.h sdk/rocketnet_counters.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
+set(ROCKETNET_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/RocketNet")
+configure_package_config_file(cmake/RocketNetConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
+    INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION} COMPATIBILITY ExactVersion)
+install(EXPORT RocketNetTargets NAMESPACE RocketNet:: DESTINATION ${ROCKETNET_PACKAGE_DIR})
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
+    cmake/RocketNetDependencies.cmake DESTINATION ${ROCKETNET_PACKAGE_DIR})

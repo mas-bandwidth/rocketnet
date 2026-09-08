@@ -1,0 +1,4 @@
+@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/RocketNetDependencies.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/RocketNetTargets.cmake")
+check_required_components(RocketNet)

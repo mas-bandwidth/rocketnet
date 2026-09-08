@@ -1,6 +1,14 @@
 # Building rocketnet
 
-rocketnet builds on Linux, macOS and Windows with CMake. On Linux and macOS the
+Production libraries use an explicit source list. The SDK test suite is linked
+only into `test` through `rocketnet_test_support`. Shared builds hide unannotated
+implementation symbols; `tools/exports.txt` lists the supported C exports. CI
+compares the built shared library with that list and checks that the static
+archive contains no test suite. Review intentional ABI changes in the list as
+part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
+compatibility separately from the wire version; see the ABI rules below.
+
+rocketnet builds on Linux, macOS and Windows with CMake 3.20 or later. On Linux and macOS the
 Makefile is the front door:
 
     make
@@ -27,6 +35,88 @@ vcpkg, and the binaries land under `bin/<config>/`:
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
+The generated header lives in each build tree, so concurrent configurations do
+not rewrite the checkout. Windows copies the committed header into its build tree.
+
+## Installing and embedding the SDK
+
+Build and install both libraries without examples, tests or tools:
+
+    cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release \
+      -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake --build build-sdk --parallel
+    cmake --install build-sdk --prefix /your/sdk/prefix
+
+An independent CMake project (enable CXX for the static library's C++ runtime)
+can then use:
+
+```cmake
+find_package(RocketNet 1.0.0 EXACT CONFIG REQUIRED)
+target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
+# Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
+```
+
+Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
+libsodium, Threads and the Linux bpf/xdp dependencies on the consuming machine;
+it does not embed the producer's absolute dependency paths or bundle those
+third-party runtimes. Shared consumers inherit the Windows DLL import definition.
+The Unix shared-library soname follows `ROCKETNET_ABI_VERSION`.
+Use a separate install prefix for each build configuration. With Visual Studio
+or another multi-config generator, pass `--config Debug` or `--config Release`
+to build/install and select the same configuration in the consumer. A
+Debug-only prefix should be consumed with `-DCMAKE_CONFIGURATION_TYPES=Debug`,
+so toolchains do not try to generate other configurations requiring uninstalled
+Release artifacts. Installing another configuration into the same prefix
+overwrites the libraries; side-by-side Debug/Release installation is not supported.
+
+`add_subdirectory(path/to/rocketnet)` exposes the same two namespaced targets.
+Examples, tests and tools default off when embedded, and the parent's
+`BUILD_SHARED_LIBS` does not change the static target. Explicit
+`ROCKETNET_BUILD_*` options override those defaults.
+
+`python3 tools/check_package.py build --config Release --embedded` installs and
+moves the package, then builds and runs separate C/C++ consumers against both
+libraries. It also checks an embedded build with `BUILD_SHARED_LIBS=ON` and
+verifies that the XDP archive contains the current sources. These checks are in CI.
+
+## ABI compatibility
+
+The current public layouts are preserved. New allocation-free `rocketnet_abi_*`
+queries expose the SDK revision, compiler-derived struct sizes, field counts,
+offsets and widths for both configs, packet context and all four stats structs.
+They are safe before init and write no caller-owned struct. Unknown names return
+`SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
+these before calling struct-writing functions; the C# binding does so automatically.
+
+An incompatible layout or calling-contract change must increment
+`ROCKETNET_ABI_VERSION` and update the matching binding. Additive functions alone
+do not require a revision change. Changes to public fields must also update the
+ABI metadata and binding checks. The existing unsized C entry points still
+require matching headers and library; this does not make an old native binary
+safe to use with an arbitrary newer library. Sized evolution APIs remain a
+separate compatibility project.
+
+## History memory budget
+
+`cmake -B build -DROCKETNET_HISTORY_PACKETS=8192` chooses the per-connection
+sequence-history depth. The minimum and default are 4096, the maximum 32768;
+values must be multiples of 64. CMake propagates the value consistently to both
+libraries and consumers of internal headers. Rebuild all such consumers together.
+This does not change packet encoding and does not configure a send or ACK rate.
+Increasing it increases both per-connection memory and bounded ACK processing.
+
+Separate build trees may select `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
+`CMAKE_LIBRARY_OUTPUT_DIRECTORY` to keep sanitizer/configuration outputs apart.
+
+Large allocation components have independent CMake budgets:
+`ROCKETNET_REASSEMBLY_MEMORY_MIB` defaults to 512 and `ROCKETNET_XDP_MEMORY_MIB`
+to 4096. Both accept 1 through 1048576 MiB. Reassembly includes its slot records,
+arena and delivered mirror; XDP includes userspace queue structs and UMEM.
+Oversized geometry is refused with required and permitted byte counts before
+allocation. These bounds are not an available-RAM check: reserve additional
+memory for ACK history, other transport objects, allocator overhead, stacks,
+kernel buffers and your application. The default seven-queue XDP geometry alone
+still requires roughly 3.5 GiB; select fewer queues or provision that explicitly.
 
 ## Server transport drivers
 

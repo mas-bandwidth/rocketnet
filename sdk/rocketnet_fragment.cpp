@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_fragment.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_platform.h"
 #include "rocketnet.h"
@@ -72,12 +73,42 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
+uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity)
+{
+    if (num_connections < 1 || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS ||
+        max_payload_bytes < ROCKETNET_MAX_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1)
+        return 0;
+    uint64_t total = sizeof(rocketnet_reassembly_set_t);
+    const uint64_t slots = (uint64_t)num_connections * (uint64_t)num_slots;
+    if (!rocketnet_memory_add(total, slots, sizeof(rocketnet_reassembly_slot_t)) ||
+        !rocketnet_memory_add(total, slots, (uint64_t)max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES) ||
+        !rocketnet_memory_add(total, (uint64_t)delivered_capacity, (uint64_t)max_payload_bytes) || total > SIZE_MAX)
+        return 0;
+    return total;
+}
+
+bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity)
+{
+    const uint64_t bytes = rocketnet_reassembly_memory_required(num_connections, num_slots, max_payload_bytes, delivered_capacity);
+    const uint64_t budget = (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
+    if (!bytes || bytes > budget)
+    {
+        rocketnet_error("reassembly geometry refused: requires %llu bytes, component budget %llu bytes",
+            (unsigned long long)bytes, (unsigned long long)budget);
+        return false;
+    }
+    return true;
+}
+
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity )
 {
     rocketnet_assert( num_connections > 0 );
     rocketnet_assert( num_slots > 0 && num_slots <= ROCKETNET_MAX_FRAGMENTS );
     rocketnet_assert( max_payload_bytes >= ROCKETNET_MAX_PAYLOAD_BYTES );
     rocketnet_assert( delivered_capacity > 0 );
+
+    if (!rocketnet_reassembly_memory_allowed(num_connections, num_slots, max_payload_bytes, delivered_capacity))
+        return NULL;
 
     struct rocketnet_reassembly_set_t * set = (struct rocketnet_reassembly_set_t*) rocketnet_malloc( context, sizeof(struct rocketnet_reassembly_set_t) );
     if ( !set )

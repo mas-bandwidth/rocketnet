@@ -280,6 +280,12 @@ enum
 
     ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL,
 
+    // History was overwritten before its ACK, or a writer fell behind the
+    // retained sequence window. Advisory: the packet is still transmitted.
+    ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW,
+    // Private packet metadata budget exhausted during a fill phase.
+    ROCKETNET_COUNTER_SEND_LEASE_FULL,
+
     ROCKETNET_NUM_COUNTERS
 };
 

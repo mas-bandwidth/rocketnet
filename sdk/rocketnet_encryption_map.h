@@ -9,6 +9,7 @@
 #define ROCKETNET_ENCRYPTION_MAP_H
 
 #include <stdint.h>
+#include "rocketnet_history.h"
 #include "rocketnet_address.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_protocol.h"
@@ -30,7 +31,7 @@
 struct rocketnet_replay_protection_t
 {
     uint64_t highest_opened;
-    uint64_t window[4];                     // 256-entry bitmask, the standard's floor
+    uint64_t window[ROCKETNET_HISTORY_PACKETS / 64];
 };
 
 struct rocketnet_encryption_mapping_t

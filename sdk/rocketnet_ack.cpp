@@ -10,6 +10,8 @@
 #include "rocketnet.h"
 
 #include <string.h>
+#include <math.h>
+#include <limits.h>
 
 // -----------------------------------------
 //                           the ack block
@@ -222,7 +224,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
 }
 
-void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
+bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
                                          uint64_t aggregate_id, double time )
@@ -231,7 +233,18 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     rocketnet_assert( sequence != 0 );
     rocketnet_assert( !( has_packet_id && aggregate_id != 0 ) );        // a fragment's packet id lives in its aggregate
 
+    if ( !sequence || !isfinite(time) )
+        return false;
+    rocketnet_platform_spin_lock_u64( &endpoint->sent_lock );
     struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    if ( record->sequence >= sequence ||
+         ( endpoint->highest_sequence >= ROCKETNET_SENT_PACKET_BUFFER_SIZE &&
+           sequence <= endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
+    {
+        rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
+        return false;
+    }
+    const bool retained_without_loss = !record->sequence || record->acked;
     record->sequence = sequence;
     record->packet_id = packet_id;
     record->aggregate_id = aggregate_id;
@@ -246,6 +259,8 @@ void rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
     // interleaving, the mark ends at the largest recorded sequence
 
     rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
+    rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
+    return retained_without_loss;
 }
 
 void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
@@ -253,55 +268,12 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
 
-    struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-
-    // the record must still be this sequence's: a recycled entry belongs to
-    // a later packet and must not be tagged. missing the tag only delays the
-    // latch to the next keep-alive, which is the safe direction.
-    //
-    // RESIDUAL, stated rather than glossed, and the attribution matters.
-    //
-    // This read-then-write is not atomic. A concurrent record_sent for the
-    // ONE sequence that aliases to this slot -- sequence + 4096n, the ring
-    // being 4096 entries -- landing between the compare and the store would
-    // tag that packet instead. It is a single aliased sequence, not a range
-    // of them.
-    //
-    // What is pre-existing is only the non-atomic ACCESS STYLE that
-    // record_sent already uses. THE HAZARD ITSELF IS NEW TO THIS CHANGE:
-    // was_keep_alive, the writer here and the consumer in process_block all
-    // arrive with it, and before it no keep-alive mis-tag was possible
-    // because nothing carried the tag. This note must not hand its own
-    // hazard to prior art.
-    //
-    // It is unreachable under the current phase contract, which is what
-    // makes it acceptable rather than harmless. THREE conditions hold it
-    // shut:
-    //
-    //   1. update and the fill phase never overlap;
-    //   2. keep-alives are written only by update; and
-    //   3. update is single-threaded per client index -- two update threads
-    //      on the same slot would open it with (1) and (2) both intact.
-    //      This also covers the OTHER writer of record->sequence, the memset
-    //      in rocketnet_ack_endpoint_reset. It has two production routes:
-    //      the init loop in server_acks_create, before any client exists,
-    //      and rocketnet_server_acks_reset_slot from connection-response
-    //      processing when a slot is assigned -- inside update, so clause
-    //      (3) is what shuts the one that can race. (Neither route is
-    //      disconnect_client, which writes the burst, releases the slot and
-    //      removes the mapping without touching the endpoint.)
-    //
-    // Breaking AT LEAST ONE of the three is necessary to open the window --
-    // not each of them, and none of them sufficient alone: a mis-tag also
-    // needs a concurrent send to land on the one aliasing sequence inside
-    // the compare-then-store, whose width is whatever the compiler emits and
-    // is not something this comment can promise. Hold it as
-    // necessary-but-not-sufficient: the day any of the three stops being
-    // true is the day this function must be made atomic, whether or not the
-    // race has been observed.
-
+    // Serialize the compare and tag with aliased record publication.
+    rocketnet_platform_spin_lock_u64( &endpoint->sent_lock );
+    auto * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     if ( record->sequence == sequence )
         record->was_keep_alive = 1;
+    rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
 }
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
@@ -310,16 +282,16 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
     rocketnet_assert( endpoint );
     rocketnet_assert( fragment_count >= 2 );
 
-    // the id is claimed with one atomic add, so fill threads open
-    // aggregates concurrently; ids ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE
-    // apart cannot coexist in one fill phase, so the slot write is sole
-
+    // Claim and publish together: arbitrarily many fill threads may lap the
+    // finite aggregate ring, and an older writer must not replace a newer one.
+    rocketnet_platform_spin_lock_u64( &endpoint->sent_lock );
     uint64_t id = rocketnet_platform_atomic_add_u64( &endpoint->num_aggregates, 1 ) + 1;
 
     struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
     aggregate->id = id;
     aggregate->packet_id = packet_id;
     aggregate->remaining = (uint32_t) fragment_count;
+    rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
 
     return id;
 }
@@ -656,6 +628,9 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
 {
     rocketnet_assert( max_clients > 0 );
 
+    if ( max_clients < 1 || max_clients > INT_MAX / ROCKETNET_SENT_PACKET_BUFFER_SIZE )
+        return NULL;
+
     struct rocketnet_server_acks_t * acks = (struct rocketnet_server_acks_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_acks_t) );
     if ( !acks )
         return NULL;
@@ -665,10 +640,9 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
     acks->context = context;
     acks->max_clients = max_clients;
 
-    // the batch caps at the per-frame send budget times the slot count: in
-    // steady state newly-acknowledged packets can never outrun sends
-
-    acks->acked_capacity = ROCKETNET_SEND_PACKETS_PER_CLIENT * max_clients;
+    // One delayed ACK may acknowledge every retained record. Capacity follows
+    // retained state, not an assumed number of sends per update.
+    acks->acked_capacity = ROCKETNET_SENT_PACKET_BUFFER_SIZE * max_clients;
 
     acks->acked_client_index = (int*) rocketnet_malloc( context, (size_t) acks->acked_capacity * sizeof(int) );
     acks->acked_packet_ids = (uint64_t*) rocketnet_malloc( context, (size_t) acks->acked_capacity * sizeof(uint64_t) );

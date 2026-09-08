@@ -27,33 +27,13 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 /// <summary>The rocketnet C SDK surface: raw P/Invoke plus thin span helpers.</summary>
-public static unsafe class RocketNet
+public static unsafe partial class RocketNet
 {
     const string Lib = "rocketnet";
 
     static RocketNet()
     {
         NativeLibrary.SetDllImportResolver( typeof(RocketNet).Assembly, Resolve );
-    }
-
-    static IntPtr Resolve( string name, Assembly assembly, DllImportSearchPath? searchPath )
-    {
-        if ( name != Lib )
-            return IntPtr.Zero;
-        string fileName = OperatingSystem.IsWindows() ? "rocketnet.dll"
-                        : OperatingSystem.IsMacOS()   ? "librocketnet.dylib"
-                        :                               "librocketnet.so";
-        string? env = Environment.GetEnvironmentVariable( "ROCKETNET_LIBRARY_PATH" );
-        if ( env != null )
-        {
-            string candidate = Directory.Exists( env ) ? Path.Combine( env, fileName ) : env;
-            if ( File.Exists( candidate ) && NativeLibrary.TryLoad( Path.GetFullPath( candidate ), out IntPtr handle ) )
-                return handle;
-        }
-        string local = Path.Combine( AppContext.BaseDirectory, fileName );
-        if ( File.Exists( local ) && NativeLibrary.TryLoad( local, out IntPtr baseHandle ) )
-            return baseHandle;
-        return IntPtr.Zero;                     // fall through to the runtime's default probing
     }
 
     // -----------------------------------------
@@ -129,7 +109,7 @@ public static unsafe class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 189;
+    public const int NumCounters = 191;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -326,6 +306,8 @@ public static unsafe class RocketNet
         ClientFragmentPayloadBatchFull,
         SendArenaFull,
         ReceiveCursorTooSmall,
+        SendHistoryOverflow,
+        SendLeaseFull,
     }
 #pragma warning restore 1591
 
@@ -459,7 +441,7 @@ public static unsafe class RocketNet
 
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
     /// AbortPacket. The fields are read-only to the caller; the payload is written at
-    /// Frame + PayloadIndex, up to PayloadCapacity bytes — <see cref="PayloadSpan"/> is that span.</summary>
+    /// Frame + PayloadIndex, up to PayloadCapacity bytes — use the checked client/server packet payload span accessor.</summary>
     [StructLayout( LayoutKind.Sequential )]
     public struct PacketContext
     {
@@ -646,19 +628,68 @@ public static unsafe class RocketNet
     /// <summary>Mints a connect token locally against the published development keys.
     /// A production client is handed its token by a backend. The token buffer is
     /// <see cref="ConnectTokenBytes"/>. Returns nonzero on success.</summary>
+    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return WriteDevConnectToken( serverAddress, clientId, unixTimestamp, connectToken.AsSpan() );
+    }
+
+    /// <summary>Mints a development token into a buffer of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, Span<byte> connectToken )
+    {
+        ArgumentNullException.ThrowIfNull( serverAddress );
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return WriteDevConnectTokenNative( serverAddress, clientId, unixTimestamp, token );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int WriteDevConnectToken( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken );
+    private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
 
     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
     /// monotonic; pass the same clock to every call that takes one. Returns IntPtr.Zero on
     /// refusal — an invalid token refuses here.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, ref config, time );
+    }
+
+    /// <summary>Creates a client from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
+    {
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return ClientTransportCreateNative( context, token, ref config, time );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time );
+    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, ref ClientTransportConfig config, double time );
 
     /// <summary>Creates a client with the default (development) config.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
+    {
+        ArgumentNullException.ThrowIfNull( connectToken );
+        return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, nullConfig, time );
+    }
+
+    /// <summary>Creates a client with default config from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
+    {
+        ValidateConnectTokenLength( connectToken.Length );
+        fixed ( byte* token = connectToken )
+            return ClientTransportCreateNative( context, token, nullConfig, time );
+    }
+
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time );
+    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, IntPtr nullConfig, double time );
+
+    private static void ValidateConnectTokenLength( int length )
+    {
+        if ( length != ConnectTokenBytes )
+            throw new ArgumentException( $"A connect token must contain exactly {ConnectTokenBytes} bytes.", "connectToken" );
+    }
 
     /// <summary>Destroys the client. Disconnect and pump a few updates first.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
@@ -1027,14 +1058,36 @@ public static unsafe class RocketNet
     //                            span helpers
     // -----------------------------------------
 
-    /// <summary>The payload span of an acquired packet: PayloadCapacity bytes at
-    /// Frame + PayloadIndex. Empty when the context holds no frame.</summary>
-    public static Span<byte> PayloadSpan( in PacketContext context )
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
+    static extern byte* ClientPacketPayloadNative( IntPtr client, in PacketContext context, out int capacity );
+
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
+    static extern byte* ServerPacketPayloadNative( IntPtr server, in PacketContext context, out int capacity );
+
+    /// <summary>Validates the packet's owner, metadata and active lease before exposing memory.
+    /// Empty for invalid contexts. The span expires at finish, abort, update, flush or destroy;
+    /// callers must not retain it across those operations or race them.</summary>
+    public static Span<byte> ClientTransportPacketPayloadSpan( IntPtr client, in PacketContext context )
     {
-        return context.Frame == IntPtr.Zero
-            ? Span<byte>.Empty
-            : new Span<byte>( (byte*) context.Frame + context.PayloadIndex, context.PayloadCapacity );
+        byte* payload = ClientPacketPayloadNative(client, in context, out int capacity);
+        return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
+
+    /// <summary>The server counterpart of <see cref="ClientTransportPacketPayloadSpan"/>,
+    /// with the same lease validation and lifetime.</summary>
+    public static Span<byte> ServerTransportPacketPayloadSpan( IntPtr server, in PacketContext context )
+    {
+        byte* payload = ServerPacketPayloadNative(server, in context, out int capacity);
+        return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
+    }
+
+    /// <summary>Number of counters in the loaded native library.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_num_counters", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int CounterCount();
+
+    /// <summary>Reads a counter outside update/fill; an invalid index or null block yields zero.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_counter_value", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ulong CounterValue( IntPtr counters, int counter );
 
     /// <summary>A counters block as a span of <see cref="NumCounters"/> monotonic values,
     /// indexed by <see cref="Counter"/>.</summary>
@@ -1042,7 +1095,7 @@ public static unsafe class RocketNet
     {
         return counters == IntPtr.Zero
             ? ReadOnlySpan<ulong>.Empty
-            : new ReadOnlySpan<ulong>( (void*) counters, NumCounters );
+            : new ReadOnlySpan<ulong>( (void*) counters, CounterCount() );
     }
 
     /// <summary>A client receive batch: zero-copy spans over the library's payload storage.

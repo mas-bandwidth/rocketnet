@@ -408,6 +408,38 @@ void rocketnet_test_copy_string()
 void rocketnet_test_address()
 {
     {
+        const char * invalid[] = {
+            "127.0.0.1:", "127.0.0.1:abc", "127.0.0.1:-1", "127.0.0.1:+80",
+            "127.0.0.1: 80", "127.0.0.1:80x", "127.0.0.1:65536", "127.0.0.1:65537",
+            "127.0.0.1:99999999999999999999", "[::1]:", "[::1]:abc", "[::1]:-1",
+            "[::1]:+80", "[::1]: 80", "[::1]:80x", "[::1]:65536", "[::1]junk",
+            "[::1:80", "[::1]::80", "[127.0.0.1]:80", "::1]", "[::1]:80:90"
+        };
+        for ( size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i )
+        {
+            rocketnet_address_t address;
+            memset( &address, 0xFF, sizeof(address) );
+            rocketnet_check( !rocketnet_address_parse( &address, invalid[i] ) );
+            rocketnet_check( address.type == ROCKETNET_ADDRESS_NONE );
+            rocketnet_check( address.port == 0 );
+        }
+        const char * valid[] = { "127.0.0.1:0", "127.0.0.1:65535", "[::1]:0", "[::1]:65535", "[::1]", "::1" };
+        const int ports[] = { 0, 65535, 0, 65535, 0, 0 };
+        for ( size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i )
+        {
+            rocketnet_address_t address;
+            rocketnet_check( rocketnet_address_parse( &address, valid[i] ) );
+            rocketnet_check( address.port == ports[i] );
+        }
+        char oversized[ROCKETNET_MAX_ADDRESS_STRING_LENGTH + 16];
+        memset( oversized, '0', sizeof(oversized) );
+        memcpy( oversized, "127.0.0.1:", 10 );
+        oversized[sizeof(oversized) - 1] = '\0';
+        rocketnet_address_t address;
+        rocketnet_check( !rocketnet_address_parse( &address, oversized ) );
+    }
+
+    {
         struct rocketnet_address_t address;
         rocketnet_check( !rocketnet_address_parse( &address, "" ) );
         rocketnet_check( !rocketnet_address_parse( &address, "[" ) );
@@ -2726,8 +2758,8 @@ void rocketnet_test_replay_protection()
     // received, and refused either way
     struct rocketnet_replay_protection_t high;
     memset( &high, 0, sizeof(high) );
-    rocketnet_replay_advance( &high, 300 );
-    rocketnet_check( rocketnet_replay_already_received( &high, 44 ) );      // 300 - 256
+    rocketnet_replay_advance( &high, ROCKETNET_REPLAY_WINDOW_BITS + 44 );
+    rocketnet_check( rocketnet_replay_already_received( &high, 44 ) );      // exactly the discarded floor
     rocketnet_check( !rocketnet_replay_already_received( &high, 45 ) );
 
     // a far-ahead advance clears the whole window: a sequence one full lap
@@ -2735,10 +2767,10 @@ void rocketnet_test_replay_protection()
     struct rocketnet_replay_protection_t lap;
     memset( &lap, 0, sizeof(lap) );
     rocketnet_replay_advance( &lap, 1 );
-    rocketnet_replay_advance( &lap, 257 );                                  // same ring bit as 1
-    rocketnet_check( rocketnet_replay_already_received( &lap, 257 ) );
+    rocketnet_replay_advance( &lap, ROCKETNET_REPLAY_WINDOW_BITS + 1 );                                  // same ring bit as 1
+    rocketnet_check( rocketnet_replay_already_received( &lap, ROCKETNET_REPLAY_WINDOW_BITS + 1 ) );
     rocketnet_check( rocketnet_replay_already_received( &lap, 1 ) );        // too old now, refused
-    rocketnet_check( !rocketnet_replay_already_received( &lap, 2 ) );       // 2 > 257-256, cleared, not received
+    rocketnet_check( !rocketnet_replay_already_received( &lap, 2 ) );       // inside the retained window and not received
 
     // the standard's phase separation: two independent windows never
     // interact -- handshake and session replay state are separate structs
@@ -5315,9 +5347,37 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check( context.payload_capacity % 8 == 0 );
     rocketnet_check( context.sequence > 0 );
 
+    // Packet metadata is a view, never authority over native storage.
+    int checked_capacity = 0;
+    rocketnet_check(rocketnet_server_transport_packet_payload(server, &context, &checked_capacity) == frame + context.payload_index);
+    rocketnet_check(checked_capacity == context.payload_capacity);
+    rocketnet_check(rocketnet_client_transport_packet_payload(client, &context, &checked_capacity) == NULL && checked_capacity == 0);
+    for (int field = 0; field < 6; ++field)
+    {
+        auto changed = context;
+        switch(field)
+        {
+            case 0: changed.frame++; break;
+            case 1: changed.packet_id++; break;
+            case 2: changed.sequence++; break;
+            case 3: changed.client_index = -1; break;
+            case 4: changed.payload_index = -1; break;
+            case 5: changed.payload_capacity = INT_MAX; break;
+        }
+        rocketnet_check(rocketnet_server_transport_packet_payload(server, &changed, &checked_capacity) == NULL);
+        auto aborted = changed;
+        rocketnet_server_transport_abort_packet(server, &aborted);
+        rocketnet_check(aborted.frame == NULL);
+        rocketnet_check(rocketnet_server_transport_finish_packet(server, &changed, 1) == 0);
+    }
+    rocketnet_check(rocketnet_server_transport_packet_payload(server, &context, &checked_capacity) == frame + context.payload_index);
+    auto expired = context;
+
     // oversize is refused at finish and consumes nothing visible
 
     rocketnet_server_transport_finish_packet( server, &context, context.payload_capacity + 1 );
+    rocketnet_check(rocketnet_server_transport_packet_payload(server, &expired, &checked_capacity) == NULL);
+    rocketnet_check(rocketnet_server_transport_finish_packet(server, &expired, 1) == 0);
 
     // an aborted packet is harmless
 
@@ -5740,17 +5800,27 @@ void rocketnet_test_transport_packet_loss_stats()
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
     rocketnet_check( client );
 
+    // This handshake uses real sockets and a real receive thread. Advancing
+    // virtual time by 1/60 per 1 ms wait gives that thread only ~300 ms before
+    // a five-second protocol deadline. Use actual elapsed time for connection;
+    // the controlled virtual cadence below still drives the statistics case.
+    const double connect_time = game_time;
     double wall_start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - wall_start < 5.0 )
     {
-        game_time += 1.0 / 60.0;
+        game_time = connect_time + rocketnet_platform_time() - wall_start;
         rocketnet_client_transport_update( client, game_time );
         rocketnet_server_transport_update( server, game_time );
+        rocketnet_server_transport_send_packets( server );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
             break;
         rocketnet_platform_sleep( 0.001 );
     }
+    if (rocketnet_client_transport_state(client) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED)
+        printf("packet loss test connect failed: %s, server clients %d\n",
+            rocketnet_client_transport_state_name(rocketnet_client_transport_state(client)),
+            rocketnet_server_transport_num_connected_clients(server));
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     uint8_t payload_data[64];
@@ -7979,6 +8049,66 @@ void rocketnet_test_ack_asymmetric_rate()
         rocketnet_check( acked_seen[i] );
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE] == 0 );
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL] == 0 );
+
+    // No elapsed time or return traffic while more than two complete history
+    // windows are sent. Both directions must keep transmitting on overflow;
+    // one later ACK surfaces exactly the still-retained application IDs.
+    for (int direction = 0; direction < 2; ++direction)
+    {
+        client.num_acked = 0;
+        test.server.acks->num_acked = 0;
+        const int burst = 2 * ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+        for (int i = 0; i < burst; ++i)
+        {
+            uint64_t sequence = 0;
+            uint8_t frame[1500]{};
+            int bytes = 0;
+            if (direction == 0)
+            {
+                rocketnet_check(rocketnet_client_protocol_start_payload(&client, &sequence));
+                bytes = rocketnet_client_protocol_seal_payload_frame(&client, sequence, 100000 + i, frame, 4, time);
+                rocketnet_check(bytes > 0);
+                rocketnet_check(rocketnet_server_protocol_process_packet(&test.server, &test.client_address,
+                    frame, bytes, ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                    payload, &payload_bytes, &payload_client_index) == ROCKETNET_SERVER_PROCESS_ACCEPTED);
+            }
+            else
+            {
+                rocketnet_address_t to;
+                rocketnet_check(rocketnet_server_protocol_start_payload(&test.server, 0, &to, &sequence));
+                bytes = rocketnet_server_protocol_seal_payload_frame(&test.server, 0, sequence, 200000 + i, frame, 4, time);
+                rocketnet_check(bytes > 0);
+                rocketnet_check(rocketnet_client_protocol_process_packet(&client, frame, bytes, time, payload, &payload_bytes));
+            }
+        }
+        uint8_t ack[ROCKETNET_RECEIVE_CEILING];
+        int bytes = 0;
+        const uint64_t * ids = NULL;
+        int count = 0;
+        if (direction == 0)
+        {
+            bytes = rocketnet_server_protocol_write_ack_if_due(&test.server, 0, time + 0.01, ack);
+            rocketnet_check(bytes > 0);
+            rocketnet_check(rocketnet_client_protocol_process_packet(&client, ack, bytes, time + 0.01, payload, &payload_bytes));
+            ids = client.acked_packet_ids;
+            count = client.num_acked;
+            rocketnet_check(client_counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] > 0);
+        }
+        else
+        {
+            rocketnet_client_protocol_update(&client, time + 0.02, ack, &bytes);
+            rocketnet_check(bytes > 0);
+            rocketnet_check(rocketnet_server_protocol_process_packet(&test.server, &test.client_address,
+                ack, bytes, ROCKETNET_TEST_CREATE_TS, time + 0.02, response, &response_bytes,
+                payload, &payload_bytes, &payload_client_index) == ROCKETNET_SERVER_PROCESS_ACCEPTED);
+            ids = test.server.acks->acked_packet_ids;
+            count = test.server.acks->num_acked;
+            rocketnet_check(test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] > 0);
+        }
+        rocketnet_check(count == ROCKETNET_SENT_PACKET_BUFFER_SIZE);
+        for (int i = 0; i < count; ++i)
+            rocketnet_check(ids[i] == (uint64_t)(100000 * (direction + 1) + burst - 1 - i));
+    }
 
     rocketnet_free( NULL, acked_seen );
     rocketnet_test_server_teardown( &test );
