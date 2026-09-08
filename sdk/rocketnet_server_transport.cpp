@@ -1092,22 +1092,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     acks->update_count++;
 
-    // flush. the per-driver law is stated where callers read it, at
-    // send_packets in rocketnet.h: flush after each joined fill phase,
-    // independently of application frames. When staged packets leave is
-    // per driver. the portable driver has always ALSO sent update's own
-    // responses and keep-alives inline right here, and much of the test
-    // suite's pump loops lean on that without ever calling send_packets.
-    // the xdp driver does not have that property: its worker drains only
-    // the off buffer, so nothing staged by update leaves until the
-    // send_packets flip retargets the buffers -- a divergence the suite
-    // has never observed because it has never run against xdp (no root in
-    // CI). the gso driver sides with the portable behavior: update's own
-    // staging flushes inline on the main thread -- the flush is idempotent
-    // -- and send_flushed advances with it, so send_packets flips only for
-    // what the fill phase stages after this point. the xdp flip is
-    // destructive to run twice on one staging generation, which is what
-    // the staged/flushed guard below protects.
+    // Drivers with FLUSH_ON_UPDATE publish update-generated responses here.
+    // Other staged drivers publish at send_packets after the joined fill phase.
+    // XDP retains published generations until the worker drains them; the
+    // staged/flushed counters avoid redundant driver calls between fills.
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
@@ -1626,9 +1614,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         server_transport->stats_pending_packets_sent = 0;
         server_transport->stats_pending_bytes_sent = 0;
 
-        // flip only when something staged since the last flip: the xdp flip is
-        // destructive to run twice on one staging generation; the gso flush is
-        // naturally idempotent but rides the same guard
+        // Publish only work staged since the previous driver flush.
 
         if ( server_transport->send_staged != server_transport->send_flushed )
         {

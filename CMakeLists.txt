@@ -163,6 +163,17 @@ if(ROCKETNET_BUILD_TESTS)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
     endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
+            sdk/rocketnet.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp)
+        add_dependencies(test_xdp rocketnet_xdp_header)
+        target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS
+            $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+        target_include_directories(test_xdp PRIVATE sdk "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_compile_features(test_xdp PRIVATE cxx_std_11)
+        target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+        target_link_libraries(test_xdp PRIVATE RocketNet::Sodium RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+    endif()
     if(WIN32)
         # Isolate the test-instrumented driver: never link another copy from
         # the production archive. Only its ordinary runtime dependencies enter.

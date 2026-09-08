@@ -1797,7 +1797,10 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load( std::memory_order_relaxed )];
+    const int flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
+    if ( flow_index < 0 )
+        return;
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
     ptrdiff_t offset = ( packet_data - send_buffer->packet_data[0] );
 
@@ -1826,7 +1829,10 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
-    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[socket->send_flow_index.load( std::memory_order_relaxed )];
+    const int flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
+    if ( flow_index < 0 )
+        return;
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
     ptrdiff_t offset = ( packet_data - send_buffer->packet_data[0] );
 
@@ -1869,6 +1875,74 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         rocketnet_platform_mutex_release( &socket->send_mutex );
     }
 }
+
+
+#if defined(ROCKETNET_XDP_TESTS)
+// Exercise the native staging entry points without creating kernel resources.
+bool rocketnet_server_socket_test_inactive_generation()
+{
+    void * server_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_socket_t));
+    void * socket_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_xdp_socket_t));
+    if (!server_storage || !socket_storage)
+    {
+        rocketnet_free(NULL, socket_storage);
+        rocketnet_free(NULL, server_storage);
+        return false;
+    }
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
+    server->num_queues = 1;
+    server->socket = socket;
+    rocketnet_platform_mutex_create(&socket->send_mutex);
+    rocketnet_server_socket_acquire_send_buffer(socket);
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    uint8_t * packets[ROCKETNET_XDP_NUM_BUFFERS] = {};
+    uint64_t ids[ROCKETNET_XDP_NUM_BUFFERS] = {};
+    bool valid = true;
+    for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)
+    {
+        packets[generation] = rocketnet_server_socket_start_packet(server, &to, &ids[generation]);
+        if (!packets[generation]) { valid = false; break; }
+        rocketnet_server_socket_finish_packet(server, ids[generation], packets[generation], 64 + generation);
+        valid &= socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation);
+        uint64_t aborted_id;
+        uint8_t * aborted = rocketnet_server_socket_start_packet(server, &to, &aborted_id);
+        if (!aborted) { valid = false; break; }
+        rocketnet_server_socket_finish_packet(server, aborted_id, aborted, 32);
+        rocketnet_server_socket_abort_packet(server, aborted_id, aborted);
+        valid &= socket->send_buffer[generation].packet_info[1].packet_bytes == 0;
+        rocketnet_server_socket_send_packets(server);
+    }
+    valid &= socket->send_flow_index.load() == -1;
+    if (valid)
+    {
+        // Both generations belong to the worker. Late native calls must not
+        // form an inactive-buffer pointer or alter either published packet.
+        rocketnet_server_socket_finish_packet(server, ids[0], packets[0], 17);
+        rocketnet_server_socket_abort_packet(server, ids[1], packets[1]);
+        for (int generation = 0; generation < ROCKETNET_XDP_NUM_BUFFERS; ++generation)
+            valid &= socket->send_buffer[generation].packet_info[0].packet_bytes == size_t(64 + generation);
+        rocketnet_server_socket_send_packets(server);
+        valid &= socket->send_flow_index.load() == -1;
+        socket->send_handoff.retire(); // No worker exists; retire one copied generation.
+        uint64_t id;
+        uint8_t * packet = rocketnet_server_socket_start_packet(server, &to, &id);
+        valid &= packet == packets[0];
+        if (packet)
+        {
+            rocketnet_server_socket_finish_packet(server, id, packet, 100);
+            valid &= socket->send_buffer[0].packet_info[0].packet_bytes == 100;
+        }
+    }
+    rocketnet_platform_mutex_destroy(&socket->send_mutex);
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free(NULL, socket_storage);
+    rocketnet_free(NULL, server_storage);
+    return valid;
+}
+#endif
 
 void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
 {
