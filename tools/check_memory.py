@@ -17,9 +17,11 @@ elif sys.platform.startswith('linux'):
 
 
 def run(*arguments):
-    result = subprocess.run([str(binary), *map(str, arguments)], check=True,
+    result = subprocess.run([str(binary), *map(str, arguments)],
                             capture_output=True, text=True, timeout=120)
     print(result.stdout, end='')
+    print(result.stderr, end='', file=sys.stderr)
+    result.check_returncode()
     return [json.loads(line) for line in result.stdout.splitlines()]
 
 
@@ -41,5 +43,6 @@ if sys.platform.startswith('linux'):
     assert xdp['worker_threads'] == 7
 refused = subprocess.run([str(binary), '1001', '1192', '1', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
-assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr
+assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (
+    refused.returncode, refused.stdout, refused.stderr)
 print('test_transport_memory_plans_match_allocations')
