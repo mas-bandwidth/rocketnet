@@ -666,13 +666,13 @@ int crypto_stream_chacha20(unsigned char *c, unsigned long long clen,
 int crypto_stream_chacha20_xor(unsigned char *c, const unsigned char *m,
                                unsigned long long mlen, const unsigned char *n,
                                const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4, 5)));
 
 int crypto_stream_chacha20_xor_ic(unsigned char *c, const unsigned char *m,
                                   unsigned long long mlen,
                                   const unsigned char *n, uint64_t ic,
                                   const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4, 6)));
 
 void crypto_stream_chacha20_keygen(unsigned char k[crypto_stream_chacha20_KEYBYTES])
             __attribute__ ((nonnull));
@@ -696,13 +696,13 @@ int crypto_stream_chacha20_ietf(unsigned char *c, unsigned long long clen,
 int crypto_stream_chacha20_ietf_xor(unsigned char *c, const unsigned char *m,
                                     unsigned long long mlen, const unsigned char *n,
                                     const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4, 5)));
 
 int crypto_stream_chacha20_ietf_xor_ic(unsigned char *c, const unsigned char *m,
                                        unsigned long long mlen,
                                        const unsigned char *n, uint32_t ic,
                                        const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4, 6)));
 
 void crypto_stream_chacha20_ietf_keygen(unsigned char k[crypto_stream_chacha20_ietf_KEYBYTES])
             __attribute__ ((nonnull));
@@ -984,7 +984,7 @@ int crypto_aead_xchacha20poly1305_ietf_decrypt_detached(unsigned char *m,
                                                         unsigned long long adlen,
                                                         const unsigned char *npub,
                                                         const unsigned char *k)
-            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull(3, 5, 9, 9)));
+            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull(3, 5, 8, 9)));
 
 void crypto_aead_xchacha20poly1305_ietf_keygen(unsigned char k[crypto_aead_xchacha20poly1305_ietf_KEYBYTES])
             __attribute__ ((nonnull));
@@ -1067,13 +1067,13 @@ int crypto_onetimeauth_poly1305(unsigned char *out,
                                 const unsigned char *in,
                                 unsigned long long inlen,
                                 const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4)));
 
 int crypto_onetimeauth_poly1305_verify(const unsigned char *h,
                                        const unsigned char *in,
                                        unsigned long long inlen,
                                        const unsigned char *k)
-            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull));
+            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull(1, 4)));
 
 int crypto_onetimeauth_poly1305_init(crypto_onetimeauth_poly1305_state *state,
                                      const unsigned char *key)
@@ -1082,7 +1082,7 @@ int crypto_onetimeauth_poly1305_init(crypto_onetimeauth_poly1305_state *state,
 int crypto_onetimeauth_poly1305_update(crypto_onetimeauth_poly1305_state *state,
                                        const unsigned char *in,
                                        unsigned long long inlen)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1)));
 
 int crypto_onetimeauth_poly1305_final(crypto_onetimeauth_poly1305_state *state,
                                       unsigned char *out)
@@ -1125,11 +1125,11 @@ const char *crypto_onetimeauth_primitive(void);
 
 int crypto_onetimeauth(unsigned char *out, const unsigned char *in,
                        unsigned long long inlen, const unsigned char *k)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1, 4)));
 
 int crypto_onetimeauth_verify(const unsigned char *h, const unsigned char *in,
                               unsigned long long inlen, const unsigned char *k)
-            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull));
+            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull(1, 4)));
 
 int crypto_onetimeauth_init(crypto_onetimeauth_state *state,
                             const unsigned char *key) __attribute__ ((nonnull));
@@ -1137,7 +1137,7 @@ int crypto_onetimeauth_init(crypto_onetimeauth_state *state,
 int crypto_onetimeauth_update(crypto_onetimeauth_state *state,
                               const unsigned char *in,
                               unsigned long long inlen)
-            __attribute__ ((nonnull));
+            __attribute__ ((nonnull(1)));
 
 int crypto_onetimeauth_final(crypto_onetimeauth_state *state,
                              unsigned char *out) __attribute__ ((nonnull));
@@ -1825,7 +1825,7 @@ extern "C" {
 # endif
 #endif
 
-void sodium_memzero(void * const pnt, const size_t len) __attribute__ ((nonnull));
+void sodium_memzero(void * const pnt, const size_t len) ;
 
 void sodium_stackzero(const size_t len);
 
@@ -1836,7 +1836,7 @@ void sodium_stackzero(const size_t len);
  * This function is not designed for lexicographical comparisons.
  */
 int sodium_memcmp(const void * const b1_, const void * const b2_, size_t len)
-            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull));
+            __attribute__ ((warn_unused_result)) ;
 
 /*
  * sodium_compare() returns -1 if b1_ < b2_, 1 if b1_ > b2_ and 0 if b1_ == b2_
@@ -1846,27 +1846,27 @@ int sodium_memcmp(const void * const b1_, const void * const b2_, size_t len)
  */
 int sodium_compare(const unsigned char *b1_, const unsigned char *b2_,
                    size_t len)
-            __attribute__ ((warn_unused_result)) __attribute__ ((nonnull));
+            __attribute__ ((warn_unused_result)) ;
 
 int sodium_is_zero(const unsigned char *n, const size_t nlen);
 
 void sodium_increment(unsigned char *n, const size_t nlen);
 
 void sodium_add(unsigned char *a, const unsigned char *b, const size_t len)
-            __attribute__ ((nonnull));
+            ;
 
 void sodium_sub(unsigned char *a, const unsigned char *b, const size_t len)
-            __attribute__ ((nonnull));
+            ;
 
 char *sodium_bin2hex(char * const hex, const size_t hex_maxlen,
                      const unsigned char * const bin, const size_t bin_len)
-            __attribute__ ((nonnull));
+            __attribute__((nonnull(1)));
 
 int sodium_hex2bin(unsigned char * const bin, const size_t bin_maxlen,
                    const char * const hex, const size_t hex_len,
                    const char * const ignore, size_t * const bin_len,
                    const char ** const hex_end)
-            __attribute__ ((nonnull(1, 3)));
+            __attribute__((nonnull(1)));
 
 #define sodium_base64_VARIANT_ORIGINAL            1
 #define sodium_base64_VARIANT_ORIGINAL_NO_PADDING 3
@@ -1886,19 +1886,19 @@ size_t sodium_base64_encoded_len(const size_t bin_len, const int variant);
 
 char *sodium_bin2base64(char * const b64, const size_t b64_maxlen,
                         const unsigned char * const bin, const size_t bin_len,
-                        const int variant) __attribute__ ((nonnull));
+                        const int variant) __attribute__((nonnull(1)));
 
 int sodium_base642bin(unsigned char * const bin, const size_t bin_maxlen,
                       const char * const b64, const size_t b64_len,
                       const char * const ignore, size_t * const bin_len,
                       const char ** const b64_end, const int variant)
-            __attribute__ ((nonnull(1, 3)));
+            __attribute__((nonnull(1)));
 
 int sodium_mlock(void * const addr, const size_t len)
-            __attribute__ ((nonnull));
+            __attribute__((nonnull));
 
 int sodium_munlock(void * const addr, const size_t len)
-            __attribute__ ((nonnull));
+            __attribute__((nonnull));
 
 /* WARNING: sodium_malloc() and sodium_allocarray() are not general-purpose
  * allocation functions.
@@ -1941,19 +1941,19 @@ void *sodium_allocarray(size_t count, size_t size)
 
 void sodium_free(void *ptr);
 
-int sodium_mprotect_noaccess(void *ptr) __attribute__ ((nonnull));
+int sodium_mprotect_noaccess(void *ptr) __attribute__((nonnull));
 
-int sodium_mprotect_readonly(void *ptr) __attribute__ ((nonnull));
+int sodium_mprotect_readonly(void *ptr) __attribute__((nonnull));
 
-int sodium_mprotect_readwrite(void *ptr) __attribute__ ((nonnull));
+int sodium_mprotect_readwrite(void *ptr) __attribute__((nonnull));
 
 int sodium_pad(size_t *padded_buflen_p, unsigned char *buf,
                size_t unpadded_buflen, size_t blocksize, size_t max_buflen)
-            __attribute__ ((nonnull(2)));
+            __attribute__((nonnull(2)));
 
 int sodium_unpad(size_t *unpadded_buflen_p, const unsigned char *buf,
                  size_t padded_buflen, size_t blocksize)
-            __attribute__ ((nonnull(2)));
+            __attribute__((nonnull(2)));
 
 /* -------- */
 

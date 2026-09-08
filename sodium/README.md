@@ -52,7 +52,10 @@ private symbols through header aliases. GCC target options are pushed/popped
 at each original C-file boundary; intrinsics headers are loaded before target
 pragmas so their declarations do not inherit a preceding AVX2 section. The
 standard `__STDC_WANT_LIB_EXT1__` feature macro is retained for the translation
-unit rather than undefined between files. These are amalgamation adaptations;
+unit rather than undefined between files. Existing `nonnull` declarations are refreshed from the pinned upstream headers:
+the baseline carried stale annotations that rejected valid NULL/zero-length
+AEAD inputs under UBSan. The fixed-vector test executes that call explicitly.
+These are amalgamation adaptations;
 cryptographic arithmetic and protocol encodings are unchanged.
 
 ## Check

@@ -84,6 +84,26 @@ def main():
 
         return f'\n/* ===== upstream {path} ===== */\n' + INCLUDE.sub(inline, source)
 
+    # netcode's baseline predates upstream's precise nullable/zero-length
+    # annotations. Refresh only existing nonnull attributes from the pinned
+    # declarations; do not suppress sanitizer diagnostics for valid calls.
+    prototype = re.compile(r'^\w[^;{}]*?\b((?:crypto_|sodium_|randombytes_)\w+)\s*\([^;{}]*;', re.M)
+    nonnull = re.compile(r'__attribute__\s*\(\(\s*nonnull(?:\s*\([^)]*\))?\s*\)\)')
+    attributes = {}
+    for path, text in files.items():
+        if path.startswith(public_root) and path.endswith('.h'):
+            for declaration in prototype.finditer(text):
+                attribute = nonnull.search(declaration[0])
+                attributes[declaration[1]] = attribute[0] if attribute else ''
+
+    def refresh(declaration):
+        name = declaration[1]
+        if name not in attributes:
+            return declaration[0]
+        return nonnull.sub(lambda _: attributes[name], declaration[0])
+
+    baseline['sodium.h'] = prototype.sub(refresh, baseline['sodium.h'])
+
     # Public headers retain their upstream guards and C++ linkage. Private
     # declarations/body tables are expanded at the original include sites,
     # preserving all architecture conditions and inclusion scopes.

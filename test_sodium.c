@@ -47,6 +47,14 @@ int main(void)
     CHECK(crypto_sign_verify_detached(out, (const unsigned char *)"", 0, pk) == 0);
     out[0] ^= 1;
     CHECK(crypto_sign_verify_detached(out, (const unsigned char *)"", 0, pk) == -1);
+    // Empty message and associated data may be NULL. Stale baseline
+    // nonnull annotations used to trip UBSan inside the AEAD implementation.
+    unsigned char nonce[12] = {0}, key[32] = {0}, plain[1];
+    unsigned long long count = 99;
+    CHECK(crypto_aead_chacha20poly1305_ietf_encrypt(out, &count, NULL, 0, NULL, 0, NULL, nonce, key) == 0);
+    CHECK(count == 16);
+    CHECK(crypto_aead_chacha20poly1305_ietf_decrypt(plain, &count, NULL, out, 16, NULL, 0, nonce, key) == 0);
+    CHECK(count == 0);
     puts("test_sodium_known_answers");
     return 0;
 }
