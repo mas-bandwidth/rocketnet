@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_replay.h"
@@ -623,6 +624,15 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
 // -----------------------------------------
 //                    the server's acks
 // -----------------------------------------
+
+uint64_t rocketnet_server_acks_allocation_bytes(int clients)
+{
+    if (clients < 1 || clients > INT_MAX / ROCKETNET_SENT_PACKET_BUFFER_SIZE) return 0;
+    const uint64_t n = (uint64_t)clients;
+    return rocketnet_memory_allocations({sizeof(rocketnet_server_acks_t),
+        n*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(int), n*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(uint64_t),
+        n*sizeof(rocketnet_ack_endpoint_t)});
+}
 
 struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, int max_clients )
 {

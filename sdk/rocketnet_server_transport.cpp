@@ -13,6 +13,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_memory.h"
 
 #include <sodium.h>
 #include <atomic>
@@ -397,6 +398,44 @@ static bool rocketnet_server_apply_env_alias_string( const char * alias_name, co
     return true;
 }
 
+bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
+    const char * driver, rocketnet_server_memory_plan_t & plan)
+{
+    plan = {};
+    if (!driver) return false;
+    rocketnet_server_transport_config_t defaults;
+    if (!config) { rocketnet_server_transport_default_config(&defaults); config = &defaults; }
+    const int clients = config->max_clients;
+    const int payload = config->max_payload_bytes ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
+    const int slots = config->num_reassembly_slots ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
+    if (clients < 1 || clients > ROCKETNET_MAX_CLIENTS || payload < ROCKETNET_MAX_PAYLOAD_BYTES ||
+        payload > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ||
+        config->num_xdp_queues < 0 || config->num_xdp_queues > 1024) return false;
+
+    plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t)});
+    for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * 2),
+        rocketnet_token_table_allocation_bytes(clients * 8), rocketnet_token_table_allocation_bytes(clients * 2),
+        rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients)})
+    {
+        if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
+    }
+    plan.reassembly_bytes = rocketnet_reassembly_memory_required(clients, slots, payload, clients * slots);
+    if (!plan.reassembly_bytes || !rocketnet_memory_add(plan.reassembly_bytes, 4, rocketnet_allocation_overhead())) return false;
+    plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes(ROCKETNET_SEND_ARENA_SLOTS, (payload + 15) & ~15);
+    if (!rocketnet_builtin_server_memory_plan(config, driver, plan)) return false;
+    if (!plan.transport_bytes || !plan.send_arena_bytes || !plan.driver_bytes) return false;
+    for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
+        plan.send_arena_bytes, plan.driver_bytes, plan.umem_bytes})
+        if (!rocketnet_memory_add(plan.total_bytes, 1, bytes)) return false;
+    return plan.total_bytes <= SIZE_MAX;
+}
+
+uint64_t rocketnet_server_transport_required_memory(const rocketnet_server_transport_config_t * config, const char * driver)
+{
+    rocketnet_server_memory_plan_t plan;
+    return rocketnet_server_transport_memory_plan(config, driver, plan) ? plan.total_bytes : 0;
+}
+
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
                                                                          const char * public_address_string,
                                                                          const struct rocketnet_server_transport_config_t * config,
@@ -536,6 +575,18 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         memset( bind_address.data.ipv4, 0, sizeof(bind_address.data.ipv4) );
     else
         memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
+
+    for (int i = 0; i < ladder.num_candidates; ++i)
+    {
+        const char * name = rocketnet_driver_name(ladder.candidates[i]);
+        rocketnet_server_memory_plan_t plan;
+        if (rocketnet_server_transport_memory_plan(config, name, plan))
+            rocketnet_info("server memory plan [%s]: %llu allocator bytes, %llu UMEM bytes, %d workers, %d sockets; excludes OS stacks, kernel queues, loader and application memory",
+                name, (unsigned long long)(plan.total_bytes - plan.umem_bytes),
+                (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
+        else
+            rocketnet_info("server memory plan [%s]: unavailable; consult this driver's resource policy", name);
+    }
 
     struct rocketnet_server_transport_t * server_transport = (struct rocketnet_server_transport_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_transport_t) );
     if ( !server_transport )

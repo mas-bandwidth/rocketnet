@@ -36,8 +36,8 @@ struct control_fixture_t
     int responses;
     int payloads;
     int aborts;
-    int keep_alives[300];
-    int acks[300];
+    int keep_alives[ROCKETNET_MAX_CLIENTS];
+    int acks[ROCKETNET_MAX_CLIENTS];
     int capacity;
     int used;
     rocketnet_address_t reserved_to;
@@ -49,7 +49,7 @@ static void record(control_fixture_t * f, const rocketnet_address_t * to, const 
 {
     if (to->port == f->request_address.port) { ++f->responses; return; }
     const int client = to->port - 1000;
-    CHECK(client >= 0 && client < 300);
+    CHECK(client >= 0 && client < ROCKETNET_MAX_CLIENTS);
     if (packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET) ++f->keep_alives[client];
     else if (packet[0] == ROCKETNET_CONNECTION_ACK_PACKET) ++f->acks[client];
     else if (packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET) ++f->payloads;
@@ -137,19 +137,20 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     return server;
 }
 
-static void test_buffered_control_pressure()
+static void test_buffered_control_pressure(int clients = 300)
 {
     auto * f = new control_fixture_t();
     rocketnet_server_driver_operations_t operations;
-    auto * server = make_server(f, &operations, 300, false);
+    auto * server = make_server(f, &operations, clients, false);
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
+    const double begin = rocketnet_time();
     for (int step = 0; step < 6; ++step)
     {
         double now = 1.0 + step;
         // Half the clients owe standalone ACKs while their keep-alive clock
         // is not due; the other half need keep-alives. All indices are due
         // for one kind of control packet on every update.
-        for (int i = 1; i < 300; i += 2)
+        for (int i = 1; i < clients; i += 2)
         {
             auto * mapping = rocketnet_encryption_map_entry(server->protocol.encryption_map,
                 rocketnet_client_slots_mapping_index(server->protocol.client_slots, i));
@@ -158,12 +159,14 @@ static void test_buffered_control_pressure()
         }
         rocketnet_server_transport_update(server, now);
         CHECK(f->responses == (step + 1) * f->requests);
-        for (int i = 0; i < 300; ++i)
+        for (int i = 0; i < clients; ++i)
             CHECK((i % 2 ? f->acks[i] : f->keep_alives[i]) == step + 1);
     }
-    for (int i = 0; i < 300; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
+    const double elapsed_ms = (rocketnet_time() - begin) * 1000.0;
+    for (int i = 0; i < clients; ++i) CHECK(server->protocol.acks->endpoints[i].rtt == 17.0f);
     rocketnet_server_transport_destroy(server); delete f;
-    printf("test_buffered_control_pressure\n");
+    printf("test_buffered_control_pressure clients=%d updates=6 controls=%d elapsed_ms=%.3f\n",
+        clients, clients * 6, elapsed_ms);
 }
 
 static void test_staged_control_fairness()
@@ -225,6 +228,7 @@ int main()
     CHECK(rocketnet_init());
     rocketnet_forbid_xdp_commit();
     test_buffered_control_pressure();
+    test_buffered_control_pressure(1000);
     test_staged_control_fairness();
     test_single_frame_arena();
     rocketnet_term();

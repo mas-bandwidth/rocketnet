@@ -628,12 +628,33 @@ static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, con
 // checked from here are checked, so one run names every errand at once
 // rather than one per attempt.
 
+uint64_t rocketnet_xdp_umem_bytes(int queues)
+{
+    if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
+    uint64_t bytes = 0;
+    if (!rocketnet_memory_add(bytes, (uint64_t)queues,
+            (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
+        return 0;
+    return bytes;
+}
+
+uint64_t rocketnet_server_xdp_allocation_bytes(int queues)
+{
+    if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
+    uint64_t bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_socket_t),
+        (uint64_t)queues * sizeof(rocketnet_server_xdp_socket_t)});
+    if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)queues, rocketnet_platform_thread_allocation_bytes())) return 0;
+    return bytes <= SIZE_MAX ? bytes : 0;
+}
+
 uint64_t rocketnet_server_socket_memory_required(int num_queues)
 {
     if (num_queues < 1 || num_queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
+    const uint64_t umem = rocketnet_xdp_umem_bytes(num_queues);
     uint64_t bytes = sizeof(rocketnet_server_socket_t);
-    if (!rocketnet_memory_add(bytes, (uint64_t)num_queues, sizeof(rocketnet_server_xdp_socket_t)) ||
-        !rocketnet_memory_add(bytes, (uint64_t)num_queues, (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE) || bytes > SIZE_MAX)
+    if (!umem ||
+        !rocketnet_memory_add(bytes, (uint64_t)num_queues, sizeof(rocketnet_server_xdp_socket_t)) ||
+        !rocketnet_memory_add(bytes, 1, umem) || bytes > SIZE_MAX)
         return 0;
     return bytes;
 }

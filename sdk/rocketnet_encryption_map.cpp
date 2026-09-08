@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet.h"
 
@@ -25,6 +26,14 @@ struct rocketnet_encryption_map_t
     int * live;                                             // hot: parallel to address
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
 };
+
+uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
+{
+    if (capacity < 1) return 0;
+    const uint64_t n = (uint64_t)capacity;
+    return rocketnet_memory_allocations({sizeof(rocketnet_encryption_map_t), 2*n*sizeof(int),
+        n*sizeof(int), n*sizeof(rocketnet_address_t), n*sizeof(int), n*sizeof(rocketnet_encryption_mapping_t)});
+}
 
 struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * context, int capacity )
 {

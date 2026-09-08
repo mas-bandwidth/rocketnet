@@ -463,6 +463,12 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 //                          the send arena
 // -----------------------------------------
 
+uint64_t rocketnet_send_arena_allocation_bytes(int slots, int bytes)
+{
+    if (slots < 1 || bytes < 1) return 0;
+    return rocketnet_memory_allocations({sizeof(rocketnet_send_arena_t), (uint64_t)slots * (uint64_t)bytes});
+}
+
 struct rocketnet_send_arena_t * rocketnet_send_arena_create( void * context, int num_slots, int slot_bytes )
 {
     rocketnet_assert( num_slots > 0 );

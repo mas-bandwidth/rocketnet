@@ -719,6 +719,16 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_default_config( struct roc
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
 
+// Allocation-free constructor memory plan for one built-in driver name.
+// Includes SDK allocator requests (alignment/ownership overhead and transient
+// worker shims) plus XDP UMEM. Excludes OS stacks, kernel/libbpf/libxdp resources,
+// loader/libc bookkeeping and application memory; this is not a host RAM limit.
+// Uses the supplied numeric config exactly (NULL means defaults); no environment
+// overlay, key validation, socket probe or budget refusal. Zero means invalid
+// geometry, overflow, unknown/custom driver, or driver not built for this platform.
+// Query each candidate separately: "auto" and driver lists are not concrete plans.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
+
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first

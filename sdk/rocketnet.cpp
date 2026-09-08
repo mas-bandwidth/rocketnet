@@ -250,6 +250,11 @@ struct rocketnet_allocation_header_t
     void (*free_function)( void *, void * );
 };
 
+uint64_t rocketnet_allocation_overhead()
+{
+    return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+}
+
 void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
     bool refused;
@@ -269,7 +274,7 @@ void rocketnet_allocator( void * (*malloc_function)( void * context, size_t byte
 void * rocketnet_malloc( void * context, size_t bytes )
 {
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
-    const size_t overhead = sizeof(rocketnet_allocation_header_t) + alignment - 1;
+    const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
         return NULL;
     void * (*allocate)( void *, size_t );

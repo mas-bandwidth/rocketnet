@@ -860,6 +860,12 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_dev_config", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ServerTransportDevConfig( out ServerTransportConfig config );
 
+    /// <summary>Constructor allocator requests plus XDP UMEM for one built-in driver.
+    /// Excludes OS/kernel/application memory and environment overrides. Zero means
+    /// invalid geometry, overflow, or an unknown/unavailable driver; use a concrete name.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_required_memory", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ulong ServerTransportRequiredMemory( ref ServerTransportConfig config, [MarshalAs( UnmanagedType.LPUTF8Str )] string driver );
+
     /// <summary>Creates a server on the public address clients dial, e.g. "127.0.0.1:40000".
     /// Returns IntPtr.Zero on refusal.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]

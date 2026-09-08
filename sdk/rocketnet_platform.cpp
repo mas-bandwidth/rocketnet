@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
 #include <limits.h>
@@ -3132,4 +3133,16 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
     return rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+}
+
+uint64_t rocketnet_platform_socket_allocation_bytes()
+{
+    return rocketnet_memory_allocations({sizeof(rocketnet_platform_socket_t)});
+}
+
+uint64_t rocketnet_platform_thread_allocation_bytes()
+{
+    // Includes the transient shim, freed when the worker begins. Counting
+    // every shim gives a conservative constructor peak independent of scheduling.
+    return rocketnet_memory_allocations({sizeof(rocketnet_platform_thread_t), sizeof(thread_shim_data_t)});
 }
