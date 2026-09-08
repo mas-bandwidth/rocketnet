@@ -96,6 +96,11 @@ static void test_completion_owns_frames()
         ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
     CHECK(peer);
 
+    rocketnet_address_t invalid = {};
+    uint64_t refused_id;
+    CHECK(!rocketnet_server_iocp_start_packet(driver, &invalid, &refused_id));
+    // Address refusal must leave a whole generation available below.
+
     // Exhaust and abort a complete phase. Every frame must be reclaimable.
     std::set<uint8_t*> frames;
     for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE; ++i )
@@ -131,7 +136,6 @@ static void test_completion_owns_frames()
         rocketnet_server_iocp_abort_packet(driver, id, frame);
     }
     CHECK(!rocketnet_server_iocp_start_packet(driver, &peer_address, &id));
-    rocketnet_server_iocp_send_packets(driver);
     rocketnet_server_iocp_test_hold_completions(driver, false);
     const double deadline = rocketnet_platform_time() + 5.0;
     do
@@ -146,6 +150,16 @@ static void test_completion_owns_frames()
     // retirement batch before checking that every frame is back in the pool.
     rocketnet_server_iocp_test_hold_completions(driver, true);
     rocketnet_server_iocp_test_hold_completions(driver, false);
+    // The failed pop above must not burn a staging slot. As the 32 in-flight
+    // frames return, all 32 must be reservable in this SAME fill generation.
+    for ( int i = 0; i < 32; ++i )
+    {
+        uint8_t * frame = rocketnet_server_iocp_start_packet(driver, &peer_address, &id);
+        CHECK(frame && pending.erase(frame) == 1);
+        rocketnet_server_iocp_abort_packet(driver, id, frame);
+    }
+    CHECK(pending.empty());
+    rocketnet_server_iocp_send_packets(driver);
     frames.clear();
     for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE; ++i )
     {

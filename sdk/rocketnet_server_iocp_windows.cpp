@@ -382,14 +382,20 @@ failed:
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) ) return NULL;
-    const uint64_t slot = iocp->num_staged.fetch_add( 1, std::memory_order_relaxed );
-    if ( slot >= ROCKETNET_IOCP_SEND_QUEUE_SIZE ) return NULL;
-    iocp->staged[slot] = -1;
     SLIST_ENTRY * entry = InterlockedPopEntrySList( &iocp->free_sends );
     if ( !entry ) return NULL;
     rocketnet_iocp_operation_t * op = CONTAINING_RECORD( entry, rocketnet_iocp_operation_t, free_entry );
     op->address_bytes = rocketnet_iocp_address_write( to, iocp->ipv6, &op->address );
     if ( !op->address_bytes )
+    {
+        InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
+        return NULL;
+    }
+    // Reserve a staging slot only after acquiring a usable frame. A failed
+    // pop/address must not consume capacity while completions return frames
+    // during this same fill phase. Every accepted slot owns one pool entry.
+    const uint64_t slot = iocp->num_staged.fetch_add( 1, std::memory_order_relaxed );
+    if ( slot >= ROCKETNET_IOCP_SEND_QUEUE_SIZE )
     {
         InterlockedPushEntrySList( &iocp->free_sends, &op->free_entry );
         return NULL;
