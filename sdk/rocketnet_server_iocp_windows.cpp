@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -292,6 +293,17 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
     rocketnet_free( context, iocp->receives );
     iocp->~rocketnet_server_iocp_t();
     rocketnet_free( context, iocp );
+}
+
+uint64_t rocketnet_server_iocp_allocation_bytes(int workers)
+{
+    if (workers < 1 || workers > ROCKETNET_IOCP_MAX_WORKERS) return 0;
+    uint64_t bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_iocp_t),
+        (uint64_t)workers * sizeof(rocketnet_iocp_worker_t),
+        (uint64_t)ROCKETNET_IOCP_SEND_QUEUE_SIZE * sizeof(rocketnet_iocp_operation_t),
+        (uint64_t)workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * sizeof(rocketnet_iocp_operation_t)});
+    if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)workers, rocketnet_platform_thread_allocation_bytes())) return 0;
+    return bytes <= SIZE_MAX ? bytes : 0;
 }
 
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketnet_address_t * bind_address, int num_workers, int fail_stage )

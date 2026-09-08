@@ -132,6 +132,67 @@ memory for ACK history, other transport objects, allocator overhead, stacks,
 kernel buffers and your application. The default seven-queue XDP geometry alone
 still requires roughly 3.5 GiB; select fewer queues or provision that explicitly.
 
+## Pre-allocation server resource plans
+
+`rocketnet_server_transport_required_memory(config, driver)` returns the planned
+constructor storage in bytes for one concrete built-in driver. It works before
+`rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
+Pass `NULL` config for defaults. A zero result means invalid geometry or a driver
+that has no built-in plan on this build; `auto`, candidate lists and custom drivers
+need separate policy. The query uses the supplied numeric configuration only:
+it does not apply environment overrides, check keys, probe hardware or approve a
+configuration against the component budgets. Create reports each candidate's plan
+at INFO level before allocating the transport, using its effective configuration.
+
+The plan includes the transport, protocol tables and ACK history, reassembly and
+its delivered mirror, send arena, native driver queues and SDK worker allocations,
+plus the SDK allocator's ownership/alignment overhead. XDP UMEM is counted
+separately and included in the total. Worker startup shims are included even if
+some have already been freed by the time create returns. OS thread stacks, kernel
+socket/ring storage, libbpf/libxdp allocations, libc bookkeeping, loader and
+application memory are outside this count. Provision room for those costs; a
+plan is not an available-RAM check or a whole-host peak estimate. Existing
+component budgets, queue defaults and history limits are unchanged.
+
+Build tools normally, then use the resource probe:
+
+```
+./bin/transport_memory 1000 1192 16 portable 0 --plan-only
+./bin/transport_memory 1000 1192 16 portable 0
+# Linux only; this prints geometry without attaching XDP or allocating UMEM:
+./bin/transport_memory 1000 1192 1 xdp 7 --plan-only
+python3 tools/check_memory.py
+```
+
+Arguments are clients, maximum payload bytes, reassembly slots, concrete driver
+and queue/worker count (zero selects that driver's default). `--plan-only` emits
+a component breakdown, worker/socket counts and an explicit unknown OS/application
+cost, then exits before initialization. Without it, the probe creates a loopback
+server, compares independent allocator live/peak observations against the plan,
+reports process peak RSS separately and checks that destruction frees every SDK
+allocation. Clear deployment `ROCKETNET_*` overrides when profiling a specific
+argument set: real create still obeys those overrides and a mismatch fails loudly.
+RSS and requested allocator bytes measure different things; untouched allocations
+may not yet be resident. The probe never commits an XDP attachment.
+
+On the shared M3 Ultra, Release portable plans matched all 40 live allocations:
+
+| Clients | Payload bytes | Reassembly slots | Planned/observed allocator bytes |
+| ---: | ---: | ---: | ---: |
+| 1 | 1192 | 1 | 32,609,307 |
+| 2 | 1192 | 1 | 32,937,054 |
+| 1000 | 1192 | 1 | 360,028,560 |
+| 1000 | 1192 | 16 | 417,433,560 |
+| 1000 | 4096 | 16 | 510,407,896 |
+
+These are target-specific constructor measurements, not deployment limits. The
+maximum legal numeric reassembly geometry plans roughly 146 GiB and can be queried
+without allocating it; the default reassembly component budget refuses its create.
+`test_transport_control` also exercises six maintenance passes over 1000 mixed
+ACK/keepalive clients while the buffered driver accepts only 256 controls per send
+batch. Its elapsed time is a diagnostic for that synthetic workload, not a packet
+rate or a frame/send/ACK cadence requirement.
+
 ## Server transport drivers
 
 Driver selection is runtime (#106): one build carries every driver its platform

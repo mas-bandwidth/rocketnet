@@ -368,6 +368,22 @@ int main()
     rocketnet_allocator( allocate, release );
     check( rocketnet_malloc( &state, SIZE_MAX ) == NULL );
     check( state.calls == 0 );
+    rocketnet_server_transport_config_t memory_config;
+    rocketnet_server_transport_default_config(&memory_config);
+    check(rocketnet_server_transport_required_memory(NULL, "portable") > 0);
+    const uint64_t default_memory = rocketnet_server_transport_required_memory(&memory_config, "portable");
+    check(default_memory > 0);
+    check(rocketnet_server_transport_required_memory(&memory_config, "auto") == 0);
+    check(rocketnet_server_transport_required_memory(&memory_config, "custom") == 0);
+    check(rocketnet_server_transport_required_memory(&memory_config, NULL) == 0);
+    memory_config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
+    check(rocketnet_server_transport_required_memory(&memory_config, "portable") == 0);
+    memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
+    memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
+    memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS;
+    // Planning a geometry larger than the component budget never allocates it.
+    check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
+    check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {
         void * p = rocketnet_malloc( &state, size );

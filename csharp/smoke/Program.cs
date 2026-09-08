@@ -151,6 +151,9 @@ static class Smoke
             Fail( $"default config driver is '{defaultConfig.GetDriver()}', expected 'auto'" );
         if ( defaultConfig.GetPublicAddress() != "" )
             Fail( $"default config public address is '{defaultConfig.GetPublicAddress()}', expected empty" );
+        if ( RocketNet.ServerTransportRequiredMemory( ref defaultConfig, "portable" ) == 0 ||
+             RocketNet.ServerTransportRequiredMemory( ref defaultConfig, "auto" ) != 0 )
+            Fail( "memory planner requires a concrete built-in driver" );
         defaultConfig.SetPublicAddress( "10.0.0.1:5000" );
         if ( defaultConfig.GetPublicAddress() != "10.0.0.1:5000" )
             Fail( "public address does not round-trip through the binding" );

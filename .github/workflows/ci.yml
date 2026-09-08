@@ -160,6 +160,9 @@ jobs:
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      - name: Memory plans against allocator observations
+        run: python3 tools/check_memory.py ./bin/transport_memory
+
       - name: Native driver contract and external backend
         run: |
           ./bin/test_driver
@@ -298,6 +301,9 @@ jobs:
 
       - name: Ambient config isolation and passing output
         run: python tools/check_test_environment.py ./bin/${{ matrix.build_type }}/test.exe
+
+      - name: Memory plans against allocator observations
+        run: python tools/check_memory.py ./bin/${{ matrix.build_type }}/transport_memory.exe
 
       - name: Native driver contract and external backend
         run: |

@@ -628,6 +628,15 @@ static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, con
 // checked from here are checked, so one run names every errand at once
 // rather than one per attempt.
 
+uint64_t rocketnet_server_xdp_allocation_bytes(int queues)
+{
+    if (queues < 1 || queues > ROCKETNET_XDP_MAX_QUEUES) return 0;
+    uint64_t bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_socket_t),
+        (uint64_t)queues * sizeof(rocketnet_server_xdp_socket_t)});
+    if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)queues, rocketnet_platform_thread_allocation_bytes())) return 0;
+    return bytes <= SIZE_MAX ? bytes : 0;
+}
+
 uint64_t rocketnet_server_socket_memory_required(int num_queues)
 {
     if (num_queues < 1 || num_queues > ROCKETNET_XDP_MAX_QUEUES) return 0;

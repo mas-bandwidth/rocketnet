@@ -1,3 +1,4 @@
+#include "rocketnet_memory.h"
 #include <new>
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
@@ -553,6 +554,15 @@ static void rocketnet_server_gso_worker( void * data )
 }
 
 // ---------------------------------------------------------------------------
+
+uint64_t rocketnet_server_gso_allocation_bytes(int queues)
+{
+    if (queues < 1 || queues > ROCKETNET_GSO_MAX_QUEUES) return 0;
+    uint64_t bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_gso_t),
+        (uint64_t)queues * sizeof(rocketnet_server_gso_queue_t)});
+    if (!bytes || !rocketnet_memory_add(bytes, (uint64_t)queues, rocketnet_platform_thread_allocation_bytes())) return 0;
+    return bytes <= SIZE_MAX ? bytes : 0;
+}
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
 {

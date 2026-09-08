@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet.h"
 
@@ -37,6 +38,14 @@ struct rocketnet_token_table_t
     uint64_t * expire_timestamp;                            // cold
     uint64_t * insert_order;                                // cold
 };
+
+uint64_t rocketnet_token_table_allocation_bytes(int capacity)
+{
+    if (capacity < 1) return 0;
+    const uint64_t n = (uint64_t)capacity;
+    return rocketnet_memory_allocations({sizeof(rocketnet_token_table_t), 2*n*sizeof(int), n*sizeof(int),
+        n*ROCKETNET_TOKEN_IDENTIFIER_BYTES, n*sizeof(rocketnet_address_t), n*sizeof(uint64_t), n*sizeof(uint64_t)});
+}
 
 static struct rocketnet_token_table_t * rocketnet_token_table_create( void * context, int capacity )
 {

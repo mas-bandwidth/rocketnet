@@ -3,6 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#include "rocketnet_memory.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet.h"
 
@@ -29,6 +30,14 @@ struct rocketnet_client_slots_t
     int * confirmed;
     uint8_t * user_data;                    // max_clients * ROCKETNET_USER_DATA_BYTES
 };
+
+uint64_t rocketnet_client_slots_allocation_bytes(int clients)
+{
+    if (clients < 1) return 0;
+    const uint64_t n = (uint64_t)clients;
+    return rocketnet_memory_allocations({sizeof(rocketnet_client_slots_t), 2*n*sizeof(int),
+        n*sizeof(int), n*sizeof(uint64_t), n*sizeof(int), n*sizeof(int), n*sizeof(int), n*ROCKETNET_USER_DATA_BYTES});
+}
 
 struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context, int max_clients )
 {
