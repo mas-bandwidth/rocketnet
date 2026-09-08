@@ -5,6 +5,7 @@
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
+static int arena_pattern;
 static int controlled_seal(rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
     uint64_t packet_id, uint8_t * wire, int bytes, double time);
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
@@ -20,7 +21,7 @@ static int controlled_seal(rocketnet_server_protocol_t * server, int client_inde
     {
         CHECK(bytes == 64);
         for (int i = 0; i < bytes; ++i)
-            CHECK(wire[ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + i] == uint8_t(i + 37));
+            CHECK(wire[ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET + i] == uint8_t(i + arena_pattern));
         ++checked_seals;
     }
     if (fail_seal) return 0;
@@ -197,7 +198,8 @@ static void test_single_frame_arena()
             int capacity;
             uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
             CHECK(payload && capacity >= 5000);
-            for (int i = 0; i < 64; ++i) payload[i] = uint8_t(i + 37);
+            arena_pattern = 37 + attempt * 17;
+            for (int i = 0; i < 64; ++i) payload[i] = uint8_t(i + arena_pattern);
             fail_seal = attempt == 0;
             int bytes = rocketnet_server_transport_finish_packet(server, &context, 64);
             CHECK((bytes > 0) == (attempt == 1) && !context.frame);
