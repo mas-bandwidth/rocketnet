@@ -164,7 +164,7 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
     {
         const int queues = config->num_xdp_queues ? config->num_xdp_queues : 7;
         plan.driver_bytes = rocketnet_server_xdp_allocation_bytes(queues);
-        plan.umem_bytes = (uint64_t)queues * ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        plan.umem_bytes = rocketnet_xdp_umem_bytes(queues);
         plan.worker_threads = queues; plan.sockets = queues;
     }
 #endif

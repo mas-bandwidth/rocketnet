@@ -12,6 +12,7 @@
 #include "rocketnet_fragment.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
+#include "rocketnet_constants.h"
 #endif
 #include <atomic>
 #include <initializer_list>
@@ -352,7 +353,10 @@ static void check_memory_geometry(allocator_state & state)
         check(state.calls == before); // refused before any allocation or socket
     }
 #if ROCKETNET_XDP
+    check(!rocketnet_xdp_umem_bytes(0));
+    check(rocketnet_xdp_umem_bytes(7) == (uint64_t)7 * ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE);
     check(!rocketnet_server_socket_memory_required(0));
+    check(rocketnet_server_socket_memory_required(7) > rocketnet_xdp_umem_bytes(7));
     check(rocketnet_server_socket_memory_required(7) > UINT64_C(3) * 1024 * 1024 * 1024);
     const uint64_t xdp_huge = rocketnet_server_socket_memory_required(1024);
     if (xdp_huge > (uint64_t)ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024)

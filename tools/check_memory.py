@@ -39,8 +39,10 @@ large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
 assert large['planned_bytes'] > 100 * 1024**3
 if sys.platform.startswith('linux'):
     xdp, = run(1000, 1192, 1, 'xdp', 7, '--plan-only')
-    assert xdp['umem_bytes'] == 7 * 65536 * 4096
+    # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
+    assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 7
+    assert xdp['sockets'] == 7
 refused = subprocess.run([str(binary), '1001', '1192', '1', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (

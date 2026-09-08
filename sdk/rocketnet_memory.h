@@ -49,6 +49,8 @@ uint64_t rocketnet_platform_thread_allocation_bytes();
 uint64_t rocketnet_server_gso_allocation_bytes(int queues);
 uint64_t rocketnet_server_iocp_allocation_bytes(int workers);
 uint64_t rocketnet_server_xdp_allocation_bytes(int queues);
+// UMEM bytes for a queue count. Plan and the XDP preflight share this; do not restate the product.
+uint64_t rocketnet_xdp_umem_bytes(int queues);
 
 struct rocketnet_server_transport_config_t;
 struct rocketnet_server_memory_plan_t
