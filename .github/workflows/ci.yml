@@ -356,6 +356,9 @@ jobs:
           ./bin/test_lifecycle
           ./bin/test_xdp
 
+      - name: Inactive XDP index negative control
+        run: python3 tools/check_xdp_guard_control.py
+
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #
   # Discovery is the nightly's job (#124: hours, with the corpus persisted
