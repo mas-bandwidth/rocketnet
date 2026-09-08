@@ -94,7 +94,11 @@ def main():
         if path.startswith(public_root) and path.endswith('.h'):
             for declaration in prototype.finditer(text):
                 attribute = nonnull.search(declaration[0])
-                attributes[declaration[1]] = attribute[0] if attribute else ''
+                name = declaration[1]
+                value = attribute[0] if attribute else ''
+                if name in attributes and attributes[name] != value:
+                    raise SystemExit(f"conflicting upstream nonnull declarations: {name} in {path}")
+                attributes[name] = value
 
     def refresh(declaration):
         name = declaration[1]
