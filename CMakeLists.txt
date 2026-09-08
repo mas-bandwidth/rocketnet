@@ -176,6 +176,10 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         target_link_libraries(test_xdp PRIVATE RocketNet::Sodium RocketNet::Bpf RocketNet::Xdp Threads::Threads)
     endif()
+    if(APPLE)
+        add_executable(test_msgx test_msgx.cpp)
+        target_link_libraries(test_msgx PRIVATE rocketnet)
+    endif()
     if(WIN32)
         # Isolate the test-instrumented driver: never link another copy from
         # the production archive. Only its ordinary runtime dependencies enter.
