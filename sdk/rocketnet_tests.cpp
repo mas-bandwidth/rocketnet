@@ -39,6 +39,10 @@
 #include "rocketnet_server_gso.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include "rocketnet_server_iocp.h"
+#endif
+
 #include <sodium.h>
 
 #include <math.h>
@@ -4959,11 +4963,40 @@ void rocketnet_test_transport_disconnect_delivery()
     rocketnet_server_transport_destroy( server );
 }
 
+static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
+{
+    // IOCP may still own earlier sends. Keep every successful reservation in
+    // this fill, without flushing, while completion workers return the rest.
+    // A lost frame still fails the exact-capacity check after a bounded wait.
+    const double deadline = rocketnet_platform_time() + 5.0;
+    int count = 0;
+    while ( count < 20000 )
+    {
+        rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        if ( !frame )
+        {
+            if ( count < completion_capacity && rocketnet_platform_time() < deadline )
+            {
+                rocketnet_platform_sleep( 0.001 );
+                continue;
+            }
+            break;
+        }
+        frame[context.payload_index] = (uint8_t) count;
+        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
+        count++;
+    }
+    if ( completion_capacity && count != completion_capacity )
+        printf( "ring fill: driver=%s accepted=%d expected=%d\n", rocketnet_server_transport_driver( server ), count, completion_capacity );
+    return count;
+}
+
 void rocketnet_test_transport_ring_exhaustion()
 {
     // fill past the ring, and the overflow refuses cleanly: starts beyond
-    // capacity return NULL, the counter names the reason, the flush clamp
-    // sends exactly what fit, and the NEXT frame is whole again.
+    // capacity return NULL, the counter names the reason, and the full
+    // capacity returns after flush and any asynchronous send completions.
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -4993,31 +5026,22 @@ void rocketnet_test_transport_ring_exhaustion()
     }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    // fill to capacity. the ring's capacity is the driver's own -- 256 on
-    // the portable payload ring, 16384 on the staged drivers -- so it is
-    // MEASURED here rather than asserted against one driver's constant,
-    // then proven exact twice over: every driver must provide at least the
-    // portable ring's 256, and a second fill after the flush accepts
-    // exactly the same number, so the capacity is a stable fact of the
-    // driver and the flush reclaims the whole ring.
-
-    int capacity = 0;
-    for ( int i = 0; i < 20000; i++ )
-    {
-        struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-        if ( !frame )
-            break;
-        frame[context.payload_index] = (uint8_t) i;
-        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
-        capacity++;
-    }
+    // Synchronous drivers are measured at their first refusal. IOCP's pool
+    // has a known size, but even handshake sends may still be retiring at
+    // the first fill. Wait for that whole pool, not an incidental snapshot.
+    int completion_capacity = 0;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( strcmp( rocketnet_server_transport_driver( server ), "iocp" ) == 0 )
+        completion_capacity = ROCKETNET_IOCP_SEND_QUEUE_SIZE;
+#endif
+    const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
+    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
-    // counter attributes every refusal exactly (the break above already
-    // cost one refusal, so the baseline is read here)
+    // counter attributes every refusal exactly (the fill already incurred
+    // refusals, so the baseline is read here)
 
     const uint64_t ring_full_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
     for ( int i = 0; i < 44; i++ )
@@ -5029,19 +5053,12 @@ void rocketnet_test_transport_ring_exhaustion()
 
     rocketnet_server_transport_send_packets( server );
 
-    // the second fill accepts exactly the measured capacity
-
-    int refill = 0;
-    for ( int i = 0; i < 20000; i++ )
-    {
-        struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-        if ( !frame )
-            break;
-        frame[context.payload_index] = (uint8_t) i;
-        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
-        refill++;
-    }
+    // Flush submits IOCP sends; it does not synchronously reclaim them.
+    // Accumulate returned frames in this one fill until the same exact
+    // capacity is reached. No flush or transport update assists the refill.
+    const int refill = rocketnet_test_fill_server_ring( server, completion_capacity );
+    if ( refill != capacity )
+        printf( "ring refill: driver=%s first=%d second=%d\n", rocketnet_server_transport_driver( server ), capacity, refill );
     rocketnet_check( refill == capacity );
 
     rocketnet_server_transport_send_packets( server );
@@ -5061,9 +5078,12 @@ void rocketnet_test_transport_ring_exhaustion()
     {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
-        rocketnet_check( frame );
-        memcpy( frame + context.payload_index, "again", 5 );
-        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) > 0 );
+        rocketnet_check( frame || completion_capacity );
+        if ( frame )
+        {
+            memcpy( frame + context.payload_index, "again", 5 );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) > 0 );
+        }
         rocketnet_server_transport_send_packets( server );
 
         rocketnet_client_transport_update( client, rocketnet_platform_time() );

@@ -120,11 +120,16 @@ Windows CI:
 
 ```sh
 cmake --build build --target rocketnet_xdp_header
-cp build/generated/rocketnet_server_xdp.h sdk/rocketnet_server_xdp.h
+if ! python3 tools/check_xdp_archive.py --committed-only; then
+    cp build/generated/rocketnet_server_xdp.h sdk/rocketnet_server_xdp.h
+fi
 python3 tools/check_xdp_archive.py
 ```
 
 `--committed-only` verifies the fallback without requiring xxd. The generated
 header must contain the exact generated archive bytes; the committed fallback's
 archive must contain the exact current source bytes, independently of archive
-timestamps. Neither check loads a program or attaches to a network interface.
+timestamps and ownership metadata. The conditional copy avoids changing the
+fallback solely because archive metadata differs. CI compiles a fresh extraction
+of the archive, so a removed input cannot be supplied by old staging files.
+Neither check loads a program or attaches to a network interface.
