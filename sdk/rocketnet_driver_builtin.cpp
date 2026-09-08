@@ -1,6 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_memory.h"
 
 // Adapters preserve the existing native backend entry points. New backends
 // can define their operations directly in their own implementation file.
@@ -135,4 +136,46 @@ void rocketnet_forbid_xdp_commit()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     rocketnet_server_socket_forbid_commit();
 #endif
+}
+
+// Built-in resource policy belongs beside the native adapters, never in the
+// transport. Custom drivers may report their own plan without changing create.
+bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
+    const char * driver, rocketnet_server_memory_plan_t & plan)
+{
+    if (strcmp(driver, "portable") == 0)
+    {
+        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
+    }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    else if (strcmp(driver, "msgx") == 0)
+    {
+        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
+    }
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    else if (strcmp(driver, "gso") == 0)
+    {
+        const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
+        plan.driver_bytes = rocketnet_server_gso_allocation_bytes(queues);
+        plan.worker_threads = queues; plan.sockets = queues;
+    }
+    else if (strcmp(driver, "xdp") == 0)
+    {
+        const int queues = config->num_xdp_queues ? config->num_xdp_queues : 7;
+        plan.driver_bytes = rocketnet_server_xdp_allocation_bytes(queues);
+        plan.umem_bytes = (uint64_t)queues * ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+        plan.worker_threads = queues; plan.sockets = queues;
+    }
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    else if (strcmp(driver, "iocp") == 0)
+    {
+        const int workers = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
+        plan.driver_bytes = rocketnet_server_iocp_allocation_bytes(workers);
+        plan.worker_threads = workers; plan.sockets = 1;
+    }
+#endif
+    else return false; // A custom driver's resource policy remains native to it.
+    return plan.driver_bytes != 0;
 }

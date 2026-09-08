@@ -14,12 +14,6 @@
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
 #include "rocketnet_memory.h"
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-#include "rocketnet_server_gso.h"
-#endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#include "rocketnet_server_iocp.h"
-#endif
 
 #include <sodium.h>
 #include <atomic>
@@ -428,40 +422,7 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     plan.reassembly_bytes = rocketnet_reassembly_memory_required(clients, slots, payload, clients * slots);
     if (!plan.reassembly_bytes || !rocketnet_memory_add(plan.reassembly_bytes, 4, rocketnet_allocation_overhead())) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes(ROCKETNET_SEND_ARENA_SLOTS, (payload + 15) & ~15);
-    if (strcmp(driver, "portable") == 0)
-    {
-        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
-    }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    else if (strcmp(driver, "msgx") == 0)
-    {
-        plan.driver_bytes = rocketnet_platform_socket_allocation_bytes(); plan.sockets = 1;
-    }
-#endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    else if (strcmp(driver, "gso") == 0)
-    {
-        const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
-        plan.driver_bytes = rocketnet_server_gso_allocation_bytes(queues);
-        plan.worker_threads = queues; plan.sockets = queues;
-    }
-    else if (strcmp(driver, "xdp") == 0)
-    {
-        const int queues = config->num_xdp_queues ? config->num_xdp_queues : 7;
-        plan.driver_bytes = rocketnet_server_xdp_allocation_bytes(queues);
-        plan.umem_bytes = (uint64_t)queues * ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
-        plan.worker_threads = queues; plan.sockets = queues;
-    }
-#endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    else if (strcmp(driver, "iocp") == 0)
-    {
-        const int workers = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
-        plan.driver_bytes = rocketnet_server_iocp_allocation_bytes(workers);
-        plan.worker_threads = workers; plan.sockets = 1;
-    }
-#endif
-    else return false; // A custom driver's resource policy remains native to it.
+    if (!rocketnet_builtin_server_memory_plan(config, driver, plan)) return false;
     if (!plan.transport_bytes || !plan.send_arena_bytes || !plan.driver_bytes) return false;
     for (uint64_t bytes : {plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
         plan.send_arena_bytes, plan.driver_bytes, plan.umem_bytes})

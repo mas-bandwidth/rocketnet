@@ -59,3 +59,6 @@ struct rocketnet_server_memory_plan_t
 };
 bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_config_t * config,
     const char * driver, rocketnet_server_memory_plan_t & plan);
+// Native built-in adapter resource policy; fills only driver/UMEM/worker/socket fields.
+bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_config_t * config,
+    const char * driver, rocketnet_server_memory_plan_t & plan);
