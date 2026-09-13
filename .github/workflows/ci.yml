@@ -292,7 +292,7 @@ jobs:
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
   #
-  # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
+  # RELEASE ONLY, IN THREE PARALLEL LEGS (2026-09-13).
   #
   # The Debug row moved to nightly.yml under the same name. Windows keeps
   # Release on every commit because Release is what ships and what the
@@ -301,34 +301,45 @@ jobs:
   # 136s it could not stay inside the two-minute law. It runs nightly,
   # unchanged, every step of it.
   #
-  # The Release row is split into two legs that each pay the MSVC
-  # configure-and-build floor in parallel. Measured on run 34780374187 the
-  # single row was 174s: a 75s floor (5s checkout, 16s configure, 51s build,
-  # 3s post) and 97s of checks behind it. The legs are halved BY MEASURED
-  # DURATION, not by theme:
+  # WHY THREE AND NOT TWO, since two was tried first and measured. On run
+  # 34780845315 the two legs landed at 136s EACH -- balanced to the second,
+  # 52s and 51s of checks, nothing left to rebalance. The floor is what beats
+  # a two-way split: 81-83s of setup, checkout, configure and `cmake --build`
+  # before a single check runs, against ~105s of checks. floor + 105/2 is over
+  # the ceiling by arithmetic. floor + 105/3 is not.
   #
-  #   (a)  47s  native driver contract and external backend (38s), production
-  #             library boundary (5s), the committed XDP fallback source (2s),
-  #             serialization surface (1s), memory plans (1s)
-  #   (b)  50s  install and relocate the SDK (15s), ambient config isolation
-  #             (12s), the suite and sodium (12s), the full suite over IOCP
-  #             (10s), IOCP allocation and shutdown (1s)
+  # The legs are balanced BY MEASURED DURATION, not by theme, which is why
+  # (a) holds one check and (b) holds seven:
   #
-  # BOTH LEGS RUN THE FULL `cmake --build` rather than only their own targets.
-  # Narrowing the build would buy each leg perhaps fifteen seconds and would
+  #   (a)  ~42s  the external driver backend (check_driver_extension.py),
+  #              which configures and builds an out-of-tree backend against
+  #              the installed SDK -- a second MSVC build inside a check, and
+  #              the single most expensive thing on this runner
+  #   (b)  ~33s  the suite and sodium (12s), the full suite over IOCP (14s),
+  #              IOCP allocation and shutdown, the committed XDP fallback
+  #              source, the serialization surface, the library boundary,
+  #              memory plans
+  #   (c)  ~30s  install and relocate the SDK (12s), ambient config isolation
+  #              (12s), the native driver contract itself (test_driver and
+  #              test_transport_control)
+  #
+  # `Native driver contract and external backend` was ONE step running three
+  # commands; it is now two steps running the same three commands in the same
+  # order, because the python check is ~40s of the 48s and the two exes are
+  # the rest. Nothing was shortened and nothing was dropped -- a step boundary
+  # moved so the expensive half could sit on its own runner.
+  #
+  # (a) IS THE FLOOR OF THIS JOB and cannot be split further without changing
+  # tools/check_driver_extension.py, which is code, not workflow. If Windows
+  # must come down again, that check is the thing to look at.
+  #
+  # ALL THREE LEGS RUN THE FULL `cmake --build` rather than only their own
+  # targets. Narrowing it would buy each leg perhaps fifteen seconds and would
   # cost "everything in the tree compiles under MSVC", which is coverage, not
   # duplication -- the one thing this file's header says a gate may never
   # trade away. Caching the object tree would buy more and is refused for the
-  # same reason it was refused everywhere else in this workflow: a stale
-  # object is a green for the wrong reason.
-  #
-  # A NUMBER TO BE HONEST ABOUT: 75s of floor and 97s of checks means the
-  # best possible two-way split is 75 + 48.5 = 123.5s. These legs land just
-  # OVER the two-minute ceiling, by arithmetic rather than by luck, and no
-  # rebalancing of the two fixes it. A third leg lands all three near 107s.
-  # That is a live question for the estate, not something to decide by
-  # quietly adding a job, because this tier is at 20 jobs and GitHub's
-  # concurrent-job ceiling is the next thing that would lengthen the wall.
+  # same reason it is refused everywhere else in this workflow: a stale object
+  # is a green for the wrong reason.
   #
   # The doctrine the row itself carries (#81's baseline): the portable driver
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
@@ -351,13 +362,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [a, b]
+        leg: [a, b, c]
     steps:
 
       - uses: actions/checkout@v4
 
       - name: Check committed XDP fallback source on Windows
-        if: matrix.leg == 'a'
+        if: matrix.leg == 'b'
         # Uses Python and CMake preinstalled on the windows-2025 runner.
         run: python tools/check_xdp_archive.py --committed-only
 
@@ -366,6 +377,12 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      # ---- leg (a): the out-of-tree driver backend, alone ----
+
+      - name: External driver backend
+        if: matrix.leg == 'a'
+        run: python tools/check_driver_extension.py build --config Release
 
       # ---- leg (b): the suite as the runner executes it ----
 
@@ -388,18 +405,8 @@ jobs:
           ROCKETNET_DRIVER: iocp
         run: ./bin/Release/test.exe
 
-      - name: Install and relocate the SDK; run C/C++ static/shared consumers
-        if: matrix.leg == 'b'
-        run: python tools/check_package.py build --config Release
-
-      - name: Ambient config isolation and passing output
-        if: matrix.leg == 'b'
-        run: python tools/check_test_environment.py ./bin/Release/test.exe
-
-      # ---- leg (a): the driver contract and the library's boundary ----
-
       - name: Run serialization surface (portable)
-        if: matrix.leg == 'a'
+        if: matrix.leg == 'b'
         shell: bash
         env:
           ROCKETNET_DRIVER: portable
@@ -408,21 +415,30 @@ jobs:
           ./bin/Release/test_lifecycle.exe
 
       - name: Check production library boundary
-        if: matrix.leg == 'a'
+        if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
 
       - name: Memory plans against allocator observations
-        if: matrix.leg == 'a'
+        if: matrix.leg == 'b'
         run: python tools/check_memory.py ./bin/Release/transport_memory.exe
 
-      - name: Native driver contract and external backend
-        if: matrix.leg == 'a'
+      # ---- leg (c): the SDK as a consumer sees it, and the driver contract ----
+
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        if: matrix.leg == 'c'
+        run: python tools/check_package.py build --config Release
+
+      - name: Ambient config isolation and passing output
+        if: matrix.leg == 'c'
+        run: python tools/check_test_environment.py ./bin/Release/test.exe
+
+      - name: Native driver contract
+        if: matrix.leg == 'c'
         run: |
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./bin/Release/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/check_driver_extension.py build --config Release
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
