@@ -3,6 +3,13 @@
 # loopback soak, bounded to fit the runner. A red night is a found bug.
 # The same binaries run unbounded by hand for the multi-day soaks on real
 # hardware: ./bin/soak_sim and ./bin/soak, and belief comes after days.
+#
+# The second job, `sanitized-soak`, arrived here on 2026-09-13 from ci.yml
+# under Glenn's law that the per-commit tier finishes in one to two minutes:
+# at 297s it was the wall of the whole gate. It came across unchanged -- same
+# name, same flags, same seed, same count -- because a leg that is too slow
+# for the gate moves tiers, it does not get shortened to fit. Its own header
+# below names what the per-commit tier still has without it.
 
 name: nightly-soak
 
@@ -52,3 +59,82 @@ jobs:
 
       - name: UDP loopback soak
         run: ./bin/soak 200000
+
+  # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
+  # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
+  # 297 seconds it WAS the wall: the whole per-commit tier finished when this
+  # job finished, and Glenn's law is that the per-commit tier finishes in one
+  # to two minutes. So it moved here, unchanged -- same job name, same flags,
+  # same seed, same iteration count, same log handling -- rather than being
+  # weakened to fit. A slower leg moves to a tier that does not run on every
+  # commit; it does not get shortened until it is cheap and stops finding
+  # things.
+  #
+  # WHAT THE PER-COMMIT GATE STILL HAS after the move, so the loss is named
+  # rather than assumed: the `sanitizers` job runs asan + ubsan over the whole
+  # suite on every commit, and `tsan` runs the threaded transport. What this
+  # leg alone carries is the pairing of the STATEFUL simulator's hostile-lite
+  # wire with the sanitizers, and LSan -- the one leak check the estate runs
+  # against a leak-clean-by-construction harness, so a report here is a new
+  # unfreed allocation rather than accounting noise. Those two now land the
+  # next morning instead of on the commit. A red here is read by whoever is on
+  # the estate that morning and bisected back to its commit.
+  #
+  # soak_sim is the RIGHT target and bin/soak (real UDP loopback) is not: the
+  # simulator drives the protocol layer in memory against a seeded packet
+  # simulator, with no sockets and no wall clock, so a pinned seed makes the
+  # entire run reproducible bit for bit. The unsanitized, far deeper soak_sim
+  # and bin/soak runs are the `soak` job above; this one is short and watched.
+  #
+  # Same asan+ubsan flags as ci.yml's `sanitizers` job. Output is verbose, so
+  # it goes to a file and only the tail is surfaced on failure.
+
+  sanitized-soak:
+    name: soak_sim (asan + ubsan + lsan, bounded)
+    runs-on: ubuntu-24.04
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build soak_sim
+        run: cmake --build build --target soak_sim --parallel
+
+      # bounded, seed-pinned. the sim's own iteration bound is the clock, not
+      # wall time, so the run tries the same inputs on a slow morning as on a
+      # fast one.
+
+      - name: Run the bounded sanitized soak (seed pinned)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ROCKETNET_SOAK_SIM_SEED: "1"
+        run: |
+          set -o pipefail
+          if ./bin/soak_sim 600000 > soak_sim.log 2>&1; then
+            echo "sanitized soak completed cleanly"
+            tail -3 soak_sim.log
+          else
+            echo "sanitized soak FAILED (exit $?)"
+            tail -80 soak_sim.log
+            exit 1
+          fi
+
+      - name: Upload the soak log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitized-soak-log
+          path: soak_sim.log
+          if-no-files-found: ignore

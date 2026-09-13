@@ -1,13 +1,27 @@
 # rocketnet CI: THE PER-COMMIT GATE (#111).
 #
 # The split this file's existence rests on is DURATION-DEPENDENCE. Everything
-# here gates and fits in minutes, including bounded TSAN, soak and leak
-# checks. Duration-dependent discovery and multi-day acceptance belong to
-# nightly-soak.yml and fuzz-nightly.yml, tracked in #124.
+# here gates and fits in minutes, including bounded TSAN. Duration-dependent
+# discovery and multi-day acceptance belong to nightly-soak.yml and
+# fuzz-nightly.yml, tracked in #124.
 # The line is not "cheap here, expensive there": asan+ubsan is not cheap and
 # it is here, because a sanitizer finding on THIS commit is what stops the
 # defect from being merged. Anything that only finds what an hour finds is
 # not a gate, it is a watch.
+#
+# AND THERE IS NOW A SECOND LINE, Glenn's law of 2026-09-13: the per-commit
+# tier finishes in ONE TO TWO MINUTES. A leg that cannot is not argued down,
+# it MOVES to a tier that does not run on every commit -- or it is split so
+# that the work runs in parallel instead of in series. A gate nobody waits
+# for is a gate nobody reads.
+#
+# What that law cost on 2026-09-13, named rather than assumed: the bounded
+# sanitized soak (soak_sim under asan + ubsan + lsan, 297s and the single
+# biggest job in this file) moved to nightly-soak.yml UNCHANGED, same job
+# name and same seed and same iteration count. asan+ubsan over the whole
+# suite and tsan over the threaded transport both stayed here; what the
+# estate now learns the next morning instead of on the commit is the
+# STATEFUL simulator under the sanitizers, and LSan.
 #
 # WHO READS THIS: the pull request. Every job below is a required-in-practice
 # check on the PR that carries it, read by the human at the gate before merge
@@ -28,6 +42,13 @@
 #                           only leg that can see an endianness break before
 #                           a customer does
 #   conformance             STANDARD.md against the implementation
+#   platform-selftests      soak_sim's instruments and the bench harnesses'
+#                           abort paths, each against its own negative
+#                           control -- once per OS, on the Release build,
+#                           because neither is a build-type story
+#   tsan                    the threaded transport, in two parallel legs
+#   sodium-pinned           the system-sodium integration mode against a
+#                           content-verified 1.0.20 reference
 #
 # The Linux build links the XDP dataplane against libbpf/libxdp, so those dev
 # packages are installed there; the XDP program itself (server_xdp) is
@@ -196,41 +217,6 @@ jobs:
       - name: Provisioning script selftest
         if: runner.os == 'Linux'
         run: bash scripts/rocketnet-provision selftest
-
-      # soak_sim's instruments, each driven against its own negative control
-      # (#99). The audit legs corrupt the simulator's index on purpose and
-      # fail unless the audit aborts -- and prove, in the leg beside them,
-      # that the same corruption is SILENT without it. The profile legs
-      # double-charge the accounting on purpose and fail unless the profile
-      # refuses to print shares. Runs on both platforms, needs nothing but
-      # the build, and takes a few seconds.
-
-      - name: soak_sim instrument selftest
-        run: bash scripts/soak-sim-selftest
-
-      # the bench harnesses' failure states (#98). Building them here is the
-      # first time bench/ has been compiled by CI at all, which alone catches
-      # the platform-only files rotting; the selftest then FORCES each abort
-      # path -- a receive refused for a reason that is not an empty queue, a
-      # persistently refused send, a full io_uring submission queue -- and
-      # fails unless the harness goes red naming the call. The linux leg
-      # covers bench_gso, whose pps=0-on-a-GSO-less-host case is exactly what
-      # #98 item 5 filed; the macOS leg covers the darwin trio. Neither leg
-      # measures anything: no number from a CI runner is ever published.
-
-      - name: Build the bench harnesses (Linux)
-        if: runner.os == 'Linux'
-        run: make -C bench bench_portable bench_gso bench_uring_system
-
-      - name: Build the bench harnesses (macOS)
-        if: runner.os == 'macOS'
-        run: make -C bench darwin
-
-      - name: Bench harness failure-state selftest
-        run: bash bench/selftest.sh
-
-      - name: Benchmark campaign result gate
-        run: python3 bench/test_campaign.py
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -741,89 +727,6 @@ jobs:
           ROCKETNET_LIBRARY_PATH: bin/Release
         run: dotnet run --project csharp/smoke -c Release --no-build -- --iocp
 
-  # THE SANITIZED SOAK, PER COMMIT. This is where the duration-split (see the
-  # file header) is drawn tightest: the NIGHTLY soak (nightly-soak.yml) runs
-  # soak_sim for tens of millions of iterations and belief comes after days;
-  # what earns a place on the per-commit gate is not depth but the pairing of
-  # a BOUNDED, SEED-PINNED run with the sanitizers -- a fixed seed and a fixed
-  # iteration count try the same hostile-lite wire on every commit, and asan +
-  # ubsan turn a memory error or an undefined operation on that wire into an
-  # immediate red rather than a statistical one. It is the fuzz-smoke's
-  # determinism argument applied to the stateful simulator: same inputs, same
-  # order, same verdict, and the sanitizers watching while they run.
-  #
-  # soak_sim is the RIGHT target here and bin/soak (real UDP loopback) is not:
-  # the simulator drives the protocol layer in memory against a seeded packet
-  # simulator, with no sockets and no wall clock, so a pinned seed makes the
-  # entire run reproducible bit for bit. bin/soak's loopback timing is not
-  # reproducible and belongs to the nightly.
-  #
-  # LEAK DETECTION IS ON HERE (detect_leaks=1), which is the one per-commit
-  # home LSan has -- and it is legitimate precisely because this run is leak
-  # -clean by construction: the client protocol structs are inline (no heap),
-  # and every heap object the harness creates (the server's maps and slot set,
-  # the reassembly set, the network simulator) is destroyed before it exits.
-  # So a leak report here is a NEW unfreed allocation -- a create without its
-  # destroy -- reported deterministically, not the create/destroy-accounting
-  # noise the whole-suite `sanitizers` job defers to the nightly with its
-  # documented detect_leaks=0. The two are not in tension: the suite job takes
-  # asan+ubsan's immediate findings and leaves leak accounting to a human with
-  # a baseline; this leg gates the one leak shape that is unambiguous.
-  #
-  # Same asan+ubsan flags as the `sanitizers` job. Output is verbose, so it
-  # goes to a file and only the tail is surfaced on failure (yojimbo's soak).
-
-  sanitized-soak:
-    name: soak_sim (asan + ubsan + lsan, bounded)
-    runs-on: ubuntu-24.04
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
-
-      - name: Configure
-        run: >
-          cmake -B build
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
-
-      - name: Build soak_sim
-        run: cmake --build build --target soak_sim --parallel
-
-      # bounded, seed-pinned. the count is measured to land around a minute
-      # under the sanitizers on this runner; the sim's own iteration bound is
-      # the gate's clock, not wall time, so the run tries the same inputs on a
-      # slow morning as on a fast one.
-
-      - name: Run the bounded sanitized soak (seed pinned)
-        env:
-          ASAN_OPTIONS: detect_leaks=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-          ROCKETNET_SOAK_SIM_SEED: "1"
-        run: |
-          set -o pipefail
-          if ./bin/soak_sim 600000 > soak_sim.log 2>&1; then
-            echo "sanitized soak completed cleanly"
-            tail -3 soak_sim.log
-          else
-            echo "sanitized soak FAILED (exit $?)"
-            tail -80 soak_sim.log
-            exit 1
-          fi
-
-      - name: Upload the soak log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sanitized-soak-log
-          path: soak_sim.log
-          if-no-files-found: ignore
-
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
   # transport's concurrency directly. rocketnet spawns real threads -- the
@@ -857,9 +760,25 @@ jobs:
   # touches shared state is instrumented; an uninstrumented unit is where tsan
   # goes quietly blind.
 
+  # SPLIT INTO TWO PARALLEL LEGS (2026-09-13), not shortened. Measured on run
+  # 34759562592 the single job was 149s: 30s to install, configure and build,
+  # then 46s for the suite, 49s for the bounded loopback soak and 18s for the
+  # lifecycle harness -- three sequential runs of the same instrument over
+  # different surfaces, on one runner, for no reason but that they had always
+  # been steps in one job. Split, each leg pays the 30s build once in parallel
+  # and lands near 76s and 97s, so tsan stops being a per-commit wall. NOTHING
+  # WAS DROPPED OR SHORTENED: the same three runs, the same halt_on_error, the
+  # same ./bin/soak 20000 count, still per commit, still no suppressions file.
+  # Each leg builds only the targets it runs, which is also why the second
+  # build is not the full 16s.
+
   tsan:
-    name: tsan (threaded transport)
+    name: tsan (${{ matrix.leg }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [threaded transport, loopback soak]
     steps:
 
       - uses: actions/checkout@v4
@@ -877,20 +796,28 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
-      - name: Build the suite and the soak
-        run: cmake --build build --target test test_lifecycle soak --parallel
+      - name: Build the suite
+        if: matrix.leg == 'threaded transport'
+        run: cmake --build build --target test --parallel
+
+      - name: Build the soak and the lifecycle harness
+        if: matrix.leg == 'loopback soak'
+        run: cmake --build build --target soak test_lifecycle --parallel
 
       - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
+        if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/test
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
+        if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/soak 20000
 
       - name: Allocation lifecycle under tsan
+        if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
           ROCKETNET_DRIVER: portable
@@ -966,3 +893,110 @@ jobs:
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"
+
+  # THE PLATFORM SELFTESTS, lifted out of build-and-test (2026-09-13).
+  #
+  # Both checks below used to be steps on all FOUR build-and-test rows --
+  # ubuntu and macos, Debug and Release -- and together they were the largest
+  # single cost in that matrix. Measured on run 34759562592:
+  #
+  #   ubuntu-24.04 / Debug     164s total, of which 49s soak_sim selftest + 23s bench selftest
+  #   macos-15     / Debug     150s total, of which 48s soak_sim selftest + 29s bench selftest
+  #   ubuntu-24.04 / Release   153s total, of which 10s soak_sim selftest + 24s bench selftest
+  #   macos-15     / Release    87s total, of which  ~8s soak_sim selftest + ~22s bench selftest
+  #
+  # THE CUT IS THE DUPLICATION, NOT THE CHECK. Neither of these two is a
+  # build-type story, so the Debug row and the Release row were running the
+  # same assertions twice per OS:
+  #
+  #   bench/selftest.sh drives `make -C bench`, which has its OWN Makefile and
+  #   its own flags and never reads CMAKE_BUILD_TYPE -- so the Debug row and
+  #   the Release row compiled and drove BIT-IDENTICAL harness binaries. That
+  #   half was a literal duplicate.
+  #
+  #   scripts/soak-sim-selftest asserts the INSTRUMENTS: determinism at a
+  #   pinned seed, the audit against its corruption control, the profile
+  #   against its double-charge control. Those are properties of the
+  #   simulator's accounting, not of the optimizer, and the script's own
+  #   header tells the operator to "run make first" -- i.e. the Release
+  #   build is the spelling it is written against. Running it a second time at
+  #   -O0 asserted nothing the Release run had not, at five times the cost
+  #   (49s vs 10s on ubuntu).
+  #
+  # So the per-OS pair runs ONCE, here, per commit, on the Release build --
+  # every check kept, none moved to a nightly, none weakened. It is a separate
+  # job rather than an `if: matrix.build_type == 'Release'` on the existing
+  # rows because the ubuntu Release row was itself at 153s: pinning would have
+  # left it there, and a parallel job takes the work off the critical path
+  # instead of moving it along it.
+  #
+  # It keeps both OSes, because the two legs cover different harnesses: the
+  # linux leg covers bench_gso (whose pps=0-on-a-GSO-less-host case is what
+  # #98 item 5 filed) and bench_uring_system; the macOS leg covers the darwin
+  # trio. bench/selftest.sh reports a harness this host cannot build as
+  # SKIPPED with the reason and fails if a BUILT harness got neither a leg nor
+  # a skip, so dropping an OS here would silently drop its harnesses.
+
+  platform-selftests:
+    name: platform selftests / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+
+      # only soak_sim, not the whole tree: build-and-test already compiles
+      # everything on both these OSes in both configurations, so a second full
+      # build here would buy nothing and cost the budget this job exists to
+      # protect. Release, because that is the build the selftest is written
+      # against.
+
+      - name: Build soak_sim (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target soak_sim --parallel
+
+      # soak_sim's instruments, each driven against its own negative control
+      # (#99). The audit legs corrupt the simulator's index on purpose and
+      # fail unless the audit aborts -- and prove, in the leg beside them,
+      # that the same corruption is SILENT without it. The profile legs
+      # double-charge the accounting on purpose and fail unless the profile
+      # refuses to print shares.
+
+      - name: soak_sim instrument selftest
+        run: bash scripts/soak-sim-selftest
+
+      # the bench harnesses' failure states (#98). Building them here is the
+      # only place bench/ is compiled by CI at all, which alone catches the
+      # platform-only files rotting; the selftest then FORCES each abort path
+      # -- a receive refused for a reason that is not an empty queue, a
+      # persistently refused send, a full io_uring submission queue -- and
+      # fails unless the harness goes red naming the call. Neither leg
+      # measures anything: no number from a CI runner is ever published.
+
+      - name: Build the bench harnesses (Linux)
+        if: runner.os == 'Linux'
+        run: make -C bench bench_portable bench_gso bench_uring_system
+
+      - name: Build the bench harnesses (macOS)
+        if: runner.os == 'macOS'
+        run: make -C bench darwin
+
+      - name: Bench harness failure-state selftest
+        run: bash bench/selftest.sh
+
+      - name: Benchmark campaign result gate
+        run: python3 bench/test_campaign.py
