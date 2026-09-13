@@ -4254,6 +4254,7 @@ void rocketnet_test_integrity_limit()
     memset( wrong_key, 0x42, sizeof(wrong_key) );
 
     const uint8_t some_bytes[4] = { 1, 2, 3, 4 };
+    const uint8_t keep_alive_bytes[8] = { 0 };          // a keep-alive carries 8 bytes; below its floor is WRONG_SIZE, never an open
 
     // --- the server: the mapping accumulates across the handshake and session keys ---
     {
@@ -4316,7 +4317,7 @@ void rocketnet_test_integrity_limit()
 
         // the limit: the mapping is torn down with its slot, the counter emits once
         packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1001,
-                                                            NULL, 0, wrong_key );
+                                                            keep_alive_bytes, 8, wrong_key );
         rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
@@ -4362,7 +4363,7 @@ void rocketnet_test_integrity_limit()
 
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000,
-                                                                       NULL, 0, client.connection_salt, wrong_key );
+                                                                       keep_alive_bytes, 8, client.connection_salt, wrong_key );
 
         // limit-1: counted, refused, still connected
         rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, packet_bytes, time, payload, &payload_bytes ) );

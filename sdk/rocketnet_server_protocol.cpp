@@ -581,6 +581,37 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 // counter groups are per type, so the bookkeeping is table driven and the
 // flow is one straight ladder.
 
+// The AEAD integrity limit, per the standard's _Replay Protection_: one
+// more sealed packet that did not open on this mapping, across both of its
+// keys. On reaching ROCKETNET_INTEGRITY_LIMIT the connection is torn down
+// the way the idle timeout tears it down -- the slot released, the mapping
+// removed with its keys zeroed, nothing sent -- and INTEGRITY_LIMIT_REACHED
+// emits once. A connection under 2^36 forgery attempts has nothing worth
+// preserving, and the peer's own timeout ends its side. This is the read
+// path, so the check runs in every build.
+
+static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol_t * server,
+                                                int mapping_index,
+                                                struct rocketnet_encryption_mapping_t * mapping )
+{
+    uint64_t * counters = server->counters->values;
+
+    mapping->integrity_failures++;
+
+    if ( mapping->integrity_failures < ROCKETNET_INTEGRITY_LIMIT )
+        return;
+
+    int client_index = mapping->client_index;
+    rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
+    if ( client_index != -1 )
+    {
+        rocketnet_client_slots_release( server->client_slots, client_index );
+        counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
+    }
+    rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
+    counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
+}
+
 struct rocketnet_sealed_type_counters_t
 {
     int received;
@@ -712,6 +743,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     {
         rocketnet_spam( "server ignored sealed packet. did not open" );
         counters[type_counters->did_not_open]++;
+        rocketnet_server_integrity_failure( server, mapping_index, mapping );
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
@@ -725,6 +757,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         {
             rocketnet_spam( "server ignored connection response. wrong size" );
             counters[type_counters->did_not_open]++;
+            rocketnet_server_integrity_failure( server, mapping_index, mapping );
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
         for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
@@ -733,6 +766,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             {
                 rocketnet_spam( "server ignored connection response. padding is not zero" );
                 counters[type_counters->did_not_open]++;
+                rocketnet_server_integrity_failure( server, mapping_index, mapping );
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
         }
