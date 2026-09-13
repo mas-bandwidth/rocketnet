@@ -83,6 +83,13 @@
 #define ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE                             2048
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 
+// the AEAD integrity limit from the standard's _Replay Protection_: each end
+// counts the sealed packets that fail to open on a connection, across all of
+// that connection's keys, and disconnects it on reaching this many. 2^36 is
+// ChaCha20-Poly1305's forgery bound, the number QUIC and DTLS 1.3 name.
+
+#define ROCKETNET_INTEGRITY_LIMIT                               ( 1ULL << 36 )
+
 // the ack debt threshold from the standard's timing table: a standalone ack
 // goes out at this many eliciting packets received since the last block sent
 

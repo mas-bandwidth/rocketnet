@@ -209,6 +209,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL:                       return "RECEIVE_CURSOR_TOO_SMALL";
         case ROCKETNET_COUNTER_SEND_LEASE_FULL: return "SEND_LEASE_FULL";
         case ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW:                            return "SEND_HISTORY_OVERFLOW";
+        case ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED:                        return "INTEGRITY_LIMIT_REACHED";
         default:
             rocketnet_assert( 0 );
             return "???";

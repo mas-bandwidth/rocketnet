@@ -43,6 +43,29 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     client->state = state;
 }
 
+// The AEAD integrity limit, per the standard's _Replay Protection_: one
+// more sealed packet that did not open this attempt, across its handshake
+// and session keys. On reaching ROCKETNET_INTEGRITY_LIMIT the attempt ends
+// in disconnected with its keys and ephemeral secret zeroed -- the zeroing
+// rocketnet_client_protocol_disconnect does at the end of every attempt,
+// done here at once rather than left to the caller -- and
+// INTEGRITY_LIMIT_REACHED emits once. Disconnected is terminal, so nothing
+// counts past it. This is the read path, so the check runs in every build.
+
+static void rocketnet_client_integrity_failure( struct rocketnet_client_protocol_t * client )
+{
+    client->integrity_failures++;
+
+    if ( client->integrity_failures < ROCKETNET_INTEGRITY_LIMIT )
+        return;
+
+    rocketnet_debug( "client disconnected. integrity limit reached" );
+    client->counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
+    rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+}
+
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
 {
     rocketnet_assert( client );
@@ -416,6 +439,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     {
         rocketnet_spam( "client ignored challenge. wrong size" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN]++;
+        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -454,6 +478,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
         sodium_memzero( &temporary_keys, sizeof(temporary_keys) );
         rocketnet_spam( "client ignored challenge. did not open" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN]++;
+        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -531,6 +556,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     {
         rocketnet_spam( "client ignored denied. wrong size" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN]++;
+        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -579,6 +605,7 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     {
         rocketnet_spam( "client ignored denied. did not open" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN]++;
+        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -672,6 +699,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     {
         rocketnet_spam( "client ignored session packet. did not open" );
         counters[type_counters->did_not_open]++;
+        rocketnet_client_integrity_failure( client );
         return -1;
     }
 

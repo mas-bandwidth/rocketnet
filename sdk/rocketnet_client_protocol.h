@@ -68,6 +68,7 @@ struct rocketnet_client_protocol_t
     uint64_t next_fragment_payload_id;                      // per _Fragmentation_: from 1, per fragmented payload sent
     struct rocketnet_replay_protection_t replay_handshake;      // challenge and denied ride here
     struct rocketnet_replay_protection_t replay_session;
+    uint64_t integrity_failures;                            // sealed packets that did not open this attempt, across its keys; ROCKETNET_INTEGRITY_LIMIT disconnects
 
     // time. the caller supplies both clocks; nothing in here reads a clock.
     double attempt_start_time;
