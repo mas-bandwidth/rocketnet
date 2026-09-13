@@ -15,13 +15,26 @@
 # that the work runs in parallel instead of in series. A gate nobody waits
 # for is a gate nobody reads.
 #
-# What that law cost on 2026-09-13, named rather than assumed: the bounded
-# sanitized soak (soak_sim under asan + ubsan + lsan, 297s and the single
-# biggest job in this file) moved to nightly-soak.yml UNCHANGED, same job
-# name and same seed and same iteration count. asan+ubsan over the whole
-# suite and tsan over the threaded transport both stayed here; what the
-# estate now learns the next morning instead of on the commit is the
-# STATEFUL simulator under the sanitizers, and LSan.
+# What that law cost on 2026-09-13, named rather than assumed. TWO legs left
+# this file, and both went to a nightly tier UNCHANGED rather than shortened:
+#
+#   soak_sim (asan + ubsan + lsan, bounded)   297s, the biggest job here, to
+#       nightly-soak.yml -- same job name, same seed, same iteration count.
+#       asan+ubsan over the whole suite and tsan over the threaded transport
+#       both STAYED. What the estate now learns the next morning instead of on
+#       the commit is the STATEFUL simulator under the sanitizers, and LSan.
+#
+#   windows-2025 / Debug                      136s, to nightly.yml, step for
+#       step. Windows keeps its RELEASE row on every commit, because Release
+#       is what ships and the optimizer is a different compiler. What waits
+#       until morning is the second configuration -- the asserts Release
+#       compiles out.
+#
+# Everything else that was over the line was SPLIT, not moved: tsan into two
+# parallel legs, windows Release into (a) and (b), ubuntu Release into (a) and
+# (b), and the two platform selftests out of four duplicate matrix rows into
+# one job per OS. Splitting costs runner-minutes and buys wall time; that is
+# the trade the law asks for, and it takes nothing away from the gate.
 #
 # WHO READS THIS: the pull request. Every job below is a required-in-practice
 # check on the PR that carries it, read by the human at the gate before merge
@@ -30,10 +43,13 @@
 #
 # The legs, and what each one exists to catch:
 #
-#   build-and-test          the suite on ubuntu, macos and windows, in BOTH
-#                           Debug and Release. Release-only bugs are real:
-#                           the assert that fires in Debug is compiled out,
-#                           and the optimizer is a different compiler.
+#   build-and-test          the suite on ubuntu and macos, in BOTH Debug and
+#                           Release. Release-only bugs are real: the assert
+#                           that fires in Debug is compiled out, and the
+#                           optimizer is a different compiler. The ubuntu
+#                           Release row runs as two parallel legs.
+#   build-and-test-windows  the same suite under MSVC, Release, as two
+#                           parallel legs. The Debug row is in nightly.yml.
 #   csharp-smoke            the binding and its loopback smoke, three OSes
 #   sanitizers              asan + ubsan over the whole suite
 #   fuzz-smoke              a bounded, deterministic replay of the committed
@@ -76,14 +92,46 @@ concurrency:
 
 jobs:
 
+  # THE ubuntu-24.04 / Release ROW IS SPLIT IN TWO (2026-09-13); every other
+  # row is untouched and runs every step, as before.
+  #
+  # That row was the last non-windows leg over the two-minute law: 122s on run
+  # 34780374187, being a 49s floor (13s apt, 35s `make`) and 70s of checks
+  # behind it. Its cost is NOT one indivisible check -- the two largest are
+  # `check_package.py` at 17s and the driver contract at 15s, and neither
+  # depends on the other -- so it halves cleanly by measured duration:
+  #
+  #   (a)  33s  install and relocate the SDK (17s), native driver contract and
+  #             external backend (15s), the library boundary, memory plans,
+  #             the serialization surface, XDP staging and the archive check
+  #   (b)  37s  the suite on the auto ladder (7s) and on the pinned portable
+  #             rung (7s), ambient config isolation (7s), the history budget
+  #             (9s), sodium parity (3s), the embedded XDP compile (3s), the
+  #             committed sodium pair, sodium known answers, the provisioning
+  #             selftest
+  #
+  # `leg: ab` means "run both groups", which is every row but this one, so the
+  # macos rows and the ubuntu Debug row keep running the whole list exactly as
+  # they did. The step conditions are `contains(matrix.leg, 'a')` and
+  # `contains(matrix.leg, 'b')`, which is why 'ab' matches both.
+  #
+  # Both legs still run the full build: `make` for Release is the front door
+  # BUILDING.md sends a consumer through, and a front door nothing opens rots.
+
   build-and-test:
-    name: ${{ matrix.os }} / ${{ matrix.build_type }}
+    name: ${{ matrix.os }} / ${{ matrix.build_type }}${{ matrix.leg != 'ab' && format(' ({0})', matrix.leg) || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]      # linux x64, macos apple silicon
-        build_type: [Debug, Release]
+        include:
+          # linux x64
+          - { os: ubuntu-24.04, build_type: Debug,   leg: ab }
+          - { os: ubuntu-24.04, build_type: Release, leg: a  }
+          - { os: ubuntu-24.04, build_type: Release, leg: b  }
+          # macos apple silicon
+          - { os: macos-15,     build_type: Debug,   leg: ab }
+          - { os: macos-15,     build_type: Release, leg: ab }
     steps:
 
       - uses: actions/checkout@v4
@@ -127,28 +175,33 @@ jobs:
       # and exercising the env > struct precedence over every create.
 
       - name: Sodium known answers
+        if: contains(matrix.leg, 'b')
         run: ./bin/test_sodium
 
       - name: Reproduce the committed sodium pair
-        if: runner.os == 'Linux' && matrix.build_type == 'Release'
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
-        if: matrix.build_type == 'Release'
+        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
       - name: Run tests (auto ladder — the fall, on Linux)
+        if: contains(matrix.leg, 'b')
         run: ./bin/test
 
       - name: Run tests (portable rung pinned by env)
+        if: contains(matrix.leg, 'b')
         run: ROCKETNET_DRIVER=portable ./bin/test
 
       - name: Ambient config isolation and passing output
+        if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
 
       - name: Run serialization surface (portable)
+        if: contains(matrix.leg, 'a')
         env:
           ROCKETNET_DRIVER: portable
         run: |
@@ -156,6 +209,7 @@ jobs:
           ./bin/test_lifecycle
 
       - name: Check production library boundary
+        if: contains(matrix.leg, 'a')
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
@@ -164,11 +218,11 @@ jobs:
           fi
 
       - name: Darwin msgx refusal, fallback and re-probe
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && (contains(matrix.leg, 'a'))
         run: ./bin/test_msgx
 
       - name: Check larger history budget and reject undersized history
-        if: runner.os == 'Linux' && matrix.build_type == 'Release'
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
           cmake --build build-history --target test_lifecycle --parallel
@@ -179,26 +233,30 @@ jobs:
           fi
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        if: contains(matrix.leg, 'a')
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
       - name: Memory plans against allocator observations
+        if: contains(matrix.leg, 'a')
         run: python3 tools/check_memory.py ./bin/transport_memory
 
       - name: Native driver contract and external backend
+        if: contains(matrix.leg, 'a')
         run: |
           ./bin/test_driver
           ./bin/test_transport_control
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
       - name: Native XDP staging without kernel resources
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && (contains(matrix.leg, 'a'))
         run: ./bin/test_xdp
 
       - name: XDP source archive excludes incremental build output
+        if: contains(matrix.leg, 'a')
         run: python3 tools/check_xdp_archive.py
 
       - name: Compile the embedded XDP program without attaching it
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: |
           xdp_compile_dir=$(mktemp -d "$PWD/build/xdp-archive.XXXXXX")
           tar -xzf build/generated/rocketnet_server_xdp.tar.gz -C "$xdp_compile_dir"
@@ -215,7 +273,7 @@ jobs:
       # only a private temp dir it creates and removes.
 
       - name: Provisioning script selftest
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
         run: bash scripts/rocketnet-provision selftest
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
@@ -234,18 +292,72 @@ jobs:
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
   #
+  # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
+  #
+  # The Debug row moved to nightly.yml under the same name. Windows keeps
+  # Release on every commit because Release is what ships and what the
+  # optimizer rewrites; Debug's distinct value -- the asserts that Release
+  # compiles out -- is duration-independent but it is not free here, and at
+  # 136s it could not stay inside the two-minute law. It runs nightly,
+  # unchanged, every step of it.
+  #
+  # The Release row is split into two legs that each pay the MSVC
+  # configure-and-build floor in parallel. Measured on run 34780374187 the
+  # single row was 174s: a 75s floor (5s checkout, 16s configure, 51s build,
+  # 3s post) and 97s of checks behind it. The legs are halved BY MEASURED
+  # DURATION, not by theme:
+  #
+  #   (a)  47s  native driver contract and external backend (38s), production
+  #             library boundary (5s), the committed XDP fallback source (2s),
+  #             serialization surface (1s), memory plans (1s)
+  #   (b)  50s  install and relocate the SDK (15s), ambient config isolation
+  #             (12s), the suite and sodium (12s), the full suite over IOCP
+  #             (10s), IOCP allocation and shutdown (1s)
+  #
+  # BOTH LEGS RUN THE FULL `cmake --build` rather than only their own targets.
+  # Narrowing the build would buy each leg perhaps fifteen seconds and would
+  # cost "everything in the tree compiles under MSVC", which is coverage, not
+  # duplication -- the one thing this file's header says a gate may never
+  # trade away. Caching the object tree would buy more and is refused for the
+  # same reason it was refused everywhere else in this workflow: a stale
+  # object is a green for the wrong reason.
+  #
+  # A NUMBER TO BE HONEST ABOUT: 75s of floor and 97s of checks means the
+  # best possible two-way split is 75 + 48.5 = 123.5s. These legs land just
+  # OVER the two-minute ceiling, by arithmetic rather than by luck, and no
+  # rebalancing of the two fixes it. A third leg lands all three near 107s.
+  # That is a live question for the estate, not something to decide by
+  # quietly adding a job, because this tier is at 20 jobs and GitHub's
+  # concurrent-job ceiling is the next thing that would lengthen the wall.
+  #
+  # The doctrine the row itself carries (#81's baseline): the portable driver
+  # built with MSVC, the full test suite run on the runner. /fp:precise comes
+  # from CMakeLists.txt's MSVC branch, the family's floor per the
+  # -ffp-contract=off policy. Sodium is compiled from the pinned vendor with
+  # the same CRT; the multi-config generator puts binaries under bin/<config>.
+  # The #106 config and driver tests run here too -- setenv/unsetenv are
+  # shimmed over _putenv_s in the test file, so the windows leg proves the env
+  # engine and the portable rung on the one platform whose only rung is
+  # portable -- EXCEPT the empty-value distinction, which windows cannot
+  # represent: its CRT has no set-but-empty variable, so that one case is
+  # skipped there, named and logged with that reason. Exactly two tests are
+  # compiled out on windows, named and logged by the suite itself: the
+  # refused-destination and zero-length-chaff pump tests, whose raw-socket
+  # injector is posix-only.
+
   build-and-test-windows:
-    name: windows-2025 / ${{ matrix.build_type }}
+    name: windows-2025 / Release (${{ matrix.leg }})
     runs-on: windows-2025
     strategy:
       fail-fast: false
       matrix:
-        build_type: [Debug, Release]
+        leg: [a, b]
     steps:
 
       - uses: actions/checkout@v4
 
       - name: Check committed XDP fallback source on Windows
+        if: matrix.leg == 'a'
         # Uses Python and CMake preinstalled on the windows-2025 runner.
         run: python tools/check_xdp_archive.py --committed-only
 
@@ -253,51 +365,64 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+        run: cmake --build build --config Release --parallel
+
+      # ---- leg (b): the suite as the runner executes it ----
 
       - name: Run tests
+        if: matrix.leg == 'b'
         shell: bash
         run: |
-          ./bin/${{ matrix.build_type }}/test.exe
-          ./bin/${{ matrix.build_type }}/test_sodium.exe
+          ./bin/Release/test.exe
+          ./bin/Release/test_sodium.exe
 
       - name: IOCP allocation, completion lifetime, concurrency and shutdown
+        if: matrix.leg == 'b'
         timeout-minutes: 5
-        run: ./bin/${{ matrix.build_type }}/test_iocp.exe
+        run: ./bin/Release/test_iocp.exe
 
       - name: Full transport suite with IOCP selected
+        if: matrix.leg == 'b'
         timeout-minutes: 10
         env:
           ROCKETNET_DRIVER: iocp
-        run: ./bin/${{ matrix.build_type }}/test.exe
+        run: ./bin/Release/test.exe
+
+      - name: Install and relocate the SDK; run C/C++ static/shared consumers
+        if: matrix.leg == 'b'
+        run: python tools/check_package.py build --config Release
+
+      - name: Ambient config isolation and passing output
+        if: matrix.leg == 'b'
+        run: python tools/check_test_environment.py ./bin/Release/test.exe
+
+      # ---- leg (a): the driver contract and the library's boundary ----
 
       - name: Run serialization surface (portable)
+        if: matrix.leg == 'a'
         shell: bash
         env:
           ROCKETNET_DRIVER: portable
         run: |
-          ./bin/${{ matrix.build_type }}/test_serialize.exe
-          ./bin/${{ matrix.build_type }}/test_lifecycle.exe
+          ./bin/Release/test_serialize.exe
+          ./bin/Release/test_lifecycle.exe
 
       - name: Check production library boundary
-        run: python tools/check_exports.py bin/${{ matrix.build_type }}/rocketnet.dll build/${{ matrix.build_type }}/rocketnet.lib
-
-      - name: Install and relocate the SDK; run C/C++ static/shared consumers
-        run: python tools/check_package.py build --config ${{ matrix.build_type }}
-
-      - name: Ambient config isolation and passing output
-        run: python tools/check_test_environment.py ./bin/${{ matrix.build_type }}/test.exe
+        if: matrix.leg == 'a'
+        run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
 
       - name: Memory plans against allocator observations
-        run: python tools/check_memory.py ./bin/${{ matrix.build_type }}/transport_memory.exe
+        if: matrix.leg == 'a'
+        run: python tools/check_memory.py ./bin/Release/transport_memory.exe
 
       - name: Native driver contract and external backend
+        if: matrix.leg == 'a'
         run: |
-          ./bin/${{ matrix.build_type }}/test_driver.exe
+          ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./bin/${{ matrix.build_type }}/test_transport_control.exe
+          ./bin/Release/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+          python tools/check_driver_extension.py build --config Release
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
   # it: the transport allocates arenas at create, hands out interior pointers
