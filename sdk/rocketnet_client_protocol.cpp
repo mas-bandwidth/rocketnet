@@ -380,7 +380,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     if ( packet_bytes != ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES )
     {
         rocketnet_spam( "client ignored cookie. wrong size" );
-        counters[ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH]++;
+        counters[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE]++;
         return 0;
     }
 
