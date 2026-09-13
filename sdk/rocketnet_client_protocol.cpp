@@ -46,10 +46,11 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
 // The AEAD integrity limit, per the standard's _Replay Protection_: one
 // more sealed packet that did not open this attempt, across its handshake
 // and session keys. On reaching ROCKETNET_INTEGRITY_LIMIT the attempt ends
-// in disconnected with its keys zeroed, exactly as a server-sent disconnect
-// ends it, and INTEGRITY_LIMIT_REACHED emits once. Disconnected is terminal,
-// so nothing counts past it. This is the read path, so the check runs in
-// every build.
+// in disconnected with its keys and ephemeral secret zeroed -- the zeroing
+// rocketnet_client_protocol_disconnect does at the end of every attempt,
+// done here at once rather than left to the caller -- and
+// INTEGRITY_LIMIT_REACHED emits once. Disconnected is terminal, so nothing
+// counts past it. This is the read path, so the check runs in every build.
 
 static void rocketnet_client_integrity_failure( struct rocketnet_client_protocol_t * client )
 {

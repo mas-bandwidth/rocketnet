@@ -584,9 +584,13 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 // The AEAD integrity limit, per the standard's _Replay Protection_: one
 // more sealed packet that did not open on this mapping, across both of its
 // keys. On reaching ROCKETNET_INTEGRITY_LIMIT the connection is torn down
-// the way the idle timeout tears it down -- the slot released, the mapping
-// removed with its keys zeroed, nothing sent -- and INTEGRITY_LIMIT_REACHED
-// emits once. A connection under 2^36 forgery attempts has nothing worth
+// the way a client-sent disconnect tears it down -- the slot released, the
+// mapping removed with its keys zeroed, CLIENT_DISCONNECTED bumped when a
+// slot was held -- except that nothing is sent, and INTEGRITY_LIMIT_REACHED
+// emits once. The counter lands in the disconnected ledger, not the
+// timed-out one: CLIENT_CONNECTED = CLIENT_DISCONNECTED + CLIENT_TIMED_OUT
+// still holds, and INTEGRITY_LIMIT_REACHED says how many of the disconnects
+// were this. A connection under 2^36 forgery attempts has nothing worth
 // preserving, and the peer's own timeout ends its side. This is the read
 // path, so the check runs in every build.
 
