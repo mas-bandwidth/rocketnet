@@ -26,6 +26,10 @@ ROCKETNET_EXPORT_FUNC void rocketnet_address_load_ipv4( struct rocketnet_address
 
 ROCKETNET_EXPORT_FUNC bool rocketnet_address_parse( struct rocketnet_address_t * address, const char * address_string );
 
+// both of the following write into the caller's buffer bounded by
+// ROCKETNET_MAX_ADDRESS_STRING_LENGTH: the buffer must be at least that many
+// bytes, terminator included. the constant arrives with rocketnet.h, above.
+
 ROCKETNET_EXPORT_FUNC const char * rocketnet_address_to_string( const struct rocketnet_address_t * address, char * buffer );
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_address_to_string_without_port( const struct rocketnet_address_t * address, char * buffer );
