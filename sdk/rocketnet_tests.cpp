@@ -4228,6 +4228,171 @@ void rocketnet_test_client_cookie_injection()
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 }
 
+// the AEAD integrity limit, per the standard's _Replay Protection_: each end
+// counts the sealed packets that fail to open on a connection, across all of
+// that connection's keys, and disconnects it on reaching 2^36. the literal is
+// untestable, so the accumulator is seeded to limit-2 and two forgeries are
+// delivered: the first is the negative control at limit-1, the second tears
+// the connection down and emits INTEGRITY_LIMIT_REACHED exactly once.
+
+static int rocketnet_test_keys_are_zero( const struct rocketnet_connection_keys_t * keys )
+{
+    const uint8_t * bytes = (const uint8_t*) keys;
+    for ( size_t i = 0; i < sizeof(*keys); i++ )
+    {
+        if ( bytes[i] != 0 )
+            return 0;
+    }
+    return 1;
+}
+
+void rocketnet_test_integrity_limit()
+{
+    rocketnet_check( ROCKETNET_INTEGRITY_LIMIT == ( 1ULL << 36 ) );
+
+    uint8_t wrong_key[32];
+    memset( wrong_key, 0x42, sizeof(wrong_key) );
+
+    const uint8_t some_bytes[4] = { 1, 2, 3, 4 };
+
+    // --- the server: the mapping accumulates across the handshake and session keys ---
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+        int payload_out_bytes = 0;
+        int payload_client_index = -1;
+
+        struct rocketnet_connection_keys_t client_keys;
+        rocketnet_test_handshake_to_challenge( &test, 0x1A7E57ULL, &client_keys );
+
+        int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        rocketnet_check( mapping_index != -1 );
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+        rocketnet_check( mapping->integrity_failures == 0 );
+
+        // a response under the wrong handshake key is one failure on the
+        // handshake key; a connection then follows under the real keys
+        uint8_t bad_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        const uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+        const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+        rocketnet_check( rocketnet_write_sealed_packet( bad_response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 1,
+                                                        NULL, padding, ROCKETNET_RESPONSE_PADDING_BYTES,
+                                                        ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                        rocketnet_test_client_eph_public,
+                                                        wrong_key ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+        rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
+
+        uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        rocketnet_test_client_build_response( client_response, &client_keys );
+        rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
+        rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );                    // a packet that opens does not count
+
+        // seed to two below the limit. the sequences are fresh so the replay
+        // window never refuses first: the open is what fails.
+        mapping->integrity_failures = ROCKETNET_INTEGRITY_LIMIT - 2;
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1000,
+                                                                some_bytes, 4, wrong_key );
+
+        // limit-1: the negative control. counted, refused, and nothing else.
+        rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == 1 );
+        rocketnet_check( mapping->integrity_failures == ROCKETNET_INTEGRITY_LIMIT - 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 0 );
+        rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == mapping_index );
+        rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+        // the limit: the mapping is torn down with its slot, the counter emits once
+        packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1001,
+                                                            NULL, 0, wrong_key );
+        rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
+        rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+        rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+        rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+
+        // after: no mapping, so the next forgery is NO_MAPPING and the
+        // lifecycle counter does not move again
+        packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1002,
+                                                            some_bytes, 4, wrong_key );
+        rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
+
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // --- the client: the attempt accumulates, and the limit disconnects with the keys zeroed ---
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        struct rocketnet_counters_t client_counters;
+        memset( &client_counters, 0, sizeof(client_counters) );
+        struct rocketnet_client_protocol_t client;
+        rocketnet_client_protocol_init( &client, &client_counters );
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_test_mint_token( token_data, 0x1A7E58ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+        rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_check( client.integrity_failures == 0 );                      // a clean handshake counts nothing
+
+        double time = client.last_receive_time + 0.01;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+
+        client.integrity_failures = ROCKETNET_INTEGRITY_LIMIT - 2;
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000,
+                                                                       NULL, 0, client.connection_salt, wrong_key );
+
+        // limit-1: counted, refused, still connected
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, packet_bytes, time, payload, &payload_bytes ) );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( client.integrity_failures == ROCKETNET_INTEGRITY_LIMIT - 1 );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 0 );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_check( !rocketnet_test_keys_are_zero( &client.keys ) );
+
+        // the limit: disconnected, the counter emits once, the keys are gone
+        packet_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1001,
+                                                                   some_bytes, 4, client.connection_salt, wrong_key );
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, packet_bytes, time, payload, &payload_bytes ) );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN] == 1 );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+        rocketnet_check( rocketnet_test_keys_are_zero( &client.keys ) );
+
+        // after: disconnected is terminal, session traffic is WRONG_STATE, and
+        // the lifecycle counter does not move again
+        packet_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1002,
+                                                                   some_bytes, 4, client.connection_salt, wrong_key );
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, packet_bytes, time, payload, &payload_bytes ) );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE] == 1 );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
+
+        rocketnet_test_server_teardown( &test );
+    }
+}
+
 void rocketnet_test_network_simulator()
 {
     struct rocketnet_address_t address_a, address_b;
@@ -12065,6 +12230,7 @@ void rocketnet_run_tests()
         RUN_TEST( test_client_denied_when_server_full );
         RUN_TEST( test_client_timeout_paths );
         RUN_TEST( test_client_cookie_injection );
+        RUN_TEST( test_integrity_limit );
         RUN_TEST( test_network_simulator );
         RUN_TEST( test_client_server_harsh_wire );
         RUN_TEST( test_client_server_lossy_wire );

@@ -286,6 +286,12 @@ enum
     // Private packet metadata budget exhausted during a fill phase.
     ROCKETNET_COUNTER_SEND_LEASE_FULL,
 
+    // a connection's sealed packets failed to open ROCKETNET_INTEGRITY_LIMIT
+    // times across its keys and it was disconnected, per the standard's AEAD
+    // integrity limit. a lifecycle counter, once per torn-down connection,
+    // on whichever end reached the limit. appended: indices are the contract.
+    ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED,
+
     ROCKETNET_NUM_COUNTERS
 };
 
