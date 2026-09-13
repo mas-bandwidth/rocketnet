@@ -15,8 +15,9 @@
 # that the work runs in parallel instead of in series. A gate nobody waits
 # for is a gate nobody reads.
 #
-# What that law cost on 2026-09-13, named rather than assumed. TWO legs left
-# this file, and both went to a nightly tier UNCHANGED rather than shortened:
+# What that law cost on 2026-09-13, named rather than assumed. THREE things
+# left this file, and each went to a nightly tier UNCHANGED rather than
+# shortened:
 #
 #   soak_sim (asan + ubsan + lsan, bounded)   297s, the biggest job here, to
 #       nightly-soak.yml -- same job name, same seed, same iteration count.
@@ -29,6 +30,14 @@
 #       is what ships and the optimizer is a different compiler. What waits
 #       until morning is the second configuration -- the asserts Release
 #       compiles out.
+#
+#   check_driver_extension.py, ON WINDOWS ONLY   42-48s on top of a 92s MSVC
+#       floor, and the last thing holding this file above two minutes. It
+#       builds an out-of-tree driver backend against the installed SDK: a
+#       contract check on a fixed input, not a tripwire a commit is likely to
+#       trip. THE SAME SCRIPT STILL GATES EVERY COMMIT ON LINUX AND MACOS,
+#       where it costs 15s. What waits until morning is only "does the
+#       out-of-tree backend still build under MSVC".
 #
 # Everything else that was over the line was SPLIT, not moved: tsan into two
 # parallel legs, windows Release into (a) and (b), ubuntu Release into (a) and
@@ -292,50 +301,58 @@ jobs:
   # refused-destination and zero-length-chaff pump tests, whose raw-socket
   # injector is posix-only.
   #
-  # RELEASE ONLY, IN THREE PARALLEL LEGS (2026-09-13).
+  # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
   #
-  # The Debug row moved to nightly.yml under the same name. Windows keeps
-  # Release on every commit because Release is what ships and what the
-  # optimizer rewrites; Debug's distinct value -- the asserts that Release
-  # compiles out -- is duration-independent but it is not free here, and at
-  # 136s it could not stay inside the two-minute law. It runs nightly,
-  # unchanged, every step of it.
+  # The Debug row moved to nightly.yml under the same name, and so did the
+  # out-of-tree driver backend check on THIS platform -- see below. Windows
+  # keeps Release on every commit because Release is what ships and what the
+  # optimizer rewrites.
   #
-  # WHY THREE AND NOT TWO, since two was tried first and measured. On run
-  # 34780845315 the two legs landed at 136s EACH -- balanced to the second,
-  # 52s and 51s of checks, nothing left to rebalance. The floor is what beats
-  # a two-way split: 81-83s of setup, checkout, configure and `cmake --build`
-  # before a single check runs, against ~105s of checks. floor + 105/2 is over
-  # the ceiling by arithmetic. floor + 105/3 is not.
+  # THE HISTORY IS WORTH KEEPING, because it is three measurements and each
+  # one ruled out a cheaper answer than the last:
   #
-  # The legs are balanced BY MEASURED DURATION, not by theme, which is why
-  # (a) holds one check and (b) holds seven:
+  #   one row              174s.
+  #   two legs             136s EACH, balanced to the second (52s and 51s of
+  #                        checks). The floor beats a two-way split.
+  #   three legs           (b) 116s and (c) 109s came inside; (a) was 137s --
+  #                        one check on a 92s floor, while its two siblings in
+  #                        the SAME RUN measured 71s and 81s of floor. A
+  #                        fourth leg with zero checks would still have landed
+  #                        at 92s. Splitting had done all it could.
   #
-  #   (a)  ~42s  the external driver backend (check_driver_extension.py),
-  #              which configures and builds an out-of-tree backend against
-  #              the installed SDK -- a second MSVC build inside a check, and
-  #              the single most expensive thing on this runner
-  #   (b)  ~33s  the suite and sodium (12s), the full suite over IOCP (14s),
+  # So the last cut is not a split. `tools/check_driver_extension.py` -- which
+  # configures and builds an out-of-tree backend against the installed SDK, a
+  # second MSVC build inside a check, 42-48s of it -- moved to nightly.yml.
+  # It is a CONTRACT CHECK ON A FIXED INPUT: it asks whether the driver
+  # extension surface still compiles and links for a consumer outside the
+  # tree, which is a question about the shape of the API, not a tripwire that
+  # a given commit is likely to trip.
+  #
+  # AND IT STILL GATES EVERY COMMIT, on Linux and macOS. Only the WINDOWS
+  # spelling went nightly, where it cost 42s on top of a 92s floor; the same
+  # script runs per commit in build-and-test's `Native driver contract and
+  # external backend` step, 15s there. What waits until morning is
+  # specifically "does the out-of-tree backend still build under MSVC", and
+  # nothing else. That is a much smaller hole than moving the check itself.
+  #
+  # With it gone the legs are ~67s of checks over a 71-92s floor, halved by
+  # measured duration:
+  #
+  #   (a)  ~32s  the suite and sodium (13s), the full suite over IOCP (14s),
   #              IOCP allocation and shutdown, the committed XDP fallback
-  #              source, the serialization surface, the library boundary,
-  #              memory plans
-  #   (c)  ~30s  install and relocate the SDK (12s), ambient config isolation
-  #              (12s), the native driver contract itself (test_driver and
-  #              test_transport_control)
+  #              source, the serialization surface, memory plans
+  #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
+  #              (12s), ambient config isolation (12s), the native driver
+  #              contract itself (test_driver and test_transport_control)
   #
   # `Native driver contract and external backend` was ONE step running three
-  # commands; it is now two steps running the same three commands in the same
-  # order, because the python check is ~40s of the 48s and the two exes are
-  # the rest. Nothing was shortened and nothing was dropped -- a step boundary
-  # moved so the expensive half could sit on its own runner.
+  # commands. The two exes stay here as `Native driver contract`; the python
+  # check is the thing that left. Same commands, same order, one of them on a
+  # different clock.
   #
-  # (a) IS THE FLOOR OF THIS JOB and cannot be split further without changing
-  # tools/check_driver_extension.py, which is code, not workflow. If Windows
-  # must come down again, that check is the thing to look at.
-  #
-  # ALL THREE LEGS RUN THE FULL `cmake --build` rather than only their own
-  # targets. Narrowing it would buy each leg perhaps fifteen seconds and would
-  # cost "everything in the tree compiles under MSVC", which is coverage, not
+  # BOTH LEGS RUN THE FULL `cmake --build` rather than only their own targets.
+  # Narrowing it would buy each leg perhaps fifteen seconds and would cost
+  # "everything in the tree compiles under MSVC", which is coverage, not
   # duplication -- the one thing this file's header says a gate may never
   # trade away. Caching the object tree would buy more and is refused for the
   # same reason it is refused everywhere else in this workflow: a stale object
@@ -362,13 +379,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [a, b, c]
+        leg: [a, b]
     steps:
 
       - uses: actions/checkout@v4
 
       - name: Check committed XDP fallback source on Windows
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'a'
         # Uses Python and CMake preinstalled on the windows-2025 runner.
         run: python tools/check_xdp_archive.py --committed-only
 
@@ -378,35 +395,29 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # ---- leg (a): the out-of-tree driver backend, alone ----
-
-      - name: External driver backend
-        if: matrix.leg == 'a'
-        run: python tools/check_driver_extension.py build --config Release
-
-      # ---- leg (b): the suite as the runner executes it ----
+      # ---- leg (a): the suite as the runner executes it ----
 
       - name: Run tests
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'a'
         shell: bash
         run: |
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
       - name: IOCP allocation, completion lifetime, concurrency and shutdown
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'a'
         timeout-minutes: 5
         run: ./bin/Release/test_iocp.exe
 
       - name: Full transport suite with IOCP selected
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'a'
         timeout-minutes: 10
         env:
           ROCKETNET_DRIVER: iocp
         run: ./bin/Release/test.exe
 
       - name: Run serialization surface (portable)
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'a'
         shell: bash
         env:
           ROCKETNET_DRIVER: portable
@@ -414,26 +425,26 @@ jobs:
           ./bin/Release/test_serialize.exe
           ./bin/Release/test_lifecycle.exe
 
+      - name: Memory plans against allocator observations
+        if: matrix.leg == 'a'
+        run: python tools/check_memory.py ./bin/Release/transport_memory.exe
+
+      # ---- leg (b): the SDK as a consumer sees it, and the driver contract ----
+
       - name: Check production library boundary
         if: matrix.leg == 'b'
         run: python tools/check_exports.py bin/Release/rocketnet.dll build/Release/rocketnet.lib
 
-      - name: Memory plans against allocator observations
-        if: matrix.leg == 'b'
-        run: python tools/check_memory.py ./bin/Release/transport_memory.exe
-
-      # ---- leg (c): the SDK as a consumer sees it, and the driver contract ----
-
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
-        if: matrix.leg == 'c'
+        if: matrix.leg == 'b'
         run: python tools/check_package.py build --config Release
 
       - name: Ambient config isolation and passing output
-        if: matrix.leg == 'c'
+        if: matrix.leg == 'b'
         run: python tools/check_test_environment.py ./bin/Release/test.exe
 
       - name: Native driver contract
-        if: matrix.leg == 'c'
+        if: matrix.leg == 'b'
         run: |
           ./bin/Release/test_driver.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -819,6 +830,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
+    env:
+      # the pin and the cache key are the same string on purpose: bump this
+      # and the cache misses, which is the only way a stale SDK leaves.
+      DOTNET_VERSION: "8.0.x"
+      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
     steps:
 
       - uses: actions/checkout@v4
@@ -833,9 +849,43 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
+      # CACHE THE SDK INSTALL, NOT THE PACKAGE STORE. Measured on run
+      # 34781198031, actions/setup-dotnet was 41s on the windows leg: that is
+      # DOWNLOADING AND INSTALLING the pinned 8.0 SDK, and it is the largest
+      # single cost in this job.
+      #
+      # The obvious-looking cut is the wrong one. A NuGet cache would cache
+      # NOTHING HERE: both csproj files declare zero package references, and
+      # csharp/RocketNet.csproj says so deliberately -- "family value: zero
+      # third-party dependencies. no package references, ever." Smoke.csproj
+      # carries one ProjectReference to its sibling and nothing else. An
+      # actions/cache on ~/.nuget/packages, or setup-dotnet's own `cache:
+      # true` which is the same store, would save and restore an empty
+      # directory every run: a step that cannot fail, which this file's header
+      # calls decoration. So the cache below is pointed at the SDK tree.
+      #
+      # DOTNET_INSTALL_DIR moves the install into the workspace so the cache
+      # can own a directory the runner user owns; setup-dotnet finds the SDK
+      # already there on a hit and skips the download. A MISS IS HARMLESS --
+      # it installs exactly as before and the job is no slower than it was.
+      #
+      # THE TRADE, named: the key is the pin string, not the resolved patch,
+      # so a hit serves whatever 8.0.x patch was first cached until someone
+      # bumps DOTNET_VERSION. That is acceptable HERE and would not be
+      # everywhere: the binding has no package dependencies, so the patch
+      # level moves only the compiler, and the pin's actual job -- holding the
+      # net8.0 TFM floor so game servers on .NET 8 can reference the binding
+      # -- is unaffected by which 8.0 patch builds it.
+
+      - name: Cache the pinned .NET SDK install
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DOTNET_INSTALL_DIR }}
+          key: dotnet-sdk-${{ runner.os }}-${{ env.DOTNET_VERSION }}
+
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Build the shared library
         if: runner.os != 'Windows'

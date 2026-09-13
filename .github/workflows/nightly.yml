@@ -119,3 +119,42 @@ jobs:
           ./bin/Debug/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_driver_extension.py build --config Debug
+
+  # THE OUT-OF-TREE DRIVER BACKEND, UNDER MSVC. Lifted from ci.yml's
+  # windows-2025 / Release leg (a) on 2026-09-13.
+  #
+  # tools/check_driver_extension.py configures and builds a driver backend
+  # that lives OUTSIDE this tree against the installed SDK, and fails if the
+  # extension surface a consumer compiles against has drifted. It is a
+  # contract check on a fixed input -- "does this API still present itself to
+  # someone outside the repo" -- not a tripwire a given commit is likely to
+  # trip, which is what earns it a nightly clock rather than a per-commit one.
+  #
+  # WHAT DID NOT MOVE, so the hole is the right size in the reader's head: the
+  # SAME SCRIPT still runs on EVERY COMMIT on Linux and macOS, inside
+  # build-and-test's `Native driver contract and external backend` step, where
+  # it costs 15s. What waits until morning is specifically the WINDOWS
+  # spelling of it, which cost 42-48s on top of a 92s MSVC configure-and-build
+  # floor and was, alone, the last thing holding ci.yml above two minutes.
+  # A backend that breaks under MSVC but not under gcc or clang is the defect
+  # this leg catches the next morning instead of on the commit; everything
+  # else about the check still gates.
+  #
+  # A red here has a commit range and a bisect. Whoever is on the estate that
+  # morning owns walking it back.
+
+  windows-driver-extension:
+    name: external driver backend / windows-2025
+    runs-on: windows-2025
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: External driver backend
+        run: python tools/check_driver_extension.py build --config Release
