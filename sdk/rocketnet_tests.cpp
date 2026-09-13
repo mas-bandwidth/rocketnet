@@ -4216,6 +4216,19 @@ void rocketnet_test_client_cookie_injection()
     rocketnet_check( !client.has_cookie );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
 
+    // a wrong-size cookie packet: too short or too long. refused, nothing stored,
+    // and increments CLIENT_COOKIE_WRONG_SIZE, distinct from CLIENT_COOKIE_SALT_MISMATCH.
+    uint8_t oversized_cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES + 1];
+    memcpy( oversized_cookie, cookie, sizeof(cookie) );
+    oversized_cookie[sizeof(cookie)] = 0;
+
+    rocketnet_check( !rocketnet_client_protocol_process_packet( &client, cookie, sizeof(cookie) - 1, 100.0, payload, &payload_bytes ) );
+    rocketnet_check( !rocketnet_client_protocol_process_packet( &client, oversized_cookie, sizeof(oversized_cookie), 100.0, payload, &payload_bytes ) );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE] == 2 );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH] == 1 );
+    rocketnet_check( !client.has_cookie );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
     // the genuine cookie stores and advances
     uint8_t real_cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     uint8_t real_mac[ROCKETNET_COOKIE_MAC_BYTES];

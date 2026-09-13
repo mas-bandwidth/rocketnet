@@ -292,6 +292,12 @@ enum
     // on whichever end reached the limit. appended: indices are the contract.
     ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED,
 
+    // client received a connection cookie packet with an invalid wire length
+    // (not equal to ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES). distinct from
+    // ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH so ledger distinguishes
+    // size errors from off-path salt injection.
+    ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
+
     ROCKETNET_NUM_COUNTERS
 };
 
