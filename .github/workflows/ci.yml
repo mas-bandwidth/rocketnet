@@ -1147,7 +1147,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
+          # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
+          - { os: ubuntu-24.04 }
           - { os: macos-15,     runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
     steps:
 
