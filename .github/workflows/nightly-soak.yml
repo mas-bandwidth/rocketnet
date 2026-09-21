@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest }
+          - { os: ubuntu-latest, runner: '["self-hosted","Linux","X64","rocketnet"]' }
           # the macOS soak runs on the fleet's self-hosted Apple-silicon runners (hosted macOS is $0.16/min;
           # this 90-minute job was the largest single line of September's Actions bill)
           - { os: macos-latest, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }

@@ -139,9 +139,9 @@ jobs:
       matrix:
         include:
           # linux x64
-          - { os: ubuntu-24.04, build_type: Debug,   leg: ab }
-          - { os: ubuntu-24.04, build_type: Release, leg: a  }
-          - { os: ubuntu-24.04, build_type: Release, leg: b  }
+          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","rocketnet"]' }
           # macos apple silicon
           - { os: macos-15,     build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
           - { os: macos-15,     build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
@@ -473,7 +473,7 @@ jobs:
 
   sanitizers:
     name: asan + ubsan
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
     steps:
 
       - uses: actions/checkout@v4
@@ -541,7 +541,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
     steps:
 
       - uses: actions/checkout@v4
@@ -811,7 +811,7 @@ jobs:
 
   conformance:
     name: STANDARD.md conformance
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
     steps:
 
       - uses: actions/checkout@v4
@@ -832,8 +832,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: macos-15 }
+          - { os: windows-2025 }
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     env:
       # the pin and the cache key are the same string on purpose: bump this
       # and the cache misses, which is the only way a stale SDK leaves.
@@ -969,7 +972,7 @@ jobs:
 
   tsan:
     name: tsan (${{ matrix.leg }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
     strategy:
       fail-fast: false
       matrix:
@@ -1024,7 +1027,7 @@ jobs:
   # this older backend checks interoperability across supported deployments.
   sodium-pinned:
     name: pinned libsodium (built from source)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
