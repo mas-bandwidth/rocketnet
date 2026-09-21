@@ -23,8 +23,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-latest }
+          # the macOS soak runs on the fleet's self-hosted Apple-silicon runners (hosted macOS is $0.16/min;
+          # this 90-minute job was the largest single line of September's Actions bill)
+          - { os: macos-latest, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     timeout-minutes: 90
     steps:
 
