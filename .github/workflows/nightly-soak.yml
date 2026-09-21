@@ -23,15 +23,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - { os: ubuntu-latest, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          # the macOS soak runs on the fleet's self-hosted Apple-silicon runners (hosted macOS is $0.16/min;
+          # this 90-minute job was the largest single line of September's Actions bill)
+          - { os: macos-latest, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     timeout-minutes: 90
     steps:
 
       - uses: actions/checkout@v4
 
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
@@ -97,6 +101,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
+        if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
