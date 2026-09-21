@@ -1137,11 +1137,13 @@ jobs:
 
   platform-selftests:
     name: platform selftests / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        include:
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: macos-15,     runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
     steps:
 
       - uses: actions/checkout@v4
