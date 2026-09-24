@@ -25,9 +25,9 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, runner: '["self-hosted","Linux","X64","rocketnet"]' }
-          # the macOS soak runs on the fleet's self-hosted Apple-silicon runners (hosted macOS is $0.16/min;
+          # the macOS soak runs on the fleet's self-hosted Intel Mac runners (batman; off the Studio, nova-tools#3634) (hosted macOS is $0.16/min;
           # this 90-minute job was the largest single line of September's Actions bill)
-          - { os: macos-latest, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+          - { os: macos-latest, runner: '["self-hosted","macOS","X64","batman"]' }
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     timeout-minutes: 90
     steps:

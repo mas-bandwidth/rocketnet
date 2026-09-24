@@ -129,8 +129,8 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.os }} / ${{ matrix.build_type }}${{ matrix.leg != 'ab' && format(' ({0})', matrix.leg) || '' }}
-    # macOS rows run on the fleet's self-hosted Apple-silicon runners (labels self-hosted,macOS,ARM64,rocketnet;
-    # four on the Studio today, the Mac minis from October): hosted macOS is $0.16/min and was ~80% of September's
+    # macOS rows run on the fleet's self-hosted Intel Mac runners (labels self-hosted,macOS,X64,batman; the Studio
+    # left CI 2026-09-24, nova-tools#3634: "It's for friends."; Apple silicon returns with the M5 mini): hosted macOS is $0.16/min and was ~80% of September's
     # Actions bill. matrix.os stays the display name and the image the row was written against; runner, when set,
     # is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
@@ -142,9 +142,9 @@ jobs:
           - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","rocketnet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","rocketnet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","rocketnet"]' }
-          # macos apple silicon
-          - { os: macos-15,     build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
-          - { os: macos-15,     build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+          # macos x64 (batman; off the Studio, nova-tools#3634)
+          - { os: macos-15,     build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","X64","batman"]' }
+          - { os: macos-15,     build_type: Release, leg: ab, runner: '["self-hosted","macOS","X64","batman"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -1150,7 +1150,7 @@ jobs:
           # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
           # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
           - { os: ubuntu-24.04 }
-          - { os: macos-15,     runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+          - { os: macos-15,     runner: '["self-hosted","macOS","X64","batman"]' }
     steps:
 
       - uses: actions/checkout@v4
