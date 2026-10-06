@@ -192,9 +192,10 @@ static void channels_test_vectors()
         for ( int i = 0; i < ROCKETNET_MESSAGE_FRAGMENT_BYTES; i++ )
             data[i] = (uint8_t) ( i * 7 + 1 );
         static const uint8_t header[] = { 0x1b, 0x80, 0x04, 0x09, 0x00, 0x00, 0x48, 0x00, 0x07, 0x00, 0x00, 0x2c, 0x01, 0x01, 0x00, 0x02, 0x00 };
-        std::vector<uint8_t> expected( header, header + sizeof( header ) );
-        expected.insert( expected.end(), data, data + ROCKETNET_MESSAGE_FRAGMENT_BYTES );
-        expected.push_back( 0x01 );
+        std::vector<uint8_t> expected( sizeof( header ) + ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1 );
+        memcpy( expected.data(), header, sizeof( header ) );
+        memcpy( expected.data() + sizeof( header ), data, ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+        expected.back() = 0x01;
         struct rocketnet_message_record_t fragment = channels_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, data, ROCKETNET_MESSAGE_FRAGMENT_BYTES );
         fragment.block = 1;
         fragment.number = 9;
@@ -566,6 +567,7 @@ static int channels_parse_with_tails( const uint8_t * bytes, int length, const s
 static void channels_test_round_trip_and_never_overreads()
 {
     const struct rocketnet_message_limits_t limits = channels_limits( channels_num_channels, 0x1F );
+    const struct rocketnet_message_limits_t first_version_limits = channels_limits( 32, rocketnet_message_enabled_codes( 0x09 ) );
 
     channels_random_t random;
     random.state = 0x9E3779B97F4A7C15ULL;
@@ -576,9 +578,10 @@ static void channels_test_round_trip_and_never_overreads()
 
     alignas( 16 ) static uint8_t payload[65536 + 64];
 
-    const int iterations = 1000;
+    const int iterations = 4000;
     int records_checked = 0;
     int mutations_parsed = 0;
+    int violations_seen[ROCKETNET_MESSAGE_NUM_VIOLATIONS] = { 0 };
 
     for ( int iteration = 0; iteration < iterations; iteration++ )
     {
@@ -699,6 +702,14 @@ static void channels_test_round_trip_and_never_overreads()
             std::vector<rocketnet_message_record_t> result;
             const int violation = channels_parse_with_tails( mutated.data(), length, &limits, result );
             channels_check( violation >= ROCKETNET_MESSAGE_VIOLATION_NONE && violation < ROCKETNET_MESSAGE_NUM_VIOLATIONS );
+            violations_seen[violation]++;
+
+            // and under the first version's limits: codes 0 and 3, 32 channels
+            std::vector<rocketnet_message_record_t> first_version;
+            const int narrow = channels_parse_with_tails( mutated.data(), length, &first_version_limits, first_version );
+            violations_seen[narrow]++;
+            if ( narrow == ROCKETNET_MESSAGE_VIOLATION_NONE )
+                channels_check_records_inside( mutated.data(), length, first_version );
             if ( violation == ROCKETNET_MESSAGE_VIOLATION_NONE )
             {
                 channels_check_records_inside( mutated.data(), length, result );
@@ -711,6 +722,16 @@ static void channels_test_round_trip_and_never_overreads()
 
     channels_check( records_checked > iterations );
     channels_check( mutations_parsed > 0 );
+
+    // the mutations reach every check a record alone can fail; BAD_SIZE needs
+    // a reliable record past 1192 bytes, which one byte cannot make, and
+    // BAD_CONTROL is the CONFIG body's
+    for ( int v = ROCKETNET_MESSAGE_VIOLATION_BAD_FORM; v <= ROCKETNET_MESSAGE_VIOLATION_BAD_RING; v++ )
+    {
+        if ( violations_seen[v] == 0 )
+            printf( "no mutation reached %s\n", rocketnet_message_violation_name( v ) );
+        channels_check( violations_seen[v] > 0 );
+    }
 }
 
 // -----------------------------------------

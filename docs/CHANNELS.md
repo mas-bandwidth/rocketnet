@@ -10,8 +10,8 @@ other six later changes neither the wire nor the per-channel state.
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Nothing in this document is built yet. Names that are not
-yet in the tree (`ROCKETNET_MAX_CHANNELS`, `rocketnet_server_t`, the `rn_*`
+is USAGE.md line n. Layer 2 is built (`sdk/rocketnet_message.h`, section 5);
+nothing above it is yet. Names that are not yet in the tree (`ROCKETNET_MAX_CHANNELS`, `rocketnet_server_t`, the `rn_*`
 internals) are introduced here.
 
 **Status: design, for Glenn's correction of the layer list (section 3) before
@@ -212,6 +212,30 @@ Rules of this layer:
 **Checked by.** Known-answer vectors (section 13.6), a round-trip property test
 over every flag combination, and a fuzz target on the decoder. Each malformed
 input must hit exactly one violation counter and never read past `L-1`.
+
+**Built.** `sdk/rocketnet_message.{h,cpp}` is this layer: the record codec, a
+writer that builds a RECORDS payload in place in a frame, the SINGLE finish,
+and a reader that runs checks 1 to 9 of 13.3 over the whole payload before it
+hands out any record, plus the CONFIG body codec (check 12). The layer holds no
+state, so no TLA+ module covers it. Its tests are `test_channels.cpp` in
+`./bin/test`: the 13.6 vectors both ways, one input per violation, SINGLE in
+place at a 16-aligned payload root, and a pack/parse property test over every
+prefix and one-byte mutation of 4,000 generated payloads
+(`ChannelsMessageRecordRoundTripAndNeverOverreads`). The fuzz target is
+`fuzz/rocketnet_fuzz_message.cpp`, seeded from `fuzz/corpus_message`. The code
+taught the design four things, now in 13.2 and 13.3:
+
+- The header's fields are defined for every flags byte, valid or not, so
+  check 2 (the header fits) can run before check 3 (the flags are allowed)
+  without guessing what a refused code would carry.
+- WIDE below channel 256 is refused (check 5). Without that a record had two
+  encodings, and a parsed payload would not always pack back to its own bytes.
+- Check 6 admits a wire code when an enabled reliability travels as it (7
+  admits 3), and a SINGLE payload is code 0 for it.
+- Check 8 for a block measures the whole block from its base: a fragment that
+  is not the last knows the block's end only to within the last fragment's
+  length, so it checks the shortest block it could be part of, and a base
+  below 0 is a span outside the ring.
 
 ## 6. Layer 3: the reliable window
 
@@ -1041,10 +1065,16 @@ offset  size  field
 
 Header bytes by type are 3, 10, 6, 12 and 15 for codes 0 to 4. BLOCK adds 4
 (6 on code 2, which gains the ring field). WIDE adds 1. A sender sets WIDE
-exactly when `channel >= 256`.
+exactly when `channel >= 256`, and a receiver refuses WIDE below 256, so every
+record has one encoding. The field conditions hold for every flags byte, so a
+code of 5 to 7 carries no code-dependent fields and BLOCK adds its fields on any
+code: a receiver measures the header before it judges the flags.
 
 ### 13.3 The receiver's checks, in order
 
+Checks 1 to 9 run over the whole payload before any record of it is handed
+up, so a refused payload delivers nothing and a record is whole or absent.
+Checks 10 to 12 need the receiver's state and run as each record is applied.
 Each failed check stops parsing the payload, increments the named counter
 (prefixed `CLIENT_` on the client), and makes the connection a violation
 (R6).
@@ -1056,22 +1086,28 @@ Each failed check stops parsing the payload, increments the named counter
    WIDE is set on code 0 or 2, or CONTROL is set with a code other than 2 or
    together with BLOCK: `MESSAGE_BAD_FLAGS`.
 4. `length == 0`, or `length` runs past the body: `MESSAGE_BAD_LENGTH`.
-5. `channel >= num_channels`: `MESSAGE_BAD_CHANNEL`. The check is against this
-   end's runtime count, not the compile-time maximum (I15).
+5. `channel >= num_channels`, or WIDE with `channel < 256`:
+   `MESSAGE_BAD_CHANNEL`. The check is against this end's runtime count, not
+   the compile-time maximum (I15).
 6. The type is not in the enabled mask (CONTROL is exempt):
-   `MESSAGE_TYPE_NOT_ENABLED`.
+   `MESSAGE_TYPE_NOT_ENABLED`. A wire code is admitted when an enabled
+   reliability travels as it (7 admits 3). A SINGLE payload is code 0 here.
 7. BLOCK checks:
    - `fragments == 0`, `fragment > fragments`, `(fragments+1) > W`, or
      `(fragments+1) × F > max_message_bytes + F - 1`;
    - a fragment below the last whose length is not `F`, or a last fragment
      longer than `F`;
    - a ring base `ring - fragment × F/16` that disagrees with a live block
-     descriptor.
+     descriptor (this one needs layer 5's state, and runs with check 10).
 
    Any of these: `MESSAGE_BAD_BLOCK`.
 8. A holdable record with `ring × 16 + span > B`, where span is `length`
    rounded up to 16, or for a block the whole block's span:
-   `MESSAGE_BAD_RING`.
+   `MESSAGE_BAD_RING`. A block's span runs from its base
+   `ring - fragment × F/16` (never below 0) to
+   `base × 16 + fragments × F + last`, where `last` is the last fragment's
+   length rounded up to 16; a fragment that is not the last takes `last = 16`,
+   the shortest block it could be part of.
 9. A reliable or CONTROL record inside a payload longer than
    `ROCKETNET_MAX_PAYLOAD_BYTES` (1192). Such a payload either rode the
    transport's fragments or came from a sender that broke L2.2 (L2.4):
@@ -1515,8 +1551,9 @@ requires.
 - **G4. STANDARD.md's scope.** It specifies the transport today, and S:7-10
   says messages are specified nowhere in it. Section 13
   here is written to drop in as a _Messages_ section. Whether the standard
-  grows to cover messages is Glenn's ruling. This card leaves STANDARD.md
-  unedited.
+  grows to cover messages is Glenn's ruling. The C2 card (layer 2) added
+  STANDARD.md _Messages_ with the wire only, behaviour staying here, as its
+  card asked; it is one section to revert if the ruling goes the other way.
 - **G5. The fragment stride** of 1152. 1168 is the largest stride that fits,
   and 1152 leaves 16 bytes of header headroom.
 - **G6. A wire violation disconnects** (R6). The alternative, counting and
