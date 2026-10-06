@@ -73,7 +73,7 @@ CONSTANTS
     Words, WordBits,  \* the replay window: Words x WordBits bits (64 x 64 in the code)
     ClearWords,       \* words zeroed on a skip >= W (4 in the code, F1)
     MaxSeq,           \* the honest client's session sequences run 1..MaxSeq
-    RepeatKeepAlive,  \* the establishing keep-alive is re-sent on the timer (the code: TRUE)
+    RepeatKeepAlive,  \* the establishing keep-alive is re-sent on the timer until confirmed (the code, approximately: TRUE; see ServerKeepAlive)
     KindLoss,         \* "none" or "firstkind": each sender's first send of each type is lost
     C2SPattern, S2CPattern,                       \* Link patterns
     Capacity, MaxDelay, Duplication, Reordering,  \* Link parameters
@@ -545,8 +545,19 @@ ServerRecvKeepAlive == \E p \in CKeepAlive :
                 /\ UNCHANGED <<admits, lateAdmit, cookieProven, deniedPulse>>
     /\ UNCHANGED <<clientVars, clock>>
 
-\* rocketnet_server_protocol_write_keep_alive_if_due: re-sent on the timer
-\* until the slot is confirmed by a session packet from the client
+\* rocketnet_server_protocol_write_keep_alive_if_due
+\* (rocketnet_server_protocol.cpp:1239-1316).  The code never stops sending
+\* keep-alives: until the client has acknowledged one (keep_alive_acked,
+\* latched at rocketnet_ack.cpp:385) it sends on the keep-alive's own clock,
+\* which other traffic does not suppress; after that, whenever nothing else
+\* went out in the interval (last_send_time).  The code rejects the confirmed
+\* flag as its test (:1284-1294).  This model has no ack blocks and no other
+\* server traffic, so it stands the slot's confirmation in for the ack: here
+\* only a client keep-alive confirms, and the honest client sends one only
+\* in 4, after a keep-alive reached it, which is when the code's latch can
+\* first be set.  It then stops, because past that point nothing in the
+\* model waits on a keep-alive.  So the model sends no more keep-alives than
+\* the code, and possibly fewer.
 ServerKeepAlive == \E a \in Addrs :
     /\ sdue /\ RepeatKeepAlive
     /\ Est(a)
