@@ -163,7 +163,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   The prototype and its windows dispatch workflow contracted with the
   landing, their findings recorded in #56.
 - The XDP server transport, first two rungs. The kernel program rewritten
-  from flow's byte-range filter to the rocketnet 4-byte prefilter: config
+  to the rocketnet 4-byte prefilter: config
   map carrying public address, port, filter value and epoch (written at create;
   until then the program passes all traffic untouched), the shared wire
   rule from rocketnet_wire.h -- one header included by the BPF program,
@@ -231,7 +231,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   addresses its receiver observes. Suite green on macos and on the space
   box, BPF program compiles, both new gates negative-controlled, soaks and
   the live UDP examples proven on the new format.
-- Step 2 begins: THE TRANSPORTS (Glenn's naming). flow's socket IO carrying
+- Step 2 begins: THE TRANSPORTS (Glenn's naming). space game's IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
   protocol at the main-thread seam; the server transport keeps the
@@ -264,7 +264,7 @@ land. The milestone view is issue #28; this file is the live ordering.
 ## TODO
 
 - ClientTransport and ServerTransport virtual interfaces (with Glenn):
-  light C++ like flow, sparingly -- the free-function transport surfaces
+  light C++ like space game, sparingly -- the free-function transport surfaces
   map one to one onto methods, and the portable implementations become the
   first concrete transports. The protocol core below stays as it is. Note
   the original motive is spent: runtime selection by preference landed
@@ -333,7 +333,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   connect layer is believed; the nightly CI soak is the bounded sentinel.
 - The ultimate soak: re-integrate rocketnet into the space game (vendored
   byte-for-byte per the vendoring law) and the space server on ssh space
-  soaks it under real conditions -- how flow itself was developed.
+  soaks it under real conditions.
   Integration note that matters: the space server pegs to real time with
   drop-frame detection and spinlock-plus-sleep to exact frame ends, never
   naive sleeps -- rocketnet's update is non-blocking with time passed in

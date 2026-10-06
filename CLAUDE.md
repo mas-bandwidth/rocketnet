@@ -2,7 +2,7 @@
 
 ## What this is
 
-RocketNet is a merger of flow's good transport bits and zero copy API with a
+RocketNet is a merger of space games' transport bits and zero copy API with a
 netcode-like connection protocol and security: a packet level transport
 library worthy of a **1000 player (or above)** game. The space game's
 transport goodness, productized for Dean Hall (RocketWerkz), and once done
@@ -73,8 +73,7 @@ packets opening with the general ack block, fragmentation, and server-side
 client slots — `client_transport` and `server_transport` over the runtime
 driver ladder (portable everywhere; xdp and gso on linux; msgx ahead of
 portable on macOS). `client.c` and `server.c` connect out of the box under
-the published dev keys. The network next era machinery is gone; flow's repo
-preserves all of it.
+the published dev keys.
 
 What remains is REQUIREMENTS.md's tail: reliability, flows and broadcast
 above the transport, and the sodium re-vendor before anything ships.
