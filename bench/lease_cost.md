@@ -44,7 +44,7 @@ ACK bookkeeping; this is not a model of four unrelated clients.
 
 ## Observation — 2026-09-08
 
-Apple M3 Ultra on the shared Studio, unpinned, with other tasks active.
+Apple silicon on a shared machine, unpinned, with other tasks active.
 Source `834bccf9e09392802f0f2a7e116bb694bee7459c`, Apple clang version 21.0.0 (clang-2100.1.1.101), libsodium 1.0.22.
 Release `-O3 -DNDEBUG -ffp-contract=off`, no LTO. Raw observations and source/header
 hashes are in [lease_cost_2026-09-08.json](lease_cost_2026-09-08.json).
