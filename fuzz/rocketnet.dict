@@ -78,3 +78,36 @@ driver_gso="gso"
 driver_xdp="xdp"
 driver_msgx="msgx"
 driver_ladder="xdp,gso,portable"
+
+# --- message records (sdk/rocketnet_message.h, STANDARD.md _Messages_) ---
+
+# the form bytes, ROCKETNET_MESSAGE_FORM_SINGLE and _RECORDS
+message_form_single="\x00"
+message_form_records="\x01"
+
+# record flags: codes 0 to 4, BLOCK on 2 and 3, WIDE on 3, CONTROL on 2, and the block vector's 0x1b
+message_flags_unreliable="\x00"
+message_flags_sequenced="\x01"
+message_flags_reliable="\x02"
+message_flags_ordered="\x03"
+message_flags_reliable_sequenced="\x04"
+message_flags_reliable_block="\x0a"
+message_flags_ordered_block="\x0b"
+message_flags_ordered_wide="\x13"
+message_flags_ordered_block_wide="\x1b"
+message_flags_config="\x22"
+
+# lengths: one byte, the block stride ROCKETNET_MESSAGE_FRAGMENT_BYTES (1152), and the CONFIG body (28)
+message_length_one="\x01\x00"
+message_length_stride="\x80\x04"
+message_length_config="\x1c\x00"
+
+# ring 72, the stride in 16-byte units; channel 256, the first WIDE channel
+message_ring_stride="\x48\x00"
+message_channel_wide="\x00\x01"
+
+# u24 counters at their wrap
+message_u24_max="\xff\xff\xff"
+
+# the CONFIG body head: kind 1, version 1, enabled {0, 3}
+message_config_head="\x01\x01\x09\x00"
