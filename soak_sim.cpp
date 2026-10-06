@@ -109,7 +109,7 @@ static volatile int quit;
 //
 // The point of measuring it here rather than under a profiler is that a soak
 // runs on whatever box it runs on, and "how much of this is instrument" has
-// to be answerable there. #93 needed perf on the space box to find that the
+// to be answerable there. #93 needed perf on the test box to find that the
 // simulator held 38.6% of cycles; this answers the same question anywhere,
 // including hosts where a sampling profiler is not available at all.
 //

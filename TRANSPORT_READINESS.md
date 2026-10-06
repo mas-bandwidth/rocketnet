@@ -1,7 +1,7 @@
 # Transport readiness
 
-RocketNet runs in Space Game with XDP. Glenn confirmed on September 7, 2026 that
-he has already tested it successfully up to 10 Gbps. That deployment and load
+RocketNet runs in the game with XDP. Confirmed on September 7, 2026 that
+it has already been tested successfully up to 10 Gbps. That deployment and load
 testing are the production baseline for this hardening work. The local and CI
 checks below validate this repair branch in their stated environments; they do
 not replace or negate the existing production evidence. Changes to the XDP and
@@ -69,7 +69,7 @@ privileged XDP commit; they do not validate privileged production traffic.
 ## Follow-up validation and SDK work
 
 - Regression validation of the changed XDP ownership/retry paths against the
-  existing Space Game and 10 Gbps baseline. Targeted syscall-failure and frame
+  existing game and 10 Gbps baseline. Targeted syscall-failure and frame
   conservation tests cover different failure conditions from throughput tests;
   this branch's CI does not run privileged XDP traffic.
 - Sized APIs for compatible public-struct evolution, complete binding generation, a
@@ -81,10 +81,10 @@ privileged XDP commit; they do not validate privileged production traffic.
 - Reproducible release dependencies, supported-platform policy and the security
   disclosure/release process. Install/export packaging and external-consumer
   tests are now present.
-- Independent review of the complete repair diff. A review request sent to Rowan
+- Independent review of the complete repair diff. A review request sent out
   is not a review received or an approval.
 
 Reliability, ordering, most-recent state, flows and broadcast remain the layer
 above this unreliable transport. No transport hardening change implements those
-features. Hardware results reported by Glenn and checks run on this branch are
+features. Hardware results reported and checks run on this branch are
 recorded separately so their provenance remains clear.

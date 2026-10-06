@@ -174,13 +174,13 @@ land. The milestone view is issue #28; this file is the live ordering.
   create-failure destroy crash fixed. The server transport gained the
   compile-time XDP driver behind a reserve/commit/abort frame seam, the
   portable path unchanged. Contracted: the old packet filter and its
-  tests, rocketnet_packets.h, the flow-era portable server socket. PROVEN
-  LIVE on the space box, veth pair in a netns, real NIC untouched: full
+  tests, rocketnet_packets.h, the earlier portable server socket. PROVEN
+  LIVE on the test box, veth pair in a netns, real NIC untouched: full
   handshake and 1800 pattern payloads echoed through kernel program,
   AF_XDP rings and crafted-frame sends; six garbage packets injected at
   the filter counted exactly -- five wrong tag, one too small -- with
   nothing reaching userspace.
-- The blessed real-NIC bring-up, done on the space box in a window Glenn
+- The blessed real-NIC bring-up, done on the test box in a window the owner
   opened by stopping the game (dead-man auto-restart armed first, players
   quiet). The XDP program loaded and attached NATIVE on the production
   Intel NIC, two queues, AF_XDP sockets on both, xdp threads pinned to
@@ -228,10 +228,10 @@ land. The milestone view is issue #28; this file is the live ordering.
   protocol provides. Every wire size moved +2, the two assembled vectors
   and Appendix A regenerated from the code, and the keyless derived-bytes
   idea was ruled out in writing because a NAT'd sender cannot know the
-  addresses its receiver observes. Suite green on macos and on the space
+  addresses its receiver observes. Suite green on macos and on the test
   box, BPF program compiles, both new gates negative-controlled, soaks and
   the live UDP examples proven on the new format.
-- Step 2 begins: THE TRANSPORTS (Glenn's naming). space game's IO carrying
+- Step 2 begins: THE TRANSPORTS, the game's IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
   protocol at the main-thread seam; the server transport keeps the
@@ -263,19 +263,19 @@ land. The milestone view is issue #28; this file is the live ordering.
 
 ## TODO
 
-- ClientTransport and ServerTransport virtual interfaces (with Glenn):
-  light C++ like space game, sparingly -- the free-function transport surfaces
+- ClientTransport and ServerTransport virtual interfaces:
+  light C++ like the game, sparingly -- the free-function transport surfaces
   map one to one onto methods, and the portable implementations become the
   first concrete transports. The protocol core below stays as it is. Note
   the original motive is spent: runtime selection by preference landed
   without virtual interfaces (#106, in DONE), so what is left to decide is
   the C++ ergonomics on their own merits.
-- The public surface above it all, ruled: the root header Dean sees is
+- The public surface above it all, ruled: the root header the customer sees is
   netcode-style pure C -- rocketnet_client_transport_t with functions,
   rocketnet_server_transport_t with functions, maybe the address type, nothing
   else. Real non-mangled symbols, so C# lands on P/Invoke and every other
   language binds the same way; whether the inside shims to C++ is an
-  implementation privilege, not a surface concern. The Dean Surface (#22)
+  implementation privilege, not a surface concern. The public C API surface (#22)
   is this surface's usage spec.
 - The XDP server transport, remaining rungs: ipv6 in the kernel program
   and the userspace path (#19); surface the kernel filter counters
@@ -287,29 +287,29 @@ land. The milestone view is issue #28; this file is the live ordering.
   6-byte prefilter with its epoch byte ships in 1.0 at epoch 0, so adopting
   the keyed form later is a configuration change and not a wire break. What
   remains is the system the epoch selects, and it arrives whole. The
-  requirement, Glenn's words: done completely, it MUST have a backend the
+  requirement: done completely, it MUST have a backend the
   server talks to, and that backend must handle identity-based auth whose
   consequence is giving away your slot -- one identity, one seat, so a
   shared token steals the sharer's own place and the incentive does the
   enforcement. That needs the backend to track the connected set across
   servers live, and to kick the old player when the same user hash pops on
   elsewhere -- which is exactly what rocketnet_server_transport_disconnect_client
-  exists to serve. The reference implementation already runs as space
-  game's backend.go, so the epic is an EXTRACTION, not a design: proven in
-  the game, generalized into the library as an OPTIONAL layer, wanted for
-  space game itself, sequenced strictly behind the RocketWerkz deliverable.
+  exists to serve. The game's own backend already runs it, so the epic is an
+  EXTRACTION, not a design: proven in the game, generalized into the library
+  as an OPTIONAL layer, wanted for the game itself, sequenced strictly behind
+  the first deliverable.
   Then the rolling magic feeds the keyed filter value (SipHash over type,
   length and the four bytes after the header, one MAC per packet because
   the epoch names the generation), the per-title generator emits the
   constant and the keyed reader in every language plus verifier-clean BPF
   behind a differential gate, and the aggressive replay window moves into
-  the kernel (Glenn's own replay_protection_buffer at 16 entries, the
+  the kernel (the replay_protection_buffer at 16 entries, the
   kernel dropping but never advancing so a forged sequence cannot poison
   it). Deliberately NOT in v1: no default magic ships, ever -- a published
   secret would make a secured-LOOKING path work out of the box, which is
   worse than not having the feature; and standalone IP pinning is out for
   good, because identity beats it on the merits without NAT's problems.
-- Replay protection in the kernel, and the buffer size question (Glenn,
+- Replay protection in the kernel, and the buffer size question (owner,
   2026-08-27: "replay protection would need to be in XDP program to be
   rad" and "I like doing it with 16 entries. That's nicer"). This needs no
   backend and no magic -- a BPF map keyed by source address holding the
@@ -319,7 +319,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   high-water back, so a forger who wins the filter's odds cannot poison a
   session by setting the mark to 2^32. Read-only in the kernel, the filter
   can lag a beat behind truth and can never be corrupted by it.
-  ONE TENSION TO PUT TO GLENN RATHER THAN SETTLE ALONE: he prefers 16
+  ONE TENSION TO SETTLE: the owner prefers 16
   entries on memory grounds, which is right for a per-connection kernel
   map at a thousand clients (128 KB against 8 MB), but STANDARD.md's
   replay window sizing rule says never smaller than 256 and at least one
@@ -327,14 +327,15 @@ land. The milestone view is issue #28; this file is the live ordering.
   reordering. Both can be true if the kernel map and the userspace window
   are sized separately, which is probably the answer, but the standard
   currently states one rule for both and should not be quietly narrowed.
-  His own next_replay_protection_t is the reference implementation.
+  RocketNet sizes the kernel map and the userspace replay window separately, and
+  the standard should say so.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
-  (the Studio, manually kicked) for days of parallel clients before the
+  (the test machine, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.
-- The ultimate soak: re-integrate rocketnet into the space game (vendored
-  byte-for-byte per the vendoring law) and the space server on ssh space
-  soaks it under real conditions.
-  Integration note that matters: the space server pegs to real time with
+- The ultimate soak: re-integrate rocketnet into the game (vendored
+  byte-for-byte per the vendoring law) and the game server soaks it under
+  real conditions.
+  Integration note that matters: the game server pegs to real time with
   drop-frame detection and spinlock-plus-sleep to exact frame ends, never
   naive sleeps -- rocketnet's update is non-blocking with time passed in
   and bounded O(max) walks, which is exactly what that loop requires, and
@@ -349,6 +350,6 @@ land. The milestone view is issue #28; this file is the live ordering.
   routine.
 - The sodium re-vendor: the gutted two-file flatten with Ed25519 and sealed
   boxes, replacing brew libsodium before anything ships.
-- The Dean Surface (#22, Glenn's): the outside-in C API design, an input to
+- The public C API surface (#22): the outside-in C API design, an input to
   the top-layer client/server objects.
 - Step 3 (after transports): reliability, flows, broadcast.
