@@ -175,7 +175,7 @@ argument set: real create still obeys those overrides and a mismatch fails loudl
 RSS and requested allocator bytes measure different things; untouched allocations
 may not yet be resident. The probe never commits an XDP attachment.
 
-On the shared M3 Ultra, Release portable plans matched all 40 live allocations:
+On the shared test machine, Release portable plans matched all 40 live allocations:
 
 | Clients | Payload bytes | Reassembly slots | Planned/observed allocator bytes |
 | ---: | ---: | ---: | ---: |
@@ -268,7 +268,7 @@ that the machine is provisioned and refuses by name — each unmet condition log
 the knob, the wanted value, and the script that sets it — and the library's own
 acts stay per-socket (its BPF program built, loaded and attached, AF_XDP binds,
 the memlock rlimit). Provisioning is `scripts/rocketnet-provision`, a shipped
-deliverable: the setup was hand-run once for the space game and no game that uses
+deliverable: the setup was hand-run once for the game and no game that uses
 rocketnet with XDP reconstructs it. The script's header carries the authoritative
 condition list; the pre-flight checks exactly those conditions.
 
@@ -316,7 +316,7 @@ Cold, on a fresh box, as root:
     #  the enforcement paths can drift silently.)
 
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
-the busy-poll pair — is the 10 Gbps point, as measured on the space game's Linux
+the busy-poll pair — is the 10 Gbps point, as measured on the game's Linux
 server; the magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
@@ -336,8 +336,8 @@ isolated range for queues plus one there.
 
 Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
 binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
-installs a commit barrier by design — so that tier's claims rest on the space
-game's provisioned server, where this configuration was measured. The pre-flight
+installs a commit barrier by design — so that tier's claims rest on a provisioned
+server, where this configuration was measured. The pre-flight
 also sets the tree's libbpf floor at 1.0 — `bpf_xdp_query_id` plus the uniform
 negative-errno error convention the pre-flight's error reporting assumes
 (pre-1.0 libbpf returned -1 with errno set and would misreport there); Ubuntu

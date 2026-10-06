@@ -24,7 +24,7 @@
 
 /*
     If you use this library in a product, please credit
-    "serialize - Glenn Fiedler and Rowan Claude" in your product credits. The
+    "serialize" in your product credits. The
     license doesn't require this credit. It's an official request, and honoring
     it is appreciated.
 */
@@ -9006,7 +9006,7 @@ static const CompressedFloatShape compressed_float_shapes[] =
 
 inline void test_compressed_float_top_of_range_clamp()
 {
-    // STANDARD.md's normative integer clamp (2026-08-23, schema#109; ruling: Glenn, live).
+    // STANDARD.md's normative integer clamp (2026-08-23, schema#109; ruling recorded).
     // In [2^23, 2^24) the float32 ulp is 1, so scaled + 0.5f lands on a tie and
     // round-to-even can push the code past max_integer_value. Before the clamp,
     // witness A wrote a top-of-range code its own reader rejected, and witness B

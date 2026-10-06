@@ -136,7 +136,7 @@ clean window than is there. It is a threshold on QUANTITY while the bias is
 CATEGORICAL: the inclusion rule is "the batch filled" at every share, so a
 window at 26% coverage prints without a warning and is still congestion-
 selected. And on a saturated loopback the shortfall can be extreme --
-`bench_portable` on an M3 Ultra covered 0.04% -- so the absence of a warning
+`bench_portable` on the test machine covered 0.04% -- so the absence of a warning
 is worth checking rather than assuming.
 
 **`empty=`** is the drain's idle probes. At saturation a receiver spends real
@@ -150,8 +150,8 @@ full" and "the kernel refuses this call" never look alike.
 
 ## What travels between machines, and what does not
 
-**Magnitude belongs to the machine.** A number measured on the space box orders
-candidates on the space box and nowhere else. Every published number carries
+**Magnitude belongs to the machine.** A number measured on the test box orders
+candidates on the test box and nowhere else. Every published number carries
 machine, kernel, toolchain and protocol revision.
 
 **Ordering sometimes travels, and must be said to be a hypothesis when it does.**

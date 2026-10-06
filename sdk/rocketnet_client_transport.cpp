@@ -24,7 +24,7 @@
 #include <atomic>
 
 // the receive thread fills one buffer while update processes the other --
-// flow's IO, carried over whole
+// the IO, carried over whole
 
 struct rocketnet_client_receive_buffer_t
 {

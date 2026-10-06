@@ -422,12 +422,11 @@ requirement, not a simplification, and it is the accumulated lesson of the
 design this one descends from:
 
 * **A client behind NAT cannot know its own source address.** It knows its
-  pre-NAT address; the server sees the post-NAT one. Network Next solved this by
-  having the server tell the client its observed external address, which its own
-  source marks *"only known post-upgrade"* — a bootstrap dependency where early
-  packets cannot carry a correct filter at all.
+  pre-NAT address; the server sees the post-NAT one. The fix is to have the
+  server tell the client its observed external address -- a bootstrap dependency
+  where early packets cannot carry a correct filter at all.
 * **Ports cannot be used at all under carrier-grade NAT**, which rewrites them.
-  Network Next had already learned this: its filter binds four IPv4 address
+  The filter therefore binds four IPv4 address
   bytes and deliberately excludes the port.
 * **A server does not always know its own public address either** — on a cloud
   instance holding a private address while clients address a public one.
