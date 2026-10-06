@@ -329,10 +329,12 @@ static void test_channels_allocator_layout()
     check( end <= layout.region_bytes );
     check( layout.region_bytes % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
 
-    // the store's classes at the defaults
+    // the store's classes at the defaults, as section 4 records them: 64-aligned
+    // thirds of S, each chunk with its u32 link inside its third
 
-    check( layout.store_chunks[RN_STORE_SMALL] > 0 );
-    check( layout.store_chunks[RN_STORE_MEDIUM] > 0 );
+    check( layout.store_chunks[RN_STORE_SMALL] == 330 );
+    check( layout.store_chunks[RN_STORE_MEDIUM] == 84 );
+    check( layout.store_chunks[RN_STORE_LARGE] == 37 );
     check( layout.store_chunks[RN_STORE_LARGE] >= ( 32768 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
 
     // odd shapes pad, and the padding is all the region adds to the formula
@@ -422,6 +424,22 @@ static void test_channels_allocator_validation()
     check( rocketnet_message_validate_config( &config ) == 0 );
     config.max_message_bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     check( rocketnet_message_validate_config( &config ) == 1 );
+
+    // section 14's lean profile is refused at the default max_message_bytes: its
+    // large class holds 18 chunks, a 32768-byte block needs 29 (section 4)
+
+    rocketnet_message_default_config( &config );
+    config.window_messages = 256;
+    config.receive_ring_bytes = 32768;
+    config.send_buffer_bytes = 65536;
+    config.send_queue_messages = 256;
+    config.packets_in_flight = 64;
+    config.unreliable_deliveries = 128;
+    check( rocketnet_message_validate_config( &config ) == 0 );
+    config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    check( rocketnet_message_validate_config( &config ) == 1 );
+    config.max_message_bytes = 18 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
+    check( rocketnet_message_validate_config( &config ) == 0 );
 
     // the maximum channel count is legal
 

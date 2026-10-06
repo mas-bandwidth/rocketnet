@@ -10,3 +10,6 @@ MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, LinkDelivers	8782	1535
 MCLink	MCLink.cfg with Pattern "burst", SpecWireFair, LinkDelivers	8073	1354	pass	vision	2026-10-06
 MCLink	MCLink.cfg with Pattern "arbitrary", SpecWireFair, LinkDelivers (reversed witness)	18543	2146	fail as expected: LinkDelivers violated, 44-state lasso, no delivery	vision	2026-10-06
 MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, ResentIsDelivered (reorder starvation)	8782	1535	fail as expected: ResentIsDelivered violated, 19-state lasso, see README-Link.md	vision	2026-10-06
+MCRNSendStore	MCRNSendStore.cfg (GuardDoubleFree, AllOrNone TRUE; TypeOK, NoDoubleAllocate, NoLeak, RefuseOnlyWhenFull, ChainsBounded)	47407249	4941552	pass	vision	2026-10-06
+MCRNSendStore	MCRNSendStore.cfg with GuardDoubleFree = FALSE (reversed witness)	149	136	fail as expected: NoDoubleAllocate violated at depth 4, chunk 1 twice on the free list	vision	2026-10-06
+MCRNSendStore	MCRNSendStore.cfg with AllOrNone = FALSE (reversed witness)	34	34	fail as expected: NoLeak violated at depth 4, a refused block took the last two chunks	vision	2026-10-06
