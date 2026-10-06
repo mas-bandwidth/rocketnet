@@ -91,7 +91,7 @@ paired with the test or card that keeps it true.
 | P6 | **Causality across updates.** If the peer sends anything in reply to a packet this end opened in update *j*, this end opens the reply in update *j+1* or later. Update *j*'s batch is fixed before any packet that update builds can leave. The server takes one `receive()` batch and then processes it (`sdk/rocketnet_server_transport.cpp:968-1045`). The client swaps its receive buffers at the start of `update` (`sdk/rocketnet_client_transport.cpp:466, 563`). | as cited | test card C0b |
 | P7 | The thread contract: `update` and `send_packets` run on the main thread. `start_packet`, `finish_packet` and `abort_packet` run on any thread strictly between the two, with a join or barrier as the handoff (`sdk/rocketnet.h:841-855`, `U:39-50`). | as cited | inherited, section 16.1 |
 | P8 | The client delivers payloads from state 3 (SENDING_CONNECTION_RESPONSE) on (`sdk/rocketnet_client_protocol.cpp:666-675, 826-831`). A client transport makes exactly one connection. | as cited | the client endpoint lives from create (layer 8) |
-| P9 | **The server needs one addition.** A slot can be released and reassigned inside one update: a disconnect packet releases it (`sdk/rocketnet_server_protocol.cpp:934-944`) and a later response in the same batch can claim it. `is_client_connected` and `client_id` cannot show that a slot changed hands, because a reconnecting client may present the same id. The addition is `uint64_t rocketnet_server_transport_client_connection_id( server, client_index )`: nonzero, unique for each connection over the transport's lifetime, and 0 while the slot is free. | as cited | **transport card C0a** |
+| P9 | **The server needs one addition, in two parts.** A slot can be released and reassigned inside one update: a disconnect packet releases it (`sdk/rocketnet_server_protocol.cpp:934-944`) and a later response in the same batch can claim it. The batch entries tag only the slot, at receive time (`sdk/rocketnet_server_transport.cpp:1014, 1031, 1103, 1120`; acked ids `sdk/rocketnet_server_protocol.cpp:860`), and acked ids may be deferred to a later update (P4). So no reading of the slot's state after the update, by any accessor, can say which connection an entry belongs to: `is_client_connected`, `client_id` and a connection id read at update end all name the slot's *last* owner. **(a)** `uint64_t rocketnet_server_transport_client_connection_id( server, client_index )`: nonzero, unique for each connection over the transport's lifetime, and 0 while the slot is free. **(b)** Each batch entry carries the connection id of the connection it was received for, written beside `client_index` when the entry is appended: `rocketnet_server_transport_payload_connection_ids( server, const uint64_t ** connection_id )` and `rocketnet_server_transport_acked_connection_ids( server, const uint64_t ** connection_id )`, parallel to the existing arrays. (a) tells the object who owns the slot now; (b) tells it whose an entry is. The object compares them when it applies an entry (10.2). | as cited | **transport card C0a** |
 
 **F1 blocks RELIABLE_ORDERED.** `sdk/rocketnet_replay.cpp:54-60` still clears
 only 4 of the window's 64 words on a forward jump of 4096 or more
@@ -638,19 +638,45 @@ stands in for the transport, with time as a loop variable.
 
 ### 10.2 The slots machine (server, pure)
 
-`rn_slots_t` holds `connection_id[max_clients]`. It has one event,
-`observe( slot, connection_id )`, which the object feeds once per slot per
-update from P9's accessor. Its actions:
+`rn_slots_t` holds `connection_id[max_clients]`: the connection each slot's
+endpoint is bound to. It has two events.
+
+`observe( slot, connection_id )`, fed once per slot per update from P9(a).
+Its actions:
 
 - `RESET(slot)` when the id changes to a nonzero value. This also emits the
   CONNECTED event.
 - `DROP(slot)` when the id goes to 0. This emits DISCONNECTED and discards the
   slot's queues.
 
-Both are O(slots that changed). To keep the per-update sweep constant-shape,
-the accessor is read for every slot, which is one u64 load each. `RNSlots`
-checks that no message, ack or receipt of connection A is ever applied to
-connection B in the same slot.
+`admit( slot, entry_connection_id )`, asked for every batch entry (payload or
+acked id) at the moment the object would apply it, with the id P9(b) tagged
+the entry with. Its answer is `APPLY` when the tag equals
+`connection_id[slot]`, and otherwise `DISCARD`, counted as
+`stale_connection_entries`. **An entry is applied only to the connection it was
+received for.** The slot index alone never decides it, and no state read after
+the transport's update decides it either: the decision is made at apply time,
+from the tag written at receive time.
+
+What this covers:
+
+- **Same-batch churn.** A sends, A disconnects, B claims the slot, all in one
+  batch. `observe` resets the slot to B; A's entries carry A's id and are
+  discarded, never applied to B. B's own entries, later in the same batch,
+  carry B's id and are applied.
+- **Deferred acks** (P4). A's acked ids deferred past the update in which B
+  took the slot still carry A's id and are discarded.
+- **A connection that lived and died inside one batch** (A, then B, then C in
+  one update). `observe` sees only C. B's entries are discarded, and B gets no
+  CONNECTED or DISCONNECTED event: no endpoint was ever bound to it.
+- **A free slot.** `connection_id[slot]` is 0 and no tag is 0, so every entry
+  for it is discarded.
+
+`observe` is O(slots that changed); `admit` is one u64 compare per entry. To
+keep the per-update sweep constant-shape, the accessor is read for every slot,
+one u64 load each. `RNSlots` checks that no message, ack or receipt of
+connection A is ever applied to connection B in the same slot, and that no
+entry is discarded from the connection it belongs to.
 
 ### 10.3 CONFIG: the one announcement
 
@@ -689,11 +715,17 @@ It owns:
 
 1. `rocketnet_server_transport_update( transport, time )`.
 2. The delivered, receipt and event lists of the previous update are reset.
-3. **Slots:** observe every slot's connection id, then apply RESET and DROP.
-4. **Acks:** for each `(client_index, packet_id)` in the transport's acked
-   batch, call `on_acked`.
-5. **Payloads:** for each `(client_index, payload)` in the transport's batch,
-   call `on_payload` into that client's share of the delivered list.
+3. **Slots:** observe every slot's connection id (P9a), then apply RESET and
+   DROP.
+4. **Acks:** for each `(client_index, connection_id, packet_id)` in the
+   transport's acked batch, ask `admit( client_index, connection_id )` (P9b);
+   on `APPLY`, call `on_acked`; on `DISCARD`, count it and go on.
+5. **Payloads:** for each `(client_index, connection_id, payload)` in the
+   transport's batch, ask `admit` the same way; on `APPLY`, call `on_payload`
+   into that client's share of the delivered list. The check is here, at apply
+   time, after step 3 has bound each slot to its current connection; it is
+   never made at receive time against a slot whose owner may still change
+   within the batch.
 6. **Ticks:** call `tick( time )` for each slot whose deadline has passed. The
    deadlines sit in a 4-ary min-heap keyed by slot, so this is O(due · log n).
 7. **Errors:** for each endpoint in error, call
@@ -1210,11 +1242,109 @@ code by hand before it is written down.
 | `RNScheduler` | priority levels, ready lists, channel FIFO, window stall | `FirstWriteInOrderPerChannel`, `UnreliableNotBlockedByWindow`, LIVE `NoStarvation` | per-message priority without channel FIFO: `FirstWriteInOrderPerChannel` fails |
 | `RNReceipts` | serials, ACKED and LOSS for 5, 6 and 7, eviction, block receipts | `ExactlyOneOutcomePerReceiptSerial`, `LossOnlyForUnreliableReceipt`, `BlockAckedOnlyWhenAllFragmentsAcked` | firing on the last-index fragment (RakNet): early ACKED |
 | `RNEndpoint` | two endpoints over Link, with transport ack semantics (acked ⇒ opened, burned ids, history overflow ⇒ silence), CONFIG, errors | end to end: reliable exactly-once, ordered in order, unreliable at-most-once, CONFIG mismatch ⇒ both sides error; LIVE no hang: with CONFIG lost on first send, both still verify | CONFIG sent once, unreliable: a lost first packet hangs verification |
-| `RNSlots` | slot reassign within one update, connection ids, reset | `NoCrossConnectionDelivery`, `NoCrossConnectionAck` | observing `is_client_connected` instead of connection id: a same-update churn leaks A's messages to B |
+| `RNSlots` | one slot under the transport's loop: connect, disconnect and reassign any number of times between object updates; payload and acked-id entries tagged with the connection they were received for; acked ids deferred across updates (P4); the object update as observe, then admit at apply time | `NoCrossConnectionApply` (no payload or ack of connection A is applied to B), `NoOwnEntryDropped` (admit never discards an entry from the connection it belongs to) | applying by slot after observing the slot's connection id (the old rule, which P9a alone gives): A sends, A disconnects, B claims the slot, all in one update; observe resets to B and A's payload is applied to B. By hand, the same trace also fails with `is_client_connected` or `client_id` in place of the connection id: neither changes, so there is not even a RESET |
 
 The instances are small: 2 to 3 channels, `W = 4`, `B = 64` (4 units), 3 to 4
 messages, and Link capacity 3. `RNEndpoint` is the largest, and it runs on a
 bench machine, never on the working machine.
+
+### 15.1 `RNSlots`, drafted and run
+
+`RNSlots` is the one module drafted ahead of its card, because the slot rule
+was found broken in review and its fix must be shown, not argued. Card C7
+moves it into `tla/` with its `RUNS.tsv` rows. `CheckAtApply = TRUE` is the
+rule of 10.2; `FALSE` is the old rule, applying by slot after `observe`.
+
+```tla
+---------------------------- MODULE RNSlots ----------------------------
+\* One server slot over the transport's update loop (CHANNELS.md 10.2, 11.1).
+\* The transport may release and reassign the slot many times between two
+\* object updates; every batch entry (payload or acked id) is tagged with the
+\* connection id it was received for. Acked ids may be deferred to a later
+\* update (P4). The object update observes the slot's id (RESET/DROP), then
+\* applies entries. CheckAtApply = FALSE is the old rule (apply by slot).
+EXTENDS Naturals, Sequences
+
+CONSTANTS MaxConn, MaxEntries, CheckAtApply
+
+VARIABLES owner, nextId, batch, deferred, bound, applied, dropped, made
+
+vars == << owner, nextId, batch, deferred, bound, applied, dropped, made >>
+
+Entry == [kind : {"payload", "ack"}, conn : 1..MaxConn]
+
+Init == /\ owner = 0 /\ nextId = 1
+        /\ batch = << >> /\ deferred = << >>
+        /\ bound = 0
+        /\ applied = {} /\ dropped = {} /\ made = 0
+
+\* ---- transport, inside one update ----
+Connect == /\ owner = 0 /\ nextId <= MaxConn
+           /\ owner' = nextId /\ nextId' = nextId + 1
+           /\ UNCHANGED << batch, deferred, bound, applied, dropped, made >>
+
+Disconnect == /\ owner # 0 /\ owner' = 0
+              /\ UNCHANGED << nextId, batch, deferred, bound, applied, dropped, made >>
+
+Receive(k) == /\ owner # 0 /\ made < MaxEntries
+              /\ batch' = Append(batch, [kind |-> k, conn |-> owner])
+              /\ made' = made + 1
+              /\ UNCHANGED << owner, nextId, deferred, bound, applied, dropped >>
+
+AckDeferred == /\ owner # 0 /\ made < MaxEntries
+               /\ deferred' = Append(deferred, [kind |-> "ack", conn |-> owner])
+               /\ made' = made + 1
+               /\ UNCHANGED << owner, nextId, batch, bound, applied, dropped >>
+
+\* ---- the object update: observe (RESET/DROP), then apply ----
+Entries(s) == { s[i] : i \in 1..Len(s) }
+
+Applies(e, now) == IF CheckAtApply THEN e.conn = now ELSE now # 0
+
+ObjectUpdate ==
+    LET now == owner
+        es  == Entries(batch) \cup Entries(deferred)
+    IN /\ bound' = now                                  \* RESET or DROP
+       /\ applied' = applied \cup { [from |-> e.conn, to |-> now] : e \in { x \in es : Applies(x, now) } }
+       /\ dropped' = dropped \cup { [from |-> e.conn, to |-> now] : e \in { x \in es : ~Applies(x, now) } }
+       /\ batch' = << >> /\ deferred' = << >>
+       /\ UNCHANGED << owner, nextId, made >>
+
+Next == Connect \/ Disconnect \/ Receive("payload") \/ Receive("ack")
+        \/ AckDeferred \/ ObjectUpdate
+
+Spec == Init /\ [][Next]_vars
+
+\* No payload or ack of connection A is ever applied to connection B.
+NoCrossConnectionApply == \A a \in applied : a.from = a.to
+\* The check never drops what belongs to the connection it is applied to.
+NoOwnEntryDropped == \A d \in dropped : d.from # d.to
+TypeOK == /\ owner \in 0..MaxConn /\ bound \in 0..MaxConn
+          /\ batch \in Seq(Entry) /\ deferred \in Seq(Entry)
+==========================================================================
+```
+
+```
+SPECIFICATION Spec
+CONSTANTS MaxConn = 3
+          MaxEntries = 3
+          CheckAtApply = TRUE
+INVARIANTS TypeOK NoCrossConnectionApply NoOwnEntryDropped
+```
+
+Run on the bench `vision`, TLC 2.19 (rev 5a47802), `-workers 2`, 2026-10-06:
+
+| Instance | Result |
+|---|---|
+| `CheckAtApply = TRUE` (10.2) | `Model checking completed. No error has been found.` 7427 states generated, 3762 distinct states found, 0 states left on queue. |
+| `CheckAtApply = FALSE` (old rule) | `Error: Invariant NoCrossConnectionApply is violated.` at depth 6: Connect (A = 1), Receive payload tagged 1, Disconnect, Connect (B = 2), ObjectUpdate, ending in `applied = {[from \|-> 1, to \|-> 2]}`. |
+
+The counterexample matches the code by hand: the payload entry is appended
+with only its slot index (`sdk/rocketnet_server_transport.cpp:1014`), the
+disconnect releases the slot in the same receive loop
+(`sdk/rocketnet_server_protocol.cpp:941`), and a later connection response in
+that loop can claim it, so after the transport's update the slot names B while
+A's payload is still in the batch.
 
 ## 16. Threads, transitions, purity
 
@@ -1264,7 +1394,7 @@ bench machine, never on the working machine.
 | channel | `rn_channel_*_t` arrays | send, record | deliver, hold, drop | none |
 | scheduler | inside `rn_endpoint_t` | enqueue, take | next item | none |
 | endpoint | `rn_endpoint_t` | send, payload, acked, tick | bytes into a frame, deliveries, receipts, error, deadline | `now` argument |
-| slots | `rn_slots_t` | observe(slot, id) | RESET, DROP | none |
+| slots | `rn_slots_t` | observe(slot, id), admit(slot, entry id) | RESET, DROP; APPLY or DISCARD | none |
 
 ## 17. For the reviewer: eight types reachable, two shipped
 
@@ -1343,8 +1473,11 @@ requires.
 
 - **C0.** Fix F1 (`memset` of the window). TLA module 1 (the inventory's
   replay module) shows the trace first.
-- **C0a.** Add `rocketnet_server_transport_client_connection_id` (P9), with a
-  test that releases and reassigns a slot inside one update.
+- **C0a.** Add `rocketnet_server_transport_client_connection_id` and the
+  per-entry connection ids of the payload and acked batches (P9a, P9b), with a
+  test that releases and reassigns a slot inside one update and checks that
+  the released connection's payloads and acked ids carry its id, not the new
+  one's.
 - **C0b.** Transport tests that pin P2 and P6: an acked unfragmented id means
   the payload was in exactly one batch; a reply is never seen in the update
   that elicited it. Both on every driver.
@@ -1392,7 +1525,8 @@ requires.
 
 ### 18.3 Not done by this card
 
-- No code, no TLA+ module and no test. The modules in section 15 are the plan.
+- No code and no test. No TLA+ module is committed: the modules in section 15
+  are the plan, and `RNSlots` exists only as the draft in 15.1, run on a bench.
 - The per-entry sizes in section 14 are working figures. Layer 1 pins them.
 - P2 and P6 are argued from the code. Their tests are card C0b.
 - The RTO behaviour when acks are paced only by keep-alives was reasoned, not
