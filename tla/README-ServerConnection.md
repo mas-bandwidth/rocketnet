@@ -215,7 +215,7 @@ run.
 | `W-once-altconn` | KindLoss "alternate", RepeatKeepAlive FALSE | Connects | 393619 | fail as expected (3) |
 | `W-nochallenge-altconn` | KindLoss "alternate", ResendChallenge FALSE | Connects | 60999 | fail as expected (3) |
 | `W-once-alternate` | KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate" | Connects | 70254 | fail; not a witness (8) |
-| `L-timeout` | NumAddrs 3, Timeout 2, HsDeadline 2, ClientTimeout 3, ClientDisconnects TRUE, ServerDisconnects TRUE, Vanishes TRUE, Moves TRUE, MaxNonces 3 | OneAdmissionPerToken, ReleaseRemovesMapping, SlotFreed, HalfBounded | 1063129 | stopped by hand at depth 45, no violation |
+| `L-timeout` | NumAddrs 3, Timeout 2, HsDeadline 2, ClientTimeout 3, ClientDisconnects TRUE, ServerDisconnects TRUE, Vanishes TRUE, Moves TRUE, MaxNonces 3 | OneAdmissionPerToken, ReleaseRemovesMapping, SlotFreed, HalfBounded | 1064645 | pass |
 | `W-attacker1` | NumClients 1, NumAddrs 1, Slots 1, MapCap 2, AdmCap 2, HistCap 8, Timeout 2, HsDeadline 2, ClientTimeout 3, Vanishes TRUE, Attacker TRUE, MaxNonces 6, KindLoss "none" | OneAdmissionPerToken, SlotFreed | 14306 | fail as expected (6, F7) |
 | `F9-evict` | KindLoss "none", SharedToken TRUE, HistCap 1, ClientDisconnects TRUE, MaxAttempts 2, MaxNonces 3 | OneAdmissionPerToken | 3222064 | fail as expected (4, F9) |
 | `F9-noevict` | KindLoss "none", SharedToken TRUE, HistCap 4, ClientDisconnects TRUE, MaxAttempts 2, MaxNonces 3 | OneAdmissionPerToken, ReleaseRemovesMapping | 6984515 | pass |
