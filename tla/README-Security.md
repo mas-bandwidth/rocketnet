@@ -89,9 +89,20 @@ response ladder: mapping, open, already connected (the last-received time refres
 F7), client id connected, no slots or set full (denied, mapping kept), admit. The
 session ladder for a client keep-alive: mapping, replay check, open, advance, not
 connected or accepted (last-received refreshed, slot confirmed). The establishing
-keep-alive is re-sent on the timer while the slot is unconfirmed
-(`rocketnet_server_protocol_write_keep_alive_if_due`); `RepeatKeepAlive = FALSE` is the
-witness that sends it once.
+keep-alive is re-sent on the timer while the slot is unconfirmed; `RepeatKeepAlive =
+FALSE` is the witness that sends it once. The code's rule is not the confirmed flag:
+`rocketnet_server_protocol_write_keep_alive_if_due`
+(`sdk/rocketnet_server_protocol.cpp:1239-1316`) re-sends on the keep-alive's own clock
+until the client acknowledges a keep-alive (`keep_alive_acked`, latched at
+`sdk/rocketnet_ack.cpp:385`), then goes on sending on `last_send_time`, when nothing
+else went out; its comment (`:1284-1294`) rejects the confirmed flag because any sealed
+packet sets it, a standalone ack from a client still in 3 included. The model has no
+acks, and its client sends a session packet only in 4, after opening a keep-alive, so
+the model's "confirmed" stands for `keep_alive_acked`. Two abstractions follow:
+confirmation is the client's session packet arriving rather than an ack block naming a
+keep-alive, and the model stops the keep-alive at confirmation where the code carries
+on with the idle keep-alive. Stopping only takes server sends away, so the liveness
+runs are no easier for it; the idle keep-alive itself is not modelled.
 
 **The attacker** (`Attacker = TRUE`): sees every packet handed to either link (the
 latest cookie per address, every sealed client packet without its source); may send a
@@ -214,16 +225,32 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`), from `tla/`:
 java -XX:+UseParallelGC -Xmx12g -cp /path/to/tla2tools.jar tlc2.TLC -workers 16 -config MCSecurity.cfg MCSecurity
 ```
 
-`MCSecurity.cfg` is the committed run: the attacker on, holding the honest client's
-captured token (`Tokens = {"th"}`), both links losing their first send
-(`Pattern = "first"`), no duplication or reordering, `MaxClock = 2`, `MaxSeq = 1`,
-`MaxNonces = 1`; `SafetyInvariants` and the four action properties. It is the largest
-attacker-on instance that finished inside the card's budget (7.9 million states,
-2.9 million distinct, seven minutes on 14 workers).
+`MCSecurity.cfg` is the committed run: the attacker on, holding all four tokens
+(`Tokens = {"th", "tx", "tf", "te"}`, `Signed = {"th", "tx", "te"}`,
+`ForThisServer = {"th", "tf", "te"}`: the honest client's captured token, a foreign
+one, a forged one and an expired one), both links losing their first send
+(`Pattern = "first"`), one packet in flight per link (`Capacity = 1`), no duplication
+or reordering, `MaxClock = 2`, `MaxSeq = 1`, `MaxNonces = 1`; `SafetyInvariants` and the
+four action properties. It finishes in under a minute on vision (1,233,227 states,
+499,144 distinct, 16 workers). `Capacity = 1` is what makes four tokens fit: the
+attacker's choice of source, token and cookie is made once per free place on the wire.
 
-The other runs in `RUNS.tsv` start from the **base instance**: the committed file with
-`Tokens = {"th", "tx", "tf", "te"}`, `Signed = {"th", "tx", "te"}`,
-`ForThisServer = {"th", "tf", "te"}`, `MaxClock = 4`, `MaxNonces = 2`, `MaxSeq = 3`,
+That the run presents every hostile token is itself checked. `MCSecurity.tla` defines
+six reversed witnesses, `WitnessForeign`, `WitnessForged`, `WitnessExpired` (the server
+is never about to read a request carrying `"tx"`, `"tf"`, `"te"`) and the same three
+`...PastGate` (nor one carrying a cookie the attacker saw, the request that reaches the
+expire, server-key and signature rungs). Each must fail; add one under `INVARIANTS`:
+
+```sh
+sed -e 's/^    SafetyInvariants$/    SafetyInvariants\n    WitnessForgedPastGate/' MCSecurity.cfg > /tmp/w.cfg
+java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -config /tmp/w.cfg MCSecurity
+```
+
+All six fail in a few hundred states, at an `InjectRequest`: the forged, foreign and
+expired tokens reach the server in the committed run, with and without a live cookie.
+
+The other runs in `RUNS.tsv` start from the **base instance**: the committed file (the same
+four tokens) with `Capacity = 2`, `MaxClock = 4`, `MaxNonces = 2`, `MaxSeq = 3`,
 both patterns `"arbitrary"`, `Duplication = TRUE`, `Reordering = TRUE`; each row says
 what it changed from there. `Attacker = FALSE` for every liveness run. For example, the
 F1 run from the base instance:
@@ -239,11 +266,14 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -config /tmp/f1.cfg MCSecuri
 
 Common to every run: `Addrs = {"H", "A"}`, `MaxClients = 1`, `MapCap = 2`,
 `HistoryCap = 2`, `AdmittedCap = 2`, `CookieLife = 2`, `Words = 2`, `WordBits = 2`
-(W = 4), `Capacity = 2`, `MaxDelay = 0`.
+(W = 4), `Capacity = 2` (the committed run alone uses 1), `MaxDelay = 0`.
 
 | Run | Changes to the base instance | Checks | Result |
 |---|---|---|---|
-| committed | `MCSecurity.cfg` as committed (above) | `SafetyInvariants`, the four action properties | passes |
+| committed | `MCSecurity.cfg` as committed (above): four tokens, `Capacity = 1` | `SafetyInvariants`, the four action properties | passes |
+| witnesses | committed, `+` one of the six `Witness...` invariants | the witness | **fails** each, as it must: every hostile token is presented |
+| committed-cap2 | committed with `Capacity = 2`, `MaxNonces = 2` | the same as committed | **not finished** (43 million states at 25 minutes); no violation in the states explored |
+| committed-one-token | committed with `Tokens`, `Signed`, `ForThisServer` all `{"th"}` and `Capacity = 2` (the previous committed run) | the same as committed | passes |
 | attacker-on, larger | the base as is; and with fewer tokens, `"first"` or `"alternate"` or `"firstkind"`, no reordering, `MaxClock 3`, `MaxSeq 2`; and `HonestExpire = 2` | the same | **not finished** in the budget (11 to 47 million states each); no violation in the states explored |
 | live-first / alternate / burst | `Attacker = FALSE`, the pattern on both links | `+ HonestConnects, ServerNotStranded` | passes |
 | live-firstkind | `Attacker = FALSE`, `KindLoss = "firstkind"`, patterns `"none"` | the same | passes |
@@ -268,8 +298,10 @@ the attacker, and the liveness run with duplication and reordering; `"alternate"
 and reordering; `"burst"` (sends 1 and 2 lost) likewise; `"arbitrary"` (any copy
 dropped at any time) for the F1 runs and the arbitrary liveness run; and
 `KindLoss = "firstkind"`, the first packet of every kind lost on both ends, with both
-patterns `"none"`. The attacker-on runs under `"arbitrary"`, `"alternate"` and
-`"firstkind"` with more than one token did not finish and are recorded as such.
+patterns `"none"`. With the attacker on and all four tokens, `"first"` finishes at
+`Capacity = 1`; the attacker-on runs under `"arbitrary"`, `"alternate"` and
+`"firstkind"` with more than one token at `Capacity = 2` did not finish and are recorded
+as such.
 
 ## What TLC found
 
@@ -317,7 +349,9 @@ behaviour of the design.
    `HonestConnects` and `ServerNotStranded` fail with a lasso of response, refresh,
    tick. hang-witness-alt is the same under `"alternate"`. With the code's behaviour
    (`RepeatKeepAlive = TRUE`: `rocketnet_server_protocol_write_keep_alive_if_due`
-   re-sends on its timer until a session packet confirms the slot) the same runs pass
+   re-sends on the keep-alive's own clock until the client acknowledges a keep-alive,
+   `keep_alive_acked`, `sdk/rocketnet_server_protocol.cpp:1239-1316`, which the model
+   stands in for with the confirmed slot; see "The server") the same runs pass
    (live-firstkind, live-alternate). The code already does what the request asks for
    this packet. The cookie, the challenge and the denied are not sent on a timer; they
    are re-provoked by the client's retransmitted request or response, which the client
@@ -387,12 +421,15 @@ behaviour of the design.
 
 ## What was not done
 
-- The attacker-on safety runs with more than one token did not finish inside the
-  card's budget: eight runs, 11 to 47 million states generated each, depth 14 to 19, no
-  violation in the states explored. The attacker's choice of source, token and cookie
-  at every step is what grows the graph. The committed run is the one-token instance
-  that finished; the attacker there still replays the honest request from either
-  address with any cookie it has seen, replays every sealed packet, and floods junk.
+- The attacker-on safety runs with more than one token at `Capacity = 2` did not
+  finish inside the budget: eight runs, 11 to 47 million states generated each, depth
+  14 to 19, no violation in the states explored. The four-token run at `Capacity = 1`
+  does finish and is the committed run, so every hostile token is checked against
+  `SafetyInvariants` there; what is not checked to completion is the attacker with
+  more than one packet of its own in flight per link, at larger clocks, or under the
+  `"arbitrary"`, `"alternate"` and `"firstkind"` patterns. The four tokens at `Capacity = 2` with
+  `MaxNonces = 2` was tried too and stopped at 25 minutes: 43 million states, 18 million
+  distinct, depth 20, the queue still at 3.7 million, no violation in the states explored.
   `RUNS.tsv` records every unfinished run with the states it reached.
 - The bounded-attacker liveness run (`AttackerSettles`) did not finish; finding 6
   describes the trace it would be looking for, replayed by hand and not yet printed by

@@ -545,8 +545,20 @@ ServerRecvKeepAlive == \E p \in CKeepAlive :
                 /\ UNCHANGED <<admits, lateAdmit, cookieProven, deniedPulse>>
     /\ UNCHANGED <<clientVars, clock>>
 
-\* rocketnet_server_protocol_write_keep_alive_if_due: re-sent on the timer
-\* until the slot is confirmed by a session packet from the client
+\* rocketnet_server_protocol_write_keep_alive_if_due
+\* (sdk/rocketnet_server_protocol.cpp:1239-1316): re-sent on its own timer
+\* until the client acknowledges a keep-alive (keep_alive_acked, latched at
+\* sdk/rocketnet_ack.cpp:385); after that the code keeps sending on
+\* last_send_time, when nothing else went out.  The code rejects the
+\* confirmed flag as the test (:1284-1294): any sealed packet sets it,
+\* including a standalone ack from a client still in 3.  The model has no
+\* acks, and its client sends a session packet only in 4, after it has
+\* opened a keep-alive, so here "confirmed" stands for keep_alive_acked.
+\* Two abstractions: confirmation is the session packet arriving, not an
+\* ack block naming a keep-alive; and the model stops at confirmation where
+\* the code goes on with the idle keep-alive.  Stopping only removes server
+\* sends, so the liveness runs are no easier for it; the idle keep-alive
+\* is outside this model.
 ServerKeepAlive == \E a \in Addrs :
     /\ sdue /\ RepeatKeepAlive
     /\ Est(a)
