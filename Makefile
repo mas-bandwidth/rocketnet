@@ -4,8 +4,8 @@ build:
 
 # driver selection is runtime now (#106): one build carries every driver its
 # platform has, and ROCKETNET_DRIVER (or the config's driver field) selects
-# at create -- the full suite against each rung is the matrix proving the
-# abstraction, e.g. ROCKETNET_DRIVER=portable ./bin/test
+# at create -- the functional suite against each rung is the matrix proving the
+# abstraction, e.g. ROCKETNET_DRIVER=portable ./bin/functional
 
 .PHONY: clean
 clean:

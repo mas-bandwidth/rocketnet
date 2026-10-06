@@ -178,14 +178,15 @@ jobs:
           cmake --build build --parallel
 
       # Driver selection is runtime now (#106), so one build serves the whole
-      # matrix. The default run walks the auto ladder: on this unprivileged
-      # runner the linux leg is the FALL made real -- xdp refused for missing
-      # privilege, gso granted -- so the full suite runs over the gso driver
-      # here (and over the darwin msgx pump on macOS); the in-suite pin tests
-      # (test_server_driver_pin_*) go red if a rung stops granting, so a
-      # silent fall cannot hollow this leg out. The second run pins the
-      # portable floor by env, proving the floor rung carries the suite too
-      # and exercising the env > struct precedence over every create.
+      # matrix. ./bin/test is the unit suite: no socket, no real driver, the
+      # state machines and the in-memory simulator, parallel, 60s warning,
+      # 120s kill. ./bin/functional is the driver matrix. On this unprivileged
+      # runner the linux functional leg is the FALL made real -- xdp refused
+      # for missing privilege, gso granted -- so the functional suite runs
+      # over the gso driver here (and over the darwin msgx pump on macOS);
+      # the pin tests (test_server_driver_pin_*) go red if a rung stops
+      # granting, so a silent fall cannot hollow this leg out. The second
+      # functional run pins the portable floor by env.
 
       - name: Sodium known answers
         if: contains(matrix.leg, 'b')
@@ -201,11 +202,11 @@ jobs:
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
-      - name: Run tests (auto ladder — the fall, on Linux)
+      - name: Run unit tests
         if: contains(matrix.leg, 'b')
         run: ./bin/test
 
-      - name: Run tests (portable rung pinned by env)
+      - name: Run unit tests with the driver pin preserved
         if: contains(matrix.leg, 'b')
         run: ROCKETNET_DRIVER=portable ./bin/test
 
@@ -213,13 +214,21 @@ jobs:
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_test_environment.py ./bin/test
 
-      - name: Run serialization surface (portable)
+      - name: Run functional suite (auto ladder — the fall, on Linux)
+        if: contains(matrix.leg, 'b')
+        timeout-minutes: 20
+        run: ./bin/functional
+
+      - name: Run functional suite (portable rung pinned by env)
+        if: contains(matrix.leg, 'b')
+        timeout-minutes: 20
+        run: ROCKETNET_DRIVER=portable ./bin/functional
+
+      - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
         env:
           ROCKETNET_DRIVER: portable
-        run: |
-          ./bin/test_serialize
-          ./bin/test_lifecycle
+        run: ./bin/test_lifecycle
 
       - name: Check production library boundary
         if: contains(matrix.leg, 'a')
@@ -229,10 +238,6 @@ jobs:
           else
             python3 tools/check_exports.py bin/librocketnet.so build/librocketnet.a
           fi
-
-      - name: Darwin msgx refusal, fallback and re-probe
-        if: runner.os == 'macOS' && (contains(matrix.leg, 'a'))
-        run: ./bin/test_msgx
 
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
@@ -257,12 +262,7 @@ jobs:
         if: contains(matrix.leg, 'a')
         run: |
           ./bin/test_driver
-          ./bin/test_transport_control
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
-
-      - name: Native XDP staging without kernel resources
-        if: runner.os == 'Linux' && (contains(matrix.leg, 'a'))
-        run: ./bin/test_xdp
 
       - name: XDP source archive excludes incremental build output
         if: contains(matrix.leg, 'a')
@@ -347,7 +347,7 @@ jobs:
   #              source, the serialization surface, memory plans
   #   (b)  ~35s  the library boundary (10s), install and relocate the SDK
   #              (12s), ambient config isolation (12s), the native driver
-  #              contract itself (test_driver and test_transport_control)
+  #              contract itself (test_driver; transport control is inside functional)
   #
   # `Native driver contract and external backend` was ONE step running three
   # commands. The two exes stay here as `Native driver contract`; the python
@@ -408,26 +408,26 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
-      - name: IOCP allocation, completion lifetime, concurrency and shutdown
+      - name: Run functional suite
         if: matrix.leg == 'a'
-        timeout-minutes: 5
-        run: ./bin/Release/test_iocp.exe
+        timeout-minutes: 20
+        shell: bash
+        run: ./bin/Release/functional.exe
 
-      - name: Full transport suite with IOCP selected
+      - name: Functional suite with IOCP selected
         if: matrix.leg == 'a'
-        timeout-minutes: 10
+        timeout-minutes: 20
+        shell: bash
         env:
           ROCKETNET_DRIVER: iocp
-        run: ./bin/Release/test.exe
+        run: ./bin/Release/functional.exe
 
-      - name: Run serialization surface (portable)
+      - name: Run lifecycle unit binary
         if: matrix.leg == 'a'
         shell: bash
         env:
           ROCKETNET_DRIVER: portable
-        run: |
-          ./bin/Release/test_serialize.exe
-          ./bin/Release/test_lifecycle.exe
+        run: ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
         if: matrix.leg == 'a'
@@ -451,8 +451,6 @@ jobs:
         if: matrix.leg == 'b'
         run: |
           ./bin/Release/test_driver.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./bin/Release/test_transport_control.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # asan + ubsan over the whole suite, per commit, exactly as serialize runs
@@ -494,18 +492,25 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Run tests (auto ladder)
+      - name: Run unit tests
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./bin/test
 
-      - name: Run tests (portable rung pinned by env)
+      - name: Run unit tests with the driver pin preserved
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
           ROCKETNET_DRIVER: portable
         run: ./bin/test
+
+      - name: Run functional suite under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        timeout-minutes: 30
+        run: ./bin/functional
 
       - name: Allocation lifecycle under sanitizers
         env:
@@ -515,8 +520,6 @@ jobs:
         run: |
           ./bin/test_lifecycle
           ./bin/test_driver
-          ./bin/test_transport_control
-          ./bin/test_xdp
           ./bin/test_sodium
 
       - name: Inactive XDP index negative control
@@ -939,17 +942,18 @@ jobs:
   # happen to lose, so a race becomes a red on a commit rather than a heisenbug
   # in a soak months later.
   #
-  # WHAT CARRIES THE THREADS, and what does not. bin/test on the auto ladder is
-  # the richest surface: on this linux runner the ladder falls to the gso rung
-  # (xdp refused for privilege, gso granted), so the server's GSO worker
-  # threads run, the client receive thread runs, frame_sync's timed wait runs,
-  # and the hammer tests drive the concurrent path on purpose. bin/soak adds
-  # the real-UDP loopback -- a client and a server transport, each with its
-  # receive thread and its socket, exchanging over the loopback -- bounded so
-  # the leg ends. soak_sim is DELIBERATELY NOT here: it drives the protocol
-  # layer in memory with no threads and no sockets, so under tsan it is a
-  # single-threaded program with no race surface at all, and a leg that cannot
-  # find the thing it names is decoration. The threaded soak is bin/soak.
+  # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
+  # and starts no driver. bin/functional is the surface that used to live in
+  # that run: on this linux runner the ladder falls to the gso rung (xdp
+  # refused for privilege, gso granted), so the server's GSO worker threads
+  # run, the client receive thread runs, and the hammer tests drive the
+  # concurrent path on purpose. bin/soak adds the real-UDP loopback -- a
+  # client and a server transport, each with its receive thread and its
+  # socket, exchanging over the loopback -- bounded so the leg ends.
+  # soak_sim is DELIBERATELY NOT here: it drives the protocol layer in memory
+  # with no threads and no sockets, so under tsan it is a single-threaded
+  # program with no race surface at all, and a leg that cannot find the thing
+  # it names is decoration. The threaded soak is bin/soak.
   #
   # A REAL FINDING STOPS THE WORLD. halt_on_error=1 ends the run on the first
   # race, and there is NO suppressions file -- a blanket suppression is how a
@@ -1000,17 +1004,24 @@ jobs:
 
       - name: Build the suite
         if: matrix.leg == 'threaded transport'
-        run: cmake --build build --target test --parallel
+        run: cmake --build build --target test functional --parallel
 
       - name: Build the soak and the lifecycle harness
         if: matrix.leg == 'loopback soak'
         run: cmake --build build --target soak test_lifecycle --parallel
 
-      - name: Run the suite under tsan (auto ladder — gso rung, receive thread, hammer tests)
+      - name: Run the unit suite under tsan
         if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: ./bin/test
+
+      - name: Run the functional suite under tsan
+        if: matrix.leg == 'threaded transport'
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        timeout-minutes: 30
+        run: ./bin/functional
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
         if: matrix.leg == 'loopback soak'
