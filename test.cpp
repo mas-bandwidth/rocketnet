@@ -45,5 +45,11 @@ static int rocketnet_unit_worker( const char * name )
 
 int main( int argc, char ** argv )
 {
-    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name, NULL, 0, NULL, 0, true );
+    // the message layer's cases (test_channels.cpp) run as a sibling
+    // process: they replace the process's allocation functions to prove
+    // the message layer allocates nothing after create
+    static const suite_exec execs[] = {
+        { "test_channels", "test_channels", true },
+    };
+    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name, execs, 1, NULL, 0, true );
 }

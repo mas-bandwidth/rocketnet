@@ -298,6 +298,16 @@ enum
     // size errors from off-path salt injection.
     ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
 
+    // The message layer's region (docs/CHANNELS.md section 4): a
+    // connection's arena is carved once and never grows, so exhaustion is
+    // a refusal, counted. SEND_STORE_FULL: the send store had no chunk of
+    // the class a message needs, or too few 1152-byte chunks for a whole
+    // block, and the send was refused whole. SEND_QUEUE_FULL: every send
+    // descriptor was in use. The client's CLIENT_ variants land with the
+    // client object, their first user. Appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL,
+    ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL,
+
     ROCKETNET_NUM_COUNTERS
 };
 

@@ -1091,6 +1091,103 @@ namespace rocketnet
 #endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
 
 // -----------------------------------------
+//                                messages
+// -----------------------------------------
+
+// The message layer above the transports (docs/CHANNELS.md). Layer 1 is
+// here: the configuration every connection's region is carved from, and
+// the sizing queries an application calls before it connects.
+
+#ifndef ROCKETNET_MAX_CHANNELS
+#define ROCKETNET_MAX_CHANNELS                                         32
+#endif // #ifndef ROCKETNET_MAX_CHANNELS
+
+#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
+#endif
+
+// reliability, per send -- RakNet's values and numbering (PacketPriority.h:46-85)
+
+#define ROCKETNET_UNRELIABLE                                            0
+#define ROCKETNET_UNRELIABLE_SEQUENCED                                  1
+#define ROCKETNET_RELIABLE                                              2
+#define ROCKETNET_RELIABLE_ORDERED                                      3
+#define ROCKETNET_RELIABLE_SEQUENCED                                    4
+#define ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT                           5
+#define ROCKETNET_RELIABLE_WITH_ACK_RECEIPT                             6
+#define ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT                     7
+
+#define ROCKETNET_PRIORITY_IMMEDIATE                                    0
+#define ROCKETNET_PRIORITY_HIGH                                         1
+#define ROCKETNET_PRIORITY_MEDIUM                                       2
+#define ROCKETNET_PRIORITY_LOW                                          3
+
+#define ROCKETNET_RECEIPT_ACKED                                         1
+#define ROCKETNET_RECEIPT_LOSS                                          2
+
+// the largest message start_message writes into a real wire frame, zero
+// copy: the payload capacity less the one form byte
+
+#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )
+
+// the block stride, a wire constant (docs/CHANNELS.md section 8)
+
+#define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
+
+// The message config table, one declaration deriving struct, defaults and
+// validation, as the transports' tables. Fields marked WIRE must be
+// identical on both ends; CONFIG verifies them (docs/CHANNELS.md 10.3).
+// Validation refuses and never clamps; beyond the ranges it refuses a
+// window that is not a power of two, a ring that is not a multiple of 16,
+// max_message_bytes above the ring or above the window in fragments, and a
+// send store whose 1152-byte class cannot hold one maximal block.
+
+#define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                                \
+    INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                                                         \
+    INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */                                           \
+    INT_FIELD( receive_ring_bytes,      65536,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */                                         \
+    INT_FIELD( max_message_bytes,       32768,   1191, 1 << 20,                0 )   /* WIRE, <= receive_ring_bytes */                                  \
+    INT_FIELD( send_buffer_bytes,      131072,  12288, 1 << 28,                0 )                                                                      \
+    INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                                                      \
+    INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                                                      \
+    INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                                                      \
+    INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */                                    \
+    INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                                                      \
+    INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                                                      \
+    INT_FIELD( rto_initial_ms,           1000,     10, 60000,                  0 )                                                                      \
+    INT_FIELD( rto_min_ms,                 50,      1, 60000,                  0 )                                                                      \
+    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                                                      \
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
+
+struct rocketnet_message_config_t
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
+
+// Allocation-free and safe before init: the exact bytes one connection's
+// region takes under this config (docs/CHANNELS.md section 14), the formula
+// plus each part's 64-byte alignment. A server allocates max_clients of
+// these in one block at create; a client one. NULL config means the
+// defaults. Zero means the config is refused, and the reason is logged.
+
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
+
+// Allocation-free and safe before init: writes the sizing formula, every
+// term at this config, the exact region bytes, and the total for
+// num_connections regions into buffer, always terminated. Returns the
+// length of the full text (snprintf's contract, so a short buffer is
+// detectable), or 0 when the config is refused. NULL config means the
+// defaults.
+
+ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_bytes );
+
+// The same text, logged at info level, one line per term.
+
+ROCKETNET_EXPORT_FUNC void rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
+
+// -----------------------------------------
 
 struct rocketnet_counters_t;
 

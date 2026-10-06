@@ -42,6 +42,13 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
 }
 
+void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
+{
+    rocketnet_assert( config );
+    memset( config, 0, sizeof(struct rocketnet_message_config_t) );
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+}
+
 // the field descriptors: the walkable form of each table, one entry per
 // declared field, offsets taken from the real structs
 
@@ -66,6 +73,14 @@ static const struct rocketnet_config_field_t rocketnet_server_config_fields[] =
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
+#define ROCKETNET_CONFIG_DESC_STRUCT struct rocketnet_message_config_t
+
+static const struct rocketnet_config_field_t rocketnet_message_config_fields_table[] =
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+};
+
+#undef ROCKETNET_CONFIG_DESC_STRUCT
 
 const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields( int * num_fields )
 {
@@ -79,6 +94,15 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
     rocketnet_assert( num_fields );
     *num_fields = (int) ( sizeof(rocketnet_server_config_fields) / sizeof(rocketnet_server_config_fields[0]) );
     return rocketnet_server_config_fields;
+}
+
+// declared in rocketnet_allocator.h, beside the region the table sizes
+
+const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields )
+{
+    rocketnet_assert( num_fields );
+    *num_fields = (int) ( sizeof(rocketnet_message_config_fields_table) / sizeof(rocketnet_message_config_fields_table[0]) );
+    return rocketnet_message_config_fields_table;
 }
 
 // ----------------------------------------------------------------
