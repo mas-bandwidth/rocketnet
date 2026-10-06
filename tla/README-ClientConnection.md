@@ -213,21 +213,41 @@ below changed; the TSV has one row per run.
 | `L-first` | KindLoss "none", C2SPattern "first", S2CPattern "first" | Spec | Connects, ServerNotStranded | 4057 | pass |
 | `L-alternate` | KindLoss "none", C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects, ServerNotStranded | 11237 | pass |
 | `L-burst` | KindLoss "none", C2SPattern "burst", S2CPattern "burst" | Spec | Connects, ServerNotStranded | 4055 | pass |
+| `L-arbitrary` | KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 23032 | not finished (stopped at the card's deadline) |
 | `W-once-firstkind` | RepeatKeepAlive FALSE | Spec | Connects | 1312 | fail as expected |
 | `W-once-alternate` | KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects | 7413 | fail as expected |
 | `W-anysend` | KeepAliveClock "anysend" | Spec | Connects | 9748 | fail as expected |
 | `L-silent` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | SilentServerTimesOut, AttemptResolves | 20 | pass |
 | `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | 772894 | pass |
+| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 28369060 | not finished (stopped at the card's deadline) |
+| `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 74297106 | pass |
+| `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | 18268052 | pass |
+| `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | 24756464 | pass |
+| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | 75959281 | not finished (stopped at the card's deadline) |
 | `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 7054770 | pass |
+| `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 5051198 | pass |
 | `F4-ephemeral` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | EphemeralErasedOutsideHandshake | 124 | fail as expected (F4) |
 | `F8-terminal` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | TerminalAbsorbing | 252 | fail as expected (F8) |
 | `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 17569 | fail as expected (observation) |
 
-The small instance: `SendInterval = 1`, `MaxNonces = 2`, `MaxIds = 2`, `MaxSlots = 1`,
-`DisconnectCopies = 2`, `Capacity = 2`, `Duplication = TRUE`, `Reordering = TRUE`,
-`BurstStart = 1`, `BurstLen = 2`; `MaxDelay = 0` for liveness runs and 1 for safety
-runs; `MaxAttempts = 1` for liveness runs and 2 for safety runs (a reconnect, so a late
-packet of an old attempt meets a new one).
+The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
+`DisconnectCopies = 2`, `Capacity = 2`, `BurstStart = 1`, `BurstLen = 2`. Liveness runs
+(`L-*`, `W-*`): a FIFO link, `MaxNonces = 1`, `MaxAttempts = 1`, every deadline off.
+Safety runs (`S-*`): duplication and reordering on, `MaxNonces = 2`, the application
+and the server may disconnect, other clients may take the slot, deadlines on where the
+pattern lets the handshake finish inside them and off where it does not
+(`"alternate"`, `"burst"`, `"firstkind"`); `S-firstkind` and `S-delay` add a tick of
+latency; `S-arbitrary` adds a second attempt (a reconnect, so a late packet of an old
+attempt meets a new one) and did not finish inside the card's deadline: 74.6 million
+distinct states with no violation when it was stopped, and TLC reports a violation the
+moment it finds one. `S-none` with latency and the full environment was stopped at 28
+million states for the same reason; `S-firstkind` (7 million, complete) is the
+latency-plus-full-environment run that finished. `L-arbitrary` under `SpecTyped` was
+stopped 42 minutes into its temporal check (69 thousand graph nodes): the per-type
+implications are what TLC's tableau is slow on. Under `Spec` the same instance fails
+with the type-targeted drop of "What TLC found" 9, which is the fairness being too
+weak, not the protocol; the arbitrary-loss liveness therefore stands on the hand
+replay of that lasso and on the four deterministic patterns, not on a completed run.
 
 ### Loss patterns explored
 
@@ -235,9 +255,10 @@ Each run names its patterns in the TSV. Across the runs TLC explored: nothing lo
 (`"none"`); the first send on each link lost (`"first"`); every other send lost
 (`"alternate"`: "the first packet dropped, the second through", forever); sends 1 and 2
 lost (`"burst"`); any copy dropped at any time (`"arbitrary"`); and the first packet of
-every kind lost (`KindLoss = "firstkind"`, applied before the link). In every run both
-links also duplicate, reorder, and, in the safety runs, delay by a tick, so an old
-packet arriving late and a replayed packet are in every run.
+every kind lost (`KindLoss = "firstkind"`, applied before the link). In every safety run
+both links also duplicate and reorder, and in `S-firstkind`, `S-delay` and the three
+findings runs delay by a tick, so an old packet arriving late and a replayed packet are
+in every safety run. The liveness runs use a FIFO link (the fairness section says why).
 
 ## What TLC found
 
