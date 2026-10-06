@@ -545,12 +545,15 @@ ServerRecvKeepAlive == \E p \in CKeepAlive :
                 /\ UNCHANGED <<admits, lateAdmit, cookieProven, deniedPulse>>
     /\ UNCHANGED <<clientVars, clock>>
 
-\* rocketnet_server_protocol_write_keep_alive_if_due: re-sent on the timer
-\* until the slot is confirmed by a session packet from the client
+\* rocketnet_server_protocol_write_keep_alive_if_due (1239-1316): send
+\* periodically for an established mapping, including after confirmation.
+\* Code selects last_keep_alive_send_time until keep_alive_acked, then
+\* last_send_time; neither latch nor confirmation stops sends. This model
+\* has no established server payload/ack traffic, so the clocks coincide
+\* at this abstraction. Ack-specific suppression is not verified here.
 ServerKeepAlive == \E a \in Addrs :
     /\ sdue /\ RepeatKeepAlive
     /\ Est(a)
-    /\ \E s \in slots : s.mapAddr = a /\ ~s.confirmed
     /\ sdue' = FALSE
     /\ ServerSendPkt([type |-> "keepalive", to |-> a, tok |-> map[a].tok, nonce |-> map[a].nonce])
     /\ UNCHANGED <<map, slots, others, history, admitted, insertOrder, nonceCtr, gen, hasPrev>>

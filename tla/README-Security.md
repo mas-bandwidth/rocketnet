@@ -89,9 +89,16 @@ response ladder: mapping, open, already connected (the last-received time refres
 F7), client id connected, no slots or set full (denied, mapping kept), admit. The
 session ladder for a client keep-alive: mapping, replay check, open, advance, not
 connected or accepted (last-received refreshed, slot confirmed). The establishing
-keep-alive is re-sent on the timer while the slot is unconfirmed
-(`rocketnet_server_protocol_write_keep_alive_if_due`); `RepeatKeepAlive = FALSE` is the
-witness that sends it once.
+keep-alive is re-sent on the timer while the mapping is established, including after
+slot confirmation. In `rocketnet_server_protocol_write_keep_alive_if_due`
+(`sdk/rocketnet_server_protocol.cpp:1239-1316`), `keep_alive_acked` selects the timer:
+`last_keep_alive_send_time` before acknowledgment, `last_send_time` after it.
+`sdk/rocketnet_ack.cpp:385` latches that signal only when an ack block names a sent
+keep-alive. Neither this signal nor slot confirmation stops keep-alives. This model
+omits server payloads and standalone acks, so only keep-alives advance those send
+clocks for an established mapping; `sdue` abstracts their common periodic send.
+It does not verify ack-specific suppression under competing traffic.
+`RepeatKeepAlive = FALSE` is a counterfactual witness that sends it once.
 
 **The attacker** (`Attacker = TRUE`): sees every packet handed to either link (the
 latest cookie per address, every sealed client packet without its source); may send a
@@ -174,6 +181,12 @@ restates it at the grain it needs:
 
 Safety never relies on any of these. Nothing is assumed of other clients.
 
+These restrictions do **not** establish the card's unrestricted fairness-alone
+liveness requirement. `PathSettles` requires all autonomous link activity eventually
+to stop, which is stronger than finite duplication of each individual packet.
+Per-kind `KindDelivery` is also not identical to per-value Link fairness. The checked
+liveness claims are limited to the specifications and configurations listed here.
+
 ### The clock
 
 `clock` saturates at `MaxClock`. Once it has, nothing expires any more, so a liveness
@@ -214,14 +227,25 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`), from `tla/`:
 java -XX:+UseParallelGC -Xmx12g -cp /path/to/tla2tools.jar tlc2.TLC -workers 16 -config MCSecurity.cfg MCSecurity
 ```
 
-`MCSecurity.cfg` is the committed run: the attacker on, holding the honest client's
-captured token (`Tokens = {"th"}`), both links losing their first send
-(`Pattern = "first"`), no duplication or reordering, `MaxClock = 2`, `MaxSeq = 1`,
-`MaxNonces = 1`; `SafetyInvariants` and the four action properties. It is the largest
-attacker-on instance that finished inside the card's budget (7.9 million states,
-2.9 million distinct, seven minutes on 14 workers).
+`MCSecurity.cfg` is the committed run: the attacker on, with all four tokens
+(`Tokens = {"th", "tx", "tf", "te"}`, `Signed = {"th", "tx", "te"}`,
+`ForThisServer = {"th", "tf", "te"}`), both links losing their first send
+(`Pattern = "first"`), `Capacity = 1`, no duplication or reordering, `MaxClock = 2`,
+`MaxSeq = 1`, `MaxNonces = 1`; `SafetyInvariants` and the four action properties.
+This explores forged, foreign and already-expired token requests as well as replay
+and junk flooding. Capacity 1 bounds the graph; it cannot exercise duplication or
+reordering, which are checked in separate capacity-2 runs below. `ExpiredNeverAdmits`
+is a separate negative check, not part of `SafetyInvariants`: a token that expires
+between request and response can still admit (finding 7).
 
-The other runs in `RUNS.tsv` start from the **base instance**: the committed file with
+### Historical attempt-1 runs
+
+The following table and original trace lengths describe snapshot
+`9b731111b8bc185f71e020acc95131636fb102a5`, whose keep-alive abstraction stopped on
+slot confirmation. They are retained as historical evidence, not fresh verification
+of the corrected model. The fresh snapshot and results are listed separately below.
+
+The historical runs in `RUNS.tsv` start from the **base instance**: the attempt-1 configuration with
 `Tokens = {"th", "tx", "tf", "te"}`, `Signed = {"th", "tx", "te"}`,
 `ForThisServer = {"th", "tf", "te"}`, `MaxClock = 4`, `MaxNonces = 2`, `MaxSeq = 3`,
 both patterns `"arbitrary"`, `Duplication = TRUE`, `Reordering = TRUE`; each row says
@@ -237,13 +261,13 @@ sed -e 's/ClearWords    = 2/ClearWords    = 1/' -e 's/MaxSeq        = 3/MaxSeq  
 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -config /tmp/f1.cfg MCSecurity
 ```
 
-Common to every run: `Addrs = {"H", "A"}`, `MaxClients = 1`, `MapCap = 2`,
+Common to every historical run: `Addrs = {"H", "A"}`, `MaxClients = 1`, `MapCap = 2`,
 `HistoryCap = 2`, `AdmittedCap = 2`, `CookieLife = 2`, `Words = 2`, `WordBits = 2`
 (W = 4), `Capacity = 2`, `MaxDelay = 0`.
 
 | Run | Changes to the base instance | Checks | Result |
 |---|---|---|---|
-| committed | `MCSecurity.cfg` as committed (above) | `SafetyInvariants`, the four action properties | passes |
+| attempt-1 committed | one-token configuration at the historical snapshot, Capacity 2 | `SafetyInvariants`, the four action properties | passes |
 | attacker-on, larger | the base as is; and with fewer tokens, `"first"` or `"alternate"` or `"firstkind"`, no reordering, `MaxClock 3`, `MaxSeq 2`; and `HonestExpire = 2` | the same | **not finished** in the budget (11 to 47 million states each); no violation in the states explored |
 | live-first / alternate / burst | `Attacker = FALSE`, the pattern on both links | `+ HonestConnects, ServerNotStranded` | passes |
 | live-firstkind | `Attacker = FALSE`, `KindLoss = "firstkind"`, patterns `"none"` | the same | passes |
@@ -262,7 +286,7 @@ Common to every run: `Addrs = {"H", "A"}`, `MaxClients = 1`, `MapCap = 2`,
 
 ## Loss patterns TLC explored
 
-Both links under `"first"` (the first send on each link lost): the committed run with
+In the historical snapshot, both links under `"first"` (the first send on each link lost): the then-committed run with
 the attacker, and the liveness run with duplication and reordering; `"alternate"` (the
 1st, 3rd, 5th send lost: "first packet dropped, second comes through") with duplication
 and reordering; `"burst"` (sends 1 and 2 lost) likewise; `"arbitrary"` (any copy
@@ -273,7 +297,7 @@ patterns `"none"`. The attacker-on runs under `"arbitrary"`, `"alternate"` and
 
 ## What TLC found
 
-Every counterexample below was replayed by hand through the functions it names. Two
+The attempt-1 counterexamples below were replayed by hand through the functions they name. Two
 are defects already in the inventory, reproduced as the inventory asked; one is the
 inventory's question F5; the rest are model errors fixed, witnesses, or expected
 behaviour of the design.
@@ -317,8 +341,9 @@ behaviour of the design.
    `HonestConnects` and `ServerNotStranded` fail with a lasso of response, refresh,
    tick. hang-witness-alt is the same under `"alternate"`. With the code's behaviour
    (`RepeatKeepAlive = TRUE`: `rocketnet_server_protocol_write_keep_alive_if_due`
-   re-sends on its timer until a session packet confirms the slot) the same runs pass
-   (live-firstkind, live-alternate). The code already does what the request asks for
+   re-sends while established, selecting its timer using `keep_alive_acked`, not
+   `confirmed`) the repaired abstraction is checked in the fresh runs below.
+   Historical live-firstkind and live-alternate also passed their narrower abstraction. The code already does what the request asks for
    this packet. The cookie, the challenge and the denied are not sent on a timer; they
    are re-provoked by the client's retransmitted request or response, which the client
    sends on its timer, and the four liveness runs show that suffices.
@@ -387,13 +412,15 @@ behaviour of the design.
 
 ## What was not done
 
-- The attacker-on safety runs with more than one token did not finish inside the
-  card's budget: eight runs, 11 to 47 million states generated each, depth 14 to 19, no
-  violation in the states explored. The attacker's choice of source, token and cookie
-  at every step is what grows the graph. The committed run is the one-token instance
-  that finished; the attacker there still replays the honest request from either
-  address with any cookie it has seen, replays every sealed packet, and floods junk.
-  `RUNS.tsv` records every unfinished run with the states it reached.
+- Attempt 1's larger attacker-on safety runs did not finish within its budget:
+  their unfinished state counts remain in `RUNS.tsv`, prefixed with their historical
+  snapshot. The corrected four-token committed configuration uses Capacity 1 and
+  completes; it replaces the former one-token TEST configuration. Larger capacities,
+  ongoing arbitrary path activity and attacker-on liveness are not established by
+  this small safety run.
+- Ack blocks and competing established server traffic are omitted. Continuing
+  keep-alives after slot confirmation fixes this model's incorrect stopping rule;
+  it does not verify the real dual-clock suppression behavior or malicious ack claims.
 - The bounded-attacker liveness run (`AttackerSettles`) did not finish; finding 6
   describes the trace it would be looking for, replayed by hand and not yet printed by
   TLC.
@@ -409,3 +436,108 @@ behaviour of the design.
   need a client that leaves.
 - The server's S2C replay window and the keyed prefilter (not implemented by 1.0) are
   not modelled.
+
+
+## Fresh corrected-model verification (2026-10-06)
+
+Source base: `c4f9a8c16a4b9f147a1536a2af4139d8c3b1eb29`; prior work carried from
+`9b731111b8bc185f71e020acc95131636fb102a5`. The corrected model continues sending
+keep-alives after slot confirmation. All fresh runs use TLC 2.19 (08 August 2024,
+revision `5a47802`), Java 21.0.12.1, Linux amd64 on `space`, serialized with eight
+workers. The source snapshot is identified by these SHA-256 values (documentation
+and RUNS.tsv are result records, not TLC inputs):
+
+| Input | SHA-256 |
+|---|---|
+| Security.tla | `b5736d13541f7dc5f0f7196bcd2b04f33ef30876097ed6b21525e94299ee4f5a` |
+| MCSecurity.tla | `1db96ad5036b9aad03c33091a370c48b1612ac9ce74dbea583a4fb0c618a4bb9` |
+| MCSecurity.cfg | `c90afae6d7ba95458d8dcb1459a5dadc47b318944273cd61c98719f0caa9f431` |
+| Link.tla (unchanged) | `8371800d24fba8f7bbd63e3bfdea322a27ab3cc6f742cfa9d1be3c2b9dd1f669` |
+
+Command, from `tla/`, using a separate state directory for each run:
+
+```sh
+java -XX:+UseParallelGC -Xmx8g -cp /path/to/tla2tools.jar tlc2.TLC \
+  -workers 8 -metadir /path/to/run-states -config /path/to/run.cfg MCSecurity
+```
+
+The `committed` run uses MCSecurity.cfg unchanged. Every other **fresh** run starts
+from that same committed file and applies the following common changes:
+`Attacker = FALSE`, `Capacity = 2`, `MaxClock = 4`, `MaxSeq = 3`, `MaxNonces = 2`,
+`Duplication = TRUE`, `Reordering = TRUE`. Keep all its original invariant and action
+property checks; apply each row's additional changes and checks. In this section
+“patterns” always means both C2SPattern and S2CPattern.
+
+| Fresh run | Further changes | Additional checks |
+|---|---|---|
+| live-firstkind | KindLoss "firstkind", patterns "none" | HonestConnects, ServerNotStranded |
+| live-first | patterns "first" | HonestConnects, ServerNotStranded |
+| live-alternate | patterns "alternate" | HonestConnects, ServerNotStranded |
+| live-burst | patterns "burst" | HonestConnects, ServerNotStranded |
+| hang-firstkind | live-firstkind with RepeatKeepAlive FALSE | HonestConnects, ServerNotStranded |
+| hang-alternate | live-alternate with RepeatKeepAlive FALSE | HonestConnects, ServerNotStranded |
+| live-arbitrary | SPECIFICATION SpecArbitrary, patterns "arbitrary", Duplication FALSE, Reordering FALSE | HonestConnects |
+| expiry | HonestExpire 2, patterns "none", Reordering FALSE, MaxClock 3, MaxSeq 2 | ExpiredNeverAdmits |
+| denied | OthersMayJoin TRUE, OthersMayLeave TRUE, patterns "none" | DeniedMeansNoSlot |
+| replay-code | ClearWords 1, MaxSeq 8, MaxClock 10, C2SPattern "arbitrary", S2CPattern "none" | InWindowExact |
+| replay-fullclear | replay-code with ClearWords 2 | InWindowExact |
+
+### Fresh trace replay against the current C++
+
+- **hang-firstkind:** 29 states, lasso back to state 24. Admission sends the first
+  keep-alive, lost by the kind-loss pattern; the client remains at 3 while its
+  responses refresh the established mapping. **hang-alternate:** 34 states, lasso
+  back to state 25, with the establishing keep-alive lost at its odd send position.
+  In both, the response refresh matches server_protocol.cpp:778-783 and the connected
+  early return at :491-496. The absent retry is deliberately injected by
+  RepeatKeepAlive FALSE; actual :1239-1316 supplies the retry. These are counterfactual
+  witnesses, not current-code hangs. The corresponding TRUE configurations pass.
+- **expiry:** 12 states. At state 8 the request passes at clock 1, at state 10 the
+  clock reaches token expiry 2, and state 12 admits. The response function at
+  server_protocol.cpp:478-576 never checks token expiry; token_tables.cpp:269-290
+  inserts the expired timestamp when a free entry exists. The token then reads as
+  absent to later lookups. This confirms finding 7's observation, not a claimed
+  violation of the standard's response ladder.
+- **denied:** 17 states. Another client takes the slot at state 10; the response is
+  duplicated at state 13; its first copy receives a denied at state 14; the client
+  reaches -1 at state 15; the other client leaves at state 16; the remaining response
+  admits at state 17. server_protocol.cpp:514-544 leaves the mapping after a denied;
+  :546-576 later assigns the freed slot, while client_protocol.cpp:612-614 already
+  moved the client to denied. This is the existing F5 resource-retention question.
+- **replay-code:** 34 states. Sequences 1 and 2 open (states 16 and 19); 3 through 6
+  are lost; 7 opens at state 34. Now `hi = 7`, `opened = {1, 2, 7}` and
+  `win = (0 :> {} @@ 1 :> {0, 1})`. Sequence 6 is inside the window but its bit,
+  inherited from sequence 2, says received. Replaying replay.cpp:54-60 shows exactly
+  the defect: a jump of at least W clears only the first four of the real 64 words.
+  The reduced model clears one of two words. replay.cpp:27-39 then trusts the stale
+  in-window bit. This reproduces F1; no C++ was changed.
+
+Fresh counts and outcomes follow. Error-state counts depend on worker scheduling;
+the recorded trace and full configuration identify the checked behavior.
+
+| Run | States generated | Distinct | Outcome |
+|---|---:|---:|---|
+| committed | 1291095 | 516800 | pass |
+| live-firstkind | 17644 | 8331 | pass |
+| hang-firstkind | 6188 | 3403 | expected counterfactual hang |
+| live-first | 17016 | 7491 | pass |
+| live-alternate | 5623 | 2717 | pass |
+| hang-alternate | 2311 | 1245 | expected counterfactual hang |
+| live-burst | 11130 | 4890 | pass |
+| live-arbitrary | 25530 | 12008 | pass |
+| expiry | 278 | 211 | expected violation: ExpiredNeverAdmits (response expiry observation) |
+| denied | 4384 | 2195 | expected violation: DeniedMeansNoSlot (F5 question) |
+| replay-code | 720295 | 278978 | expected violation: InWindowExact (F1 defect) |
+| replay-fullclear | 6473605 | 2225188 | pass |
+
+The committed gate printed:
+
+```text
+Model checking completed. No error has been found.
+1291095 states generated, 516800 distinct states found, 0 states left on queue.
+Finished in 16s at (2026-10-06 19:18:55)
+```
+
+No new C++ defect is claimed by the keep-alive correction. The new safety TEST covers
+all four tokens, but does not erase the separately observed response-expiry behavior,
+the single-key-holder limitation, or the liveness fairness restrictions above.
