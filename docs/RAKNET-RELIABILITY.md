@@ -64,8 +64,7 @@ The sender remembers, per datagram, which reliable message numbers it carried
 
 `NUMBER_OF_RELIABILITIES` is 8 (`PP.h:84`). Two more names are commented out
 and never took a value: `UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT` (`PP.h:71`) and
-`RELIABLE_SEQUENCED_WITH_ACK_RECEIPT` (`PP.h:81`), with the reason at `PP.h:70,
-80`: a sequenced message can be discarded by the receiver, so an ack does not
+`RELIABLE_SEQUENCED_WITH_ACK_RECEIPT` (`PP.h:81`), with the reason at `PP.h:70, 80`: a sequenced message can be discarded by the receiver, so an ack does not
 mean it was processed. The longer reason, with the bug it caused, is in a
 comment at `RL.cpp:2047-2053`.
 
@@ -140,17 +139,13 @@ that system's `MTUSize` (`RakPeer.h:679`) and `lastReliableSend`
 algorithm that couples ordered and sequenced on one channel is written out as a
 comment at `RL.h:423-439` and matches the code:
 
-- **Sender, ordered send** (`RL.cpp:1651-1657`): `orderingIndex =
-  orderedWriteIndex[ch]++`, and `sequencedWriteIndex[ch] = 0`.
-- **Sender, sequenced send** (`RL.cpp:1625-1636`): `orderingIndex =
-  orderedWriteIndex[ch]` (not incremented), `sequencingIndex =
-  sequencedWriteIndex[ch]++`.
+- **Sender, ordered send** (`RL.cpp:1651-1657`): `orderingIndex = orderedWriteIndex[ch]++`, and `sequencedWriteIndex[ch] = 0`.
+- **Sender, sequenced send** (`RL.cpp:1625-1636`): `orderingIndex = orderedWriteIndex[ch]` (not incremented), `sequencingIndex = sequencedWriteIndex[ch]++`.
 - **Receiver** keeps `orderedReadIndex[ch]`, the next ordered index expected,
   and `highestSequencedReadIndex[ch]`, the sequenced watermark for the current
   ordered index. On delivering an ordered message: `orderedReadIndex++` and
   `highestSequencedReadIndex = 0` (`RL.cpp:1372-1373`). On delivering a
-  sequenced message at the current ordered index directly: `highestSequencedReadIndex =
-  sequencingIndex + 1` (`RL.cpp:1317`). On releasing a sequenced message from
+  sequenced message at the current ordered index directly: `highestSequencedReadIndex = sequencingIndex + 1` (`RL.cpp:1317`). On releasing a sequenced message from
   the channel heap: `highestSequencedReadIndex = sequencingIndex`, without the
   `+ 1` (`RL.cpp:1421`), so a duplicate of that exact message arriving next is
   not "older" and is delivered again; section 11 item 18. On releasing an
@@ -263,8 +258,7 @@ UNRELIABLE_SEQUENCED"; the code writes 3, 6, 13 and 10 whole bytes.
 
 ### 5.1 RakPeer: the user thread
 
-`RakPeerInterface::Send` (`RPI.h:198`) takes `data, length, priority,
-reliability, char orderingChannel, AddressOrGUID, broadcast, forceReceiptNumber`
+`RakPeerInterface::Send` (`RPI.h:198`) takes `data, length, priority, reliability, char orderingChannel, AddressOrGUID, broadcast, forceReceiptNumber`
 and returns a `uint32_t` receipt. In `RP.cpp:1308-1352`:
 
 1. Bad input returns 0 (`RP.cpp:1317-1324`).
@@ -329,8 +323,7 @@ is in the resend buffer (`RP.cpp:5857-5869`).
    priority weight (`RL.cpp:1676`).
 
 **The message number is not assigned here.** `messageNumberAssigned` stays
-false until the message is actually placed in a datagram (`RL.cpp:1675,
-2060`). The reason is at `IP.h:83-85` and `RL.cpp:1024-1027`: assigning at
+false until the message is actually placed in a datagram (`RL.cpp:1675, 2060`). The reason is at `IP.h:83-85` and `RL.cpp:1024-1027`: assigning at
 `Send` time and then sending higher-priority messages first created huge gaps
 in the receiver's hole queue.
 
@@ -371,8 +364,7 @@ HIGH is about 5:1, not 2:1.
 3. **Dead connection**: if anything is in the resend buffer and no datagram of
    any kind has arrived for `timeoutTime` (`RL.cpp:1799-1808`, `AckTimeout` at
    `RL.cpp:3428-3433`), `deadConnection` is set and `Update` returns. RakPeer
-   then drops the system (`RP.cpp:5874`). The `timeLastDatagramArrived -
-   curTime > 10000` term at `RL.cpp:3432` guards a clock race, per its comment.
+   then drops the system (`RP.cpp:5874`). The `timeLastDatagramArrived - curTime > 10000` term at `RL.cpp:3432` guards a clock race, per its comment.
 4. **Acks** go out when the congestion controller says so (`RL.cpp:1810-1813`,
    section 7.2). **NAKs** go out every update that has any
    (`RL.cpp:1815-1825`).
@@ -402,8 +394,7 @@ HIGH is about 5:1, not 2:1.
        the slot is empty, `RL.cpp:2075-2079`), append to the resend list
        adding its bytes to `unacknowledgedBytes`, and increment the number
        (`RL.cpp:2060-2090`);
-     - `UNRELIABLE_WITH_ACK_RECEIPT`: record `{datagram number it will get,
-       serial, RTO deadline}` in `unreliableWithAckReceiptHistory`
+     - `UNRELIABLE_WITH_ACK_RECEIPT`: record `{datagram number it will get, serial, RTO deadline}` in `unreliableWithAckReceiptHistory`
        (`RL.cpp:2092-2099`);
      - push it into the datagram (`RL.cpp:2109`), `timesSent++`.
      `ResendBufferOverflow` is "the next message number's slot is still
@@ -457,8 +448,7 @@ with `min > max` or `max == 0xFFFFFF` rejects the whole datagram
 1. any `unreliableWithAckReceiptHistory` entry with that datagram number yields
    `ID_SND_RECEIPT_ACKED` and is removed (`RL.cpp:750-770`);
 2. the datagram's message-number list is fetched from `datagramHistory`
-   (`RL.cpp:772`); if present, the controller gets `OnAck` with `ping = now -
-   timeSent` (`RL.cpp:779-784`), each message number goes through
+   (`RL.cpp:772`); if present, the controller gets `OnAck` with `ping = now - timeSent` (`RL.cpp:779-784`), each message number goes through
    `RemovePacketFromResendListAndDeleteOlderReliableSequenced`
    (`RL.cpp:786-793`), and the history entry is cleared (`RL.cpp:795`).
 
@@ -511,15 +501,13 @@ left alone.
        `highestSequencedReadIndex`, which is then set to `sequencingIndex + 1`
        (`RL.cpp:1290-1320`; the `+ 1` was a 2012 fix for duplicates,
        `RL.cpp:1315-1316`), else dropped (`RL.cpp:1321-1341`). An ordered
-       message is delivered, `orderedReadIndex++`, `highestSequencedReadIndex
-       = 0`, and the channel's heap is drained while its head's
+       message is delivered, `orderedReadIndex++`, `highestSequencedReadIndex = 0`, and the channel's heap is drained while its head's
        `orderingIndex == orderedReadIndex` (`RL.cpp:1343-1427`): a popped
        ordered message does `orderedReadIndex++`, a popped sequenced one sets
        `highestSequencedReadIndex = sequencingIndex` (no `+ 1`,
        `RL.cpp:1415-1422`).
      - newer `orderingIndex` (`RL.cpp:1429-1463`): buffered in the channel heap
-       with weight `(orderingIndex - heapIndexOffset) * 1 048 576 +
-       sequencingIndex`, or `+ 1 048 575` for ordered, so that for one ordering
+       with weight `(orderingIndex - heapIndexOffset) * 1 048 576 + sequencingIndex`, or `+ 1 048 575` for ordered, so that for one ordering
        index every sequenced message pops before the ordered one, in sequence
        order (`RL.cpp:1439-1446`). `heapIndexOffset` is captured when the heap
        is empty (`RL.cpp:1436-1437`).
@@ -546,8 +534,7 @@ range `uint8 minEqualsMax`, `uint24 min`, and `uint24 max` only when they
 differ. Ranges are merged on insert (`DS_RangeList.h:159-218`). The writer
 stops at the bit budget it is given and, with `clearSerialized`, removes what
 it wrote (`DS_RangeList.h:76, 102-110`), so `SendACKs` loops until the list is
-empty, one datagram per pass (`RL.cpp:3616-3656`). The reader rejects `max <
-min` (`DS_RangeList.h:134-135`).
+empty, one datagram per pass (`RL.cpp:3616-3656`). The reader rejects `max < min` (`DS_RangeList.h:134-135`).
 
 ### 7.2 When acks go out
 
@@ -598,8 +585,7 @@ carry the right serial (`RL.cpp:1599`).
 
 ### 8.1 Split
 
-`SplitPacket` (`RL.cpp:2928-3033`): `splitPacketCount = ceil(bytes /
-maximumSendBlockBytes)` with the block being `(MTU - 28 - 9) - 23`
+`SplitPacket` (`RL.cpp:2928-3033`): `splitPacketCount = ceil(bytes / maximumSendBlockBytes)` with the block being `(MTU - 28 - 9) - 23`
 (`RL.cpp:2939-2942`). One `InternalPacket` per fragment is taken from the pool
 and the original's header copied into it (`RL.cpp:2957-2968`). Every fragment
 points into the original data block through one ref-counted record
@@ -616,8 +602,7 @@ the wire.
 
 ### 8.2 Reassemble
 
-`InsertIntoSplitPacketList` (`RL.cpp:3038-3177`, `PREALLOCATE_LARGE_MESSAGES
-== 0` branch): find or create the `SplitPacketChannel` for `splitPacketId`
+`InsertIntoSplitPacketList` (`RL.cpp:3038-3177`, `PREALLOCATE_LARGE_MESSAGES == 0` branch): find or create the `SplitPacketChannel` for `splitPacketId`
 (`RL.cpp:3043-3061`), preallocate its list to `splitPacketCount`, **append**
 the fragment (`RL.cpp:3141`, `DS_List.h:294-330`), record `lastUpdateTime`,
 remember the index-0 fragment as `firstPacket`, and every
@@ -683,8 +668,7 @@ Three things to carry forward from this:
   If the sender was not continuously sending, nothing else happens
   (`CC.cpp:226-227`). A new "period" starts when the acked number passes
   `nextCongestionControlBlock`, resetting the per-period flags
-  (`CC.cpp:229-237`). In slow start `cwnd += MTU`, capped at `ssThresh +
-  MTU^2/cwnd` when it crosses `ssThresh` (`CC.cpp:239-248`); in avoidance
+  (`CC.cpp:229-237`). In slow start `cwnd += MTU`, capped at `ssThresh + MTU^2/cwnd` when it crosses `ssThresh` (`CC.cpp:239-248`); in avoidance
   `cwnd += MTU^2/cwnd` once per period (`CC.cpp:249-255`).
 - **OnResend** (`CC.cpp:163-184`): if continuously sending, not already backed
   off this period, and `cwnd > 2 * MTU`: `ssThresh = cwnd / 2` (at least MTU),
@@ -694,25 +678,21 @@ Three things to carry forward from this:
   (continuously sending and not yet backed off this period, `CC.cpp:191`),
   `ssThresh = cwnd / 2`; `cwnd` is not changed and the period is not marked
   backed off.
-- **Bandwidth** (`CC.cpp:66-86`): new data may send `cwnd -
-  unacknowledgedBytes` bytes, resends may send `unacknowledgedBytes`.
+- **Bandwidth** (`CC.cpp:66-86`): new data may send `cwnd - unacknowledgedBytes` bytes, resends may send `unacknowledgedBytes`.
   `unacknowledgedBytes` counts reliable message bytes in the resend list
   (`RL.cpp:3585, 3573`), not datagram bytes; unreliable traffic is never
   charged, so **unreliable sends are never throttled by the window**, only by
   the optional bits-per-second cap (`RL.cpp:1995`).
-- **RTO** (`CC.cpp:288-314`): 2 s while RTT is unknown; else `2 * RTT + 4 *
-  deviation + 30 ms`, capped at 2 s. The per-message `timesSent` parameter is
+- **RTO** (`CC.cpp:288-314`): 2 s while RTT is unknown; else `2 * RTT + 4 * deviation + 30 ms`, capped at 2 s. The per-message `timesSent` parameter is
   ignored (`CC.cpp:290`), so there is no exponential back-off.
 - **Datagram numbers** (`CC.cpp:103-113`) and the expected-next check
   (`CC.cpp:128-161`) live here.
 - No-ops: `Update`, `OnSendBytes`, `OnGotPacketPair`, `OnDuplicateAck`,
-  `OnSendNACK`; `OnSendAckGetBAndAS` always says no (`CC.cpp:60-64, 115-126,
-  258-286`). Packet pairs are disabled (`RL.cpp:407-408`, `RL.cpp:3495-3504`).
+  `OnSendNACK`; `OnSendAckGetBAndAS` always says no (`CC.cpp:60-64, 115-126, 258-286`). Packet pairs are disabled (`RL.cpp:407-408`, `RL.cpp:3495-3504`).
 
 **Code vs comment.** `CC.h:151-154` says `RTO = (RTT + 4 * RTTVar) + SYN`,
 "If we have been continuously sending for the last RTO, and no ACK or NAK at
-all, SND *= 2", and "Minimum value is 100 milliseconds"; the code is `2 * RTT +
-4 * dev + 30 ms`, no doubling, and the minimum is commented out
+all, SND *= 2", and "Minimum value is 100 milliseconds"; the code is `2 * RTT + 4 * dev + 30 ms`, no doubling, and the minimum is commented out
 (`CC.cpp:294, 298, 306-313`). `CC.h:109` says every 15th and 16th packet is
 a pair; pairs are off. `CC.h:176, 184` return 0 for the window limit and
 bytes-per-second limit.
@@ -927,8 +907,7 @@ sequenced types inherit neither RakNet's duplicate nor its stale watermark
 after a heap-released ordered message.
 
 **I6. The reorder buffer is keyed by (ordering index, sequencing index), not
-by ordering index alone.** RakNet's heap weight is `ordering_gap * 2^20 +
-sequencing`, with ordered messages at the top of their epoch
+by ordering index alone.** RakNet's heap weight is `ordering_gap * 2^20 + sequencing`, with ordered messages at the top of their epoch
 (`RL.cpp:1439-1446`), and the drain releases sequenced messages of the next
 epoch before its ordered message (`RL.cpp:1376-1423`). A buffer that holds one
 message per ordering index cannot hold the sequenced messages that arrive ahead
@@ -1032,8 +1011,7 @@ compare with the connection's runtime count, not the compile-time maximum. At
 constant so the stress runs at 1024 and 10 000 change one number.
 
 **I16. The protocol does not share a user channel.** RakNet sends its own
-handshake and disconnect on `RELIABLE_ORDERED` channel 0 (`RP.cpp:3553, 3563,
-6201`), so a user's channel 0 ordered index is advanced by the protocol.
+handshake and disconnect on `RELIABLE_ORDERED` channel 0 (`RP.cpp:3553, 3563, 6201`), so a user's channel 0 ordered index is advanced by the protocol.
 RocketNet's connection protocol is below the message layer; keep it there.
 
 **I17. The receive side hands up messages, not packets, and in one stream.**
@@ -1055,8 +1033,7 @@ RakNet's C# binding is SWIG-generated from the public headers
 (`DependentExtensions/Swig/SwigInterfaceFiles/RakNet.i`), including
 `MessageIdentifiers.h`, `RakNetTypes.h`, `BitStream.h`, `PacketPriority.h`,
 `RakPeerInterface.h` and `RakPeer.h`
-(`DependentExtensions/Swig/SwigInterfaceFiles/RakNetCSharpSwigIncludes.i:9, 13,
-16, 24, 31, 32`), with `Packet.data` surfaced as a `byte[]`
+(`DependentExtensions/Swig/SwigInterfaceFiles/RakNetCSharpSwigIncludes.i:9, 13, 16, 24, 31, 32`), with `Packet.data` surfaced as a `byte[]`
 (`DependentExtensions/Swig/SwigInterfaceFiles/RakNetCSharpTypeMaps.i:312`). A
 generated copy of the C# is checked in under
 `DependentExtensions/Swig/InternalSwigItems/InternalSwigWindowsCSharpSample/InternalSwigTestApp/SwigFiles/`
