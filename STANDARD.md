@@ -5,9 +5,11 @@ UDP. This document is the security and connection standard for the transport
 tier — in the RocketNet library, `client_transport` and `server_transport`
 over transport drivers, though a conforming implementation may name its pieces
 as it likes — so people can write their own implementations. It is the
-packet-level connection layer only; reliability, messages, flows and broadcast
+packet-level connection layer; reliability, messages, flows and broadcast
 belong to a high-level tier above the transport, carried entirely in payload
-packets, and nothing in them is specified here. The transport's own two
+packets. The one part of that tier specified here is its wire, the layout of
+message records inside a payload (_Messages_); its behaviour is
+docs/CHANNELS.md. The transport's own two
 packet-level primitives are specified here: **delivery notification** — every
 session packet reports what arrived, and the transport informs, never
 retransmits (_Acks_) — and **fragmentation** of payloads larger than one
@@ -286,6 +288,10 @@ section, and this table exists so an implementer never hunts for a number.
 | Ack block | 7 bytes minimum: largest received, range count, first range length | _Acks_ |
 | Fragment header | 6 bytes sealed: payload id, fragment index, fragment count − 1 | _Fragmentation_ |
 | Fragment count | 2 to 256 per fragmented payload | _Fragmentation_ |
+| Message form byte | last payload byte: 0x00 SINGLE, 0x01 RECORDS | _Messages_ |
+| Message record header | 3 to 20 bytes: flags, u16 length, then the code's fields | _Messages_ |
+| Message block stride | 1152 bytes | _Messages_ |
+| CONFIG control body | 28 bytes | _Messages_ |
 | Send budget | 1232 default, 1426 maximum | _Packet sizes_ |
 | Receive ceiling | 1426, fixed | _Packet sizes_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
@@ -1977,6 +1983,216 @@ heap, and lose nothing but the slots' bounded memory, which was spent at
 create. This is the answer to every resource-exhaustion attack reassembly
 invites, and it is the same answer this protocol gives everywhere: fixed
 tables, spent up front, no surprises at the 999th client.
+
+## Messages
+
+**The message tier rides entirely inside transport payloads, and this section
+is its wire: the bytes of a type 5 or type 9 payload, before the transport
+seals it.** It is the layer above the transport (the design is
+docs/CHANNELS.md, whose section numbers are cited here as _CHANNELS n_), and
+nothing in it changes a byte of any section above. A transport that carries
+opaque payloads conforms without it; an implementation of the message tier
+conforms to it exactly. Integers are little endian and byte aligned, and no
+field is narrower than a byte, as everywhere in this standard.
+
+### Payload forms
+
+The payload's **last** byte, the _form byte_, says how the bytes before it are
+laid out. Putting it last is what makes the zero-copy form possible: a SINGLE
+message starts at payload offset 0, which is the transport's 16-aligned
+payload root, so an application writes it in place in the frame and a
+receiver reads it in place in the delivered batch.
+
+```
+payload := body form            L = len(payload) >= 2
+form    := u8                   the LAST byte
+           0x00  SINGLE    body is one UNRELIABLE message, 1 <= len(body)
+           0x01  RECORDS   body is one or more records, exactly filling it
+           else  violation MESSAGE_BAD_FORM
+```
+
+SINGLE costs one byte. Its message is always UNRELIABLE and carries no channel,
+number or receipt. A SINGLE payload larger than one packet is legal: the
+transport fragments it, and losing a fragment loses the message, which is what
+unreliable means.
+
+RECORDS is the aggregation form: small unreliable messages, reliable records,
+resends and the CONFIG record share one payload, back to back.
+
+### Record
+
+```
+offset  size  field
+0       1     flags
+                bits 0-2  code: 0 UNRELIABLE, 1 UNRELIABLE_SEQUENCED, 2 RELIABLE,
+                          3 RELIABLE_ORDERED, 4 RELIABLE_SEQUENCED; 5-7 violation
+                bit  3    BLOCK    this record is one fragment of a block
+                bit  4    WIDE     channel is u16, not u8
+                bit  5    CONTROL  a layer control record (_The CONFIG control record_)
+                bits 6-7  zero
+1       2     length               data bytes, >= 1
+3       ...   the fields below, each present only when its condition holds, in this order:
+
+  number      u24   code in {2,3,4}                     reliable message number, mod 2^24
+  ring        u16   code in {3,4} or BLOCK              receive-ring offset in 16-byte units
+  sequencing  u24   code in {1,4}                       sequencing index, mod 2^24
+  ordering    u24   code in {1,3,4}                     ordering index, mod 2^24
+  channel     u8    code in {1,3,4} and not WIDE
+              u16   code in {1,3,4} and WIDE
+  fragment    u16   BLOCK                               fragment index
+  fragments   u16   BLOCK                               fragment count - 1
+
+  data        length bytes
+```
+
+Header bytes are 3, 10, 6, 12 and 15 for codes 0 to 4. BLOCK adds 4 (6 on code
+2, which gains the ring field). WIDE adds 1. The largest header is 20 bytes
+(code 4, BLOCK, WIDE).
+
+**The conditions are defined for every flags byte, including one the receiver
+will refuse.** A code of 5 to 7 carries none of the code-dependent fields, and
+BLOCK adds the ring and the two fragment fields whatever the code. So the
+receiver measures a header before it judges the flags, and check 2 below runs
+before check 3 without guessing.
+
+**Every record has exactly one encoding.** A sender sets WIDE exactly when
+`channel >= 256`, and a receiver refuses WIDE with a channel below 256. A
+field a record does not carry is absent, not zero-filled. So a payload a
+receiver accepts packs back to the same bytes from the records it parsed, and
+no byte of an accepted payload is ignored.
+
+The receipt variants of the API never reach the wire: reliability 5 is sent as
+code 0, 6 as 2, and 7 as 3. The block stride is the wire constant
+**F = 1152** bytes, a multiple of 16: fragments 0 to k−2 of a block carry
+exactly F bytes and fragment k−1 carries 1 to F (_CHANNELS 8_).
+
+A payload that carries a reliable record (code 2, 3 or 4) or a CONTROL record
+is at most `ROCKETNET_MAX_PAYLOAD_BYTES` (1192) long, so the transport sends it
+unfragmented. A reliable message longer than one record can hold is sent as a
+block. An unreliable record (code 0 or 1) may travel alone in a larger payload
+that the transport fragments; its u16 length caps it at 65,535 bytes.
+
+### The receiver's checks, in order
+
+A receiver runs these checks over **the whole payload before it hands up any
+record of it**. The first check that fails stops parsing, names exactly one
+violation, refuses the whole payload, and makes the connection a violation: the
+message tier disconnects it, loudly (_CHANNELS R6_). The transport has already
+acknowledged the packet, so dropping a bad record and carrying on could lose
+reliable data silently. A record is therefore delivered whole or not at all,
+and no check reads outside `[payload, payload + L)`.
+
+1. `L < 2`, or the form byte is not 0 or 1: `MESSAGE_BAD_FORM`.
+2. In RECORDS form, fewer than 3 bytes remain, or the header's fields (as the
+   flags byte names them) run past the body: `MESSAGE_TRUNCATED`.
+3. The code is 5 to 7, bits 6 and 7 are not zero, BLOCK is set on code 0 or 1,
+   WIDE is set on code 0 or 2, or CONTROL is set with a code other than 2 or
+   together with BLOCK: `MESSAGE_BAD_FLAGS`.
+4. `length == 0`, or `length` runs past the body: `MESSAGE_BAD_LENGTH`.
+5. `channel >= num_channels`, against this end's runtime count and not the
+   compile-time maximum, or WIDE with `channel < 256`: `MESSAGE_BAD_CHANNEL`.
+6. The record's code is not admitted by the enabled mask: `MESSAGE_TYPE_NOT_ENABLED`.
+   A code is admitted when an enabled reliability travels as that code, so
+   enabling 7 admits code 3. CONTROL records are exempt. A SINGLE payload is
+   code 0 for this check, and it is the only check a SINGLE payload has after
+   check 1.
+7. BLOCK checks, on what the record shows alone:
+   - `fragments == 0`, `fragment > fragments`, `(fragments+1) > W`, or
+     `(fragments+1) × F > max_message_bytes + F − 1`;
+   - a fragment below the last whose length is not F, or a last fragment
+     longer than F.
+
+   Any of these: `MESSAGE_BAD_BLOCK`. A ring base that disagrees with a live
+   block descriptor is `MESSAGE_BAD_BLOCK` too; that check needs the
+   receiver's block state, and it runs with check 10.
+8. A holdable record (code 3, code 4, or any BLOCK) whose span falls outside
+   the receive ring of `B` bytes: `MESSAGE_BAD_RING`. For a record that is not
+   a block, the span is `ring × 16` up to `ring × 16 + length` rounded up to
+   16. For a block it is the whole block's span: from the base
+   `ring − fragment × F/16` (in 16-byte units, which must not be negative) to
+   the end of the last fragment, `base × 16 + fragments × F + last`, where
+   `last` is the last fragment's length rounded up to 16. A fragment that is
+   not the last does not know that length, so it takes `last = 16`, the
+   shortest block it could belong to; the last fragment checks the exact end.
+9. A reliable or CONTROL record inside a payload longer than 1192 bytes: such
+   a payload either rode the transport's fragments or came from a sender that
+   broke the size rule above. `MESSAGE_BAD_SIZE`.
+10. The window (_CHANNELS 6.5_): `MESSAGE_NUMBER_OUTSIDE_WINDOW`,
+    `MESSAGE_SLOT_COLLISION`.
+11. A code 3 record whose ordering is behind the channel's next ordering index:
+    `MESSAGE_ORDERING_BEHIND`.
+12. A CONTROL record that is malformed or of an unknown kind:
+    `MESSAGE_BAD_CONTROL`.
+
+Checks 1 to 9 need only the payload and the receiver's configuration; checks 10
+to 12 need the receiver's window, channel and block state, and run as each
+record is applied. A duplicate reliable record (_CHANNELS 6.5_) is not a
+violation; it is counted as `MESSAGE_DUPLICATE` and dropped. Each violation has
+its own counter, prefixed `CLIENT_` on the client.
+
+### The CONFIG control record
+
+Each end sends one CONFIG record per connection: code 2 with CONTROL set,
+taking the sender's first reliable number, so it is resent until acknowledged.
+Its data is 28 bytes:
+
+```
+offset  size  field
+0       1     kind                 1 = CONFIG
+1       1     version              1
+2       1     enabled              bit r set = reliability r may be sent by the application
+3       1     zero
+4       4     num_channels         u32
+8       4     window_messages      u32
+12      4     receive_ring_bytes   u32
+16      4     max_message_bytes    u32
+20      4     fragment_bytes       u32, 1152
+24      4     zero
+```
+
+A kind other than 1, a body that is not 28 bytes, or a version 1 body whose
+zero bytes are not zero is `MESSAGE_BAD_CONTROL`. Otherwise the receiver
+compares every field with its own values, and any difference is a CONFIG
+mismatch (`ERROR_CONFIG_MISMATCH`), which disconnects. A version the receiver
+does not know reads as a body and is a mismatch, not a malformed record.
+
+### Numbers
+
+Number, sequencing and ordering are 24-bit counters that wrap. Each end keeps
+64-bit values and reconstructs a wire value against its reference by signed
+half range (2^23). For numbers the reference is the lowest number not yet
+received. For ordering it is the channel's next ordering index. For sequencing
+it is the channel's sequencing watermark. Every live value lies within `W` (at
+most 2^20) of its reference, so the half range never aliases.
+
+### Known-answer vectors
+
+The bytes below are the payload, before the transport seals it. An
+implementation reproduces each one from its records, and parses each one back
+to the same records.
+
+```
+SINGLE, message "hi":                        68 69 00
+RECORDS, one UNRELIABLE "hi":                00 02 00 68 69 01
+RECORDS, RELIABLE_ORDERED "hi", number 5, ring 0, ordering 0, channel 3:
+                                             03 02 00 05 00 00 00 00 00 00 00 03 68 69 01
+RECORDS, the two records above in one packet:
+                                             00 02 00 68 69 03 02 00 05 00 00 00 00 00 00 00 03 68 69 01
+RECORDS, fragment 1 of 3 of a RELIABLE_ORDERED block, number 9, ring 72, ordering 7, channel 300 (WIDE):
+                                             1b 80 04 09 00 00 48 00 07 00 00 2c 01 01 00 02 00 <1152 data bytes> 01
+CONFIG, defaults, number 0:
+                                             22 1c 00 00 00 00 01 01 09 00 20 00 00 00 00 04 00 00
+                                             00 00 01 00 00 80 00 00 80 04 00 00 00 00 00 00 01
+```
+
+The block vector, field by field: flags `0x1b` (code 3, BLOCK, WIDE); length
+`0x0480`, 1152; number 9; ring 72, so its data starts at `72 × 16 = 1152`,
+fragment 1 of a block based at 0; ordering 7; channel 300 as `2c 01`; fragment
+1; fragments − 1, 2. The CONFIG vector: flags `0x22` (code 2 with CONTROL);
+length 28; number 0; kind 1, version 1; enabled `0x09` (types 0 and 3); 32
+channels, `W` 1024, `B` 65536, max 32768, F 1152. The reference implementation
+regenerates every vector from its codec and compares it byte for byte
+(`test_channels_message_record_vectors`).
 
 ## Timing
 
