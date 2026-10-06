@@ -299,7 +299,7 @@ of the machine. The instances that finished are the committed ones; the larger
 instances were run as far as the time allowed and stopped, with no invariant
 violated to the depth reached, and are the runs to repeat on a quiet bench.
 
-**`MCChannels.cfg` (safety), `Spec`, loss unbounded: not finished on this bench. Stopped at depth 41 after 20 minutes at load 170 to 420 with 87,599,972 states generated, 21,811,412 distinct and 2.8 million on the queue, no invariant violated to that depth. Breadth-first, so every state at depth 40 or less was checked. This is the run to complete on a quiet bench; the gate of this card is owed until it is.**
+**`MCChannels.cfg` (safety), `Spec`, loss unbounded: not finished on this bench. Stopped at depth 44 after 27 minutes at load 170 to 420 with 127,163,396 states generated, 30,181,198 distinct and 3.0 million on the queue (the queue had just begun to shrink), no invariant violated to that depth. Breadth-first, so every state at depth 43 or less was checked. This is the run to complete on a quiet bench; the gate of this card is owed until it is.**
 
 **`MCChannelsLive.cfg` (liveness), `SpecFair`, `-lncheck final`: `Model checking completed. No error has been found.` 2,830,922 states generated, 836,516 distinct states found, 39 min 57 s of which 16 min was the final liveness check; `EveryReliableDelivered` and `EveryReliableAcked` hold.**
 
