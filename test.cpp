@@ -43,7 +43,17 @@ static int rocketnet_unit_worker( const char * name )
     return result;
 }
 
+// sibling binaries the suite runs as one case each: test_channels replaces
+// its process's allocation functions to trap live allocation, so it cannot
+// share a process with the unit tests
+
+static const suite_exec rocketnet_unit_execs[] =
+{
+    { "test_channels", "test_channels", true },
+};
+
 int main( int argc, char ** argv )
 {
-    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name, NULL, 0, NULL, 0, true );
+    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name,
+        rocketnet_unit_execs, (int) ( sizeof(rocketnet_unit_execs) / sizeof(rocketnet_unit_execs[0]) ), NULL, 0, true );
 }
