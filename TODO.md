@@ -231,7 +231,7 @@ land. The milestone view is issue #28; this file is the live ordering.
   addresses its receiver observes. Suite green on macos and on the test
   box, BPF program compiles, both new gates negative-controlled, soaks and
   the live UDP examples proven on the new format.
-- Step 2 begins: THE TRANSPORTS. the game's IO carrying
+- Step 2 begins: THE TRANSPORTS, the game's IO carrying
   the connection protocol — the client transport keeps the dual-stack bind,
   preferred ports and receive-thread double buffering verbatim, with the
   protocol at the main-thread seam; the server transport keeps the
@@ -294,10 +294,10 @@ land. The milestone view is issue #28; this file is the live ordering.
   enforcement. That needs the backend to track the connected set across
   servers live, and to kick the old player when the same user hash pops on
   elsewhere -- which is exactly what rocketnet_server_transport_disconnect_client
-  exists to serve. The reference implementation already runs as the
-  game's backend.go, so the epic is an EXTRACTION, not a design: proven in
-  the game, generalized into the library as an OPTIONAL layer, wanted for
-  the game itself, sequenced strictly behind the first deliverable.
+  exists to serve. The game's own backend already runs it, so the epic is an
+  EXTRACTION, not a design: proven in the game, generalized into the library
+  as an OPTIONAL layer, wanted for the game itself, sequenced strictly behind
+  the first deliverable.
   Then the rolling magic feeds the keyed filter value (SipHash over type,
   length and the four bytes after the header, one MAC per packet because
   the epoch names the generation), the per-title generator emits the
@@ -327,13 +327,14 @@ land. The milestone view is issue #28; this file is the live ordering.
   reordering. Both can be true if the kernel map and the userspace window
   are sized separately, which is probably the answer, but the standard
   currently states one rule for both and should not be quietly narrowed.
-  The next_replay_protection_t in the reference implementation is the model.
+  RocketNet sizes the kernel map and the userspace replay window separately, and
+  the standard should say so.
 - The multi-day soaks: soak_sim and soak run unbounded on real hardware
   (the test machine, manually kicked) for days of parallel clients before the
   connect layer is believed; the nightly CI soak is the bounded sentinel.
 - The ultimate soak: re-integrate rocketnet into the game (vendored
-  byte-for-byte per the vendoring law) and the game server on ssh
-  soaks it under real conditions.
+  byte-for-byte per the vendoring law) and the game server soaks it under
+  real conditions.
   Integration note that matters: the game server pegs to real time with
   drop-frame detection and spinlock-plus-sleep to exact frame ends, never
   naive sleeps -- rocketnet's update is non-blocking with time passed in
