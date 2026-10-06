@@ -102,6 +102,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_frame_sync.cpp
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
+    sdk/rocketnet_message.cpp
     sdk/rocketnet_network_simulator.cpp
     sdk/rocketnet_platform.cpp
     sdk/rocketnet_protocol.cpp
@@ -179,7 +180,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
     rocketnet_use_sodium(rocketnet_test_support)
-    add_executable(test test.cpp)
+    add_executable(test test.cpp test_channels.cpp)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     foreach(test_target test_lifecycle test_serialize test_driver test_transport_control)
