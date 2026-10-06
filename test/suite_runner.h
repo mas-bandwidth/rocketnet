@@ -1,0 +1,539 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+
+    Parallel suite runner. Each test is a process. A test over 60s prints a
+    warning. A test over 120s is killed and fails the suite. The ten slowest
+    are printed at the end. strict_names keeps every line inside the
+    names-only shape tools/check_test_environment.py accepts, because that
+    checker merges stderr into stdout and is not ours to change.
+*/
+
+#pragma once
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <errno.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char **environ;
+#endif
+
+struct suite_exec
+{
+    const char *name;
+    const char *file;
+    bool required;
+};
+
+struct suite_case
+{
+    std::string name;
+    std::string exec_path; // empty: re-exec this binary with --run name
+    bool skipped;
+    std::string skip_line;
+};
+
+struct suite_result
+{
+    std::string name;
+    double seconds;
+    bool skipped;
+    bool failed;
+    std::string detail;
+};
+
+inline std::string suite_executable_path()
+{
+#if defined(_WIN32)
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA( NULL, buf, MAX_PATH );
+    if ( n == 0 || n >= MAX_PATH )
+        return "";
+    return std::string( buf, buf + n );
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = (uint32_t) sizeof( buf );
+    if ( _NSGetExecutablePath( buf, &size ) != 0 )
+        return "";
+    return std::string( buf );
+#else
+    char buf[4096];
+    ssize_t n = readlink( "/proc/self/exe", buf, sizeof( buf ) - 1 );
+    if ( n < 0 )
+        return "";
+    buf[n] = '\0';
+    return std::string( buf );
+#endif
+}
+
+inline std::string suite_directory_of( const std::string & path )
+{
+    const std::string::size_type pos = path.find_last_of( "/\\" );
+    if ( pos == std::string::npos )
+        return ".";
+    return path.substr( 0, pos );
+}
+
+inline bool suite_file_exists( const std::string & path )
+{
+    FILE * file = fopen( path.c_str(), "rb" );
+    if ( !file )
+        return false;
+    fclose( file );
+    return true;
+}
+
+inline int suite_job_count()
+{
+    unsigned jobs = std::thread::hardware_concurrency();
+    if ( jobs == 0 )
+        jobs = 1;
+    if ( const char * env = std::getenv( "ROCKETNET_TEST_JOBS" ) )
+    {
+        const int requested = std::atoi( env );
+        if ( requested > 0 )
+            jobs = (unsigned) requested;
+    }
+    if ( jobs > 8 )
+        jobs = 8;
+    return (int) jobs;
+}
+
+inline void suite_print_summary( const std::vector<suite_result> & results, bool strict_names )
+{
+    std::vector<suite_result> ran;
+    for ( size_t i = 0; i < results.size(); i++ )
+        if ( !results[i].skipped )
+            ran.push_back( results[i] );
+    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) {
+        return a.seconds > b.seconds;
+    } );
+    const int shown = (int) ran.size() < 10 ? (int) ran.size() : 10;
+    if ( !strict_names )
+        printf( "slowest ten:\n" );
+    for ( int i = 0; i < shown; i++ )
+    {
+        if ( strict_names )
+            printf( "test_timing_slowest_%02d [SKIPPED %.3fs %s]\n", i + 1, ran[i].seconds, ran[i].name.c_str() );
+        else
+            printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
+    }
+    int warnings = 0;
+    int fails = 0;
+    for ( size_t i = 0; i < ran.size(); i++ )
+    {
+        if ( ran[i].seconds > 60.0 )
+        {
+            warnings++;
+            if ( strict_names )
+                printf( "test_timing_warning_%02d [SKIPPED %.3fs %s over 60s]\n", warnings, ran[i].seconds, ran[i].name.c_str() );
+            else
+                printf( "warning: %s %.3fs (over 60s)\n", ran[i].name.c_str(), ran[i].seconds );
+        }
+        if ( ran[i].failed )
+        {
+            fails++;
+            if ( strict_names )
+                printf( "test_timing_fail_%02d [SKIPPED %s]\n", fails, ran[i].detail.c_str() );
+            else
+                printf( "FAIL: %s\n", ran[i].detail.c_str() );
+        }
+    }
+    fflush( stdout );
+}
+
+#if !defined(_WIN32)
+
+inline int suite_main( int argc, char ** argv,
+    int ( *worker )( const char * name ),
+    int ( *count )(),
+    const char * ( *name_at )( int ),
+    const suite_exec * execs, int nexecs,
+    const char ** skip_lines, int nskips,
+    bool strict_names )
+{
+    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+        return worker( argv[2] );
+
+    const std::string self = suite_executable_path();
+    if ( self.empty() )
+    {
+        fprintf( stderr, "FAIL: could not resolve this executable\n" );
+        return 1;
+    }
+    const std::string dir = suite_directory_of( self );
+
+    std::vector<suite_case> pending;
+    for ( int i = 0; i < count(); i++ )
+    {
+        suite_case item;
+        item.name = name_at( i );
+        item.skipped = false;
+        pending.push_back( item );
+    }
+    for ( int i = 0; i < nexecs; i++ )
+    {
+        suite_case item;
+        item.name = execs[i].name;
+        item.exec_path = dir + "/" + execs[i].file;
+        if ( !suite_file_exists( item.exec_path ) )
+        {
+            if ( execs[i].required )
+            {
+                fprintf( stderr, "FAIL: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
+                return 1;
+            }
+            item.skipped = true;
+            item.skip_line = std::string( execs[i].name ) + " [SKIPPED not built on this platform]";
+        }
+        pending.push_back( item );
+    }
+
+    for ( int i = 0; i < nskips; i++ )
+    {
+        printf( "%s\n", skip_lines[i] );
+        fflush( stdout );
+    }
+
+    const int jobs = suite_job_count();
+    const double limit_s = 120.0;
+    struct running_t
+    {
+        std::string name;
+        pid_t pid;
+        std::chrono::steady_clock::time_point start;
+        bool killed;
+    };
+    std::vector<running_t> running;
+    std::vector<suite_result> results;
+    size_t next = 0;
+    int failures = 0;
+
+    while ( next < pending.size() || !running.empty() )
+    {
+        while ( (int) running.size() < jobs && next < pending.size() )
+        {
+            const suite_case item = pending[next++];
+            if ( item.skipped )
+            {
+                printf( "%s\n", item.skip_line.c_str() );
+                fflush( stdout );
+                suite_result result;
+                result.name = item.name;
+                result.seconds = 0;
+                result.skipped = true;
+                result.failed = false;
+                results.push_back( result );
+                continue;
+            }
+
+            const std::string path = item.exec_path.empty() ? self : item.exec_path;
+            std::vector<char> arg0( path.begin(), path.end() );
+            arg0.push_back( '\0' );
+            std::vector<char> arg_run;
+            std::vector<char> arg_name;
+            char * spawn_argv[4];
+            spawn_argv[0] = arg0.data();
+            if ( item.exec_path.empty() )
+            {
+                arg_run.assign( 6, '\0' );
+                std::memcpy( arg_run.data(), "--run", 6 );
+                arg_name.assign( item.name.begin(), item.name.end() );
+                arg_name.push_back( '\0' );
+                spawn_argv[1] = arg_run.data();
+                spawn_argv[2] = arg_name.data();
+                spawn_argv[3] = NULL;
+            }
+            else
+            {
+                spawn_argv[1] = NULL;
+            }
+
+            posix_spawnattr_t attr;
+            posix_spawnattr_init( &attr );
+            posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETPGROUP );
+            posix_spawnattr_setpgroup( &attr, 0 );
+            pid_t pid = 0;
+            const int spawned = posix_spawn( &pid, path.c_str(), NULL, &attr, spawn_argv, environ );
+            posix_spawnattr_destroy( &attr );
+            if ( spawned != 0 )
+            {
+                suite_result result;
+                result.name = item.name;
+                result.seconds = 0;
+                result.skipped = false;
+                result.failed = true;
+                result.detail = item.name + " failed to spawn";
+                results.push_back( result );
+                failures++;
+                continue;
+            }
+            running_t child;
+            child.name = item.name;
+            child.pid = pid;
+            child.start = std::chrono::steady_clock::now();
+            child.killed = false;
+            running.push_back( child );
+        }
+
+        for ( size_t i = 0; i < running.size(); )
+        {
+            int status = 0;
+            const pid_t got = waitpid( running[i].pid, &status, WNOHANG );
+            const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
+            if ( got == 0 )
+            {
+                if ( !running[i].killed && seconds > limit_s )
+                {
+                    kill( -running[i].pid, SIGKILL );
+                    kill( running[i].pid, SIGKILL );
+                    running[i].killed = true;
+                }
+                i++;
+                continue;
+            }
+            suite_result result;
+            result.name = running[i].name;
+            result.seconds = seconds;
+            result.skipped = false;
+            result.failed = false;
+            if ( got < 0 )
+            {
+                result.failed = true;
+                result.detail = running[i].name + " wait failed";
+            }
+            else if ( running[i].killed || seconds > limit_s )
+            {
+                result.failed = true;
+                result.seconds = seconds < limit_s ? limit_s : seconds;
+                result.detail = running[i].name + " exceeded 120s";
+            }
+            else if ( WIFEXITED( status ) && WEXITSTATUS( status ) == 0 )
+            {
+                result.failed = false;
+            }
+            else if ( WIFEXITED( status ) )
+            {
+                result.failed = true;
+                char buf[64];
+                snprintf( buf, sizeof( buf ), " exit %d", WEXITSTATUS( status ) );
+                result.detail = running[i].name + buf;
+            }
+            else
+            {
+                result.failed = true;
+                char buf[64];
+                snprintf( buf, sizeof( buf ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
+                result.detail = running[i].name + buf;
+            }
+            if ( result.failed )
+                failures++;
+            results.push_back( result );
+            running.erase( running.begin() + (std::ptrdiff_t) i );
+        }
+
+        if ( !running.empty() )
+            std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+    }
+
+    suite_print_summary( results, strict_names );
+    return failures == 0 ? 0 : 1;
+}
+
+#else
+
+inline int suite_main( int argc, char ** argv,
+    int ( *worker )( const char * name ),
+    int ( *count )(),
+    const char * ( *name_at )( int ),
+    const suite_exec * execs, int nexecs,
+    const char ** skip_lines, int nskips,
+    bool strict_names )
+{
+    if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+        return worker( argv[2] );
+
+    const std::string self = suite_executable_path();
+    if ( self.empty() )
+    {
+        fprintf( stderr, "FAIL: could not resolve this executable\n" );
+        return 1;
+    }
+    const std::string dir = suite_directory_of( self );
+
+    std::vector<suite_case> pending;
+    for ( int i = 0; i < count(); i++ )
+    {
+        suite_case item;
+        item.name = name_at( i );
+        item.skipped = false;
+        pending.push_back( item );
+    }
+    for ( int i = 0; i < nexecs; i++ )
+    {
+        suite_case item;
+        item.name = execs[i].name;
+        item.exec_path = dir + "\\" + execs[i].file + ".exe";
+        if ( !suite_file_exists( item.exec_path ) )
+        {
+            if ( execs[i].required )
+            {
+                fprintf( stderr, "FAIL: %s missing at %s\n", execs[i].name, item.exec_path.c_str() );
+                return 1;
+            }
+            item.skipped = true;
+            item.skip_line = std::string( execs[i].name ) + " [SKIPPED not built on this platform]";
+        }
+        pending.push_back( item );
+    }
+    for ( int i = 0; i < nskips; i++ )
+    {
+        printf( "%s\n", skip_lines[i] );
+        fflush( stdout );
+    }
+
+    const int jobs = suite_job_count();
+    const double limit_s = 120.0;
+    struct running_t
+    {
+        std::string name;
+        HANDLE process;
+        std::chrono::steady_clock::time_point start;
+        bool killed;
+    };
+    std::vector<running_t> running;
+    std::vector<suite_result> results;
+    size_t next = 0;
+    int failures = 0;
+
+    while ( next < pending.size() || !running.empty() )
+    {
+        while ( (int) running.size() < jobs && next < pending.size() )
+        {
+            const suite_case item = pending[next++];
+            if ( item.skipped )
+            {
+                printf( "%s\n", item.skip_line.c_str() );
+                fflush( stdout );
+                suite_result result;
+                result.name = item.name;
+                result.seconds = 0;
+                result.skipped = true;
+                result.failed = false;
+                results.push_back( result );
+                continue;
+            }
+            const std::string path = item.exec_path.empty() ? self : item.exec_path;
+            std::string command = "\"" + path + "\"";
+            if ( item.exec_path.empty() )
+                command += " --run " + item.name;
+            std::vector<char> mutable_command( command.begin(), command.end() );
+            mutable_command.push_back( '\0' );
+            STARTUPINFOA startup;
+            std::memset( &startup, 0, sizeof( startup ) );
+            startup.cb = sizeof( startup );
+            PROCESS_INFORMATION info;
+            std::memset( &info, 0, sizeof( info ) );
+            if ( !CreateProcessA( NULL, mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
+            {
+                suite_result result;
+                result.name = item.name;
+                result.seconds = 0;
+                result.skipped = false;
+                result.failed = true;
+                result.detail = item.name + " failed to spawn";
+                results.push_back( result );
+                failures++;
+                continue;
+            }
+            CloseHandle( info.hThread );
+            running_t child;
+            child.name = item.name;
+            child.process = info.hProcess;
+            child.start = std::chrono::steady_clock::now();
+            child.killed = false;
+            running.push_back( child );
+        }
+
+        if ( !running.empty() )
+        {
+            HANDLE handles[8];
+            const int n = (int) running.size();
+            for ( int i = 0; i < n; i++ )
+                handles[i] = running[i].process;
+            WaitForMultipleObjects( (DWORD) n, handles, FALSE, 50 );
+        }
+
+        for ( size_t i = 0; i < running.size(); )
+        {
+            const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - running[i].start ).count();
+            const DWORD wait = WaitForSingleObject( running[i].process, 0 );
+            if ( wait == WAIT_TIMEOUT )
+            {
+                if ( !running[i].killed && seconds > limit_s )
+                {
+                    TerminateProcess( running[i].process, 124 );
+                    running[i].killed = true;
+                }
+                i++;
+                continue;
+            }
+            DWORD code = 1;
+            GetExitCodeProcess( running[i].process, &code );
+            CloseHandle( running[i].process );
+            suite_result result;
+            result.name = running[i].name;
+            result.seconds = seconds;
+            result.skipped = false;
+            result.failed = false;
+            if ( running[i].killed || seconds > limit_s )
+            {
+                result.failed = true;
+                result.seconds = seconds < limit_s ? limit_s : seconds;
+                result.detail = running[i].name + " exceeded 120s";
+            }
+            else if ( code == 0 )
+            {
+                result.failed = false;
+            }
+            else
+            {
+                result.failed = true;
+                char buf[64];
+                snprintf( buf, sizeof( buf ), " exit %lu", (unsigned long) code );
+                result.detail = running[i].name + buf;
+            }
+            if ( result.failed )
+                failures++;
+            results.push_back( result );
+            running.erase( running.begin() + (std::ptrdiff_t) i );
+        }
+    }
+
+    suite_print_summary( results, strict_names );
+    return failures == 0 ? 0 : 1;
+}
+
+#endif

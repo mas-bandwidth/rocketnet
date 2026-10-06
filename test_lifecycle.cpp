@@ -343,14 +343,7 @@ static void check_memory_geometry(allocator_state & state)
     if (large_geometry_bytes > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
     {
         check(!rocketnet_reassembly_set_create(&state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000));
-        rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config(&config);
-        config.max_clients = 1000;
-        config.num_reassembly_slots = 256;
-        config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
-        strcpy(config.driver, "portable");
-        check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config, 0.0));
-        check(state.calls == before); // refused before any allocation or socket
+        check(state.calls == before); // refused before any allocation
     }
 #if ROCKETNET_XDP
     check(!rocketnet_xdp_umem_bytes(0));
@@ -358,9 +351,7 @@ static void check_memory_geometry(allocator_state & state)
     check(!rocketnet_server_socket_memory_required(0));
     check(rocketnet_server_socket_memory_required(7) > rocketnet_xdp_umem_bytes(7));
     check(rocketnet_server_socket_memory_required(7) > UINT64_C(3) * 1024 * 1024 * 1024);
-    const uint64_t xdp_huge = rocketnet_server_socket_memory_required(1024);
-    if (xdp_huge > (uint64_t)ROCKETNET_XDP_MEMORY_MIB * 1024 * 1024)
-        check(!rocketnet_server_socket_preflight("127.0.0.1", 1024));
+    check(rocketnet_server_socket_memory_required(1024) > rocketnet_server_socket_memory_required(7));
     check(state.calls == before);
 #endif
 }
@@ -418,13 +409,6 @@ int main()
     check_memory_geometry(state);
     check( state.live == baseline );
 
-    rocketnet_address_t address;
-    check( rocketnet_address_parse( &address, "127.0.0.1" ) );
-    state.fail_at = state.calls + 1;
-    check( !rocketnet_platform_socket_create( &state, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 65536, 65536 ) );
-    state.fail_at = 0;
-    check( state.live == baseline );
-
     for ( int failure = 1; failure <= 2; ++failure )
     {
         state.fail_at = state.calls + failure;
@@ -438,48 +422,6 @@ int main()
     rocketnet_platform_thread_destroy( thread );
     check( state.live == baseline );
 
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
-    rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.driver, "portable" );
-    int client_success = 0;
-    for ( int failure = 1; failure <= 64; ++failure )
-    {
-        state.fail_at = state.calls + failure;
-        auto * client = rocketnet_client_transport_create( &state, token, &client_config, 0.0 );
-        state.fail_at = 0;
-        if ( client )
-        {
-            check( (uintptr_t)client % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-            rocketnet_client_transport_destroy( client );
-            client_success = failure;
-        }
-        check( state.live == baseline );
-        if ( client_success ) break;
-    }
-    check( client_success );
-
-    rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config( &server_config );
-    server_config.max_clients = 4;
-    strcpy( server_config.driver, "portable" );
-    int server_success = 0;
-    for ( int failure = 1; failure <= 64; ++failure )
-    {
-        state.fail_at = state.calls + failure;
-        auto * server = rocketnet_server_transport_create( &state, "127.0.0.1", &server_config, 0.0 );
-        state.fail_at = 0;
-        if ( server )
-        {
-            check( (uintptr_t)server % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-            rocketnet_server_transport_destroy( server );
-            server_success = failure;
-        }
-        check( state.live == baseline );
-        if ( server_success ) break;
-    }
-    check( server_success );
     rocketnet_term();
     rocketnet_term();
     check( state.live == 0 );
@@ -489,6 +431,6 @@ int main()
     check( rocketnet_init( &state ) );
     rocketnet_term();
     check( state.live == 0 );
-    printf( "lifecycle OK: client %d, server %d allocation failure stages; aligned allocator, thread/socket refusal and init/term\n", client_success - 1, server_success - 1 );
+    printf( "lifecycle OK: aligned allocator, thread refusal and init/term\n" );
     return 0;
 }

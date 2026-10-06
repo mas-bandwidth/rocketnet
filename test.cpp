@@ -4,29 +4,29 @@
 */
 
 #include "rocketnet.h"
-#include "rocketnet_tests.h"
+#include "test/suite_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-int main()
+int rocketnet_unit_test_count();
+const char * rocketnet_unit_test_name( int index );
+void rocketnet_unit_prepare();
+int rocketnet_unit_run_named( const char * name );
+
+static int rocketnet_unit_worker( const char * name )
 {
+    setvbuf( stdout, NULL, _IOLBF, 0 );
+    setvbuf( stderr, NULL, _IOLBF, 0 );
+
     // init reads this before the suite installs its config isolation.
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
 #endif
-    if ( cleared != 0 ) return 1;
-
-    // the captured floor. the suite runs silent -- rocketnet_run_tests
-    // captures the library's log into a ring instead of printing it, and a
-    // failing check dumps that ring before the check line -- so this level
-    // is what a failure gets to show: errors are kept, so a create that
-    // returns NULL always explains itself where it matters, and a passing
-    // run prints test names and nothing else. ROCKETNET_TEST_VERBOSE=1
-    // skips the capture and leaves the log live at this level.
+    if ( cleared != 0 )
+        return 1;
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
@@ -36,11 +36,14 @@ int main()
         return 1;
     }
 
-    rocketnet_run_tests();
-
+    rocketnet_unit_prepare();
+    const int result = rocketnet_unit_run_named( name );
     rocketnet_term();
-
     fflush( stdout );
+    return result;
+}
 
-    return 0;
+int main( int argc, char ** argv )
+{
+    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name, NULL, 0, NULL, 0, true );
 }

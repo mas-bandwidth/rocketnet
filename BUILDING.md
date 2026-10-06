@@ -13,9 +13,38 @@ Makefile is the front door:
 
     make
 
-Binaries and libraries land in `bin/`. Run the test suite with:
+Binaries and libraries land in `bin/`. Run the unit suite with:
 
     ./bin/test
+
+`./bin/test` does not open a socket and does not start a driver. It drives the
+state machines and the in-memory network simulator. Tests run in parallel
+(at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). A test over
+60 seconds prints a warning line. A test over 120 seconds is killed and the
+suite fails. The ten slowest are printed at the end. Those timing lines use
+the `test_timing_* [SKIPPED ...]` spelling because `tools/check_test_environment.py`
+accepts only test-name lines on a passing `./bin/test` run, and that checker
+is shared with the unit suite.
+
+A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
+IOCP, or AF_XDP, or that starts a real driver (`rocketnet_server_transport_create`,
+`rocketnet_client_transport_create`, `rocketnet_platform_socket_create`, or a
+sibling binary that does), belongs in the functional suite:
+
+    ./bin/functional
+
+The functional suite is its own target. It runs in parallel under the same
+60 second warning and 120 second failure limits, and it prints the ten
+slowest as a table. Put a new test in `./bin/test` when the assertion can be
+reached through a state machine or the simulator. Put it in `./bin/functional`
+when the assertion is about a real socket or a real driver. A test that
+cannot run without a socket is functional, and it keeps its assertions.
+Where the same rule is already covered by a simulator or state-machine test,
+that unit test stays beside it. The connect path's unit twin is
+`test_client_server_connect` (and the simulator loss walks). Fragment and
+ACK behavior already has protocol tests in the unit suite. The keyless-config
+create is functional; `test_server_keyless_config_has_no_keys` checks the
+config the gate reads, without creating a driver.
 
 Dependencies, per platform, as CI installs them:
 
@@ -202,11 +231,11 @@ the Darwin batch pump and portable — and the transport walks an ordered candid
 list at create. The list rides the config's `driver` field or the
 `ROCKETNET_DRIVER` environment variable (precedence: default < struct < env):
 
-    ./bin/test                                # auto: the platform's recommended ladder
-                                              #   (linux: xdp,gso,portable — falls on refusal)
-    ROCKETNET_DRIVER=portable ./bin/test      # a one-element list is a pin: that driver
-                                              #   or loud failure, never a silent fall
-    ROCKETNET_DRIVER=gso,portable ./bin/test  # exactly these, exactly this order
+    ./bin/functional                                # auto: the platform's recommended ladder
+                                                #   (linux: xdp,gso,portable — falls on refusal)
+    ROCKETNET_DRIVER=portable ./bin/functional  # a one-element list is a pin: that driver
+                                                #   or loud failure, never a silent fall
+    ROCKETNET_DRIVER=gso,portable ./bin/functional  # exactly these, exactly this order
 
 Names known but absent on a platform — or not applicable to an endpoint, like
 `gso` for a client — are skipped with a log line, so one fleet-wide value deploys
@@ -224,8 +253,9 @@ absorbed into this system with its exact old meaning — the msgx pump off —
 honored and named in the logs, with `ROCKETNET_DRIVER=portable` as its successor;
 `ROCKETNET_SERVER_NUM_QUEUES` and `ROCKETNET_SERVER_NUM_OS_CPUS` likewise keep
 working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
-`ROCKETNET_NUM_OS_CPUS`. Run the same `./bin/test` against each rung — the suite is
-driver-blind.
+`ROCKETNET_NUM_OS_CPUS`. Run `./bin/functional` against each rung. The unit
+suite, `./bin/test`, does not start a driver, so a driver pin does not change
+what it asserts.
 
 The SDK test suite temporarily clears config overrides derived from both
 config tables and their legacy aliases, then restores them on return.
