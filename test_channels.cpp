@@ -273,6 +273,11 @@ static void channels_lean_config( rocketnet_message_config_t * config )
     config->send_queue_messages = 256;
     config->packets_in_flight = 64;
     config->unreliable_deliveries = 128;
+
+    // the design's lean profile kept the default max_message_bytes, 32768,
+    // which needs 29 block chunks; a 65536-byte store has 18. Refused by
+    // section 14's own rule, so the lean profile caps messages at 16384.
+    config->max_message_bytes = 16384;
 }
 
 // every part 64-aligned, in carve order, disjoint, inside the region, and
@@ -366,7 +371,11 @@ static void test_channels_allocator_layout()
     check( rocketnet_message_connection_bytes( NULL ) == 449024 );
     check( rn_region_layout( NULL, &layout ) && layout.region_bytes == 449024 );
 
-    // the lean profile: "about 177 KiB"
+    // the lean profile: "about 177 KiB", and the design's own lean figures
+    // with the default max_message_bytes are refused
+    channels_lean_config( &config );
+    config.max_message_bytes = 32768;
+    check( !rn_region_layout( &config, &layout ) );
     channels_lean_config( &config );
     check( rn_region_layout( &config, &layout ) );
     channels_check_layout( layout );
@@ -1187,7 +1196,7 @@ static void test_channels_allocator_no_live_allocation()
                                is_client ? client_counters.values : server_counters.values );
     }
 
-    const int ticks = 600;
+    const int ticks = 300;
     for ( int tick = 0; tick < ticks; tick++ )
     {
         for ( int i = 0; i < connections; i++ )

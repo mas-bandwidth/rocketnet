@@ -10,12 +10,13 @@ other six later changes neither the wire nor the per-channel state.
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Nothing in this document is built yet. Names that are not
-yet in the tree (`ROCKETNET_MAX_CHANNELS`, `rocketnet_server_t`, the `rn_*`
-internals) are introduced here.
+is USAGE.md line n. Layer 1 is built (section 4, `sdk/rocketnet_allocator.h`
+and `.cpp`, tested by `test_channels.cpp`); nothing above it is. Names that
+are not yet in the tree (`rocketnet_server_t`, most of the `rn_*` internals)
+are introduced here.
 
-**Status: design, for Glenn's correction of the layer list (section 3) before
-layer 1 starts.**
+**Status: design, for Glenn's correction of the layer list (section 3).
+Layer 1 is built on the list as drafted.**
 
 ---
 
@@ -156,7 +157,55 @@ ring placement, being a multiple of 16, is 16-aligned too.
 order and refill, and assert the free-list counts; a carve test that asserts
 every table is in bounds for the minimum, default and maximum configurations;
 and `RNSendStore`, a small module that checks a class never double-allocates a
-chunk and never loses one.
+chunk and never loses one (drafted and run in 15.2).
+
+**What the code settled** (`sdk/rocketnet_allocator.h`, `.cpp`):
+
+- **Allocated at create, carved at connect.** The owner's one
+  `rocketnet_malloc` (`rn_arena_create`: a server `max_clients` regions, a
+  client one) happens at create. `rn_region_carve` runs at every connect, in
+  the same memory: it points every carve-out, zeroes the fixed tables, and
+  rebuilds the store's free lists and the descriptor pool, with no
+  allocation. A reconnect is a carve, so it starts from nothing the last
+  connection left. The receive ring and the store's data are not cleared,
+  because no layer reads them before writing them.
+- **Every part sits at a 64-byte aligned offset**, in the order of section
+  14's table. The exact region is the formula plus at most 63 bytes a part;
+  at the defaults the padding is zero.
+- **The 1152 class keeps its links inside its own third.** A block's chain
+  and the class's free list need one u32 per chunk outside the chunk, since a
+  fragment fills its chunk. The links sit at the head of the 1152 class's
+  third, so they cost no byte outside `S`. At the defaults the classes hold
+  341 × 128, 85 × 512 and 37 × 1152. The 128 and 512 classes keep their
+  free-list link in the free chunk itself.
+- **No fallback to a larger class.** A message takes a chunk of the smallest
+  class that fits or is refused, as this section says; a full 128 class does
+  not spill into the 512 class.
+- **The send descriptors are pooled here too.** `Q` descriptors on a free
+  list; a send that finds none is refused and counted as
+  `MESSAGE_SEND_QUEUE_FULL`. A store that cannot satisfy a send counts
+  `MESSAGE_SEND_STORE_FULL`. Both counters are in `sdk/rocketnet_counters.h`
+  now; the client's `CLIENT_` variants land with the client object, their
+  first user.
+- **A double free is caught only where asserts are on.** A freed chunk
+  carries a marker that the free path asserts on (`ROCKETNET_ASSERTS`, so
+  Debug builds). In a build without asserts a double free corrupts the free
+  list and the next allocations hand one chunk out twice: `RNSendStore`'s
+  reversed witness in 15.2 is that trace.
+- **The entry types are pinned.** `rn_channel_send_t`, the per-number entry,
+  the receiver's descriptor and the rest are declared in
+  `rocketnet_allocator.h` with the fields sections 6 and 7 name, and a static
+  assert holds each to its section 14 size. A later layer that needs a field
+  changes the struct, the assert fails, and the formula changes with it.
+- **The traps.** `test_channels_allocator_no_live_allocation` wraps
+  `rocketnet_allocator`'s hooks, the global `operator new` and `delete`, and
+  on glibc without a sanitizer `malloc`, `free`, `calloc` and `realloc`, and
+  fails at the first call while armed. It soaks a server's 16 regions and a
+  client's at the default configuration, driving every carve-out to its
+  configured capacity, with a reconnect every fiftieth tick. Layers 2 to 8 do
+  not exist yet, so the soak stands in for their reads and writes; each of
+  those layers runs its own send and receive paths under the same traps when
+  it lands.
 
 ## 5. Layer 2: records in a packet
 
@@ -869,6 +918,11 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_me
 // Allocation-free: the bytes one connection's region needs (section 14 of docs/CHANNELS.md).
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
 
+// Allocation-free: the formula, each term, the exact region and the total for n connections,
+// as text into a buffer, or logged at info level. Callable before connecting, and before init.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_bytes );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
+
 struct rocketnet_message_context_t
 {
     struct rocketnet_packet_context_t packet;
@@ -1165,9 +1219,14 @@ Symbols:
 - `S` = `send_buffer_bytes`, `Q` = `send_queue_messages`, `P` = `packets_in_flight`
 - `Du` = `unreliable_deliveries`, `Ru` = `sequenced_holds`, `Rq` = `receipt_ring`
 
-The per-entry sizes are working figures. Layer 1 pins each one with `sizeof`
-and a static assert, and `rocketnet_message_connection_bytes` returns the
-exact figure.
+Layer 1 pins each per-entry size with `sizeof` and a static assert
+(`sdk/rocketnet_allocator.cpp`), so the figures below are exact.
+`rocketnet_message_connection_bytes` returns the exact region: the formula,
+plus each part's alignment to 64 bytes. `rocketnet_message_connection_sizing`
+writes the formula, every term at a given configuration, the exact region and
+the total for `n` connections as text, and
+`rocketnet_message_print_connection_sizing` logs the same lines; both run
+before connecting and before init, and allocate nothing.
 
 | Part | Bytes |
 |---|---|
@@ -1208,7 +1267,11 @@ That is about 428 MiB for a 1000-client server, on top of the transport's own
 memory (`rocketnet_server_transport_required_memory`).
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to
-  about 177 KiB per connection, or 173 MiB at 1000.
+  181,664 bytes (about 177 KiB) per connection, or 173 MiB at 1000. It needs
+  `max_message_bytes` at most 20,736: a 65,536-byte store leaves 18 chunks of
+  1152, and the default 32,768 needs 29, so the last rule below refuses the
+  lean profile with the default message size. The test's lean profile uses
+  16,384.
 - **Channel cost:** 48 bytes per channel. 1024 channels cost 48 KiB per
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No
   other term moves, and nothing scales as channels × window. That is what
@@ -1218,8 +1281,10 @@ memory (`rocketnet_server_transport_required_memory`).
   - `ceil(max_message_bytes / F) > W`;
   - `W` not a power of two;
   - `B` not a multiple of 16;
-  - a 1152 class (a third of `S`) too small to hold one maximal block, that
-    is, fewer than `ceil(max_message_bytes/F)` chunks.
+  - a 1152 class (a third of `S`, less its links) too small to hold one
+    maximal block, that is, fewer than `ceil(max_message_bytes/F)` chunks;
+  - `rto_min_ms <= rto_initial_ms <= rto_max_ms` not holding, since the clamp
+    of 6.4 needs it (added by layer 1).
 
   Validation refuses and never clamps.
 
@@ -1234,7 +1299,7 @@ code by hand before it is written down.
 
 | Module | Models | Invariants and properties | Reversed witness (rule removed, expected failure) |
 |---|---|---|---|
-| `RNSendStore` | the three-class slab | `NoDoubleAllocate`, `NoLeak` (free + used = total), `RefuseOnlyWhenFull` | free-list push before the in-use flag clears: double allocate |
+| `RNSendStore` | one class of the slab: the free list, allocations of 1 to k chunks all or none, whole frees (15.2) | `NoDoubleAllocate`, `NoLeak` (free + used = total), `RefuseOnlyWhenFull` | a double free with the guard off: double allocate. A store that takes what it can before refusing: `NoLeak` |
 | `RNWindow` | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors; update boundaries with P6 | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, LIVE `EveryReliableEventuallyAcked` (weak fairness on Deliver) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision |
 | `RNRing` | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap. No padding at the boundary: span outside the ring |
 | `RNChannel` | the four counters and coupling, holds, the drain, newest-sequenced | `OrderedExactlyOnceInOrder`, `SequencedNeverBackwards`, `NoSequencedDuplicate` (study items 18, 19), `OrderedTraceUnchangedBySequenced` (I5) | the heap-drain path without the watermark reset: item 19's stale drop |
@@ -1345,6 +1410,118 @@ disconnect releases the slot in the same receive loop
 (`sdk/rocketnet_server_protocol.cpp:941`), and a later connection response in
 that loop can claim it, so after the transport's update the slot names B while
 A's payload is still in the batch.
+
+### 15.2 `RNSendStore`, drafted and run
+
+Drafted with layer 1 (card C1). Like `RNSlots` it lives here until a card
+moves it into `tla/` with its `RUNS.tsv` rows. It models one class of the
+send store: `free` is the intrusive free list, a slot is one live
+allocation. `sdk/rocketnet_allocator.cpp` cites it from the store.
+
+```tla
+---------------------------- MODULE RNSendStore ----------------------------
+\* One class of the send store (CHANNELS.md section 4, sdk/rocketnet_allocator.cpp):
+\* N chunks on an intrusive free list, allocations of 1..MaxBlock chunks (a
+\* single message is 1, a block k), each all or none, and frees that return a
+\* whole allocation. A slot is one live allocation; {} is an empty slot.
+\* GuardDoubleFree = FALSE lets a buggy caller free a chunk that is already on
+\* the list (the store's assert is what stops it); AllOrNone = FALSE is a store
+\* that takes what it can and then refuses.
+EXTENDS Naturals, Sequences, FiniteSets
+
+CONSTANTS N, MaxBlock, Slots, MaxRefusals, GuardDoubleFree, AllOrNone
+
+VARIABLES free, held, refusals, lastRefusal
+
+vars == << free, held, refusals, lastRefusal >>
+
+Chunks == 1..N
+Range(s) == { s[i] : i \in 1..Len(s) }
+Live == UNION { held[s] : s \in 1..Slots }
+
+Init == /\ free = [ i \in 1..N |-> i ]
+        /\ held = [ s \in 1..Slots |-> {} ]
+        /\ refusals = 0
+        /\ lastRefusal = [ k |-> 0, have |-> 0 ]
+
+Alloc(s, k) ==
+    /\ held[s] = {}
+    /\ IF Len(free) >= k
+       THEN /\ held' = [ held EXCEPT ![s] = Range(SubSeq(free, 1, k)) ]
+            /\ free' = SubSeq(free, k + 1, Len(free))
+            /\ UNCHANGED << refusals, lastRefusal >>
+       ELSE /\ refusals < MaxRefusals
+            /\ refusals' = refusals + 1
+            /\ lastRefusal' = [ k |-> k, have |-> Len(free) ]
+            /\ UNCHANGED held
+            /\ IF AllOrNone
+               THEN UNCHANGED free
+               ELSE free' = << >>          \* took what there was, then refused
+
+\* a whole allocation goes back, pushed at the head
+Free(s) ==
+    /\ held[s] # {}
+    /\ \E order \in [ 1..Cardinality(held[s]) -> held[s] ] :
+           /\ Range(order) = held[s]
+           /\ free' = order \o free
+    /\ held' = [ held EXCEPT ![s] = {} ]
+    /\ UNCHANGED << refusals, lastRefusal >>
+
+\* a caller frees a chunk that is already free; with the guard this stops
+DoubleFree(c) ==
+    /\ ~GuardDoubleFree
+    /\ c \in Range(free)
+    /\ Len(free) <= N
+    /\ free' = << c >> \o free
+    /\ UNCHANGED << held, refusals, lastRefusal >>
+
+Next == \/ \E s \in 1..Slots, k \in 1..MaxBlock : Alloc(s, k)
+        \/ \E s \in 1..Slots : Free(s)
+        \/ \E c \in Chunks : DoubleFree(c)
+
+Spec == Init /\ [][Next]_vars
+
+\* no chunk is held by two allocations, or held while on the free list
+NoDoubleAllocate == /\ \A s, t \in 1..Slots : s # t => held[s] \cap held[t] = {}
+                    /\ Live \cap Range(free) = {}
+\* free + used = total
+NoLeak == Len(free) + Cardinality(Live) = N
+\* a refusal only when fewer chunks are free than the allocation needs
+RefuseOnlyWhenFull == lastRefusal.k = 0 \/ lastRefusal.have < lastRefusal.k
+TypeOK == /\ Range(free) \subseteq Chunks
+          /\ held \in [ 1..Slots -> SUBSET Chunks ]
+=============================================================================
+```
+
+```
+SPECIFICATION Spec
+CONSTANTS N = 4
+          MaxBlock = 3
+          Slots = 3
+          MaxRefusals = 2
+          GuardDoubleFree = TRUE
+          AllOrNone = TRUE
+INVARIANTS TypeOK NoDoubleAllocate NoLeak RefuseOnlyWhenFull
+```
+
+Run on the bench `vision`, TLC 2.19 (rev 5a47802), `-workers 2 -deadlock`,
+2026-10-06:
+
+| Instance | Result |
+|---|---|
+| as above | `Model checking completed. No error has been found.` 30067 states generated, 5070 distinct states found, 0 states left on queue. |
+| `GuardDoubleFree = FALSE`, invariants `TypeOK NoDoubleAllocate RefuseOnlyWhenFull` | `Error: Invariant NoDoubleAllocate is violated.` at depth 4: Alloc takes chunk 1, chunk 2 (free) is freed again so the list reads `<<2, 2, 3, 4>>`, Alloc takes chunk 2, which is still on the list. (With `NoLeak` checked too, `NoLeak` fails first, at depth 2: the list counts five chunks of four.) |
+| `AllOrNone = FALSE` | `Error: Invariant NoLeak is violated.` at depth 4: two singles taken, a block of 3 asked with 2 free empties the list and is refused, and chunks 3 and 4 belong to no one. |
+
+Both counterexamples match the code by hand. A double free in a build
+without asserts runs `rn_send_store_push_free` on a chunk already at the head
+of its list: the chunk's next link is written as itself, so `pop` hands the
+same chunk to every following allocation, which is the model's "held while
+still on the list", and the rest of the list is lost besides. With asserts on,
+the free-chunk marker stops it at the free. `rn_send_store_alloc_block`
+compares `free_count[2]` with `k` before it pops anything, which is the
+`AllOrNone = TRUE` branch; the broken branch is what popping first and
+checking after would do.
 
 ## 16. Threads, transitions, purity
 
@@ -1482,7 +1659,9 @@ requires.
   the payload was in exactly one batch; a reply is never seen in the update
   that elicited it. Both on every driver.
 - **C1.** Layer 1: region carve, send store, `RNSendStore`, and
-  `rocketnet_message_connection_bytes`.
+  `rocketnet_message_connection_bytes`. Built (rn-l1-connection-allocator):
+  section 4's "What the code settled", and 15.2 for the model; moving
+  `RNSendStore` into `tla/` is owed.
 - **C2.** Layer 2: codec, checks, vectors and fuzz target. The STANDARD.md
   _Messages_ section lands with it (G4).
 - **C3.** Layer 3: window, ring, sent map, RTO; `RNWindow`, `RNRing`.
