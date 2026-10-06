@@ -1139,7 +1139,7 @@ extern void rocketnet_free( void * context, void * p );
 
 // The darwin batch pump (#100): sendmsg_x/recvmsg_x, Darwin's batch UDP
 // syscalls -- private but stable, used by shipping engines, and measured on
-// the Studio (see bench/probe_darwin.c) to support the exact server-pump
+// the test machine (see bench/probe_darwin.c) to support the exact server-pump
 // shape: unconnected sockets, a per-message destination on send, source
 // address and received length filled per message on receive.
 //
@@ -1987,7 +1987,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             // any other -1: the delivered prefix of [offset..count) is
             // INDETERMINATE. xnu can deliver part of a batch and still
-            // return -1 with no count -- measured on the Studio: 8 messages
+            // return -1 with no count -- measured on the test machine: 8 messages
             // with a refused destination at index 5 delivered 0-4 and
             // returned -1 -- so no retry that assumes "nothing was sent"
             // (nor "only the head failed") can be right. the law here: one

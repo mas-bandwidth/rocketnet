@@ -216,7 +216,7 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * unknown_sequence_counter,
                                           uint64_t * batch_full_counter );
 
-// The per-connection statistics recompute, the space reference's shape: rtt
+// The per-connection statistics recompute, the reference's shape: rtt
 // is the minimum over the rtt history, jitter the mean deviation from it,
 // packet loss the unacked fraction of the sent window's older half -- the
 // newer half is excluded because its acks are still in flight -- and the

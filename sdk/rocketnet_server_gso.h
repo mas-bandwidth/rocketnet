@@ -31,7 +31,7 @@
 // Honest framing, per the #81 doctrine: this is the solid middle tier for
 // hosts without XDP -- it recovers the syscall amortization and the
 // single-traversal segmentation, not the skb-allocation avoidance. The
-// space-scale claims belong to the XDP driver that earns them.
+// the highest-scale claims belong to the XDP driver that earns them.
 
 struct rocketnet_server_gso_t;
 

@@ -1,7 +1,7 @@
 # RocketNet Requirements
 
-The hard set, locked with Glenn 2026-08-26. The first customer is Dean Hall
-(RocketWerkz); "Dean" below is him. Everything here is a requirement, not a
+The hard set, locked 2026-08-26. The requirements below are what a first
+customer needs. Everything here is a requirement, not a
 preference.
 
 * Replacement for RakNet that isn't IO bound. On Linux this means AF_XDP plus
@@ -12,7 +12,7 @@ preference.
 
 * A C# interface, via a simple C API on top of the library underneath. The
   library stays the loose C-like C++ we do — no rewrite in C; the nice C API
-  rides on top for Dean to call from C#.
+  rides on top for a C# caller.
 
   The C API is for C to call: an `extern "C"` interface with real,
   non-mangled symbols, consumable from many languages without C++ nonsense.
@@ -37,21 +37,21 @@ preference.
   dependency for the signing half — Ed25519 is in its standard library — and
   sealed boxes are in `nacl/box`.
 
-* Everything is byte buffers, no structure. To Dean these are "packets" he
+* Everything is byte buffers, no structure. To the caller these are "packets" it
   can send. RocketNet does not own serialization.
 
 * Super fast, reliable, maintained, bug free.
 
-* Flows, on the server, for Dean's chunks (squares on a top-down map; players
+* Flows, on the server, for the game's chunks (squares on a top-down map; players
   subscribe to chunks near their player): create flow, destroy flow, client
   subscribe/unsubscribe on the server, and packets sent to a flow by id reach
-  every subscriber. That covers his broadcast case.
+  every subscriber. That covers the broadcast case.
 
 * Three packet disciplines, all byte buffers to the caller: reliable-ordered
   packets, unreliable packets, and most recent state only packets.
 
 * Player hosted servers are not excluded by the security model. Knowing
-  Dean, he will want them.
+  the customer, player-hosted servers will be wanted.
 
 * Connection is netcode style: connect with connect tokens — but the tokens
   must not exclude player hosted servers by requiring a secret shared
@@ -64,7 +64,7 @@ preference.
 * The connect token fits in a single 1500 MTU packet. Because of that it
   names one server, at up to two addresses — an IPv4 one and an IPv6 one,
   each optional. netcode's list of up to 32 candidate servers per token was
-  a mistake (Glenn's own, named as such); failover is a fresh token from the
+  a mistake; failover is a fresh token from the
   backend, which has better information than any stale candidate list.
 
 * Crypto is sodium, ruled 2026-08-26 after the hydrogen evaluation: gutted
@@ -80,7 +80,7 @@ preference.
 * Scale: 1000 players or above on a single server.
 
 * 1.0 endpoints are IP addresses only — an IPv4 or IPv6 address and a port —
-  ruled 2026-08-26. Dean has no requirement for exotic transports with
+  ruled 2026-08-26. There is no requirement for exotic transports with
   arbitrary string addresses. Endpoints as opaque strings, freeing transports
   to name whatever they route by, remain a future direction under a new
   protocol version; nothing in 1.0 is shaped for them.
@@ -95,7 +95,7 @@ preference.
   the machine. Transports declare their sharing model: socket transports
   run many servers per box, one port each. AF_XDP is a single server per
   box design — that is a property of that transport, the end. A customer
-  who wants that changed is asking for paid customization work. (Dean is
+  who wants that changed is asking for paid customization work. (The customer is
   being advised onto GameLift, which has no XDP, so the many-per-box case
   there rides the socket transports anyway.)
 

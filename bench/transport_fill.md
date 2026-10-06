@@ -46,7 +46,7 @@ c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
 
 ## 2026-09-08 macOS observation
 
-Studio, Apple M3 Ultra, Apple clang 21.0.0, Release `-O3 -DNDEBUG`, libsodium 1.0.22.
+Apple silicon, Apple clang 21.0.0, Release `-O3 -DNDEBUG`, libsodium 1.0.22.
 Unpinned and sharing the machine with other work. Baseline `77d89fd` (IOCP before
 the interface); candidate `dc1f40e` (the interface). Later `c27976d` changes only
 Windows test instrumentation, an explicit include and documentation/build setup;

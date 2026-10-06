@@ -5828,7 +5828,7 @@ void rocketnet_test_transport_payload_capacity()
 void rocketnet_test_transport_udp_loopback()
 {
     // the first packets on a real socket: the whole connect over UDP through
-    // loopback, on the transports -- flow's IO carrying the connection
+    // loopback, on the transports -- the IO carrying the connection
     // protocol, development keys, exactly the out-of-the-box path. real
     // clocks here; the protocol underneath is the one proven on mocked time.
 
@@ -8670,7 +8670,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     // both ends -- the join key, through real sockets. The per-client stats
     // for the HIGH slot must move after traffic: the round-robin recompute
     // covers all slots, a sixth per update, which is exactly the test the
-    // space reference's literal i == update_count % 6 predicate fails --
+    // reference's literal i == update_count % 6 predicate fails --
     // that form never updates any slot past five.
 
     struct rocketnet_server_transport_config_t server_config;
