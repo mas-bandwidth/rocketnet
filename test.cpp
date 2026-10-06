@@ -14,6 +14,24 @@ const char * rocketnet_unit_test_name( int index );
 void rocketnet_unit_prepare();
 int rocketnet_unit_run_named( const char * name );
 
+// the message layer's tests, in test_channels.cpp
+
+int rocketnet_channels_test_count();
+const char * rocketnet_channels_test_name( int index );
+const char * rocketnet_channels_test_resolve( const char * name );
+int rocketnet_channels_run_named( const char * name );
+
+static int rocketnet_suite_test_count()
+{
+    return rocketnet_unit_test_count() + rocketnet_channels_test_count();
+}
+
+static const char * rocketnet_suite_test_name( int index )
+{
+    const int units = rocketnet_unit_test_count();
+    return index < units ? rocketnet_unit_test_name( index ) : rocketnet_channels_test_name( index - units );
+}
+
 static int rocketnet_unit_worker( const char * name )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
@@ -37,7 +55,9 @@ static int rocketnet_unit_worker( const char * name )
     }
 
     rocketnet_unit_prepare();
-    const int result = rocketnet_unit_run_named( name );
+    int result = rocketnet_channels_run_named( name );
+    if ( result == 2 )
+        result = rocketnet_unit_run_named( name );
     rocketnet_term();
     fflush( stdout );
     return result;
@@ -45,5 +65,14 @@ static int rocketnet_unit_worker( const char * name )
 
 int main( int argc, char ** argv )
 {
-    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_unit_test_count, rocketnet_unit_test_name, NULL, 0, NULL, 0, true );
+    // ./bin/test <name> runs that one test alone, in this process: a suite
+    // name, or a message-layer test's alias (the name a card's TEST line uses)
+
+    if ( argc == 2 && argv[1][0] != '-' )
+    {
+        const char * resolved = rocketnet_channels_test_resolve( argv[1] );
+        return rocketnet_unit_worker( resolved ? resolved : argv[1] );
+    }
+
+    return suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name, NULL, 0, NULL, 0, true );
 }
