@@ -96,7 +96,7 @@
 #define ROCKETNET_ACK_DEBT_THRESHOLD                                      64
 
 // the per-client statistics recompute runs round-robin, a sixth of the
-// slots per update, every slot covered -- the space reference's amortization
+// slots per update, every slot covered -- the reference's amortization
 
 #define ROCKETNET_CLIENT_STATS_UPDATE_PHASES                              6
 

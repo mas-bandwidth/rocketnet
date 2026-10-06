@@ -5,7 +5,7 @@
 # hardware: ./bin/soak_sim and ./bin/soak, and belief comes after days.
 #
 # The second job, `sanitized-soak`, arrived here on 2026-09-13 from ci.yml
-# under Glenn's law that the per-commit tier finishes in one to two minutes:
+# because the per-commit tier finishes in one to two minutes:
 # at 297s it was the wall of the whole gate. It came across unchanged -- same
 # name, same flags, same seed, same count -- because a leg that is too slow
 # for the gate moves tiers, it does not get shortened to fit. Its own header
@@ -67,7 +67,7 @@ jobs:
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
   # 297 seconds it WAS the wall: the whole per-commit tier finished when this
-  # job finished, and Glenn's law is that the per-commit tier finishes in one
+  # job finished, and the per-commit tier finishes in one
   # to two minutes. So it moved here, unchanged -- same job name, same flags,
   # same seed, same iteration count, same log handling -- rather than being
   # weakened to fit. A slower leg moves to a tier that does not run on every

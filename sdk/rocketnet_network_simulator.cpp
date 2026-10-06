@@ -33,7 +33,7 @@
     What changed (#99) is only the COST of finding that slot. receive() used
     to walk all `capacity` slots on every call: at soak_sim's shape that is
     a 4096-entry scan nine times per iteration, most of them finding nothing,
-    and it held 38.6% of soak cycles on the space box -- harness, not product.
+    and it held 38.6% of soak cycles on the test box -- harness, not product.
 
     The index: every occupied slot is linked into a per-destination-shard
     doubly linked list, and each list is kept in ASCENDING SLOT INDEX ORDER.
@@ -326,7 +326,7 @@ void rocketnet_network_simulator_audit( struct rocketnet_network_simulator_t * s
     of the time for 1.004x the optimal total steps, worst single excess 31
     entries, which is why this is a heuristic and not a fix.
 
-    Measured, Apple M3 Ultra (Mac Studio), one destination, the lowest slot
+    Measured, Apple silicon, one destination, the lowest slot
     vacated and refilled 20,000 times, nanoseconds per receive+send pair:
 
         occupancy                    500      1000      4000
