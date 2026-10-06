@@ -1,0 +1,12 @@
+module	config	states	distinct	result	bench	date
+MCLink	MCLink.cfg (Pattern "arbitrary", Spec, ResentIsDelivered)	18543	2146	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "none", Spec, ResentIsDelivered	10424	1763	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "first", Spec, ResentIsDelivered	8966	1503	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", Spec, ResentIsDelivered	8782	1535	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "burst", Spec, ResentIsDelivered	8073	1354	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "none", SpecWireFair, LinkDelivers	10424	1763	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "first", SpecWireFair, LinkDelivers	8966	1503	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, LinkDelivers	8782	1535	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "burst", SpecWireFair, LinkDelivers	8073	1354	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "arbitrary", SpecWireFair, LinkDelivers (reversed witness)	18543	2146	fail as expected: LinkDelivers violated, 44-state lasso, no delivery	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, ResentIsDelivered (reorder starvation)	8782	1535	fail as expected: ResentIsDelivered violated, 19-state lasso, see README-Link.md	vision	2026-10-06
