@@ -20,6 +20,8 @@ int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
+void rocketnet_channels_prepare( const char * name );
+void rocketnet_channels_prepare_log( const char * name );
 
 static int rocketnet_suite_test_count()
 {
@@ -48,6 +50,9 @@ static int rocketnet_unit_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
+    // allocator cases install their hooks here: replacement is refused after init
+    rocketnet_channels_prepare( name );
+
     if ( !rocketnet_init() )
     {
         printf( "error: failed to initialize rocketnet\n" );
@@ -55,6 +60,7 @@ static int rocketnet_unit_worker( const char * name )
     }
 
     rocketnet_unit_prepare();
+    rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
         result = rocketnet_unit_run_named( name );

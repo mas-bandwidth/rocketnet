@@ -1,0 +1,354 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#pragma once
+
+#ifndef ROCKETNET_ALLOCATOR_H
+#define ROCKETNET_ALLOCATOR_H
+
+#include "rocketnet.h"
+#include "rocketnet_counters.h"
+
+#include <stdint.h>
+#include <stddef.h>
+
+// Layer 1 of the message layer: the region (docs/CHANNELS.md 4, sized by 14).
+//
+// One fixed region per connection: per server slot, and the client's one.
+// An arena is the one rocketnet_malloc an object makes at create, holding
+// its regions (max_clients for a server, 1 for a client); nothing in it is
+// allocated, freed or grown again until destroy. A region is carved at
+// connect -- every table reset, every free list threaded -- in its own
+// memory, allocating nothing. Every queue, window, buffer and block the
+// channel layers need is a typed carve-out of the region, sized from the
+// connection's config by section 14's formula. Exhaustion is a counted
+// refusal (MESSAGE_SEND_STORE_FULL, MESSAGE_SEND_QUEUE_FULL), never growth.
+//
+// A region is one connection's, under the one-writer-per-connection rule
+// (16.1): nothing here locks. The counters it refuses into are its owner's,
+// shared by all of an object's regions, so refusals add atomically.
+
+// ----------------------------------------------------------------
+//                          the entry types
+// ----------------------------------------------------------------
+
+// Each is pinned to section 14's working figure by a static assert in
+// rocketnet_allocator.cpp, so the formula and the code cannot drift.
+
+#define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
+#define RN_CHUNK_NONE           0xFFFFFFFFu
+
+struct rn_channel_send_t                // 32 bytes (7.1)
+{
+    uint32_t ordered_write;             // next ordering index for an ordered send
+    uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
+    uint32_t queue_head, queue_tail;    // FIFO of queued send descriptors (layer 6), RN_DESCRIPTOR_NONE when empty
+    uint16_t queued[4];                 // queued count per priority (layer 6)
+    uint32_t ready_prev, ready_next;    // this channel's link in its level's ready list (layer 6)
+};
+
+struct rn_channel_receive_t             // 16 bytes (7.1)
+{
+    uint32_t ordered_read;              // next ordering index to deliver
+    uint32_t sequenced_watermark;       // lowest sequencing index still deliverable in this epoch
+    uint32_t held_sequenced;            // descriptor of the newest held sequenced message, or RN_DESCRIPTOR_NONE
+    uint32_t pad;
+};
+
+struct rn_send_number_t                 // 32 bytes: the sender's per-number table, indexed number % W (6.1)
+{
+    uint64_t number;                    // the message number, reconstructed u64
+    uint64_t ring_start;                // absolute ring position of this fragment
+    double last_send;
+    uint32_t descriptor;                // the send descriptor, or RN_DESCRIPTOR_NONE
+    uint16_t fragment;                  // index within its block
+    uint8_t ring_units;                 // ring span in 16-byte units: ring_end = ring_start + 16 * ring_units
+    uint8_t acked;
+};
+
+struct rn_receive_descriptor_t          // 32 bytes: the receiver's descriptors, indexed number % W (6.1)
+{
+    uint64_t number;
+    uint32_t ordering;
+    uint32_t sequencing;
+    uint32_t ring;                      // offset in the receive ring
+    uint32_t bytes;
+    uint16_t channel;
+    uint8_t code;
+    uint8_t live;
+    uint16_t block_have;                // fragments received, on a block's first-number descriptor
+    uint16_t block_count;
+};
+
+struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W open-addressed entries (6.1)
+{
+    uint64_t key;                       // channel << 32 | ordering
+    uint32_t number_slot;               // the descriptor slot holding it
+    uint32_t used;
+};
+
+struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight send (Q of them)
+{
+    uint32_t chunk;                     // the first store chunk, chained for a block
+    uint32_t bytes;
+    uint32_t serial;                    // the receipt serial (7.4)
+    uint32_t next;                      // the channel FIFO link while queued; the free list's while free
+    uint32_t ordering;
+    uint32_t sequencing;
+    uint64_t first_number;              // the first message number, once numbered (6.2)
+    uint16_t channel;
+    uint8_t reliability;
+    uint8_t priority;
+    uint8_t in_use;
+    uint8_t flags;
+    uint16_t fragments;
+    uint16_t fragments_acked;
+    uint8_t reserved[22];               // layers 3 to 6's per-send state lands here, inside the pinned 64
+};
+
+struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
+{
+    uint64_t packet_id;
+    double send_time;
+    uint32_t ref_first;                 // first of this packet's references in the reference ring
+    uint16_t ref_count;
+    uint16_t unreliable_receipts;
+    uint32_t receipt_first;
+    uint32_t flags;
+};
+
+struct rn_sent_index_t                  // 16 bytes: packet_id -> sent ring entry, 2P open-addressed entries (6.1)
+{
+    uint64_t packet_id;
+    uint32_t entry;
+    uint32_t used;
+};
+
+struct rn_delivery_t                    // 24 bytes: one delivered message, valid until the next update (10.1)
+{
+    union
+    {
+        const uint8_t * data;           // into the payload (zero copy) or the receive ring
+        uint64_t data_bits;             // pins the field at 8 bytes on a 32-bit target too
+    };
+    int32_t bytes;
+    uint16_t channel;
+    uint8_t code;
+    uint8_t pad;
+    uint32_t serial;
+    uint32_t pad2;
+};
+
+struct rn_sequenced_hold_t              // 1208 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
+{
+    uint32_t bytes;
+    uint32_t ordering;
+    uint32_t sequencing;
+    uint16_t channel;
+    uint8_t used;
+    uint8_t code;
+    uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+};
+
+struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entries (7.4)
+{
+    uint32_t serial;
+    uint32_t status;                    // ROCKETNET_RECEIPT_*
+    uint32_t reserved[2];
+};
+
+// ----------------------------------------------------------------
+//                        the region's layout
+// ----------------------------------------------------------------
+
+enum
+{
+    RN_PART_CHANNEL_SEND = 0,           // 32 C
+    RN_PART_CHANNEL_RECEIVE,            // 16 C
+    RN_PART_SEND_NUMBERS,               // 32 W
+    RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
+    RN_PART_RECEIVED_BITS,              // W / 8
+    RN_PART_HELD_INDEX,                 // 16 * 2W
+    RN_PART_RECEIVE_RING,               // B
+    RN_PART_SEND_DESCRIPTORS,           // 64 Q
+    RN_PART_SEND_STORE,                 // S
+    RN_PART_SENT_PACKETS,               // 32 P
+    RN_PART_SENT_INDEX,                 // 16 * 2P
+    RN_PART_SENT_REFS,                  // 4 * 16P
+    RN_PART_DELIVERIES,                 // 24 (W + Du)
+    RN_PART_SEQUENCED_HOLDS,            // 1208 Ru
+    RN_PART_RECEIPTS,                   // 16 Rq
+    RN_NUM_PARTS
+};
+
+#define RN_STORE_SMALL          0
+#define RN_STORE_MEDIUM         1
+#define RN_STORE_LARGE          2
+#define RN_STORE_NUM_CLASSES    3
+
+#define RN_STORE_SMALL_BYTES    128
+#define RN_STORE_MEDIUM_BYTES   512
+#define RN_STORE_LARGE_BYTES    ROCKETNET_MESSAGE_FRAGMENT_BYTES
+
+struct rn_region_layout_t
+{
+    uint64_t offset[RN_NUM_PARTS];      // from the region base, each 64-aligned
+    uint64_t bytes[RN_NUM_PARTS];       // the formula's term, exactly
+    uint64_t formula_bytes;             // the sum of the terms: section 14's figure
+    uint64_t region_bytes;              // the exact region: the formula plus each part's alignment padding
+    uint32_t store_chunks[RN_STORE_NUM_CLASSES];
+};
+
+// false, with a log line naming the rule, for a refused config. NULL is the defaults.
+bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );
+
+const char * rn_region_part_name( int part );
+
+const char * rn_region_part_formula( int part );
+
+// the message table's field descriptors, as the transports' (rocketnet_config.h)
+struct rocketnet_config_field_t;
+const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields );
+
+// ----------------------------------------------------------------
+//                            the send store
+// ----------------------------------------------------------------
+
+// S bytes in three classes of fixed chunks, each class a 64-aligned third of
+// S by bytes (4). A class's third holds its chunks, then one u32 link per
+// chunk: a free chunk's link is the next free chunk, an allocated chunk's is
+// RN_CHUNK_IN_USE plus the next chunk of its block. So a block's chain costs
+// no extra bytes outside S, and the in-use flag makes a double free a
+// refusal, never a corrupted list (RNSendStore's NoDoubleAllocate).
+//
+// A message up to 1152 bytes takes one chunk of the smallest class that
+// fits, and only that class; a larger one is a block and takes
+// ceil(bytes / 1152) large chunks, all or none. Allocate and free are O(1)
+// per chunk.
+//
+// A handle is the class in its top two bits and the chunk index below.
+
+struct rn_store_class_t
+{
+    uint8_t * data;
+    uint32_t * link;
+    uint32_t chunk_bytes;
+    uint32_t num_chunks;
+    uint32_t free_head;
+    uint32_t free_count;
+};
+
+struct rn_send_store_t
+{
+    rn_store_class_t classes[RN_STORE_NUM_CLASSES];
+};
+
+uint32_t rn_send_store_chunks_for( uint64_t store_bytes, int class_index );
+
+int rn_send_store_class_for( int bytes );
+
+uint32_t rn_send_store_chunks_needed( int bytes );
+
+void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
+
+uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // the first chunk's handle, or RN_CHUNK_NONE
+
+bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not an allocated chain's head, nothing changed
+
+void rn_send_store_free( rn_send_store_t * store, uint32_t handle );    // the whole chain
+
+uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle );
+
+uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle );
+
+inline int rn_send_store_chunk_class( uint32_t handle ) { return (int) ( handle >> 30 ); }
+
+uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index );
+
+uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index );
+
+// ----------------------------------------------------------------
+//                              the region
+// ----------------------------------------------------------------
+
+struct rn_region_t
+{
+    uint8_t * base;
+    uint64_t bytes;
+    rocketnet_counters_t * counters;    // the owner's; refusals count here
+    uint64_t carves;                    // connections this region has carried
+
+    uint32_t num_channels;              // C
+    uint32_t window;                    // W
+    uint32_t ring_bytes;                // B
+    uint32_t queue;                     // Q
+    uint32_t packets;                   // P
+    uint32_t held_entries;              // 2W
+    uint32_t sent_index_entries;        // 2P
+    uint32_t sent_ref_entries;          // 16P
+    uint32_t delivery_entries;          // W + Du
+    uint32_t holds;                     // Ru
+    uint32_t receipt_entries;           // Rq
+    uint32_t max_message_bytes;
+
+    rn_channel_send_t * channel_send;
+    rn_channel_receive_t * channel_receive;
+    rn_send_number_t * send_numbers;
+    rn_receive_descriptor_t * receive_descriptors;
+    uint64_t * received_bits;
+    rn_held_entry_t * held_index;
+    uint8_t * receive_ring;
+    rn_send_descriptor_t * send_descriptors;
+    uint8_t * store_memory;
+    uint64_t store_bytes;
+    rn_send_store_t store;
+    rn_sent_packet_t * sent_packets;
+    rn_sent_index_t * sent_index;
+    uint32_t * sent_refs;
+    rn_delivery_t * deliveries;
+    rn_sequenced_hold_t * sequenced_holds;
+    rn_receipt_t * receipts;
+
+    uint32_t descriptors_free_head;
+    uint32_t descriptors_free;
+};
+
+// at connect: every table back to its empty state and every free list
+// threaded, in the region's own memory. Allocates nothing. The ring's and the
+// store's bytes are not cleared: nothing reads them before writing them.
+void rn_region_carve( rn_region_t * region );
+
+// one send's descriptor and store chunks, both or neither. The descriptor
+// index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
+// a full store MESSAGE_SEND_STORE_FULL. bytes outside 1..max_message_bytes
+// is the caller's refusal to count, and takes nothing here.
+uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
+
+void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
+
+bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );
+
+// the receiver's only ring logic (4.3): a placement is 16-aligned and inside B
+bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes );
+
+// ----------------------------------------------------------------
+//                              the arena
+// ----------------------------------------------------------------
+
+struct rn_arena_t;
+
+// the one allocation: num_regions regions, each laid out and pointed but not
+// yet carved. NULL (allocating nothing) for a refused config or count.
+rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
+
+void rn_arena_destroy( rn_arena_t * arena );
+
+int rn_arena_num_regions( const rn_arena_t * arena );
+
+rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
+
+uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the one allocation's size
+
+#endif // #ifndef ROCKETNET_ALLOCATOR_H
