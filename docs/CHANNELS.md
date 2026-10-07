@@ -1261,6 +1261,13 @@ memory (`rocketnet_server_transport_required_memory`).
 
 ## 15. The TLA+ modules
 
+A bounded first-version composition now lives in [Channels.tla](../tla/Channels.tla),
+with its coverage, fairness assumptions and exclusions in
+[README-Channels.md](../tla/README-Channels.md). It checks per-send UNRELIABLE
+and RELIABLE_ORDERED over the lossy link, the sender queue and packet map,
+and receiver ordering holds. It does not replace the focused window, byte-ring,
+block, scheduler or connection-lifetime models listed below.
+
 Each module drives its transitions through `tla/Link.tla` (loss, duplication,
 reordering, delay) where it talks to a peer. Each has a small instance in an
 `MC*.tla` and `.cfg`, and a **reversed witness**: the same module with its

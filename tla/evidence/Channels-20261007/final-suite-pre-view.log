@@ -1,0 +1,45 @@
+MCChannels exit=124
+Semantic processing of module Channels
+Semantic processing of module MCChannels
+Starting... (2026-10-07 17:00:27)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-07 17:00:28.
+Progress(16) at 2026-10-07 17:00:31: 35,862 states generated (35,862 s/min), 10,929 distinct states found (10,929 ds/min), 4,459 states left on queue.
+Progress(28) at 2026-10-07 17:01:31: 1,880,516 states generated (1,844,654 s/min), 344,561 distinct states found (333,632 ds/min), 32,269 states left on queue.
+Progress(49) at 2026-10-07 17:02:02: 2,954,518 states generated, 471,553 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 471553 total distinct states at (2026-10-07 17:02:02)
+MCChannelsNoDedup exit=12
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ acked = {}
+/\ held = {}
+
+4419 states generated, 1751 distinct states found, 892 states left on queue.
+The depth of the complete state graph search is 13.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 7 and the 95th percentile is 5).
+Finished in 01s at (2026-10-07 18:04:51)
+MCChannelsNoOrder exit=12
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {[message |-> 2, generation |-> 0]}
+/\ acked = {}
+/\ held = {}
+
+102 states generated, 62 distinct states found, 27 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 2 (minimum is 1, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-10-07 18:05:40)
+MCChannelsNoRetry exit=13
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 17: Stuttering
+Finished checking temporal properties in 00s at 2026-10-07 18:05:51
+108252 states generated, 20367 distinct states found, 0 states left on queue.
+Finished in 11s at (2026-10-07 18:05:51)
+FINAL_SUITE_DONE

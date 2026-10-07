@@ -1,0 +1,158 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 124 and seed 6435292778857275602 with 4 workers on 64 cores with 5461MB heap and 64MB offheap memory [pid: 1975136] (Linux 7.0.0-34-generic amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla-view/MCChannels.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla-view/Channels.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/Sequences.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla-view/Link.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Link
+Semantic processing of module Channels
+Semantic processing of module MCChannels
+Starting... (2026-10-07 18:28:20)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-07 18:28:20.
+Error: Invariant OrderedDelivery is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 0
+/\ receivedBits = {}
+/\ orderedWrite = <<0, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 2: <Admit line 87, col 5 to line 94, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 1
+/\ receivedBits = {}
+/\ orderedWrite = <<1, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 3: <Admit line 87, col 5 to line 94, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 2
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 4: <Send line 97, col 5 to line 108, col 82 of module Channels>
+/\ dataSent = 1
+/\ delivered = <<>>
+/\ written = {1}
+/\ accepted = 2
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 1, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 5: <Send line 97, col 5 to line 108, col 82 of module Channels>
+/\ dataSent = 2
+/\ delivered = <<>>
+/\ written = {1, 2}
+/\ accepted = 2
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = << [pkt |-> [message |-> 1, generation |-> 0], due |-> 0],
+   [pkt |-> [message |-> 2, generation |-> 0], due |-> 0] >>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 6: <Receive line 111, col 5 to line 136, col 71 of module Channels>
+/\ dataSent = 2
+/\ delivered = <<2>>
+/\ written = {1, 2}
+/\ accepted = 2
+/\ receivedBits = {1}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 1
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 1, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {[message |-> 2, generation |-> 0]}
+/\ acked = {}
+/\ held = {}
+
+78 states generated, 49 distinct states found, 22 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 5 and the 95th percentile is 5).
+Finished in 00s at (2026-10-07 18:28:20)

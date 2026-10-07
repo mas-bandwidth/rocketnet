@@ -1,0 +1,21 @@
+b3b56cdacaf365456fd9acc699a19cd4567befa1416db4a5bd3d141b4e185658  Channels.tla
+8371800d24fba8f7bbd63e3bfdea322a27ab3cc6f742cfa9d1be3c2b9dd1f669  Link.tla
+ca95f612a1d305c26cf2b70d6b324dec4d050f4893e8935f06158552d8a4ca7f  MCChannels.tla
+284483f61b94cb304133033975eb71e0e894e93847cb2b8b38cb9372770f372f  MCChannels.cfg
+2bde7aa75811b6c311e0cea2df9279b202039e5909aaa1b5a8e1791f121e3e65  MCChannelsNoDedup.cfg
+f3b1506482204c0ac385be2c0822738634e3dc1599b51d1bd630b99b6a03112b  MCChannelsNoOrder.cfg
+d9aac54cd186dbd561d37b35e12b16e60eedc65b98f54357b206633de6e91134  MCChannelsNoRetry.cfg
+1bc1cd9fbb0cc8ab9c32bd1fefba65b1af42394d8106308c16af7068a75bd254  MCChannelsPerMessage.cfg
+dd9e494c14ecddc6b32bf958aca948f68f2fc9386f2cd289dc430aae1302c52f  MCChannelsSafety.cfg
+19e9daa242ac61a8de7a0b441cd664837ddd10d76fe27ace5a4c705e8c99e468  MCChannelsTwoTickets.cfg
+10331ffdb547f8b14dff540cfb43f0cc3e978d14145a7eb3aadc8f303f83a5d9  MCChannelsWindow2.cfg
+4b2da4dc03d7e3e9731f84770e84d2e7f4eb2d93413df2ef0a71797321fbba88  README-Channels.md
+openjdk version "21.0.12.1" 2026-08-18 LTS
+OpenJDK Runtime Environment Temurin-21.0.12.1+1 (build 21.0.12.1+1-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.12.1+1 (build 21.0.12.1+1-LTS, mixed mode, sharing)
+Linux 7.0.0-34-generic x86_64 GNU/Linux
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  /opt/tla/tla2tools.jar
+Bench: vision; owned directory: /tmp/stella-rn-l3-channel-tla-w4-e15
+Gate lock: /tmp/stella-tlc-bench.lock
+Per-run bound: timeout 1800s; JVM -XX:+UseParallelGC -Xmx6g; TLC -workers 4 -lncheck final -cleanup

@@ -1,0 +1,67 @@
+MCChannelsNoDedup exit=12
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ acked = {}
+/\ held = {}
+
+4586 states generated, 1819 distinct states found, 927 states left on queue.
+The depth of the complete state graph search is 13.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 7 and the 95th percentile is 5).
+Finished in 02s at (2026-10-07 16:30:11)
+MCChannelsNoOrder exit=12
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {[message |-> 2, generation |-> 0]}
+/\ acked = {}
+/\ held = {}
+
+73 states generated, 48 distinct states found, 22 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 2 (minimum is 1, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-10-07 16:30:12)
+MCChannelsNoRetry exit=13
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 17: Stuttering
+Finished checking temporal properties in 00s at 2026-10-07 16:30:25
+108252 states generated, 20367 distinct states found, 0 states left on queue.
+Finished in 12s at (2026-10-07 16:30:25)
+MCChannels exit=124
+Progress(20) at 2026-10-07 16:31:29: 291,739 states generated (285,520 s/min), 73,672 distinct states found (71,394 ds/min), 22,510 states left on queue.
+Progress(22) at 2026-10-07 16:32:29: 588,738 states generated (296,999 s/min), 135,776 distinct states found (62,104 ds/min), 33,903 states left on queue.
+Progress(24) at 2026-10-07 16:33:29: 911,922 states generated (323,184 s/min), 194,283 distinct states found (58,507 ds/min), 38,433 states left on queue.
+Progress(25) at 2026-10-07 16:34:29: 1,195,200 states generated (283,278 s/min), 242,912 distinct states found (48,629 ds/min), 40,062 states left on queue.
+Progress(26) at 2026-10-07 16:35:29: 1,547,560 states generated (352,360 s/min), 297,490 distinct states found (54,578 ds/min), 38,109 states left on queue.
+Progress(28) at 2026-10-07 16:36:29: 1,860,028 states generated (312,468 s/min), 341,645 distinct states found (44,155 ds/min), 32,540 states left on queue.
+Progress(30) at 2026-10-07 16:37:29: 2,225,573 states generated (365,545 s/min), 389,810 distinct states found (48,165 ds/min), 24,480 states left on queue.
+Progress(33) at 2026-10-07 16:38:29: 2,656,102 states generated (430,529 s/min), 441,109 distinct states found (51,299 ds/min), 11,362 states left on queue.
+Progress(49) at 2026-10-07 16:39:10: 2,954,518 states generated, 471,553 distinct states found, 0 states left on queue.
+Checking 6 branches of temporal properties for the complete state space with 2829318 total distinct states at (2026-10-07 16:39:10)
+MCChannelsWindow2 exit=0
+Finished checking temporal properties in 04min 08s at 2026-10-07 17:34:42
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.8E-10
+  based on the actual fingerprints:  val = 6.7E-11
+156766 states generated, 26097 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 39.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 7 and the 95th percentile is 3).
+Finished in 04min 15s at (2026-10-07 17:34:42)
+MCChannelsSafety exit=0
+Progress(16) at 2026-10-07 18:04:56: 43,451 states generated (43,451 s/min), 13,300 distinct states found (13,300 ds/min), 5,494 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 6.3E-8
+  based on the actual fingerprints:  val = 1.7E-8
+2954518 states generated, 471553 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 49.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 9 and the 95th percentile is 3).
+Finished in 24s at (2026-10-07 18:05:16)
+SUITE_DONE

@@ -1,0 +1,386 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 38 and seed 4021842237469382052 with 4 workers on 64 cores with 5461MB heap and 64MB offheap memory [pid: 3612577] (Linux 7.0.0-34-generic amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/MCChannels.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/Channels.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/Sequences.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/Link.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Link
+Semantic processing of module Channels
+Semantic processing of module MCChannels
+Starting... (2026-10-07 16:30:13)
+Implied-temporal checking--satisfiability problem has 3 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-07 16:30:13.
+Progress(13) at 2026-10-07 16:30:16: 6,349 states generated (6,349 s/min), 2,089 distinct states found (2,089 ds/min), 862 states left on queue.
+Progress(26) at 2026-10-07 16:30:24: 108,252 states generated, 20,367 distinct states found, 0 states left on queue.
+Checking 3 branches of temporal properties for the complete state space with 61101 total distinct states at (2026-10-07 16:30:24)
+Error: Temporal properties were violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 0
+/\ receivedBits = {}
+/\ orderedWrite = <<0, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 2: <Admit line 86, col 5 to line 93, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 1
+/\ receivedBits = {}
+/\ orderedWrite = <<1, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 3: <Admit line 86, col 5 to line 93, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 2
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 4: <Admit line 86, col 5 to line 93, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 3
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 0>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 5: <Admit line 86, col 5 to line 93, col 52 of module Channels>
+/\ dataSent = 0
+/\ delivered = <<>>
+/\ written = {}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 6: <Send line 96, col 5 to line 107, col 82 of module Channels>
+/\ dataSent = 1
+/\ delivered = <<>>
+/\ written = {1}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 1, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 7: <Send line 96, col 5 to line 107, col 82 of module Channels>
+/\ dataSent = 2
+/\ delivered = <<>>
+/\ written = {1, 2}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = << [pkt |-> [message |-> 1, generation |-> 0], due |-> 0],
+   [pkt |-> [message |-> 2, generation |-> 0], due |-> 0] >>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 8: <Environment line 164, col 16 to line 164, col 50 of module Channels>
+/\ dataSent = 2
+/\ delivered = <<>>
+/\ written = {1, 2}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 2, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 1, generation |-> 0], [message |-> 2, generation |-> 0]}
+/\ generation = <<0, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 9: <Expire line 157, col 5 to line 162, col 52 of module Channels>
+/\ dataSent = 2
+/\ delivered = <<>>
+/\ written = {1, 2}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 2, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 2, generation |-> 0]}
+/\ generation = <<1, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 3, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 10: <Send line 96, col 5 to line 107, col 82 of module Channels>
+/\ dataSent = 3
+/\ delivered = <<>>
+/\ written = {1, 2, 3}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = << [pkt |-> [message |-> 2, generation |-> 0], due |-> 0],
+   [pkt |-> [message |-> 3, generation |-> 0], due |-> 0] >>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 2, generation |-> 0]}
+/\ generation = <<1, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 11: <Environment line 164, col 16 to line 164, col 50 of module Channels>
+/\ dataSent = 3
+/\ delivered = <<>>
+/\ written = {1, 2, 3}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 3, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 2, generation |-> 0]}
+/\ generation = <<1, 0, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 12: <Expire line 157, col 5 to line 162, col 52 of module Channels>
+/\ dataSent = 3
+/\ delivered = <<>>
+/\ written = {1, 2, 3}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 3, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<1, 1, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 13: <Send line 96, col 5 to line 107, col 82 of module Channels>
+/\ dataSent = 4
+/\ delivered = <<>>
+/\ written = {1, 2, 3, 4}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = << [pkt |-> [message |-> 3, generation |-> 0], due |-> 0],
+   [pkt |-> [message |-> 4, generation |-> 0], due |-> 0] >>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 4, generation |-> 0]}
+/\ generation = <<1, 1, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 14: <Environment line 164, col 16 to line 164, col 50 of module Channels>
+/\ dataSent = 4
+/\ delivered = <<>>
+/\ written = {1, 2, 3, 4}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 3, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {[message |-> 4, generation |-> 0]}
+/\ generation = <<1, 1, 0, 0>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 15: <Expire line 157, col 5 to line 162, col 52 of module Channels>
+/\ dataSent = 4
+/\ delivered = <<>>
+/\ written = {1, 2, 3, 4}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = <<[pkt |-> [message |-> 3, generation |-> 0], due |-> 0]>>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<1, 1, 0, 1>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 16: <Environment line 164, col 16 to line 164, col 50 of module Channels>
+/\ dataSent = 4
+/\ delivered = <<>>
+/\ written = {1, 2, 3, 4}
+/\ accepted = 4
+/\ receivedBits = {}
+/\ orderedWrite = <<2, 1>>
+/\ heldSequenced = <<0, 0>>
+/\ dataPulse = 0
+/\ orderedRead = <<0, 0>>
+/\ dataWire = << >>
+/\ transportSeen = {}
+/\ packetMap = {}
+/\ generation = <<1, 1, 0, 1>>
+/\ receiveBase = 0
+/\ queue = {1, 2, 4}
+/\ sequencedWatermark = <<0, 0>>
+/\ sequencedWrite = <<0, 0>>
+/\ ackPending = {}
+/\ acked = {}
+/\ held = {}
+
+State 17: Stuttering
+Finished checking temporal properties in 00s at 2026-10-07 16:30:25
+108252 states generated, 20367 distinct states found, 0 states left on queue.
+Finished in 12s at (2026-10-07 16:30:25)

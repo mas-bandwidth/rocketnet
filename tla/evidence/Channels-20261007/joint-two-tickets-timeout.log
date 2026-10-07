@@ -1,0 +1,24 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 56 and seed 2928848876878177548 with 4 workers on 64 cores with 5461MB heap and 64MB offheap memory [pid: 4147275] (Linux 7.0.0-34-generic amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/MCChannels.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/Channels.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/Sequences.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/stella-rn-l3-channel-tla-w4-e15/tla/Link.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Link
+Semantic processing of module Channels
+Semantic processing of module MCChannels
+Starting... (2026-10-07 17:00:27)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-07 17:00:28.
+Progress(16) at 2026-10-07 17:00:31: 35,862 states generated (35,862 s/min), 10,929 distinct states found (10,929 ds/min), 4,459 states left on queue.
+Progress(28) at 2026-10-07 17:01:31: 1,880,516 states generated (1,844,654 s/min), 344,561 distinct states found (333,632 ds/min), 32,269 states left on queue.
+Progress(49) at 2026-10-07 17:02:02: 2,954,518 states generated, 471,553 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 471553 total distinct states at (2026-10-07 17:02:02)
