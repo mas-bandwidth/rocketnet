@@ -298,6 +298,15 @@ enum
     // size errors from off-path salt injection.
     ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
 
+    // the message layer's region (docs/CHANNELS.md 4): a send refused because
+    // the connection's send store had no chunk of the class it needs (or, for
+    // a block, not every chunk it needs), and a send refused because every
+    // send descriptor was in use. Exhaustion is a counted refusal, never
+    // growth; nothing is taken from either when one refuses. Counted on the
+    // owner's counters, once per refused send. appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL,
+    ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL,
+
     ROCKETNET_NUM_COUNTERS
 };
 

@@ -8,6 +8,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
+#include "rocketnet_allocator.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,13 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
 }
 
+void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
+{
+    rocketnet_assert( config );
+    memset( config, 0, sizeof(struct rocketnet_message_config_t) );
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+}
+
 // the field descriptors: the walkable form of each table, one entry per
 // declared field, offsets taken from the real structs
 
@@ -66,6 +74,97 @@ static const struct rocketnet_config_field_t rocketnet_server_config_fields[] =
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
+#define ROCKETNET_CONFIG_DESC_STRUCT struct rocketnet_message_config_t
+
+static const struct rocketnet_config_field_t rocketnet_message_config_field_table[] =
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+};
+
+#undef ROCKETNET_CONFIG_DESC_STRUCT
+
+const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields )
+{
+    rocketnet_assert( num_fields );
+    *num_fields = (int) ( sizeof(rocketnet_message_config_field_table) / sizeof(rocketnet_message_config_field_table[0]) );
+    return rocketnet_message_config_field_table;
+}
+
+// The message config's validation (docs/CHANNELS.md 14): the table's ranges,
+// then the cross rules, each refusal a log line naming the rule. Refuses,
+// never clamps. Allocation-free, safe before init: the sizing functions an
+// application calls before connecting run it.
+
+int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config )
+{
+    struct rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
+    if ( !rocketnet_config_validate( "message", config, fields, num_fields ) )
+        return 0;
+
+    const int W = config->window_messages;
+    const int B = config->receive_ring_bytes;
+    const int F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const int fragments = ( config->max_message_bytes + F - 1 ) / F;
+
+    // the count bound and the ring index by number % W (6.1, 6.2)
+    if ( ( W & ( W - 1 ) ) != 0 )
+    {
+        rocketnet_error( "message config window_messages %d is not a power of two", W );
+        return 0;
+    }
+
+    // ring placements are multiples of 16 (4)
+    if ( B % 16 != 0 )
+    {
+        rocketnet_error( "message config receive_ring_bytes %d is not a multiple of 16", B );
+        return 0;
+    }
+
+    // a message that can never fit the receive ring could never be admitted (6.2 liveness)
+    if ( config->max_message_bytes > B )
+    {
+        rocketnet_error( "message config max_message_bytes %d is above receive_ring_bytes %d", config->max_message_bytes, B );
+        return 0;
+    }
+
+    // a block takes one number per fragment, all inside the window (8)
+    if ( fragments > W )
+    {
+        rocketnet_error( "message config max_message_bytes %d needs %d fragments, above window_messages %d", config->max_message_bytes, fragments, W );
+        return 0;
+    }
+
+    // the store's large class must hold one maximal block whole (4, 14)
+    const uint32_t large = rn_send_store_chunks_for( (uint64_t) config->send_buffer_bytes, RN_STORE_LARGE );
+    if ( large < (uint32_t) fragments )
+    {
+        rocketnet_error( "message config send_buffer_bytes %d holds %u large chunks, below the %d a max_message_bytes %d block needs",
+                         config->send_buffer_bytes, large, fragments, config->max_message_bytes );
+        return 0;
+    }
+
+    // the clamp of 6.4 needs min <= max, and the first timeout sits inside it
+    if ( config->rto_min_ms > config->rto_max_ms )
+    {
+        rocketnet_error( "message config rto_min_ms %d is above rto_max_ms %d", config->rto_min_ms, config->rto_max_ms );
+        return 0;
+    }
+    if ( config->rto_initial_ms < config->rto_min_ms || config->rto_initial_ms > config->rto_max_ms )
+    {
+        rocketnet_error( "message config rto_initial_ms %d is outside rto_min_ms %d to rto_max_ms %d", config->rto_initial_ms, config->rto_min_ms, config->rto_max_ms );
+        return 0;
+    }
+
+    return 1;
+}
 
 const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields( int * num_fields )
 {

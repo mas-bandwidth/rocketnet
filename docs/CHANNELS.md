@@ -10,12 +10,14 @@ other six later changes neither the wire nor the per-channel state.
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Layer 2 is built (`sdk/rocketnet_message.h`, section 5);
-nothing above it is yet. Names that are not yet in the tree (`ROCKETNET_MAX_CHANNELS`, `rocketnet_server_t`, the `rn_*`
-internals) are introduced here.
+is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
+and layer 2 is built (`sdk/rocketnet_message.h`, section 5); nothing above
+layer 2 is yet. `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
+are not yet in the tree (`rocketnet_server_t`, the public object surface) are
+introduced here.
 
-**Status: design, for Glenn's correction of the layer list (section 3) before
-layer 1 starts.**
+**Status: layers 1 and 2 are built. The layer list (section 3) is still for
+Glenn's correction before layer 3 starts.**
 
 ---
 
@@ -157,6 +159,79 @@ order and refill, and assert the free-list counts; a carve test that asserts
 every table is in bounds for the minimum, default and maximum configurations;
 and `RNSendStore`, a small module that checks a class never double-allocates a
 chunk and never loses one.
+
+**As built** (`sdk/rocketnet_allocator.h` and `.cpp`, card C1). The code taught
+the design these points:
+
+- **Allocated at create, carved at connect.** An *arena* is the object's one
+  `rocketnet_malloc`: its header, its region structs, then `max_clients`
+  regions (one for a client) back to back, each 64-aligned. `rn_region_carve`
+  runs at every connect in the region's own memory and allocates nothing. It
+  resets every fixed table, rethreads the store's and the descriptor pool's
+  free lists, and leaves the ring's and the chunks' bytes alone, because every
+  reader of them writes first. The carve is O(tables), once per connection,
+  never on a send or receive path.
+- **The send descriptors are layer 1's.** The `64·Q` term is a pool with an
+  intrusive LIFO free list. `rn_region_send_alloc` takes a descriptor and its
+  store chunks together, or neither. A full pool counts
+  `MESSAGE_SEND_QUEUE_FULL`; a full store counts `MESSAGE_SEND_STORE_FULL`.
+  Each counts once per refused send, on the owner's counters, atomically,
+  because an object's regions share them. A size outside 1 to
+  `max_message_bytes` is the caller's refusal to count (`MESSAGE_SEND_REFUSED`,
+  layer 8) and takes nothing here.
+- **Each class's links live inside its third.** The thirds are 64-aligned
+  (`floor(S/3)` rounded down to 64). Each holds its chunks, then one u32 link
+  per chunk, so a class has `floor(third / (chunk + 4))` chunks and nothing
+  lies outside `S`.
+  - At the defaults the classes are 330 × 128, 84 × 512 and 37 × 1152.
+  - A free chunk's link names the next free chunk.
+  - An allocated chunk's link carries `IN_USE`, `HEAD` on a chain's first
+    chunk, and the next chunk of its block. A block's chain therefore costs no
+    bytes, and a double free is an exact refusal in every build, not only an
+    assert. `RNSendStore` checks this.
+- **No fallback to a larger class.** A message takes the smallest class that
+  fits, or it is refused. Fallback would make one class's exhaustion drain the
+  others and blur which counter means what.
+- **At the defaults, `MESSAGE_SEND_QUEUE_FULL` cannot fire.** The store's 451
+  chunks run out before the 1024 descriptors can. The queue bound only binds
+  when `Q` is below the store's chunk count (for example a client with
+  `send_queue_messages = 64`, which is how the soak reaches it). Whether the
+  default `Q` should drop to the store's chunk count is choice G7 (18.2).
+- **The lean profile is refused by the store rule.** At `S = 65536` the large
+  class holds 18 chunks. The default `max_message_bytes` of 32768 needs 29.
+  The lean profile therefore also needs `max_message_bytes <= 20,736`.
+- **One validation rule more:** `rto_min_ms <= rto_initial_ms <= rto_max_ms`.
+  The clamp in 6.4 needs `min <= max`, and a first timeout outside the clamp
+  has no meaning.
+- **The exact region** is the formula plus at most 63 bytes of alignment per
+  part. At the defaults the padding is 0, and the region is 449,024 bytes,
+  which is section 14's figure to the byte.
+- **Every entry type is pinned** to its section 14 size by a static assert.
+  `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
+  a 32-bit target too.
+- **The sizing is callable before connect.**
+  - `rocketnet_message_connection_bytes` returns the region.
+  - `rocketnet_message_connection_sizing` writes the formula, each term at the
+    config, the store's classes, the padding, the region and the total for `n`
+    connections. It writes into a caller's buffer, with snprintf's contract,
+    and allocates nothing.
+  - `rocketnet_message_print_connection_sizing` logs the same lines at info
+    level.
+- **The gate:** `test_channels_allocator_no_live_allocation`, in
+  `test_channels.cpp`, run by `./bin/test`.
+  - **What it traps.** It fails at the first call, while armed, to any of the
+    rocketnet allocator hooks, the global operator new or delete, or, on glibc
+    without a sanitizer, `malloc`, `free`, `calloc`, `realloc` or the aligned
+    forms.
+  - **What it soaks.** A 16-slot server arena and 16 one-region client arenas
+    at full configured load. Every carve-out is driven to capacity each round,
+    with a reconnect every 20th tick.
+  - **The stand-in.** The soak drives layer 1's carve-outs the way layers 3 to
+    8 will. Layer 2 holds no state and allocates nothing (section 5). Each
+    later layer must run its own send and receive paths under the same traps
+    when it lands. The two size macros (`ROCKETNET_MESSAGE_SINGLE_BYTES`,
+    `ROCKETNET_MESSAGE_FRAGMENT_BYTES`) are defined once in `sdk/rocketnet.h`;
+    the codec header uses those.
 
 ## 5. Layer 2: records in a packet
 
@@ -890,8 +965,16 @@ struct rocketnet_message_config_t
 
 ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
 
+// 1 accepted, 0 refused with a log line naming the rule; NULL is the defaults (landed, C1)
+ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
+
 // Allocation-free: the bytes one connection's region needs (section 14 of docs/CHANNELS.md).
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
+
+// Allocation-free: the formula, each term, the padding, the region and the total for n
+// connections, as text, with snprintf's contract; and the same lines logged at info (landed, C1)
+ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size );
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
 struct rocketnet_message_context_t
 {
@@ -1244,7 +1327,8 @@ That is about 428 MiB for a 1000-client server, on top of the transport's own
 memory (`rocketnet_server_transport_required_memory`).
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to
-  about 177 KiB per connection, or 173 MiB at 1000.
+  about 177 KiB per connection, or 173 MiB at 1000. As built, its store holds 18 large chunks, so it also needs
+  `max_message_bytes <= 20,736` (section 4).
 - **Channel cost:** 48 bytes per channel. 1024 channels cost 48 KiB per
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No
   other term moves, and nothing scales as channels × window. That is what
@@ -1255,7 +1339,9 @@ memory (`rocketnet_server_transport_required_memory`).
   - `W` not a power of two;
   - `B` not a multiple of 16;
   - a 1152 class (a third of `S`) too small to hold one maximal block, that
-    is, fewer than `ceil(max_message_bytes/F)` chunks.
+    is, fewer than `ceil(max_message_bytes/F)` chunks (as built, the class
+    holds `floor(third / 1156)` chunks with their links, section 4);
+  - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1).
 
   Validation refuses and never clamps.
 
@@ -1270,7 +1356,7 @@ code by hand before it is written down.
 
 | Module | Models | Invariants and properties | Reversed witness (rule removed, expected failure) |
 |---|---|---|---|
-| `RNSendStore` | the three-class slab | `NoDoubleAllocate`, `NoLeak` (free + used = total), `RefuseOnlyWhenFull` | free-list push before the in-use flag clears: double allocate |
+| `RNSendStore` | one class of the slab (the classes share no state): the free stack, chains of 1 to `MaxBlock` chunks, a second free of a chain. **In `tla/`, run (card C1); `tla/README-RNSendStore.md`** | `NoDoubleAllocate`, `NoLeak` (free + used = total), `RefuseOnlyWhenFull`, `ChainsBounded` | the in-use guard removed (`GuardDoubleFree = FALSE`): a second free puts a chunk on the free list twice, `NoDoubleAllocate` at depth 4. All-or-none removed (`AllOrNone = FALSE`): a refused block keeps what it took, `NoLeak` at depth 4 |
 | `RNWindow` | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors; update boundaries with P6 | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, LIVE `EveryReliableEventuallyAcked` (weak fairness on Deliver) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision |
 | `RNRing` | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap. No padding at the boundary: span outside the ring |
 | `RNChannel` | the four counters and coupling, holds, the drain, newest-sequenced | `OrderedExactlyOnceInOrder`, `SequencedNeverBackwards`, `NoSequencedDuplicate` (study items 18, 19), `OrderedTraceUnchangedBySequenced` (I5) | the heap-drain path without the watermark reset: item 19's stale drop |
@@ -1559,12 +1645,20 @@ requires.
 - **G6. A wire violation disconnects** (R6). The alternative, counting and
   dropping the rest of the payload, would let a malformed packet lose reliable
   data silently.
+- **G7. The default send queue** (card C1). At the defaults the store holds 451
+  chunks and `Q = 1024`, so a send is always refused by the store first and
+  `MESSAGE_SEND_QUEUE_FULL` cannot fire: 573 descriptors (36 KiB per
+  connection) can never be used. A default `Q` at or below the store's chunk
+  count, such as 448, would make both bounds reachable and save 36 KiB per
+  connection. Keeping 1024 leaves headroom for an application that raises `S`.
+  This card keeps the design's 1024 and records the fact.
 
 ### 18.3 Not done by this card
 
-- No code and no test. No TLA+ module is committed: the modules in section 15
-  are the plan, and `RNSlots` exists only as the draft in 15.1, run on a bench.
-- The per-entry sizes in section 14 are working figures. Layer 1 pins them.
+- Layers 1 and 2 are in the tree (sections 4 and 5). `RNSendStore` is committed.
+  The other modules in section 15 are the plan, and `RNSlots` exists only as
+  the draft in 15.1, run on a bench.
+- The per-entry sizes in section 14 are pinned by layer 1's static asserts.
 - P2 and P6 are argued from the code. Their tests are card C0b.
 - The RTO behaviour when acks are paced only by keep-alives was reasoned, not
   measured.

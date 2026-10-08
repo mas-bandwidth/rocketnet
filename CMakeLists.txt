@@ -87,6 +87,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
     sdk/rocketnet_abi.cpp
     sdk/rocketnet_ack.cpp
+    sdk/rocketnet_allocator.cpp
     sdk/rocketnet_address.cpp
     sdk/rocketnet_base64.cpp
     sdk/rocketnet_client_protocol.cpp
