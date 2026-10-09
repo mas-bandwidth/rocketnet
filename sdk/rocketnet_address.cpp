@@ -230,6 +230,11 @@ bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_add
         }
     }
 
+    // 2026-10-05 security audit (server-dos, Low): NONE and unknown address
+    // types must not compare equal -- only IPv4 and IPv6 addresses can.
+    if ( a->type != ROCKETNET_ADDRESS_IPV4 && a->type != ROCKETNET_ADDRESS_IPV6 )
+        return false;
+
     return true;
 }
 

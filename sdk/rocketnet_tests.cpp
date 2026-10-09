@@ -688,6 +688,21 @@ void rocketnet_test_address()
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
+void rocketnet_test_address_equal_none_is_false()
+{
+    // 2026-10-05 security audit, server-dos, Low: rocketnet_address_equal
+    // fell through to `return true;` for two addresses of a type that is not
+    // IPv4 or IPv6 (NONE or any unknown type). two such addresses must never
+    // compare equal.
+    rocketnet_address_t a;
+    rocketnet_address_t b;
+    memset( &a, 0, sizeof(a) );
+    memset( &b, 0, sizeof(b) );
+    rocketnet_check( a.type == ROCKETNET_ADDRESS_NONE );
+    rocketnet_check( b.type == ROCKETNET_ADDRESS_NONE );
+    rocketnet_check( !rocketnet_address_equal( &a, &b ) );
+}
+
 void rocketnet_test_random_bytes()
 {
     const int BufferSize = 999;
@@ -9157,6 +9172,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_hash", rocketnet_test_hash },
     { "test_copy_string", rocketnet_test_copy_string },
     { "test_address", rocketnet_test_address },
+    { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },
     { "test_crypto_sizes", rocketnet_test_crypto_sizes },
