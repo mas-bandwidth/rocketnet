@@ -31,6 +31,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <crtdbg.h>
 #else
 #include <errno.h>
 #include <signal.h>
@@ -373,7 +374,26 @@ inline int suite_main( int argc, char ** argv,
     bool strict_names )
 {
     if ( argc >= 3 && std::strcmp( argv[1], "--run" ) == 0 )
+    {
+        // a child that aborts must exit with a code at once. the default
+        // windows CRT sends abort, a failed assertion and an invalid
+        // parameter through a message box, and a message box on a headless
+        // runner blocks forever: every child then burns the 120 s kill and
+        // the suite takes two hours instead of three minutes (#201). so no
+        // dialog, no fault report, and in Debug the report text goes to
+        // stderr, where the next log can show what the child tripped on.
+        _set_abort_behavior( 0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT );
+        SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX );
+#if defined(_DEBUG)
+        _CrtSetReportMode( _CRT_ASSERT, _CRTDBG_MODE_FILE );
+        _CrtSetReportFile( _CRT_ASSERT, _CRTDBG_FILE_STDERR );
+        _CrtSetReportMode( _CRT_ERROR, _CRTDBG_MODE_FILE );
+        _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDERR );
+        _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
+        _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDERR );
+#endif
         return worker( argv[2] );
+    }
 
     const std::string self = suite_executable_path();
     if ( self.empty() )
