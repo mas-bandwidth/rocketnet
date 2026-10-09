@@ -34,8 +34,17 @@ static const char * rocketnet_suite_test_name( int index )
 
 static int rocketnet_unit_worker( const char * name )
 {
+    // the MSVC CRT has no line buffering, and it refuses a zero size for any
+    // mode but _IONBF: setvbuf( stdout, NULL, _IOLBF, 0 ) trips the invalid
+    // parameter handler there, which fast-fails this worker before the test
+    // body runs (#201). unbuffered is what a per-test child wants anyway.
+#if defined(_WIN32)
+    setvbuf( stdout, NULL, _IONBF, 0 );
+    setvbuf( stderr, NULL, _IONBF, 0 );
+#else
     setvbuf( stdout, NULL, _IOLBF, 0 );
     setvbuf( stderr, NULL, _IOLBF, 0 );
+#endif
 
     // init reads this before the suite installs its config isolation.
 #if defined(_WIN32)
