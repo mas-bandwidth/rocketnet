@@ -44,8 +44,10 @@ extern bool rocketnet_test_private_block_copied;
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_socket.h"
+#include <bpf/libbpf.h>
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
+#include <rocketnet_server_xdp.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -9410,6 +9412,38 @@ void rocketnet_test_xdp_empty_map_drops()
     rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED == 0 );
 }
 
+// The 2026-10-05 security audit (area kernel-drivers) found the server_xdp
+// object compiled at runtime as root, through popen of cd/tar/make with the
+// inherited PATH, CC and MAKEFLAGS -- exit status ignored, object never
+// hashed, cleanup an rm -rf through a shell. The fix embeds the prebuilt
+// object in the library and loads it with bpf_object__open_mem. This pins
+// that the embedded bytes are a real ELF object and that opening it needs no
+// shell toolchain: PATH is emptied and CC is a program that always fails.
+void rocketnet_test_xdp_object_loads_without_shell()
+{
+    rocketnet_check( server_xdp_o_len > 0 );
+    rocketnet_check( server_xdp_o[0] == 0x7f && server_xdp_o[1] == 'E' &&
+                     server_xdp_o[2] == 'L' && server_xdp_o[3] == 'F' );
+
+    setenv( "PATH", "/nonexistent", 1 );
+    setenv( "CC", "false", 1 );
+
+    struct bpf_object_open_opts open_opts;
+    memset( &open_opts, 0, sizeof(open_opts) );
+    open_opts.sz = sizeof(open_opts);
+    struct bpf_object * bpf_obj = bpf_object__open_mem( server_xdp_o, server_xdp_o_len, &open_opts );
+    rocketnet_check( !libxdp_get_error( bpf_obj ) );
+    if ( !libxdp_get_error( bpf_obj ) )
+    {
+        struct xdp_program * program = xdp_program__from_bpf_obj( bpf_obj, "server_xdp" );
+        rocketnet_check( !libxdp_get_error( program ) );
+        if ( program )
+        {
+            xdp_program__close( program );
+        }
+    }
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -9954,6 +9988,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
+    { "test_xdp_object_loads_without_shell", rocketnet_test_xdp_object_loads_without_shell },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },

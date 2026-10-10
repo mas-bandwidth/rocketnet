@@ -73,7 +73,10 @@ endfunction()
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 if(WIN32)
-    configure_file(sdk/rocketnet_server_xdp.h "${ROCKETNET_XDP_HEADER}" COPYONLY)
+    # XDP is Linux-only, so the Windows tree never compiles the object; the
+    # header exists only so the include path and the dependency edge resolve.
+    file(WRITE "${ROCKETNET_XDP_HEADER}"
+        "static const unsigned char server_xdp_o[] = { 0 };\nstatic const unsigned int server_xdp_o_len = 0;\n")
 else()
     find_program(ROCKETNET_XXD xxd REQUIRED)
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
@@ -215,6 +218,8 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
     rocketnet_use_sodium(rocketnet_test_support)
+    target_include_directories(rocketnet_test_support PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    add_dependencies(rocketnet_test_support rocketnet_xdp_header)
     add_executable(test test.cpp test_channels.cpp)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
