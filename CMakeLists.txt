@@ -257,6 +257,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/lifecycle_driver.cpp)
+    target_include_directories(functional PRIVATE sdk)
     target_link_libraries(functional PRIVATE rocketnet Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

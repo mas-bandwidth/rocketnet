@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include "rocketnet_constants.h"
 
+#if ROCKETNET_XDP
+
 // Returns true only when the frame fits in the list and passes all checks.
 // Otherwise returns false and leaves the list unchanged.
 static inline bool rocketnet_xdp_free_list_push( uint64_t * frames, int * count, int capacity, uint64_t frame, uint64_t region_begin, uint64_t region_end )
@@ -21,3 +23,5 @@ static inline bool rocketnet_xdp_free_list_push( uint64_t * frames, int * count,
     frames[(*count)++] = frame;
     return true;
 }
+
+#endif

@@ -5,6 +5,8 @@
 
 #include "rocketnet_tests.h"
 #include "rocketnet.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_constants.h"
 
 #include "rocketnet_platform.h"
 
@@ -28,6 +30,10 @@ extern uint8_t rocketnet_test_private_block_copy[];
 extern bool rocketnet_test_private_block_copied;
 
 #include "rocketnet_counters.h"
+
+#if ROCKETNET_XDP
+#include "rocketnet_xdp_free_list.h"
+#endif
 #include "rocketnet_token_tables.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_server_protocol.h"
@@ -205,6 +211,7 @@ void rocketnet_test_time()
     rocketnet_check( finish > start );
 }
 
+#if ROCKETNET_XDP
 void rocketnet_test_xdp_free_list_refuses_overflow()
 {
     static uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES / 2 + 1];
@@ -232,6 +239,7 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, UINT64_MAX, region_begin, region_end ) );
     rocketnet_check( count == 0 );
 }
+#endif
 
 void rocketnet_test_endian()
 {
@@ -9527,11 +9535,14 @@ void rocketnet_test_config_override_logging()
 // Verify XDP umem config frame_size matches the expected constant
 void rocketnet_test_umem_config_frame_size_explicit()
 {
+    #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    #include <linux/if_xdp.h>
     struct xsk_umem_config config;
     memset( &config, 0, sizeof(config) );
     config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
     config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
+    #endif
 }
 
 void rocketnet_test_gro_short_cmsg_falls_back()
@@ -9845,7 +9856,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
+#if ROCKETNET_XDP
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
+#endif
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
