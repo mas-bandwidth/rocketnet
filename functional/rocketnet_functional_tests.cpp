@@ -2374,6 +2374,94 @@ void rocketnet_test_server_driver_pin_xdp()
     rocketnet_test_env_restore( &driver_guard );
 }
 
+#if ROCKETNET_XDP
+#include <sys/wait.h>
+
+static void rocketnet_xdp_server_stub( const char * port )
+{
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( !rocketnet_init() )
+        exit( 1 );
+    rocketnet_forbid_xdp_commit();
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "xdp" );
+
+    char addr[64];
+    snprintf( addr, sizeof(addr), "127.0.0.1:%s", port );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, addr, &config, rocketnet_platform_time() );
+    if ( !server )
+        exit( 2 );
+
+    rocketnet_platform_sleep( 5.0 );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_destroy( server );
+    rocketnet_term();
+    exit( 0 );
+}
+#endif
+
+void rocketnet_test_xdp_restart_after_kill_receives()
+{
+#if ROCKETNET_XDP
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40115", 7 );
+
+    if ( !provisioned )
+        return;
+
+    const char * port = "40115";
+
+    pid_t pid = fork();
+    if ( pid == -1 )
+        rocketnet_check( false );
+
+    if ( pid == 0 )
+    {
+        rocketnet_xdp_server_stub( port );
+        exit( 1 );
+    }
+
+    rocketnet_platform_sleep( 2.0 );
+
+    kill( pid, SIGKILL );
+    int status;
+    waitpid( pid, &status, 0 );
+
+    rocketnet_test_env_restore( &driver_guard );
+
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( !rocketnet_init() )
+        rocketnet_check( false );
+
+    rocketnet_test_env_save( &driver_guard, "ROCKETNET_DRIVER" );
+    setenv( "ROCKETNET_DRIVER", "xdp", 1 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "xdp" );
+
+    char addr[64];
+    snprintf( addr, sizeof(addr), "127.0.0.1:%s", port );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, addr, &config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_destroy( server );
+    rocketnet_term();
+
+    rocketnet_test_env_restore( &driver_guard );
+#else
+    (void)port;
+#endif
+}
+
 void rocketnet_test_server_driver_ladder_fall()
 {
     // THE FALL, proven to actually happen where it can be proven without
@@ -3206,6 +3294,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_test_server_driver_pin_gso },
     { "test_server_driver_pin_xdp", rocketnet_test_server_driver_pin_xdp },
+    { "test_xdp_restart_after_kill_receives", rocketnet_test_xdp_restart_after_kill_receives },
     { "test_server_driver_ladder_fall", rocketnet_test_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_test_server_gso_probe },
     { "test_server_gso_wire_ipv4", rocketnet_test_server_gso_wire_ipv4 },
