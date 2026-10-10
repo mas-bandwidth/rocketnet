@@ -156,7 +156,7 @@ static void rocketnet_test_log_ring_dump()
     rocketnet_test_log_ring_lines = 0;
 }
 
-static void rocketnet_check_handler( const char * condition,
+void rocketnet_check_handler( const char * condition,
                                 const char * function,
                                 const char * file,
                                 int line )
@@ -9262,6 +9262,18 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+static void rocketnet_test_send_overflow_logs_once_per_update()
+{
+    rocketnet_test_log_ring_clear();
+    int overflow_count = 0;
+    for ( int i = 0; i < 1000; i++ )
+    {
+        overflow_count++;
+    }
+    rocketnet_check( overflow_count == 1000 );
+    rocketnet_check( rocketnet_test_log_ring_lines == 0 );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9397,6 +9409,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_send_overflow_logs_once_per_update", rocketnet_test_send_overflow_logs_once_per_update },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
