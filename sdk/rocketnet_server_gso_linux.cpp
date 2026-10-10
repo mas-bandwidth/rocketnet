@@ -255,7 +255,7 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 
         if ( socket_ipv6 && rocketnet_address_is_ipv4_in_ipv6( out ) )
         {
-            rocketnet_address_convert_ipv6_to_ipv4( out );
+            return false;
         }
 
         return true;
