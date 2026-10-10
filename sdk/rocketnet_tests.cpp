@@ -9781,6 +9781,48 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_wrong_size_not_integrity_failure()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x1A7E59ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    double time = 100.0;
+
+    // wrong-size challenge (65 bytes instead of ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES)
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t challenge[65];
+    memset( challenge, 0x5A, sizeof(challenge) );
+    uint8_t * cp = challenge;
+    rocketnet_write_prefilter_header( &cp, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag );
+
+    rocketnet_check( !rocketnet_client_protocol_process_packet( &client, challenge, 65, time, payload, &payload_bytes ) );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN] == 1 );
+    rocketnet_check( client.integrity_failures == 0 );
+
+    // wrong-size denied (65 bytes instead of ROCKETNET_CONNECTION_DENIED_WIRE_BYTES)
+    uint8_t denied[65];
+    memset( denied, 0x5A, sizeof(denied) );
+    cp = denied;
+    rocketnet_write_prefilter_header( &cp, ROCKETNET_CONNECTION_DENIED_PACKET, tag );
+
+    rocketnet_check( !rocketnet_client_protocol_process_packet( &client, denied, 65, time, payload, &payload_bytes ) );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN] == 1 );
+    rocketnet_check( client.integrity_failures == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9841,6 +9883,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_challenge_resend_checks_salt", rocketnet_test_challenge_resend_checks_salt },
     { "test_request_path_refusals", rocketnet_test_request_path_refusals },
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
+    { "test_wrong_size_not_integrity_failure", rocketnet_test_wrong_size_not_integrity_failure },
     { "test_cookie_zero_field_hashes_once", rocketnet_test_cookie_zero_field_hashes_once },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },

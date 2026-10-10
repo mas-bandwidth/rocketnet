@@ -439,7 +439,6 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     {
         rocketnet_spam( "client ignored challenge. wrong size" );
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
@@ -556,7 +555,6 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
     {
         rocketnet_spam( "client ignored denied. wrong size" );
         counters[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN]++;
-        rocketnet_client_integrity_failure( client );
         return 0;
     }
 
