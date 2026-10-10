@@ -4685,19 +4685,19 @@ void rocketnet_test_integrity_limit()
                 rocketnet_write_prefilter_header( &jp, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag );
                 rocketnet_check( !rocketnet_client_protocol_process_packet( &client, junk, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES - 1, time, payload, &payload_bytes ) );
                 rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN] == 1 );
-                rocketnet_check( client.integrity_failures == 1 );
+                rocketnet_check( client.integrity_failures == 0 );
                 rocketnet_check( !rocketnet_client_protocol_process_packet( &client, junk, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES, time, payload, &payload_bytes ) );
                 rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN] == 2 );
-                rocketnet_check( client.integrity_failures == 2 );
+                rocketnet_check( client.integrity_failures == 1 );
 
                 jp = junk;
                 rocketnet_write_prefilter_header( &jp, ROCKETNET_CONNECTION_DENIED_PACKET, tag );
                 rocketnet_check( !rocketnet_client_protocol_process_packet( &client, junk, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES - 1, time, payload, &payload_bytes ) );
                 rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN] == 1 );
-                rocketnet_check( client.integrity_failures == 3 );
+                rocketnet_check( client.integrity_failures == 1 );
                 rocketnet_check( !rocketnet_client_protocol_process_packet( &client, junk, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, time, payload, &payload_bytes ) );
                 rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN] == 2 );
-                rocketnet_check( client.integrity_failures == 4 );
+                rocketnet_check( client.integrity_failures == 2 );
                 rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
             }
         }
@@ -4705,7 +4705,7 @@ void rocketnet_test_integrity_limit()
         // the genuine challenge opened and counted nothing; the client now
         // holds committed handshake keys, and a denied opens under them
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
-        rocketnet_check( client.integrity_failures == 4 );
+        rocketnet_check( client.integrity_failures == 2 );
         rocketnet_check( !rocketnet_test_keys_are_zero( &client.keys ) );
 
         const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -4715,7 +4715,7 @@ void rocketnet_test_integrity_limit()
         rocketnet_write_prefilter_header( &jp, ROCKETNET_CONNECTION_DENIED_PACKET, tag );
         rocketnet_check( !rocketnet_client_protocol_process_packet( &client, junk, sizeof(junk), time, payload, &payload_bytes ) );
         rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN] == 3 );
-        rocketnet_check( client.integrity_failures == 5 );
+        rocketnet_check( client.integrity_failures == 3 );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
         // the limit reached during the handshake: the attempt ends the same way
@@ -9534,9 +9534,50 @@ void rocketnet_test_token_lifetime_bounded()
     rocketnet_test_server_teardown( &test );
 }
 
+static void rocketnet_test_wrong_size_not_integrity_failure()
+{
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+
+    struct rocketnet_client_protocol_t client;
+    memset( &client, 0, sizeof(client) );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( client.filter_value, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    client.send_rate = 10.0;
+    client.counters = &client_counters;
+
+    // Set client to SENDING_CONNECTION_REQUEST state
+    client.state = ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST;
+
+    // Initialize minimal replay state
+    memset( &client.replay_handshake, 0, sizeof(client.replay_handshake) );
+
+    // 65-byte challenge: wrong size (correct is ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES)
+    uint8_t wrong_size_challenge[65];
+    memset( wrong_size_challenge, 0x5A, sizeof(wrong_size_challenge) );
+
+    uint8_t * p = wrong_size_challenge;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag );
+    uint64_t seq = 1;
+    memcpy( wrong_size_challenge + ROCKETNET_PREFILTER_BYTES, &seq, ROCKETNET_SEQUENCE_BYTES );
+
+    // Before processing, integrity_failures should be 0
+    rocketnet_check( client.integrity_failures == 0 );
+
+    // Process the wrong-size challenge - it should be rejected for wrong size
+    // BEFORE any crypto operation, so integrity_failures should NOT increment
+    uint8_t out_payload[ROCKETNET_RECEIVE_CEILING];
+    int out_payload_bytes = 0;
+    rocketnet_client_protocol_process_packet( &client, wrong_size_challenge, sizeof(wrong_size_challenge), 100.0, out_payload, &out_payload_bytes );
+
+    // integrity_failures should still be 0 - wrong size is not an integrity failure
+    rocketnet_check( client.integrity_failures == 0 );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
+    { "test_wrong_size_not_integrity_failure", rocketnet_test_wrong_size_not_integrity_failure },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
