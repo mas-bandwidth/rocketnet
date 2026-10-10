@@ -9,6 +9,10 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+// finish_packet's runtime bound, shared with the xdp and iocp drivers and
+// defined unconditionally in rocketnet_server_socket_linux.cpp
+bool rocketnet_server_finish_packet_within_bounds( int packet_bytes );
+
 // The GSO transport driver (#97). See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
@@ -827,10 +831,18 @@ void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, ui
 {
     rocketnet_assert( gso );
     rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
 
     (void) packet_id;
+
+    // release builds must drop (and count) a wire length the flush would
+    // otherwise trust as an iov_len; the assert that used to state the bound
+    // is compiled out there
+
+    if ( !rocketnet_server_finish_packet_within_bounds( packet_bytes ) )
+    {
+        gso->counter_send_dropped++;
+        return;
+    }
 
     // the slot comes from pointer arithmetic against the staging, the xdp
     // pattern: a pointer that is not a live slot root lands out of range and
