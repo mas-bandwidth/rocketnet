@@ -8,6 +8,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_base64.h"
+#include <sodium.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,10 +285,12 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
                 const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
                 if ( decoded_bytes != field->size )
                 {
+                    sodium_memzero( decoded, sizeof(decoded) );
                     rocketnet_error( "%s config could not parse %s as base64 of exactly %d bytes", transport_name, env_name, field->size );
                     return false;
                 }
                 memcpy( base, decoded, (size_t) field->size );
+                sodium_memzero( decoded, sizeof(decoded) );
             }
             break;
 

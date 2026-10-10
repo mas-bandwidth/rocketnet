@@ -473,19 +473,34 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_QUEUES", "ROCKETNET_NUM_XDP_QUEUES", &effective_config.num_xdp_queues ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_OS_CPUS", "ROCKETNET_NUM_OS_CPUS", &effective_config.num_os_cpus ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     if ( !rocketnet_server_apply_env_alias_string( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "ROCKETNET_PUBLIC_ADDRESS", effective_config.public_address, (int) sizeof(effective_config.public_address) ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     if ( !rocketnet_config_validate( "server", &effective_config, config_fields, num_config_fields ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     config = &effective_config;
 
@@ -495,7 +510,10 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
     if (!rocketnet_reassembly_memory_allowed(requested_clients, requested_slots, requested_payload, requested_clients * requested_slots))
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
 
     // the config's public_address, when set, displaces the create call's
@@ -548,6 +566,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( !rocketnet_server_config_has_keys( config ) )
     {
         rocketnet_error( "server config has no keys: fill rocketnet_server_transport_dev_config() for development, or supply production keys" );
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
     }
 
@@ -555,6 +574,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if ( config->protocol_id == 0 )
     {
         rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
     }
 
@@ -566,7 +586,10 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     struct rocketnet_driver_ladder_t ladder;
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+    {
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
+    }
 
     rocketnet_info( "server transport public address is %s", public_address_string );
 
@@ -750,6 +773,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         }
 
         rocketnet_server_transport_destroy( server_transport );
+        sodium_memzero( &effective_config, sizeof(effective_config) );
         return NULL;
     }
 
@@ -839,6 +863,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         env_public_address_consumed.compare_exchange_strong( expected, true );
     }
 
+    sodium_memzero( &effective_config, sizeof(effective_config) );
     return server_transport;
 }
 

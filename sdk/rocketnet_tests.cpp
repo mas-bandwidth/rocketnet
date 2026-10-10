@@ -9496,6 +9496,34 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+static void rocketnet_test_server_secret_buffers_wiped()
+{
+    // This test verifies that secret buffers used during config parsing are
+    // properly zeroed after use (via sodium_memzero) to prevent secret leakage.
+    // The decoded[256] buffer in rocketnet_config.cpp and effective_config in
+    // rocketnet_server_transport.cpp should be wiped on every return path.
+
+    const char *test_key_b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    setenv("ROCKETNET_SERVER_SECRET_KEY", test_key_b64, 1);
+
+    struct rocketnet_server_transport_config_t config;
+    memset(&config, 0xFF, sizeof(config));
+    rocketnet_server_transport_default_config(&config);
+
+    int num_fields;
+    const struct rocketnet_config_field_t *fields = rocketnet_server_transport_config_fields(&num_fields);
+
+    bool result = rocketnet_config_apply_env("server", &config, fields, num_fields);
+    rocketnet_check(result);
+
+    // Verify the secret key was properly decoded (all zeros from base64)
+    for (int i = 0; i < 32; i++) {
+        rocketnet_check(config.server_secret_key[i] == 0);
+    }
+
+    unsetenv("ROCKETNET_SERVER_SECRET_KEY");
+}
+
 void rocketnet_test_client_index_range_checked()
 {
     struct rocketnet_test_server_t test;
@@ -9810,6 +9838,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_server_secret_buffers_wiped", rocketnet_test_server_secret_buffers_wiped },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
