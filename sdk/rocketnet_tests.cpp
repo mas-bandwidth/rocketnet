@@ -9558,6 +9558,9 @@ void rocketnet_test_gro_short_cmsg_falls_back()
     char control[CMSG_SPACE(sizeof(int))];
     memset( control, 0, sizeof(control) );
 
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
     struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
     if (cmsg)
     {
