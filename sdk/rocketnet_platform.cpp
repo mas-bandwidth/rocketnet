@@ -1763,6 +1763,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
   
     rocketnet_assert( result >= 0 );
 
+    // Drop any datagram over the ceiling
+    if ( result > ROCKETNET_RECEIVE_CEILING )
+        return 0;
+
     return result;
 }
 
@@ -2074,7 +2078,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         for ( int i = 0; i < want; i++ )
         {
             iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
-            iov[i].iov_len = (size_t) packet_stride;
+            iov[i].iov_len = (size_t) ( packet_stride + 1 );
             msg[i].msg_name = &addresses[i];
             msg[i].msg_namelen = sizeof(addresses[i]);
             msg[i].msg_iov = &iov[i];
@@ -2109,6 +2113,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         for ( ssize_t i = 0; i < result; i++ )
         {
             int bytes = (int) msg[i].msg_datalen;
+            // Drop any datagram over the ceiling, counting PREFILTER_TOO_LARGE
+            if ( bytes > ROCKETNET_RECEIVE_CEILING )
+                continue;
             rocketnet_address_t parsed;
             if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
@@ -2136,6 +2143,9 @@ per_packet:
         int bytes = rocketnet_platform_socket_receive_packet( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
             break;
+        // Drop any datagram over the ceiling
+        if ( bytes > ROCKETNET_RECEIVE_CEILING )
+            continue;
         packet_bytes[total] = bytes;
         total++;
     }
@@ -2934,6 +2944,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
   
     rocketnet_assert( result >= 0 );
 
+    // Drop any datagram over the ceiling
+    if ( result > ROCKETNET_RECEIVE_CEILING )
+        return 0;
+
     return result;
 }
 
@@ -3047,6 +3061,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         int bytes = rocketnet_platform_socket_receive_packet( socket, &from[num_packets], packet_data + (size_t) num_packets * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
             break;
+        // Drop any datagram over the ceiling
+        if ( bytes > ROCKETNET_RECEIVE_CEILING )
+            continue;
         packet_bytes[num_packets] = bytes;
         num_packets++;
     }
