@@ -798,6 +798,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     protocol->cookie_lifetime_seconds = 3;
+    protocol->max_token_lifetime_seconds = 0;
     protocol->handshake_deadline_seconds = 5.0;
     protocol->max_timeout_seconds = 0;
     protocol->allow_negative_timeout = 0;
