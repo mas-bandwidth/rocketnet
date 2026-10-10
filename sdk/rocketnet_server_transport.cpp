@@ -803,6 +803,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->max_timeout_seconds = config->max_timeout_seconds;
     protocol->allow_negative_timeout = 0;
 
+    // The used-token history and admitted-token set live in memory only, so a
+    // restart loses every token the previous instance admitted and would let
+    // them admit again. Stamp the instance's start: the request path refuses
+    // any token minted before it, which is the exact set a restart loses.
+    protocol->server_start_timestamp = (uint64_t) ::time( NULL );
+
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * 2 );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * 8 );
     protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * 2 );

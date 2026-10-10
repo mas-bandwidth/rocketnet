@@ -169,6 +169,21 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         token_create_timestamp = rocketnet_read_uint64( &p );
     }
 
+    // The tables that make "a token admits one connection" true are per
+    // process: a restart forgets every token the previous instance admitted,
+    // so each of those tokens would admit a fresh connection again. The
+    // server stamps its start and refuses any token minted before it. The
+    // maximum token lifetime bounds how far back a still-unexpired token can
+    // reach -- the expire check below refuses anything older -- so refusing
+    // every pre-start token closes the restart window completely.
+
+    if ( token_create_timestamp < server->server_start_timestamp )
+    {
+        rocketnet_debug( "server ignored connection request. connect token minted before this server started" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     uint64_t token_expire_timestamp;
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_EXPIRE;

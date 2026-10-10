@@ -2171,6 +2171,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
     server->max_token_lifetime_seconds = 600;
+    server->server_start_timestamp = 0;                     // the harness's server predates every test token; the restart test raises it past one
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->allow_negative_timeout = 0;
@@ -9742,6 +9743,53 @@ void rocketnet_test_token_lifetime_bounded()
     rocketnet_test_server_teardown( &test );
 }
 
+// A restart loses the in-memory used-token history and admitted-token set, so
+// a token the previous instance admitted would admit another connection. The
+// instance refuses every token minted before it started; here the token was
+// minted before the server start and is still well inside its lifetime and the
+// configured maximum, so only the start bound can refuse it.
+
+void rocketnet_test_restart_refuses_tokens_minted_before_start()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+
+    // the restart: this instance started 50s after the token was minted and
+    // the request arrives 100s after it, so the token is neither future nor
+    // expired and its 300s lifetime is inside the 600s maximum
+
+    test.server.server_start_timestamp = ROCKETNET_TEST_CREATE_TS + 50;
+
+    struct rocketnet_counters_t before = test.counters;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS + 100, 100.0,
+                                                                       response, &response_bytes );
+
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_token_timeout_clamped()
 {
     struct rocketnet_test_server_t test;
@@ -9814,6 +9862,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
+    { "test_restart_refuses_tokens_minted_before_start", rocketnet_test_restart_refuses_tokens_minted_before_start },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
