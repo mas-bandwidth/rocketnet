@@ -315,7 +315,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // the authenticity check: the signature, and only the signature
 
-    if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
+    int signature_verified = rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key );
+    if ( !signature_verified && !sodium_is_zero( server->backend_next_public_key, ROCKETNET_KEY_BYTES ) )
+        signature_verified = rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_next_public_key );
+
+    if ( !signature_verified )
     {
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
