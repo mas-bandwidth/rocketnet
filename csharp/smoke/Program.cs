@@ -122,6 +122,24 @@ static class Smoke
             return 1;
         }
 
+        if ( args.Length == 1 && args[0] == "--counters-layout" )
+        {
+            try
+            {
+                // The load gate runs before any struct-writing import; a native
+                // counter count the binding does not know must refuse here rather
+                // than span an opaque block of the wrong length.
+                RocketNet.ValidateAbi();
+                Fail( "counter count mismatch was accepted at load" );
+            }
+            catch ( BadImageFormatException e ) when ( e.Message.Contains("counter count") )
+            {
+                Ok( "smoke_csharp_counters_layout_checked" );
+                return 0;
+            }
+            return 1;
+        }
+
         // The first matching import also writes a struct before Init.
         RocketNet.ClientTransportDefaultConfig( out var abiDefault );
         if ( abiDefault.GetDriver() != "auto" ) Fail( "ABI-checked default config" );

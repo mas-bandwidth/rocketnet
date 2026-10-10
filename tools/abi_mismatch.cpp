@@ -10,6 +10,7 @@
 #undef rocketnet_abi_field_count
 #undef rocketnet_abi_field_offset
 #undef rocketnet_abi_field_size
+#include "../sdk/rocketnet_counters.h"
 #include <stdlib.h>
 
 static bool mode(const char * name)
@@ -27,6 +28,8 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset(const char * type, const
 { return real_abi_field_offset(type, field) + (mode("offset") ? 1 : 0); }
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size(const char * type, const char * field)
 { return real_abi_field_size(type, field) + (mode("width") ? 1 : 0); }
+ROCKETNET_EXPORT_FUNC int rocketnet_num_counters(void)
+{ return (int) ROCKETNET_NUM_COUNTERS + (mode("counter count") ? 1 : 0); }
 
 // If a guard disappears, the test dies here instead of accepting a fake success.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config(rocketnet_client_transport_config_t *) { abort(); }
