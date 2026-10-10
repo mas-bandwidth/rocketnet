@@ -157,6 +157,12 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
     }
 
+    uint64_t token_create_timestamp;
+    {
+        const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_CREATE;
+        token_create_timestamp = rocketnet_read_uint64( &p );
+    }
+
     uint64_t token_expire_timestamp;
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_EXPIRE;
@@ -166,6 +172,28 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             rocketnet_debug( "server ignored connection request. connect token expired" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
+        // Check max token lifetime: if max_token_lifetime_seconds > 0, refuse tokens
+        // whose lifetime (expire - create) exceeds it. Also refuse if create is in
+        // the future beyond a 5-second skew allowance.
+        if ( server->max_token_lifetime_seconds > 0 )
+        {
+            if ( token_create_timestamp > current_timestamp + 5 )
+            {
+                rocketnet_debug( "server ignored connection request. connect token created in future" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
+
+            uint64_t lifetime = token_expire_timestamp > token_create_timestamp ?
+                                token_expire_timestamp - token_create_timestamp : 0;
+            if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
+            {
+                rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
         }
     }
 
