@@ -9810,6 +9810,95 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+// The receive budget is a bound on packets PROCESSED, not packets read. A
+// flood of prefilter-valid junk arriving ahead of a connected client's
+// packets must not displace them: the receive loop drains the cheap
+// prefilter, drops what fails before any per-connection state is touched,
+// and processes mapped (established) sources before unmapped ones. This
+// crosses the real transport seam over loopback: 1000 junk datagrams are
+// queued first, then the connected client's ten payloads, and a single
+// server update must deliver all ten.
+
+void rocketnet_test_receive_prefers_established_clients()
+{
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.driver, sizeof(server_config.driver), "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
+        NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // the junk source: an unmapped socket that passes the prefilter by type
+    // and epoch but not by filter value, exactly the noise a connected
+    // client's traffic must survive
+
+    struct rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * junk_socket = rocketnet_platform_socket_create(
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 0, 0 );
+    rocketnet_check( junk_socket );
+
+    struct rocketnet_address_t server_address_parsed;
+    rocketnet_check( rocketnet_address_parse( &server_address_parsed, server_address ) );
+
+    uint8_t junk[64];
+    memset( junk, 0, sizeof(junk) );
+    junk[0] = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
+    junk[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
+    junk[2] = 0xFF; junk[3] = 0xFF; junk[4] = 0xFF; junk[5] = 0xFF;
+
+    for ( int i = 0; i < 1000; i++ )
+        rocketnet_platform_socket_send_packet( junk_socket, &server_address_parsed, junk, sizeof(junk) );
+
+    // the connected client stages ten payloads after the junk and flushes
+    // them; one server update must read past the junk and deliver all ten
+
+    for ( int i = 0; i < 10; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        rocketnet_check( frame );
+        frame[context.payload_index] = (uint8_t) i;
+        rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, 1 ) > 0 );
+    }
+    rocketnet_client_transport_send_packets( client );
+
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+    const int * client_index;
+    uint8_t * const * payload_data;
+    const int * payload_bytes;
+    const int num_payloads = rocketnet_server_transport_payloads( server, &client_index, &payload_data, &payload_bytes );
+    rocketnet_check( num_payloads == 10 );
+
+    rocketnet_platform_socket_destroy( junk_socket );
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_destroy( server );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9957,6 +10046,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+    { "test_receive_prefers_established_clients", rocketnet_test_receive_prefers_established_clients },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
