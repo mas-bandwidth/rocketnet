@@ -149,7 +149,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     iocp->pending.fetch_add( 1, std::memory_order_relaxed );
     const int result = WSARecvFrom( iocp->socket, &op->buffer, 1, NULL, &op->flags,
         (sockaddr*) &op->address, &op->address_bytes, &op->overlapped, NULL );
-    if ( result == 0 || WSAGetLastError() == WSA_IO_PENDING )
+    if ( result == 0 || WSAGetLastError() == WSA_IO_PENDING || WSAGetLastError() == WSAEMSGSIZE )
         return true; // Immediate success also produces exactly one IOCP event.
     iocp->pending.fetch_sub( 1, std::memory_order_release );
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
