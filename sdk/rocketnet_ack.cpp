@@ -3,6 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+// Visit counter for testing: increments on each sequence visit during process_block
+unsigned long long g_ack_visit_count = 0;
+
 #include "rocketnet_memory.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_read_write.h"
@@ -345,10 +348,26 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     if ( low < window_low )
         low = window_low;
 
+    // Skip the entire walk if all records in range are already acked.
+    // Check from high downward: if all are acked, skip the loop entirely.
+    int all_acked = 1;
+    for ( uint64_t seq = high; seq >= low; seq-- )
+    {
+        struct rocketnet_sent_packet_record_t * rec = &endpoint->sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+        if ( rec->sequence == seq && !rec->acked )
+        {
+            all_acked = 0;
+            break;
+        }
+    }
+    if ( all_acked )
+        return 0;
+
     int newly_acked = 0;
 
     for ( uint64_t sequence = high; ; sequence-- )
     {
+        g_ack_visit_count++;
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
         if ( record->sequence != sequence )
