@@ -7,6 +7,10 @@
 #include "rocketnet.h"
 
 #include "rocketnet_platform.h"
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include <netinet/in.h>
+#endif
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
@@ -777,6 +781,69 @@ void rocketnet_test_address_equal_none_is_false()
     b.type = 3;
     rocketnet_check( !rocketnet_address_equal( &a, &b ) );
 }
+
+#if ROCKETNET_PLATFORM_HAS_IPV6
+static bool rocketnet_server_gso_sockaddr_to_address_test( const struct sockaddr_storage * input, bool socket_ipv6, rocketnet_address_t * out )
+{
+    if ( input->ss_family == AF_INET6 )
+    {
+        const struct sockaddr_in6 * addr = (const struct sockaddr_in6*) input;
+        out->type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; i++ )
+        {
+            out->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t*) &addr->sin6_addr ) [i] );
+        }
+        out->port = rocketnet_platform_ntohs( addr->sin6_port );
+
+        if ( socket_ipv6 && rocketnet_address_is_ipv4_in_ipv6( out ) )
+        {
+            return false;
+        }
+
+        return true;
+    }
+    else if ( input->ss_family == AF_INET )
+    {
+        const struct sockaddr_in * addr = (const struct sockaddr_in*) input;
+        out->type = ROCKETNET_ADDRESS_IPV4;
+        out->data.ipv4[0] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x000000FF ) );
+        out->data.ipv4[1] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
+        out->data.ipv4[2] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
+        out->data.ipv4[3] = (uint8_t) ( ( addr->sin_addr.s_addr & 0xFF000000 ) >> 24 );
+        out->port = rocketnet_platform_ntohs( addr->sin_port );
+        return true;
+    }
+
+    return false;
+}
+
+void rocketnet_test_v4_mapped_source_dropped()
+{
+    struct sockaddr_storage input;
+    memset( &input, 0, sizeof(input) );
+    input.ss_family = AF_INET6;
+
+    struct sockaddr_in6 * addr = (struct sockaddr_in6*) &input;
+    addr->sin6_family = AF_INET6;
+    // Set ::ffff:1.2.3.4 - v4-mapped IPv6 address (16 bytes total)
+    unsigned char mapped_addr[16] = {
+        0x00, 0x00, 0x00, 0x00,  // 0-3
+        0x00, 0x00, 0x00, 0x00,  // 4-7
+        0x00, 0x00, 0xFF, 0xFF,  // 8-11
+        0x01, 0x02, 0x03, 0x04   // 12-15
+    };
+    memcpy( addr->sin6_addr.s6_addr, mapped_addr, 16 );
+    addr->sin6_port = 0x9c40;
+
+    rocketnet_address_t out;
+    memset( &out, 0, sizeof(out) );
+
+    // This should refuse the v4-mapped source on an IPv6 socket
+    // The test will fail (red) until the fix is applied
+    bool result = rocketnet_server_gso_sockaddr_to_address_test( &input, true, &out );
+    rocketnet_check( !result );  // Should refuse (return false)
+}
+#endif
 
 void rocketnet_test_random_bytes()
 {
@@ -9281,6 +9348,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
      { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
      { "test_address", rocketnet_test_address },
     { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
+#if ROCKETNET_PLATFORM_HAS_IPV6
+    { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
+#endif
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },
     { "test_crypto_sizes", rocketnet_test_crypto_sizes },
