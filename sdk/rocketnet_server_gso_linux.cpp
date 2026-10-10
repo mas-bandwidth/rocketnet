@@ -418,6 +418,26 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
 // ---------------------------------------------------------------------------
 
+// parse the UDP_GRO stride from control messages; returns segment_bytes unchanged if no valid GRO cmsg found
+static int rocketnet_server_gso_parse_stride( int segment_bytes, struct msghdr * msg_hdr )
+{
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( msg_hdr, cmsg ) )
+    {
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len >= CMSG_LEN(sizeof(int)) )
+            {
+                int stride;
+                memcpy( &stride, CMSG_DATA( cmsg ), sizeof(int) );
+                if ( stride > 0 )
+                    segment_bytes = stride;
+            }
+            break;
+        }
+    }
+    return segment_bytes;
+}
+
 // the receive worker: drain the socket with recvmmsg, split GRO runs at the
 // kernel-reported segment stride, stage each segment into the on buffer.
 // the mutex is held across the whole fill pass, the xdp pattern: the main
@@ -501,18 +521,7 @@ static void rocketnet_server_gso_worker( void * data )
                 // the GRO segment stride: absent, the message is one
                 // datagram and the stride is its whole length
 
-                int segment_bytes = message_bytes;
-                for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &queue->messages[i].msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( &queue->messages[i].msg_hdr, cmsg ) )
-                {
-                    if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-                    {
-                        if ( cmsg->cmsg_len >= CMSG_LEN(sizeof(int)) )
-                        {
-                            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
-                        }
-                        break;
-                    }
-                }
+                int segment_bytes = rocketnet_server_gso_parse_stride( message_bytes, &queue->messages[i].msg_hdr );
                 if ( segment_bytes <= 0 )
                     segment_bytes = message_bytes;
 

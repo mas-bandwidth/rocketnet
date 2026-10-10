@@ -105,4 +105,6 @@ void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t *
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 
+int rocketnet_server_gso_parse_stride( int segment_bytes, struct msghdr * msg_hdr );
+
 #endif // #ifndef ROCKETNET_SERVER_SOCKET_H

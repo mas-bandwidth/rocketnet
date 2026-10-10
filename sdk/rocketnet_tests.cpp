@@ -9552,18 +9552,10 @@ void rocketnet_test_gro_short_cmsg_falls_back()
     {
         cmsg->cmsg_level = IPPROTO_UDP;
         cmsg->cmsg_type = UDP_GRO;
-        cmsg->cmsg_len = 8;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int)) - 1;
 
         int message_bytes = 1400;
-        int segment_bytes = message_bytes;
-
-        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-        {
-            if ( cmsg->cmsg_len >= CMSG_LEN(sizeof(int)) )
-            {
-                memcpy( &segment_bytes, CMSG_DATA(cmsg), sizeof(int) );
-            }
-        }
+        int segment_bytes = rocketnet_server_gso_parse_stride( message_bytes, &msg );
 
         rocketnet_check( segment_bytes == message_bytes );
     }
