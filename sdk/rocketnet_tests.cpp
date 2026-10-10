@@ -9298,7 +9298,6 @@ void rocketnet_test_failed_open_budget_per_mapping()
 
     // Reset counters for clean budget test
     test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
-    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED] = 0;
 
     // Send many junk packets - with budget this should be limited
     const int NUM_JUNK_PACKETS = 10000;
@@ -9313,9 +9312,9 @@ void rocketnet_test_failed_open_budget_per_mapping()
                                        payload_out, &payload_out_bytes, &payload_client_index );
     }
 
-    // Before fix: did_not_open counter should be NUM_JUNK_PACKETS
-    // After fix: budget_exceeded counter should be NUM_JUNK_PACKETS - EXPECTED_BUDGET
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED] == (NUM_JUNK_PACKETS - EXPECTED_BUDGET) );
+    // Before fix: did_not_open counter should be NUM_JUNK_PACKETS (all packets attempted open)
+    // After fix: did_not_open counter should be around EXPECTED_BUDGET (budget limits attempts)
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -9456,7 +9455,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
-    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;

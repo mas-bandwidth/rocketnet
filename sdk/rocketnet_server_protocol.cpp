@@ -43,7 +43,6 @@ static int rocketnet_check_failed_open_budget( struct rocketnet_server_protocol_
 
     if ( rocketnet_failed_open_count[mapping_index] >= (uint64_t)rocketnet_failed_open_budget_per_mapping )
     {
-        server->counters->values[ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED]++;
         return 1;
     }
 
