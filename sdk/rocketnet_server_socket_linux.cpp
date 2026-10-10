@@ -5,6 +5,22 @@
 */
 
 #include "rocketnet.h"
+#include "rocketnet_wire.h"
+
+// The staged drivers -- xdp, gso and iocp -- hand finish_packet a wire length
+// and then trust it at flush as a memcpy, iov or WSABUF length. That length
+// used to be bounded only by assert, which release builds compile out, leaving
+// a caller-supplied size as the copy length. This is the runtime replacement:
+// a value outside (0, ROCKETNET_RECEIVE_CEILING] must be dropped, and counted
+// by the driver, never staged. It lives here -- outside the xdp-only block --
+// because this translation unit is compiled on every platform the three
+// drivers cover, so the bound is shared rather than triplicated and is
+// unit-testable on the non-Linux edit loop.
+
+bool rocketnet_server_finish_packet_within_bounds( int packet_bytes )
+{
+    return packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING;
+}
 
 #if ROCKETNET_XDP
 
@@ -185,6 +201,10 @@ struct rocketnet_server_socket_t
     int stats_map_fd;
 
     std::atomic<uint64_t> packet_id{0};
+
+    // finish_packet's runtime bound drops (and counts) an out-of-range wire
+    // length on the rare violation path; never read on the hot send path.
+    std::atomic<uint64_t> send_dropped{0};
 
     int num_queues;
     rocketnet_server_xdp_socket_t * socket;
@@ -1827,8 +1847,16 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 {
     rocketnet_assert( server_socket );
     rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    // release builds must drop (and count) a wire length the flush would
+    // otherwise trust as a memcpy length; the assert that used to state the
+    // bound is compiled out there
+
+    if ( !rocketnet_server_finish_packet_within_bounds( packet_bytes ) )
+    {
+        server_socket->send_dropped.fetch_add( 1, std::memory_order_relaxed );
+        return;
+    }
 
     const int queue = packet_id % server_socket->num_queues;
 

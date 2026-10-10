@@ -44,6 +44,7 @@ extern bool rocketnet_test_private_block_copied;
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_socket.h"
+#include "rocketnet_server_gso.h"
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -68,6 +69,11 @@ extern thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
 // visit counter for testing: defined in rocketnet_ack.cpp
 extern unsigned long long g_ack_visit_count;
+
+// finish_packet's runtime bound: shared by the staged drivers and defined
+// unconditionally in rocketnet_server_socket_linux.cpp (see
+// rocketnet_test_finish_packet_oversize_dropped below)
+bool rocketnet_server_finish_packet_within_bounds( int packet_bytes );
 
 // Sockets, select, and the raw chaff injector live in functional/.
 
@@ -8855,6 +8861,50 @@ void rocketnet_test_send_arena()
     rocketnet_send_arena_destroy( arena );
 }
 
+// The staged drivers' finish_packet hands its wire length on to the flush as a
+// memcpy, iov or WSABUF size. That bound used to be an assert, which release
+// builds remove, so the runtime form must drop -- and count -- a length the
+// flush could not trust. finish_packet(2000) is the finding's own shape: past
+// the receive ceiling, so it must never be staged, and never sent.
+
+void rocketnet_test_finish_packet_oversize_dropped()
+{
+    rocketnet_check( !rocketnet_server_finish_packet_within_bounds( 2000 ) );
+    rocketnet_check( !rocketnet_server_finish_packet_within_bounds( ROCKETNET_RECEIVE_CEILING + 1 ) );
+    rocketnet_check( !rocketnet_server_finish_packet_within_bounds( 0 ) );
+    rocketnet_check( !rocketnet_server_finish_packet_within_bounds( -1 ) );
+
+    // the ceiling itself and an ordinary wire length still stage
+    rocketnet_check( rocketnet_server_finish_packet_within_bounds( ROCKETNET_RECEIVE_CEILING ) );
+    rocketnet_check( rocketnet_server_finish_packet_within_bounds( 64 ) );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // the GSO driver is the staged driver reachable without privilege: drive
+    // its finish_packet with an oversize length and pin the drop, counted,
+    // never staged and never sent
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    rocketnet_check( gso );
+
+    uint64_t packet_id = 0;
+    uint8_t * frame = rocketnet_server_gso_start_packet( gso, &bind_address, &packet_id );
+    rocketnet_check( frame );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    const uint64_t dropped_before = counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED];
+
+    rocketnet_server_gso_finish_packet( gso, packet_id, frame, 2000 );
+
+    rocketnet_server_gso_counters( gso, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == dropped_before + 1 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 0 );
+
+    rocketnet_server_gso_destroy( gso );
+#endif
+}
 
 // ----------------------------------------------------------------
 //        the config table and the driver ladder (#106)
@@ -9945,6 +9995,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_payload_id_wrap", rocketnet_test_fragment_payload_id_wrap },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
+    { "test_finish_packet_oversize_dropped", rocketnet_test_finish_packet_oversize_dropped },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },

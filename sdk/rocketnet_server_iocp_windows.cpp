@@ -6,6 +6,10 @@
 #include "rocketnet_memory.h"
 #include "rocketnet.h"
 
+// finish_packet's runtime bound, shared with the xdp and gso drivers and
+// defined unconditionally in rocketnet_server_socket_linux.cpp
+bool rocketnet_server_finish_packet_within_bounds( int packet_bytes );
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #ifndef _WIN32_WINNT
@@ -422,8 +426,18 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
 {
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
-    rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
     (void) frame;
+
+    // release builds must drop (and count) a wire length the flush would
+    // otherwise trust as a WSABUF length; the assert that used to state the
+    // bound is compiled out there
+
+    if ( !rocketnet_server_finish_packet_within_bounds( packet_bytes ) )
+    {
+        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        return;
+    }
+
     iocp->sends[packet_id].packet_bytes = packet_bytes;
 }
 
