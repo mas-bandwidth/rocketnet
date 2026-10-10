@@ -9268,8 +9268,34 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
+static void rocketnet_test_protocol_id_zero_refused( void )
+{
+    struct rocketnet_server_transport_config_t config;
+
+    // Start with default config (valid values for all fields)
+    rocketnet_server_transport_default_config( &config );
+
+    // Replace with production keys
+    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
+    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
+    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
+
+    // Set protocol_id to 0 (should be refused with production keys)
+    config.protocol_id = 0;
+
+    // This should be refused: protocol_id 0 with production keys
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
+        NULL,
+        "127.0.0.1:0",
+        &config,
+        rocketnet_platform_time() );
+
+    rocketnet_check( server == NULL );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
+    { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
     { "test_endian", rocketnet_test_endian },
