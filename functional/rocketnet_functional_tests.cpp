@@ -2176,6 +2176,83 @@ void rocketnet_test_server_driver_pin_iocp()
 {
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
 }
+
+// The audit finding: on IOCP a receive repost that returns WSAEMSGSIZE
+// synchronously is a completed I/O, not a failed post -- its completion still
+// arrives on the port. The old code retired the post on the spot, so one
+// OVERLAPPED was posted twice and, at shutdown, used after free. WSAEMSGSIZE
+// is treated like WSA_IO_PENDING and the pending count stays right.
+//
+// The stimulus has to keep oversized datagrams queued past the outstanding
+// receives: with no more datagrams than the pool is deep, every one is claimed
+// by an already-posted receive and a repost only ever meets an idle socket, so
+// the changed branch never runs. Driving more than the pool depth (here four
+// times it) leaves datagrams on the socket receive queue when the reposts that
+// follow those completions run, which is where a synchronous WSAEMSGSIZE is
+// returned. The pool then settles back to its full depth, and to zero at
+// destroy, only if every completion kept its post counted.
+
+void rocketnet_test_iocp_msgsize_keeps_pending_count()
+{
+    rocketnet_address_t bind;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create( NULL, &bind, 1 );
+    rocketnet_check( driver != NULL );
+    rocketnet_check( bind.port != 0 );
+
+    SOCKET peer = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( peer != INVALID_SOCKET );
+    sockaddr_in destination;
+    memset( &destination, 0, sizeof(destination) );
+    destination.sin_family = AF_INET;
+    destination.sin_port = htons( bind.port );
+    destination.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    // One byte past the posted buffer: every repost that meets one of these
+    // queued datagrams returns WSAEMSGSIZE and still completes on the port.
+    const int datagrams = ROCKETNET_IOCP_RECEIVES_PER_WORKER * 4;
+    uint8_t oversized[ROCKETNET_RECEIVE_CEILING + 2];
+    memset( oversized, 0xFF, sizeof(oversized) );
+    for ( int i = 0; i < datagrams; ++i )
+        rocketnet_check( sendto( peer, (const char*) oversized, (int) sizeof(oversized), 0,
+            (sockaddr*) &destination, sizeof(destination) ) == (int) sizeof(oversized) );
+
+    // Every oversized datagram a post claims is a dropped completion, so the
+    // dropped counter passing one pool proves the queued datagrams outlived
+    // the outstanding receives -- and therefore that a repost returned a
+    // synchronous WSAEMSGSIZE. Readiness is never gated on pending == the pool
+    // depth, which is already true the instant create returns and so observes
+    // nothing.
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    const double dropped_deadline = rocketnet_platform_time() + 5.0;
+    int dropped = 0;
+    for ( ;; )
+    {
+        rocketnet_server_iocp_counters( driver, counters );
+        dropped = (int) counters[ROCKETNET_IOCP_RECEIVE_DROPPED];
+        if ( dropped > ROCKETNET_IOCP_RECEIVES_PER_WORKER || rocketnet_platform_time() >= dropped_deadline )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( dropped > ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+
+    // A repost that kept its post leaves the pool at full depth; a miscounted
+    // pool is short here, so the wait expires and the check below fails.
+    const double ready_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_server_iocp_pending( driver ) != ROCKETNET_IOCP_RECEIVES_PER_WORKER &&
+            rocketnet_platform_time() < ready_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_iocp_pending( driver ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+
+    rocketnet_server_iocp_stop( driver );
+    const double stopped_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_iocp_stopped( driver ) && rocketnet_platform_time() < stopped_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_iocp_stopped( driver ) );
+    rocketnet_check( rocketnet_server_iocp_pending( driver ) == 0 );
+    rocketnet_server_iocp_destroy( driver );
+    closesocket( peer );
+}
 #endif
 
 void rocketnet_test_server_port_zero_driver()
@@ -3201,6 +3278,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+    { "test_iocp_msgsize_keeps_pending_count", rocketnet_test_iocp_msgsize_keeps_pending_count },
 #endif
     { "test_server_port_zero_driver", rocketnet_test_server_port_zero_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
