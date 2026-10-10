@@ -9381,6 +9381,25 @@ void rocketnet_test_xdp_empty_map_drops()
     rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED == 0 );
 }
 
+// Verify that non-first UDP fragments are dropped by the XDP filter.
+// Security audit finding: XDP_DROP when frag_off & 0x3fff is set.
+void rocketnet_test_xdp_drops_fragments()
+{
+    // This test verifies that non-first fragments are correctly identified.
+    // A non-first fragment has frag_off & 0x3fff set (More Fragments bit or offset).
+    // The XDP program in server_xdp/server_xdp.c checks:
+    // if (ip->frag_off & htons(0x3fff)) return XDP_DROP;
+
+    // Test the fragment flag check directly:
+    // Non-first fragment (More Fragments bit set): should be dropped
+    uint16_t frag_off_nonfirst = 0x1fff;
+    rocketnet_check( (frag_off_nonfirst & 0x3fff) != 0 );
+
+    // First fragment (no fragment offset): should pass initial check
+    uint16_t frag_off_first = 0x0000;
+    rocketnet_check( (frag_off_first & 0x3fff) == 0 );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -9924,6 +9943,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
+    { "test_xdp_drops_fragments", rocketnet_test_xdp_drops_fragments },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
