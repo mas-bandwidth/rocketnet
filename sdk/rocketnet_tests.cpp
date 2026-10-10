@@ -8774,6 +8774,28 @@ void rocketnet_test_config_validation()
 
 }
 
+void rocketnet_test_dev_keys_refused_in_release()
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+
+    // A config with only the server pair replaced (development backend key kept)
+    for ( int i = 0; i < 32; i++ )
+    {
+        config.server_public_key[i] = i;
+        config.server_secret_key[i] = i;
+    }
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, 0.0 );
+
+#ifdef NDEBUG
+    rocketnet_check( server == NULL );
+#else
+    rocketnet_check( server != NULL );
+    rocketnet_server_transport_destroy( server );
+#endif
+}
+
 void rocketnet_test_driver_ladder_parse()
 {
     const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
@@ -9266,6 +9288,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
+    { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
