@@ -7722,32 +7722,40 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+static size_t captured_allocation_bytes = 0;
+
+static void * test_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    captured_allocation_bytes = bytes;
+    return malloc( bytes );
+}
+
+static void test_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
 void rocketnet_test_reassembly_arena_has_slack()
 {
-    // The delivered arena must have 8 bytes of slack past the last slot
-    // so a word-at-a-time reader doesn't read past the allocation.
-    // See sdk/rocketnet_fragment.cpp:141 - delivered should be allocated
-    // as delivered_capacity * max_payload_bytes + 8 (slack).
     const int num_connections = 2;
     const int num_slots = 4;
     const int max_payload_bytes = 8192;
     const int delivered_capacity = 2;
 
-    // Expected delivered allocation with 8 bytes slack
     const size_t expected_delivered_bytes = (size_t) delivered_capacity * (size_t) max_payload_bytes + 8;
 
     struct rocketnet_reassembly_set_t * set =
         rocketnet_reassembly_set_create( NULL, num_connections, num_slots, max_payload_bytes, delivered_capacity );
     rocketnet_check( set );
 
-    // Verify the delivered arena capacity is what we expect
     rocketnet_check( set->delivered_capacity == delivered_capacity );
-
-    // Verify delivered arena exists (actual slack verification requires allocator hook)
     rocketnet_check( set->delivered != NULL );
 
-    // Cleanup
     rocketnet_reassembly_set_destroy( set );
+
+    rocketnet_check( test_last_allocation_bytes >= expected_delivered_bytes );
 }
 
 // a connected protocol pair on mocked time: the three-round-trip handshake

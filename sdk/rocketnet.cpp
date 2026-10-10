@@ -240,6 +240,7 @@ static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_d
 
 static std::mutex rocketnet_lifecycle_mutex;
 static size_t rocketnet_allocations = 0; // includes allocator callbacks in flight
+size_t test_last_allocation_bytes = 0;
 static bool rocketnet_initialized = false;
 static bool rocketnet_transitioning = false;
 
@@ -285,6 +286,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
         release = rocketnet_free_function;
         ++rocketnet_allocations;
     }
+    test_last_allocation_bytes = bytes;
     void * base = allocate( context, bytes + overhead );
     if ( !base )
     {
