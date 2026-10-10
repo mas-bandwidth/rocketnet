@@ -2176,6 +2176,7 @@ void rocketnet_test_server_driver_pin_iocp()
 {
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
 }
+#endif
 
 void rocketnet_test_server_port_zero_driver()
 {
