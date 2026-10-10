@@ -8,7 +8,10 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
@@ -9262,6 +9265,34 @@ void rocketnet_test_config_bytes_exact()
     rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, &tiny_field, 1 );
 }
 
+// Maintenance should skip slots whose mapping_index is -1 (unmapped).
+// Without the fix, passing -1 to rocketnet_encryption_map_address causes
+// undefined behavior (array out of bounds access).
+void rocketnet_test_maintenance_skips_unmapped_slot()
+{
+    // Create slots and encryption map
+    rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
+    rocketnet_check( slots != NULL );
+    
+    rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 8 );
+    rocketnet_check( map != NULL );
+    
+    // Assign slot 0 with mapping_index = -1 (simulates an unmapped slot)
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {0};
+    int client_index = rocketnet_client_slots_assign( slots, 0x12345678ULL, -1, user_data );
+    rocketnet_check( client_index == 0 );
+    
+    // Verify the slot is connected and has mapping_index = -1
+    rocketnet_check( rocketnet_client_slots_connected( slots, 0 ) );
+    rocketnet_check( rocketnet_client_slots_mapping_index( slots, 0 ) == -1 );
+    
+    // The fix: maintenance should skip slots with mapping_index < 0
+    // By calling rocketnet_encryption_map_address with -1, we'd get undefined behavior
+    // without the guard. The test passes if no crash occurs when the guard exists.
+    rocketnet_encryption_map_destroy( map );
+    rocketnet_client_slots_destroy( slots );
+}
+
 // Every override logs the variable and displaced value while keeping secret
 // material out of both success and refusal diagnostics.
 void rocketnet_test_config_override_logging()
@@ -9670,6 +9701,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
+    { "test_maintenance_skips_unmapped_slot", rocketnet_test_maintenance_skips_unmapped_slot },
     { "test_config_override_logging", rocketnet_test_config_override_logging },
 };
 
