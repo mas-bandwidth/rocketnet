@@ -341,12 +341,29 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // signature verification bucket: limit failed verifications per source
+    // bucket index is hash of address mod 64, bound is 10 failures per bucket
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for ( int i = 0; i < sizeof(rocketnet_address_t); i++ )
+    {
+        const uint8_t * addr_bytes = (const uint8_t *) from;
+        hash ^= addr_bytes[i];
+        hash *= 0x100000001b3ULL;
+    }
+    int bucket = hash % 64;
+    if ( server->sig_verify_failures[bucket] >= 10 )
+    {
+        rocketnet_debug( "server ignored connection request. signature verify bucket exhausted" );
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     // the authenticity check: the signature, and only the signature
 
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
+        server->sig_verify_failures[bucket]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 

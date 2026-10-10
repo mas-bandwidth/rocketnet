@@ -62,6 +62,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_server_acks_t * acks;
     struct rocketnet_reassembly_set_t * reassembly;         // per-client fragment reassembly, one connection per slot
     struct rocketnet_counters_t * counters;
+    int sig_verify_failures[64];                            // per-source bucket: signed verify failures per address bucket
 };
 
 // Processes one connection request packet, full wire bytes including the

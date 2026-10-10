@@ -2504,6 +2504,42 @@ void rocketnet_test_cookie_zero_field_hashes_once()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_cookie_bounds_signature_verifies()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x1111222233334444ULL, rocketnet_test_salt );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    // First request: get a cookie
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    // Save the valid signature from a good request
+    uint8_t good_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    memcpy( good_request, request, sizeof(good_request) );
+
+    // Send 100 requests with mutated signatures - they should all fail signature verification
+    // but the count should be bounded (e.g., to 10)
+    for ( int i = 0; i < 100; i++ )
+    {
+        memcpy( request, good_request, sizeof(request) );
+        // Mutate the signature
+        uint8_t * sig = request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
+        sig[0] ^= 1;  // Mutate one byte of the signature
+
+        rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
+    }
+
+    // Final check: the signature verification counter should be bounded
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] <= 10 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_request_path_crypto_refusals()
 {
     struct rocketnet_test_server_t test;
@@ -9702,6 +9738,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_refusals", rocketnet_test_request_path_refusals },
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
     { "test_cookie_zero_field_hashes_once", rocketnet_test_cookie_zero_field_hashes_once },
+    { "test_cookie_bounds_signature_verifies", rocketnet_test_cookie_bounds_signature_verifies },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },
