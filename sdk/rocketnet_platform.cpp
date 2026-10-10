@@ -509,15 +509,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
-    int iterations = 0;
-    const int max_iterations = 20000;
+    int zero_length_skips = 0;
+    const int zero_length_max = 100;
     for ( ;; )
     {
-        iterations++;
-        if ( iterations >= max_iterations )
-        {
-            return 0;
-        }
         from_length = sizeof( sockaddr_from );
 
         result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
@@ -537,7 +532,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            // both pumps share this semantic. the skip is bounded: a flood
+            // of byte-less datagrams counts against the per-call budget, so
+            // one receive call cannot be held open by chaff.
+            if ( ++zero_length_skips >= zero_length_max )
+            {
+                return 0;
+            }
             continue;
         }
 
@@ -1709,15 +1710,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
-    int iterations = 0;
-    const int max_iterations = 20000;
+    int zero_length_skips = 0;
+    const int zero_length_max = 100;
     for ( ;; )
     {
-        iterations++;
-        if ( iterations >= max_iterations )
-        {
-            return 0;
-        }
         from_length = sizeof( sockaddr_from );
 
         result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
@@ -1737,7 +1733,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            // both pumps share this semantic. the skip is bounded: a flood
+            // of byte-less datagrams counts against the per-call budget, so
+            // one receive call cannot be held open by chaff.
+            if ( ++zero_length_skips >= zero_length_max )
+            {
+                return 0;
+            }
             continue;
         }
 
@@ -2885,15 +2887,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
-    int iterations = 0;
-    const int max_iterations = 20000;
+    int zero_length_skips = 0;
+    const int zero_length_max = 100;
     for ( ;; )
     {
-        iterations++;
-        if ( iterations >= max_iterations )
-        {
-            return 0;
-        }
         from_length = sizeof( sockaddr_from );
 
         result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
@@ -2915,7 +2912,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // protocol admits -- and returning 0 here would read as
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            // both pumps share this semantic. the skip is bounded: a flood
+            // of byte-less datagrams counts against the per-call budget, so
+            // one receive call cannot be held open by chaff.
+            if ( ++zero_length_skips >= zero_length_max )
+            {
+                return 0;
+            }
             continue;
         }
 

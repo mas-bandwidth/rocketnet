@@ -1222,61 +1222,6 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
     rocketnet_platform_socket_destroy( socket );
 }
 
-void rocketnet_test_zero_length_flood_bounded()
-{
-    // Test for security finding: zero-length datagram flood should not block receive forever.
-    // A flood of 0-byte datagrams should be bounded by a max-iterations limit.
-    
-    rocketnet_address_t bind_address;
-    rocketnet_address_parse( &bind_address, "127.0.0.1" );
-    bind_address.port = 0;
-    
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( 
-        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
-    rocketnet_check( socket );
-    
-    // Get actual bound port using getsockname
-    struct sockaddr_in sock_addr;
-    socklen_t sock_addr_len = sizeof(sock_addr);
-    rocketnet_check( getsockname( socket->handle, (struct sockaddr*) &sock_addr, &sock_addr_len ) == 0 );
-    uint16_t bound_port = ntohs( sock_addr.sin_port );
-    
-    // Create injector socket to send zero-byte datagrams
-    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-    rocketnet_check( injector >= 0 );
-    
-    struct sockaddr_in dest;
-    memset( &dest, 0, sizeof(dest) );
-    dest.sin_family = AF_INET;
-    dest.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
-    dest.sin_port = htons( bound_port );
-    
-    // Preload 10000 zero-byte datagrams
-    const int num_zero_bytes = 10000;
-    for ( int i = 0; i < num_zero_bytes; i++ )
-    {
-        rocketnet_check( ::sendto( injector, "", 0, 0, (struct sockaddr*) &dest, sizeof(dest) ) == 0 );
-    }
-    
-    // Verify receive is bounded when receiving only zero-byte datagrams
-    // Should return EAGAIN after exhausting the socket buffer without hanging
-    uint8_t packet[256];
-    rocketnet_address_t from;
-    
-    // First call - should drain zero-byte packets and return EAGAIN (or -1)
-    // The key: zero-length reads should count against max_iterations
-    // so 10000 zero-byte datagrams won't cause a hang
-    int received = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
-    
-    // After draining zero-byte packets, should get EAGAIN or -1 (no more data)
-    // If it hangs or asserts, the fix is not working
-    // received should be -1 (EAGAIN) since all zero-byte packets were consumed
-    rocketnet_check( received <= 0 );
-    
-    rocketnet_platform_socket_destroy( socket );
-    ::close( injector );
-}
-
 void rocketnet_test_platform_batch_pump()
 {
     rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
@@ -1532,6 +1477,84 @@ void rocketnet_test_platform_pump_zero_length_chaff()
     setenv( "ROCKETNET_PUMP", "portable", 1 );
     rocketnet_test_pump_chaff_exchange();
     unsetenv( "ROCKETNET_PUMP" );
+}
+
+// the zero-length receive bound (security audit, critical): the per-packet
+// receive loop skipped a zero-length datagram with an unbounded continue, so
+// a flood of 0-byte datagrams held one receive call open -- about a second
+// at 10000 datagrams, and without limit under a sustained flood. the skip
+// now counts against a per-call budget. this pins the bound on a real
+// socket: preload 10000 zero-byte datagrams and require one call to return
+// with chaff still queued -- the call stopped at the bound instead of
+// draining the flood.
+
+void rocketnet_test_zero_length_flood_bounded()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create(
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+
+    struct sockaddr_in to;
+    memset( &to, 0, sizeof(to) );
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    to.sin_port = htons( bind_address.port );
+
+    // preload 10000 zero-byte datagrams. the send is best effort: once the
+    // kernel receive buffer fills further sends fail, and the bound needs
+    // only that more than a budget's worth of chaff is queued. a zero-length
+    // sendto is legal UDP and is exactly the chaff the finding names.
+
+    const int flood_count = 10000;
+    for ( int i = 0; i < flood_count; i++ )
+        (void) ::sendto( injector, "", 0, MSG_DONTWAIT, (struct sockaddr*) &to, sizeof(to) );
+
+    // wait for arrival: readability, then a settle window orders of
+    // magnitude past loopback flight time, so the flood is queued before the
+    // one drain call runs
+
+    {
+        double deadline = rocketnet_platform_time() + 5.0;
+        for ( ;; )
+        {
+            fd_set readable;
+            FD_ZERO( &readable );
+            FD_SET( socket->handle, &readable );
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;
+            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
+                break;
+            rocketnet_check( rocketnet_platform_time() < deadline );
+        }
+        usleep( 200000 );
+    }
+
+    // one call must return on the bound, with chaff still queued. an
+    // unbounded skip drains the whole flood here and leaves the socket
+    // empty, so the readability check is what fails before the fix.
+
+    uint8_t packet[256];
+    rocketnet_address_t from;
+    const int received = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
+    rocketnet_check( received == 0 );
+
+    fd_set readable;
+    FD_ZERO( &readable );
+    FD_SET( socket->handle, &readable );
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    rocketnet_check( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+    ::close( injector );
 }
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -3242,12 +3265,12 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_stats", rocketnet_test_transport_stats },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
-    { "test_zero_length_flood_bounded", rocketnet_test_zero_length_flood_bounded },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+    { "test_zero_length_flood_bounded", rocketnet_test_zero_length_flood_bounded },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
