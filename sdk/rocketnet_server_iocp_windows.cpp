@@ -426,7 +426,10 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
 
     // Drop oversized packets instead of asserting (release builds strip assertions)
     if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        iocp->counters[ROCKETNET_IOCP_FINISH_DROPPED_OVERSIZE].fetch_add(1,std::memory_order_relaxed);
         return;
+    }
 
     (void) frame;
     iocp->sends[packet_id].packet_bytes = packet_bytes;

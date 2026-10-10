@@ -185,6 +185,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_packets_sent;
     uint64_t counter_send_syscalls;
     uint64_t counter_send_dropped;
+    uint64_t counter_finish_dropped_oversize;
     uint64_t counter_gso_sends;
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
@@ -831,7 +832,10 @@ void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, ui
 
     // Drop oversized packets instead of asserting (release builds strip assertions)
     if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        gso->counter_finish_dropped_oversize++;
         return;
+    }
 
     (void) packet_id;
 

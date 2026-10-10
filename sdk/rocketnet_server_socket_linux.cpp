@@ -127,6 +127,7 @@ struct rocketnet_server_xdp_socket_t
     uint8_t padding_4[4096];
 
     uint64_t receive_counter;
+    uint64_t finish_dropped_oversize;
 
     uint8_t padding_5[4096];
 
@@ -1830,10 +1831,12 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     rocketnet_assert( packet_bytes > 0 );
 
     // Drop oversized packets instead of asserting (release builds strip assertions)
-    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-        return;
-
     const int queue = packet_id % server_socket->num_queues;
+    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        server_socket->socket[queue].finish_dropped_oversize++;
+        return;
+    }
 
     rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
 
