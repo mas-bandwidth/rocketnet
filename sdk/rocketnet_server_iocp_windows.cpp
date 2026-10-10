@@ -149,8 +149,12 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     iocp->pending.fetch_add( 1, std::memory_order_relaxed );
     const int result = WSARecvFrom( iocp->socket, &op->buffer, 1, NULL, &op->flags,
         (sockaddr*) &op->address, &op->address_bytes, &op->overlapped, NULL );
-    if ( result == 0 || WSAGetLastError() == WSA_IO_PENDING || WSAGetLastError() == WSAEMSGSIZE )
-        return true; // Immediate success also produces exactly one IOCP event.
+    const int error = result == 0 ? 0 : WSAGetLastError();
+    // Immediate success, a pending operation and an oversize datagram each
+    // produce exactly one IOCP completion, so none of them retire the post
+    // here: a synchronous WSAEMSGSIZE is not a failed repost.
+    if ( result == 0 || error == WSA_IO_PENDING || error == WSAEMSGSIZE )
+        return true;
     iocp->pending.fetch_sub( 1, std::memory_order_release );
     iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
     InterlockedPushEntrySList( &iocp->retry_receives, &op->free_entry );

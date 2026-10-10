@@ -321,40 +321,6 @@ static void test_receive_boundaries()
     printf("test_iocp_receive_boundaries\n");
 }
 
-static void test_msgsize_keeps_pending_count()
-{
-    // Oversized-datagram stress: WSAEMSGSIZE on repost must not decrement
-    // pending. At destroy, pending must be exactly 0.
-    rocketnet_address_t bind = address("127.0.0.1:0");
-    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 1);
-    CHECK(driver);
-    SOCKET peer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    CHECK(peer != INVALID_SOCKET);
-    sockaddr_in to = {};
-    to.sin_family = AF_INET;
-    to.sin_port = htons(bind.port);
-    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    char oversized[ROCKETNET_RECEIVE_CEILING + 128] = {};
-    for ( int i = 0; i < 64; ++i )
-        CHECK(sendto(peer, oversized, sizeof(oversized), 0, (sockaddr*)&to, sizeof(to)) == sizeof(oversized));
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_platform_time() < deadline )
-    {
-        rocketnet_server_iocp_receive_packets(driver);
-        if ( rocketnet_server_iocp_pending(driver) == ROCKETNET_IOCP_RECEIVES_PER_WORKER ) break;
-        rocketnet_platform_sleep(0.001);
-    }
-    rocketnet_server_iocp_stop(driver);
-    const double stop_deadline = rocketnet_platform_time() + 5.0;
-    while ( !rocketnet_server_iocp_stopped(driver) && rocketnet_platform_time() < stop_deadline )
-        rocketnet_platform_sleep(0.001);
-    CHECK(rocketnet_server_iocp_stopped(driver));
-    CHECK(rocketnet_server_iocp_pending(driver) == 0);
-    rocketnet_server_iocp_destroy(driver);
-    closesocket(peer);
-    printf("test_iocp_msgsize_keeps_pending_count\n");
-}
-
 int main()
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -364,7 +330,6 @@ int main()
     test_completion_owns_frames();
     test_datagrams_and_producers();
     test_receive_boundaries();
-    test_msgsize_keeps_pending_count();
     rocketnet_term();
     CHECK(live_allocations.load() == 0);
     return 0;
