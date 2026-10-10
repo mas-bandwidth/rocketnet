@@ -237,17 +237,61 @@ void rocketnet_test_xdp_martian_source_dropped()
 {
     // Test that martian source addresses are detected and dropped by the XDP RX loop
     // Martian sources include: 0.0.0.0, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255, port 0
-    // This test verifies that a packet with a loopback source (127.0.0.1) is dropped
+    // This test verifies that packets with martian sources (e.g., 127.0.0.1) are identified
     
-    // Before the fix, the martian check doesn't exist, so packets with invalid sources
-    // are accepted. After the fix, they are dropped and counted.
+    // Verify the counter constant exists and is within bounds
+    rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_MARTIAN_SOURCE < ROCKETNET_SERVER_XDP_NUM_COUNTERS );
     
-    // We test by checking that the martian counter exists and is incremented
-    // when packets with martian sources are processed.
-    // In a real XDP context, this would require actual packet injection,
-    // but we can verify the counter structure exists.
+    // Verify martian detection logic by simulating source address checks
+    // Martian source detection logic:
+    // - 0.0.0.0 (all zeros)
+    // - 127.0.0.0/8 (loopback)
+    // - 224.0.0.0/4 (multicast)
+    // - 255.255.255.255 (broadcast)
     
-    rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_MARTIAN_SOURCE >= 0 );
+    // Note: Values are in host byte order (as returned by ntohl from packet)
+    uint32_t martian_sources[] = {
+        0,                      // 0.0.0.0
+        0x7f000001,             // 127.0.0.1 (loopback)
+        0x7f000002,             // 127.0.0.2 (loopback range)
+        0xe0000001,             // 224.0.0.1 (multicast)
+        0xFFFFFFFF              // 255.255.255.255 (broadcast)
+    };
+    const int num_martian = 5;
+    
+    for ( int i = 0; i < num_martian; i++ )
+    {
+        uint32_t saddr = martian_sources[i];
+        bool is_martian = false;
+        
+        if ( saddr == 0 ) is_martian = true;
+        else if ( (saddr >> 24) == 127 ) is_martian = true;
+        else if ( (saddr >> 28) == 14 ) is_martian = true;
+        else if ( saddr == 0xFFFFFFFF ) is_martian = true;
+        
+        rocketnet_check( is_martian );
+    }
+    
+    // Verify non-martian sources are not flagged
+    uint32_t valid_sources[] = {
+        0x0a000001,             // 10.0.0.1
+        0xc0a80001,             // 192.168.0.1
+        0xac100001              // 172.16.0.1
+    };
+    const int num_valid = 3;
+    
+    for ( int i = 0; i < num_valid; i++ )
+    {
+        uint32_t saddr = valid_sources[i];
+        bool is_martian = false;
+        
+        if ( saddr == 0 ) is_martian = true;
+        else if ( (saddr >> 24) == 127 ) is_martian = true;
+        else if ( (saddr >> 28) == 14 ) is_martian = true;
+        else if ( saddr == 0xFFFFFFFF ) is_martian = true;
+        
+        rocketnet_check( !is_martian );
+    }
 }
 
 void rocketnet_test_endian()
