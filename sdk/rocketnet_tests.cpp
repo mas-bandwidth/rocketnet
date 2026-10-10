@@ -59,6 +59,9 @@
 
 extern thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
+// visit counter for testing: defined in rocketnet_ack.cpp
+extern unsigned long long g_ack_visit_count;
+
 // Sockets, select, and the raw chaff injector live in functional/.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -6541,6 +6544,55 @@ void rocketnet_test_ack_block_build()
     }
 }
 
+void rocketnet_test_ack_apply_skips_acked_range()
+{
+    // Test for security audit finding: applying the same full-window ack block
+    // twice should visit 0 records on the second apply when all are already acked.
+    // Without the fix, all records are visited even if already acked.
+
+    struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
+        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    rocketnet_check( endpoint );
+    rocketnet_ack_endpoint_reset( endpoint );
+
+    uint64_t acked[64];
+    int acked_count = 0;
+    uint64_t unknown = 0;
+    uint64_t batch_full = 0;
+
+    // Record 11 packets at sequences 100-110 (within the retained window)
+    for ( uint64_t s = 100; s <= 110; s++ )
+        rocketnet_ack_endpoint_record_sent( endpoint, s, 100, 99 + s, 1, 0, 10.0 + (double) s );
+
+    // Build an ack block acknowledging all 11 packets
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof(block) );
+    block.largest = 110;
+    block.first_range_length = 11;  // Covers 100-110
+
+    // First apply: should visit and ack all 11 records
+    g_ack_visit_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 30.0, acked, 64, &acked_count, &unknown, &batch_full ) == 11 );
+    rocketnet_check( acked_count == 11 );
+    rocketnet_check( g_ack_visit_count == 11 );
+
+    // Reset counters for second apply
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
+
+    // Second apply: should visit 0 records since all are already acked
+    // BUG: without fix, this visits all 11 records again
+    g_ack_visit_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
+    rocketnet_check( acked_count == 0 );
+    // After fix: g_ack_visit_count should be 0 here (no records visited)
+    // Without fix: g_ack_visit_count will be 11 (all records visited)
+    rocketnet_check( g_ack_visit_count == 0 );
+
+    rocketnet_free( NULL, endpoint );
+}
+
 void rocketnet_test_ack_endpoint_processing()
 {
     struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
@@ -9777,6 +9829,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },
     { "test_ack_endpoint_processing", rocketnet_test_ack_endpoint_processing },
+    { "test_ack_apply_skips_acked_range", rocketnet_test_ack_apply_skips_acked_range },
     { "test_ack_debt", rocketnet_test_ack_debt },
     { "test_ack_non_elicitation", rocketnet_test_ack_non_elicitation },
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
