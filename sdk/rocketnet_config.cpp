@@ -403,10 +403,8 @@ static int rocketnet_driver_id_from_name( const char * name, int name_length )
 
 bool rocketnet_driver_ladder_parse( const char * value, const int * available, int num_available, struct rocketnet_driver_ladder_t * ladder )
 {
-    rocketnet_assert( available );
-    rocketnet_assert( num_available > 0 );
-    rocketnet_assert( num_available <= ROCKETNET_MAX_DRIVER_CANDIDATES );
-    rocketnet_assert( ladder );
+    if ( !available || num_available <= 0 || num_available > ROCKETNET_MAX_DRIVER_CANDIDATES || !ladder )
+        return false;
 
     memset( ladder, 0, sizeof(struct rocketnet_driver_ladder_t) );
 
