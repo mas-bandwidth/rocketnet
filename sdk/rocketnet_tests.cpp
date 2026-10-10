@@ -38,7 +38,9 @@ extern bool rocketnet_test_private_block_copied;
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#if ROCKETNET_XDP
 #include "rocketnet_xdp_free_list.h"
+#endif
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
@@ -205,6 +207,7 @@ void rocketnet_test_time()
     rocketnet_check( finish > start );
 }
 
+#if ROCKETNET_XDP
 void rocketnet_test_xdp_free_list_refuses_overflow()
 {
     static uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES / 2 + 1];
@@ -232,6 +235,7 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, UINT64_MAX, region_begin, region_end ) );
     rocketnet_check( count == 0 );
 }
+#endif
 
 void rocketnet_test_endian()
 {
@@ -9207,6 +9211,7 @@ void rocketnet_test_config_validation()
 
 }
 
+#if ROCKETNET_XDP
 void rocketnet_test_driver_ladder_parse()
 {
     const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
@@ -9279,6 +9284,7 @@ void rocketnet_test_driver_ladder_parse()
     rocketnet_check( rocketnet_driver_ladder_parse( "gso,gso", linux_server, 3, &ladder ) );
     rocketnet_check( ladder.num_candidates == 2 );
 }
+#endif
 
 
 
@@ -9304,6 +9310,7 @@ void rocketnet_test_driver_ladder_parse()
 // structurally, so the committing xdp create never runs under a test. That
 // half is a documented manual reproduction on #109, not an assertion.
 
+#if ROCKETNET_XDP
 void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 {
     // every driver answers the question, and the answers are the ones the
@@ -9321,6 +9328,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
     rocketnet_check( !rocketnet_driver_discovers_bound_port( ROCKETNET_NUM_DRIVERS ) );
 
 }
+#endif
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -9331,6 +9339,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 // pre-flight's and the script's shared boundary rule cannot drift
 // unwitnessed
 
+#if ROCKETNET_XDP
 void rocketnet_test_xdp_interrupt_matcher()
 {
     // real driver lines (i40e, ice, ixgbe-style, virtio, and a real mlx5
@@ -9385,9 +9394,11 @@ void rocketnet_test_xdp_interrupt_matcher()
     rocketnet_check( !rocketnet_server_socket_interrupt_line_matches_interface(
         " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
 }
+#endif
 
 // Verify that the XDP program returns XDP_DROP when bpf_redirect_map
 // fails (e.g., empty xskmap), and REDIRECTED is only incremented on success.
+#if ROCKETNET_XDP
 void rocketnet_test_xdp_empty_map_drops()
 {
     // This test validates the fix for the security audit finding where:
@@ -9410,6 +9421,7 @@ void rocketnet_test_xdp_empty_map_drops()
     // correctly returns XDP_DROP instead of always returning XDP_REDIRECT.
     rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED == 0 );
 }
+#endif
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -9526,6 +9538,7 @@ void rocketnet_test_config_override_logging()
 }
 
 // Verify XDP umem config frame_size matches the expected constant
+#if ROCKETNET_XDP
 void rocketnet_test_umem_config_frame_size_explicit()
 {
     struct xsk_umem_config config;
@@ -9534,6 +9547,7 @@ void rocketnet_test_umem_config_frame_size_explicit()
     config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
+#endif
 
 
 
@@ -9866,7 +9880,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
+#if ROCKETNET_XDP
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
+#endif
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
@@ -9998,14 +10014,22 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
+#if ROCKETNET_XDP
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
+#endif
+#if ROCKETNET_XDP
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
+#endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+#if ROCKETNET_XDP
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
@@ -10021,7 +10045,9 @@ void rocketnet_unit_prepare()
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_log_function( rocketnet_test_suite_log_function );
     }
+#if ROCKETNET_XDP
     rocketnet_forbid_xdp_commit();
+#endif
     if ( rocketnet_unit_environment == NULL )
         rocketnet_unit_environment = new rocketnet_test_environment_t();
 }
