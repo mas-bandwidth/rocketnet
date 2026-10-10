@@ -9644,6 +9644,36 @@ void rocketnet_test_token_timeout_clamped()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_response_wrong_size_counted()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xDEC1ULL, &client_keys );
+
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    // Send a wrong-sized response (60 bytes instead of 50)
+    uint8_t wrong_sized_response[60];
+    memcpy( wrong_sized_response, client_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    memset( wrong_sized_response + ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, 0, 10 );
+
+    rocketnet_check( rocketnet_test_process_packet( &test, wrong_sized_response, 60, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9688,6 +9718,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_cookie", rocketnet_test_cookie },
     { "test_connection_keys", rocketnet_test_connection_keys },
     { "test_counters", rocketnet_test_counters },
+    { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
     { "test_used_token_history", rocketnet_test_used_token_history },
     { "test_admitted_token_set", rocketnet_test_admitted_token_set },
     { "test_encryption_map", rocketnet_test_encryption_map },
