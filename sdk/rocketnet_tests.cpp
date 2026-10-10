@@ -8864,36 +8864,47 @@ void rocketnet_test_send_arena()
 
 void rocketnet_test_finish_packet_oversize_dropped()
 {
-    // Verify that finish_packet drops oversized packets and increments the counter
-    // rather than asserting. This test verifies the fix is in place by checking:
-    // 1. ROCKETNET_RECEIVE_CEILING is defined
-    // 2. Oversized packets (2000 bytes) exceed the ceiling (1426)
-    // 3. The socket struct has the finish_dropped_oversize counter field
-    // 4. The finish_packet function has the bounds check before using packet_bytes
+    // Runtime test: finish_packet drops oversized packets and increments the
+    // finish_dropped_oversize counter instead of asserting. This test verifies
+    // the fix works by actually calling finish_packet with oversized data.
     
     const int oversized_size = 2000;
     const int ceiling = ROCKETNET_RECEIVE_CEILING;
     
-    // Verify that our oversized test case actually exceeds the ceiling
+    // Verify our oversized test case exceeds the ceiling
     rocketnet_check( oversized_size > ceiling );
     
-    // Verify the counter field exists in the socket struct by checking its size
-    // This compiles only if the field exists, failing the test if removed
-    rocketnet_server_xdp_socket_t dummy;
-    rocketnet_check( sizeof(dummy.finish_dropped_oversize) == sizeof(uint64_t) );
+    // Create minimal server socket for testing (mimics test_inactive_generation)
+    void * server_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_socket_t));
+    void * socket_storage = rocketnet_malloc(NULL, sizeof(rocketnet_server_xdp_socket_t));
+    rocketnet_check( server_storage && socket_storage );
     
-    // The fix ensures that finish_packet checks packet_bytes against the ceiling
-    // before using it in memcpy/iov/WSABUF. In release builds (-DNDEBUG),
-    // assertions are stripped so the explicit check is required.
+    auto * server = new (server_storage) rocketnet_server_socket_t();
+    auto * socket = new (socket_storage) rocketnet_server_xdp_socket_t();
     
-    // When finish_packet is called with oversized packets, it should:
-    // 1. Increment the finish_dropped_oversize counter
-    // 2. Return early without using the oversized packet_bytes
-    // 3. Never assert (which would crash in debug, be stripped in release)
+    server->num_queues = 1;
+    server->socket = socket;
+    rocketnet_platform_mutex_create(&socket->send_mutex);
+    rocketnet_server_socket_acquire_send_buffer(socket);
     
-    // This test passes when the fix is in place (counter field exists and check
-    // is present). It fails if the fix is removed and assertions are relied on.
-    rocketnet_check( true );
+    rocketnet_address_t to = {};
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    uint64_t packet_id;
+    
+    // Call finish_packet with oversized size - should drop and count, not assert
+    uint8_t * packet = rocketnet_server_socket_start_packet(server, &to, &packet_id);
+    rocketnet_check( packet != NULL );
+    rocketnet_server_socket_finish_packet(server, packet_id, packet, oversized_size);
+    
+    // Verify the drop counter was incremented
+    rocketnet_check( socket->finish_dropped_oversize == 1 );
+    
+    // Clean up
+    rocketnet_platform_mutex_destroy(&socket->send_mutex);
+    socket->~rocketnet_server_xdp_socket_t();
+    server->~rocketnet_server_socket_t();
+    rocketnet_free(NULL, socket_storage);
+    rocketnet_free(NULL, server_storage);
 }
 
 // ----------------------------------------------------------------
