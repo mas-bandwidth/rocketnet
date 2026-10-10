@@ -9162,6 +9162,13 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
+void rocketnet_test_driver_ladder_too_many_refused()
+{
+    struct rocketnet_driver_ladder_t ladder;
+    int available[9] = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+    rocketnet_check( !rocketnet_driver_ladder_parse( "portable", available, 9, &ladder ) );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_suite_environment", rocketnet_test_suite_environment },
@@ -9283,6 +9290,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
+    { "test_driver_ladder_too_many_refused", rocketnet_test_driver_ladder_too_many_refused },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
