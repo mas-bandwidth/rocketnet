@@ -2637,6 +2637,8 @@ void rocketnet_test_request_path_ordering()
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     uint8_t garbage[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     memset( garbage, 0xEE, sizeof(garbage) );
+    memcpy( garbage + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES,
+            rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     uint8_t resent[ROCKETNET_RECEIVE_CEILING];
     int resent_bytes = 0;
     before = test.counters;
