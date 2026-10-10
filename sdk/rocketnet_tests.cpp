@@ -7493,6 +7493,28 @@ void rocketnet_test_fragment_reassembly()
     rocketnet_reassembly_set_destroy( set );
 }
 
+void rocketnet_test_fragment_oversize_refused_in_release()
+{
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
+
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 4, 8192, 4 );
+    rocketnet_check( set );
+    rocketnet_reassembly_set_begin_update( set );
+
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES + 1];
+    rocketnet_write_fragment_header( fragment, 1, 0, 2 );
+    memset( fragment + ROCKETNET_FRAGMENT_HEADER_BYTES, 0x5A, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES + 1 );
+
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, (int) sizeof(fragment), counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 1 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 0 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
 void rocketnet_test_fragment_reassembly_refusals()
 {
     // every refusal reason from the standard, in its check order, each
@@ -9364,6 +9386,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_header_codec", rocketnet_test_fragment_header_codec },
     { "test_fragment_plan", rocketnet_test_fragment_plan },
     { "test_fragment_reassembly", rocketnet_test_fragment_reassembly },
+    { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
