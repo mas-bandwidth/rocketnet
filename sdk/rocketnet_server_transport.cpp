@@ -800,7 +800,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->cookie_lifetime_seconds = 3;
     protocol->max_token_lifetime_seconds = 0;
     protocol->handshake_deadline_seconds = 5.0;
-    protocol->max_timeout_seconds = 0;
+    protocol->max_timeout_seconds = config->max_timeout_seconds;
     protocol->allow_negative_timeout = 0;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * 2 );
