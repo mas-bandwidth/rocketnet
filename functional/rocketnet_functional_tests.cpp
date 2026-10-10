@@ -1121,13 +1121,13 @@ void rocketnet_test_platform_socket()
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
-// The receive seam drops a datagram past the receive ceiling instead of
-// delivering it truncated as a short packet. The platform's own pump is the
-// one under test -- darwin's recvmsg_x batch on macOS, the portable loop
-// elsewhere -- so the red test is the same real-socket injection on every
-// POSIX bench.
+// The darwin receive seam drops a datagram past the receive ceiling instead
+// of delivering it truncated as a short packet. The code under test is the
+// recvmsg_x batch path, compiled only on macOS/iOS, so this red test is
+// macOS-only: a real-socket injection of an oversized datagram followed by
+// a valid one, asserting the oversized one never surfaces as a packet.
 
 void rocketnet_test_darwin_oversize_datagram_dropped()
 {
@@ -1182,7 +1182,7 @@ void rocketnet_test_darwin_oversize_datagram_dropped()
     rocketnet_platform_socket_destroy( receiver );
 }
 
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
 {
@@ -3255,6 +3255,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_darwin_oversize_datagram_dropped", rocketnet_test_darwin_oversize_datagram_dropped },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },

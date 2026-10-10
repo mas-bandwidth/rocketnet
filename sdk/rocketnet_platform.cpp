@@ -506,28 +506,20 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     sockaddr_storage sockaddr_from;
+    socklen_t from_length;
 
     int result;
     for ( ;; )
     {
-        struct iovec iov;
-        iov.iov_base = packet_data;
-        iov.iov_len = (size_t) max_packet_size;
+        from_length = sizeof( sockaddr_from );
 
-        struct msghdr msg;
-        memset( &msg, 0, sizeof( msg ) );
-        msg.msg_name = &sockaddr_from;
-        msg.msg_namelen = sizeof( sockaddr_from );
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-
-        result = int( recvmsg( socket->handle, &msg, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0 ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
             if ( errno != EAGAIN && errno != EINTR )
             {
-                rocketnet_debug( "recvmsg failed with error %d", errno );
+                rocketnet_debug( "recvfrom failed with error %d", errno );
             }
             return 0;
         }
@@ -539,17 +531,6 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
             // both pumps share this semantic.
-            continue;
-        }
-
-        if ( msg.msg_flags & MSG_TRUNC )
-        {
-            // a datagram past the receive ceiling: the kernel copied
-            // max_packet_size bytes and set MSG_TRUNC, the rest is gone.
-            // dropping it here keeps a truncated datagram from being
-            // delivered as if it were a short packet, and skips it the
-            // same way the zero-length case above does so a flood of
-            // oversized chaff cannot cap the drain at one packet.
             continue;
         }
 
