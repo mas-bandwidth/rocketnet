@@ -29,6 +29,10 @@ do                                                                              
 
 int main()
 {
+    #if !ROCKETNET_DEVELOPMENT
+    printf( "error: test_serialize requires ROCKETNET_DEVELOPMENT\n" );
+    return 1;
+    #else
     check( rocketnet_init( NULL ) );
     rocketnet_forbid_xdp_commit();
 
@@ -144,4 +148,5 @@ int main()
     printf( "serialize surface OK\n" );
 
     return 0;
+    #endif
 }

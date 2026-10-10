@@ -99,7 +99,11 @@ void rocketnet_test_lifecycle_driver()
     check( state.live == baseline );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    #if ROCKETNET_DEVELOPMENT
     check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, (uint64_t) time(NULL), token ) );
+    #else
+    memset( token, 0, sizeof(token) );
+    #endif
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     strcpy( client_config.driver, "portable" );

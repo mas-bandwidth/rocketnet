@@ -537,7 +537,9 @@ struct rocketnet_client_transport_config_t
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
+#if ROCKETNET_DEVELOPMENT
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
+#endif // ROCKETNET_DEVELOPMENT
 
 // time is the game's clock, a double in seconds, monotonic; pass the same
 // clock to every call that takes one. The library never reads a clock of

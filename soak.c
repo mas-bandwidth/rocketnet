@@ -43,6 +43,10 @@ static int verify_payload( const uint8_t * payload_data, int payload_bytes )
 
 int main( int argc, char ** argv )
 {
+    #if !ROCKETNET_DEVELOPMENT
+    printf( "error: soak requires ROCKETNET_DEVELOPMENT\n" );
+    return 1;
+    #else
     uint64_t max_iterations = 0;
     if ( argc > 2 )
     {
@@ -239,4 +243,5 @@ int main( int argc, char ** argv )
     rocketnet_term();
 
     return failures ? 1 : 0;
+    #endif
 }

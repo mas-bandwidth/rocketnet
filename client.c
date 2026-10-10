@@ -23,6 +23,10 @@ void interrupt_handler( int signal )
 
 int main( int argc, char ** argv )
 {
+    #if !ROCKETNET_DEVELOPMENT
+    printf( "error: client requires ROCKETNET_DEVELOPMENT\n" );
+    return 1;
+    #else
     signal( SIGINT, interrupt_handler );
 
     if ( !rocketnet_init( NULL ) )
@@ -114,4 +118,5 @@ int main( int argc, char ** argv )
     rocketnet_term();
 
     return 0;
+    #endif
 }

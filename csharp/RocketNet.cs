@@ -627,28 +627,30 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_default_config", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ClientTransportDefaultConfig( out ClientTransportConfig config );
 
-    /// <summary>Mints a connect token locally against the published development keys.
-    /// A production client is handed its token by a backend. The token buffer is
-    /// <see cref="ConnectTokenBytes"/>. Returns nonzero on success.</summary>
-    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken )
-    {
-        ArgumentNullException.ThrowIfNull( connectToken );
-        return WriteDevConnectToken( serverAddress, clientId, unixTimestamp, connectToken.AsSpan() );
-    }
+     /// <summary>Mints a connect token locally against the published development keys.
+     /// A production client is handed its token by a backend. The token buffer is
+     /// <see cref="ConnectTokenBytes"/>. Returns nonzero on success.</summary>
+#if ROCKETNET_DEVELOPMENT
+     public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, byte[] connectToken )
+     {
+         ArgumentNullException.ThrowIfNull( connectToken );
+         return WriteDevConnectToken( serverAddress, clientId, unixTimestamp, connectToken.AsSpan() );
+     }
 
-    /// <summary>Mints a development token into a buffer of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
-    public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, Span<byte> connectToken )
-    {
-        ArgumentNullException.ThrowIfNull( serverAddress );
-        ValidateConnectTokenLength( connectToken.Length );
-        fixed ( byte* token = connectToken )
-            return WriteDevConnectTokenNative( serverAddress, clientId, unixTimestamp, token );
-    }
+     /// <summary>Mints a development token into a buffer of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
+     public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, Span<byte> connectToken )
+     {
+         ArgumentNullException.ThrowIfNull( serverAddress );
+         ValidateConnectTokenLength( connectToken.Length );
+         fixed ( byte* token = connectToken )
+             return WriteDevConnectTokenNative( serverAddress, clientId, unixTimestamp, token );
+     }
 
-    [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
-    private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
+     [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
+     private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
+#endif // ROCKETNET_DEVELOPMENT
 
-    /// <summary>Creates a client connecting with the token. The token names the server, carries
+     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
     /// monotonic; pass the same clock to every call that takes one. Returns IntPtr.Zero on
     /// refusal — an invalid token refuses here.</summary>
