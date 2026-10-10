@@ -49,6 +49,12 @@
 #include <string>
 #include <vector>
 
+// the request path's cookie mac generations, on this thread since it
+// started: defined in rocketnet_server_protocol.cpp, read here as the
+// gate-cost test's instrument.
+
+extern thread_local uint64_t rocketnet_server_cookie_mac_calls;
+
 // Sockets, select, and the raw chaff injector live in functional/.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -2359,6 +2365,37 @@ void rocketnet_test_request_path_cookie_gate()
     result = rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes );
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] + 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+// the gate's cost: the ladder reads zero field, then mac, then expiry, so
+// first contact -- a zero return cookie, the flood's shape -- is refused on
+// the field alone and pays exactly one cookie mac, the fresh cookie the
+// refusal sends, and none for a verification a zero field can never pass.
+
+void rocketnet_test_cookie_zero_field_hashes_once()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // a rotation in flight: the previous cookie key is live, so a gate that
+    // verifies before it reads the field pays both hashes -- the case the
+    // audit counted as three
+    memcpy( test.server.previous_cookie_key, test.server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    test.server.has_previous_cookie_key = 1;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x6666777788889999ULL, rocketnet_test_salt );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    struct rocketnet_counters_t counters_before = test.counters;
+    uint64_t hashes_before = rocketnet_server_cookie_mac_calls;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_test_expect_reason( &test, &counters_before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE );
+    rocketnet_check( rocketnet_server_cookie_mac_calls - hashes_before == 1 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -9269,6 +9306,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_happy", rocketnet_test_request_path_happy },
     { "test_request_path_refusals", rocketnet_test_request_path_refusals },
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
+    { "test_cookie_zero_field_hashes_once", rocketnet_test_cookie_zero_field_hashes_once },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },
