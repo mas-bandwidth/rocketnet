@@ -9810,6 +9810,175 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+// A forged sealed packet from a connected client's address would otherwise
+// cost one AEAD open each, without bound -- the audit's server-dos finding.
+// With a per-mapping budget, junk sealed packets (both session and handshake
+// phase) must spend at most the budget of opens; the rest are dropped before
+// the open. The budget belongs to the mapping, not the map slot it happened
+// to occupy: a client that reconnects into a reused slot does not inherit the
+// dead mapping's failures. Mappings with indices >= ROCKETNET_MAX_CLIENTS
+// (up to the encryption map capacity) are covered as well.
+void rocketnet_test_failed_open_budget_per_mapping()
+{
+    uint8_t wrong_key[32];
+    memset( wrong_key, 0x42, sizeof(wrong_key) );
+
+    const uint8_t junk_payload[8] = { 0 };
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x5F1A2BULL, &client_keys );
+
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+
+    const int NUM_JUNK_PACKETS = 10000;
+    const int EXPECTED_BUDGET = 100;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+    {
+        int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1000 + i,
+                                                                junk_payload, 8, wrong_key );
+        rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                       payload_out, &payload_out_bytes, &payload_client_index );
+    }
+
+    // At most the budget of AEAD opens ran; every other packet was dropped
+    // before its open, which is what bounds the CPU a forgery flood can cost.
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
+
+    // the mapping goes away and its slot is reused. the free list is LIFO, so
+    // the next mapping lands on the same index: a new client cannot inherit
+    // the failures the previous mapping in this slot ran up.
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    rocketnet_encryption_map_remove( test.server.encryption_map, mapping_index );
+
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.8:56789" ) );
+
+    struct rocketnet_connection_keys_t next_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x6F2B3CULL, &next_keys );
+
+    uint8_t next_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( next_response, &next_keys );
+    rocketnet_check( rocketnet_test_process_packet( &test, next_response, sizeof(next_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == mapping_index );
+
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+    test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] = 0;
+
+    int next_packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1,
+                                                                 junk_payload, 8, wrong_key );
+    rocketnet_test_process_packet( &test, packet, next_packet_bytes, response, &response_bytes,
+                                   payload_out, &payload_out_bytes, &payload_client_index );
+
+    // the fresh mapping's first forged packet reaches the open: the budget is
+    // its own, not the dead mapping's
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == 0 );
+
+    rocketnet_test_server_teardown( &test );
+
+    // Handshake-phase sealed packets (ROCKETNET_CONNECTION_RESPONSE_PACKET)
+    // from a live mapping must also be charged to and bounded by the budget.
+    {
+        struct rocketnet_test_server_t test_hs;
+        rocketnet_test_server_setup( &test_hs );
+
+        struct rocketnet_connection_keys_t hs_keys;
+        rocketnet_test_handshake_to_challenge( &test_hs, 0x1A2B3CULL, &hs_keys );
+
+        uint8_t hs_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        rocketnet_test_client_build_response( hs_response, &hs_keys );
+        rocketnet_check( rocketnet_test_process_packet( &test_hs, hs_response, sizeof(hs_response), response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+        test_hs.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] = 0;
+        test_hs.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] = 0;
+
+        struct rocketnet_connection_keys_t wrong_hs_keys;
+        memset( &wrong_hs_keys, 0x55, sizeof(wrong_hs_keys) );
+        uint8_t forged_hs_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        rocketnet_test_client_build_response( forged_hs_response, &wrong_hs_keys );
+
+        for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+        {
+            rocketnet_test_process_packet( &test_hs, forged_hs_response, sizeof(forged_hs_response), response, &response_bytes,
+                                           payload_out, &payload_out_bytes, &payload_client_index );
+        }
+
+        rocketnet_check( test_hs.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == EXPECTED_BUDGET );
+        rocketnet_check( test_hs.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
+
+        rocketnet_test_server_teardown( &test_hs );
+    }
+
+    // A mapping whose index is >= ROCKETNET_MAX_CLIENTS must also be budgeted.
+    {
+        struct rocketnet_test_server_t test_high;
+        rocketnet_test_server_setup( &test_high );
+        rocketnet_encryption_map_destroy( test_high.server.encryption_map );
+        test_high.server.encryption_map = rocketnet_encryption_map_create( NULL, ROCKETNET_MAX_ENCRYPTION_MAPPINGS );
+
+        struct rocketnet_address_t dummy_addr;
+        for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
+        {
+            dummy_addr.type = ROCKETNET_ADDRESS_IPV4;
+            dummy_addr.data.ipv4[0] = 10;
+            dummy_addr.data.ipv4[1] = (uint8_t) ( ( i >> 8 ) & 0xFF );
+            dummy_addr.data.ipv4[2] = (uint8_t) ( i & 0xFF );
+            dummy_addr.data.ipv4[3] = 1;
+            dummy_addr.port = 10000;
+            int idx = rocketnet_encryption_map_add( test_high.server.encryption_map, &dummy_addr, 1000.0 );
+            rocketnet_check( idx == i );
+        }
+
+        struct rocketnet_connection_keys_t high_keys;
+        rocketnet_test_handshake_to_challenge( &test_high, 0x7E3A1FULL, &high_keys );
+
+        uint8_t high_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+        rocketnet_test_client_build_response( high_response, &high_keys );
+        rocketnet_check( rocketnet_test_process_packet( &test_high, high_response, sizeof(high_response), response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+        int high_mapping_index = rocketnet_encryption_map_find( test_high.server.encryption_map, &test_high.client_address );
+        rocketnet_check( high_mapping_index >= ROCKETNET_MAX_CLIENTS );
+
+        test_high.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+        test_high.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] = 0;
+
+        for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+        {
+            int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 2000 + i,
+                                                                    junk_payload, 8, wrong_key );
+            rocketnet_test_process_packet( &test_high, packet, packet_bytes, response, &response_bytes,
+                                           payload_out, &payload_out_bytes, &payload_client_index );
+        }
+
+        rocketnet_check( test_high.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
+        rocketnet_check( test_high.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
+
+        rocketnet_test_server_teardown( &test_high );
+    }
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9904,6 +10073,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
+    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },

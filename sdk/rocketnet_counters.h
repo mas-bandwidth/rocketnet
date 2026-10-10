@@ -299,6 +299,12 @@ enum
     // size errors from off-path salt injection.
     ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
 
+    // a sealed packet from a mapping that had already spent its
+    // per-second budget of failed AEAD opens was dropped before opening.
+    // the CPU bound in front of the integrity limit, per the audit's
+    // server-dos finding. appended: indices are the contract.
+    ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED,
+
     ROCKETNET_NUM_COUNTERS
 };
 
