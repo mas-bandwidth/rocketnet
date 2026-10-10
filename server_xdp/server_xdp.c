@@ -97,85 +97,82 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                 return XDP_DROP;
             }
 
-            if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
+            if ( ip->ihl != 5 || ip->protocol != IPPROTO_UDP )
             {
-                struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
+                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NOT_IPV4_UDP );
+                return XDP_DROP;
+            }
 
-                if ( (void*)udp + sizeof(struct udphdr) <= data_end )
+            struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
+
+            if ( (void*)udp + sizeof(struct udphdr) > data_end )
+            {
+                debug_printf( "smaller than udp header" );
+                return XDP_DROP;
+            }
+
+            int key = 0;
+            struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
+            if ( config == NULL || config->public_port == 0 )
+            {
+                debug_printf( "server_xdp is not configured" );
+                return XDP_PASS;
+            }
+
+            if ( udp->dest == config->public_port && ( config->public_address == 0 || ip->daddr == config->public_address ) )
+            {
+                __u8 * packet_data = (unsigned char*) (void*)udp + sizeof(struct udphdr);
+
+                if ( (void*)packet_data + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES > data_end )
                 {
-                    int key = 0;
-                    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
-                    if ( config == NULL || config->public_port == 0 )
-                    {
-                        debug_printf( "server_xdp is not configured" );
-                        return XDP_PASS;
-                    }
-
-                    if ( udp->dest == config->public_port && ( config->public_address == 0 || ip->daddr == config->public_address ) )
-                    {
-                        __u8 * packet_data = (unsigned char*) (void*)udp + sizeof(struct udphdr);
-
-                        // wire size bounds: nothing a server accepts is smaller
-                        // than the smallest inbound type or larger than the
-                        // receive ceiling
-
-                        if ( (void*)packet_data + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES > data_end )
-                        {
-                            debug_printf( "packet is too small" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
-                            return XDP_DROP;
-                        }
-
-                        int packet_bytes = data_end - (void*)udp - sizeof(struct udphdr);
-
-                        if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-                        {
-                            debug_printf( "packet is too large" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
-                            return XDP_DROP;
-                        }
-
-                        // the prefilter header: the epoch names which rule
-                        // produced the filter value, so a generation this
-                        // server does not hold dies on a comparison before
-                        // the value is even examined
-
-                        if ( packet_data[1] != config->filter_epoch )
-                        {
-                            debug_printf( "wrong filter epoch" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
-                            return XDP_DROP;
-                        }
-
-                        if ( packet_data[2] != config->filter_value[0] ||
-                             packet_data[3] != config->filter_value[1] ||
-                             packet_data[4] != config->filter_value[2] ||
-                             packet_data[5] != config->filter_value[3] )
-                        {
-                            debug_printf( "wrong filter value" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
-                            return XDP_DROP;
-                        }
-
-                        const __u8 packet_type = packet_data[0];
-
-                        if ( !ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes ) )
-                        {
-                            debug_printf( "invalid packet type or size" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
-                            return XDP_DROP;
-                        }
-
-                        const __u32 queue_id = ctx->rx_queue_index;
-                        const int ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
-                        if ( ret == 0 )
-                        {
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
-                            return XDP_REDIRECT;
-                        }
-                        return XDP_DROP;
-                    }
+                    debug_printf( "packet is too small" );
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+                    return XDP_DROP;
                 }
+
+                int packet_bytes = data_end - (void*)udp - sizeof(struct udphdr);
+
+                if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+                {
+                    debug_printf( "packet is too large" );
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+                    return XDP_DROP;
+                }
+
+                if ( packet_data[1] != config->filter_epoch )
+                {
+                    debug_printf( "wrong filter epoch" );
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
+                    return XDP_DROP;
+                }
+
+                if ( packet_data[2] != config->filter_value[0] ||
+                     packet_data[3] != config->filter_value[1] ||
+                     packet_data[4] != config->filter_value[2] ||
+                     packet_data[5] != config->filter_value[3] )
+                {
+                    debug_printf( "wrong filter value" );
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
+                    return XDP_DROP;
+                }
+
+                const __u8 packet_type = packet_data[0];
+
+                if ( !ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes ) )
+                {
+                    debug_printf( "invalid packet type or size" );
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+                    return XDP_DROP;
+                }
+
+                const __u32 queue_id = ctx->rx_queue_index;
+                const int ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
+                if ( ret == 0 )
+                {
+                    server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+                    return XDP_REDIRECT;
+                }
+                return XDP_DROP;
             }
         }
     }
