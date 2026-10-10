@@ -3167,19 +3167,50 @@ void rocketnet_test_server_gso_send_overflow()
 void rocketnet_test_gso_second_binder_gets_nothing()
 {
     // SECURITY (2026-10-05 audit): SO_REUSEPORT allows any process with the
-    // same UID to join the port group and share traffic. Mitigation: run
-    // under a dedicated UID so no other process can join.
-    //
-    // This test verifies the GSO driver works correctly with SO_REUSEPORT.
-    // External join prevention requires either SO_REUSEPORT_BPF (elevated
-    // privileges) or dedicated UID deployment.
+    // same UID to join the port group and share traffic. Without fix:
+    // second bind succeeds and second binder gets some packets.
+    // With fix: second bind succeeds (same process) but second binder gets nothing.
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
 
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
     rocketnet_check( gso );
+    rocketnet_check( bind_address.port != 0 );
 
+    // Create a second plain UDP socket on the same port - may succeed or fail
+    rocketnet_platform_socket_t * second_binder = rocketnet_platform_socket_create(
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+
+    if ( second_binder == NULL ) {
+        // Second bind failed - expected with proper mitigation
+        rocketnet_server_gso_destroy( gso );
+        return;  // Test passes if bind fails
+    }
+
+    // Second bind succeeded - now send packets and verify second binder gets nothing
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    peer_address.port = bind_address.port;
+    const uint8_t packet[] = { 42, 43, 44, 45 };
+    rocketnet_platform_socket_send_packet( second_binder, &peer_address, packet, sizeof(packet) );
+
+    // Process packets - all should go to GSO
+    rocketnet_server_gso_receive_packets( gso );
+    struct rocketnet_server_socket_process_packets_t * received =
+        rocketnet_server_gso_process_packets( gso );
+
+    // GSO should receive the packet
+    rocketnet_check( received->num_packets == 1 );
+
+    // Verify second binder gets nothing - this is the red condition before fix
+    uint8_t recv_buffer[1500];
+    rocketnet_address_t from_addr;
+    int recv = rocketnet_platform_socket_receive_packet( second_binder, &from_addr, recv_buffer, sizeof(recv_buffer) );
+    rocketnet_check( recv == 0 );
+
+    // Clean up
+    rocketnet_platform_socket_destroy( second_binder );
     rocketnet_server_gso_destroy( gso );
 }
 
