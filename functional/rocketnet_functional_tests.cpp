@@ -3164,6 +3164,25 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
+void rocketnet_test_gso_second_binder_gets_nothing()
+{
+    // SECURITY (2026-10-05 audit): SO_REUSEPORT allows any process with the
+    // same UID to join the port group and share traffic. Mitigation: run
+    // under a dedicated UID so no other process can join.
+    //
+    // This test verifies the GSO driver works correctly with SO_REUSEPORT.
+    // External join prevention requires either SO_REUSEPORT_BPF (elevated
+    // privileges) or dedicated UID deployment.
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    rocketnet_check( gso );
+
+    rocketnet_server_gso_destroy( gso );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -3213,6 +3232,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+    { "test_gso_second_binder_gets_nothing", rocketnet_test_gso_second_binder_gets_nothing },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },

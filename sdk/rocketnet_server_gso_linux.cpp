@@ -282,6 +282,12 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // with what the kernel actually granted read back and reported -- the box's
 // default rmem/wmem sysctls are tiny, so never assume the request was
 // honored.
+//
+// SECURITY NOTE (2026-10-05 audit): SO_REUSEPORT allows any process with the
+// same UID to join the port group and receive a share of incoming traffic.
+// Mitigation: run under a dedicated UID that no other process can use, or
+// use SO_REUSEPORT_BPF with a BPF program to restrict which sockets receive
+// traffic (requires elevated privileges to load the BPF program).
 
 static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port )
 {
