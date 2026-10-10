@@ -2111,6 +2111,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         uint8_t * staging = rocketnet_msgx_staging_for( want, packet_stride );
         const size_t slot_bytes = (size_t) packet_stride + 1;
 
+        if ( !staging )
+            goto per_packet;
+
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
         struct iovec iov[ROCKETNET_MSGX_BATCH];
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
