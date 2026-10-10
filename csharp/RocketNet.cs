@@ -636,6 +636,7 @@ public static unsafe partial class RocketNet
         return WriteDevConnectToken( serverAddress, clientId, unixTimestamp, connectToken.AsSpan() );
     }
 
+#if ROCKETNET_DEVELOPMENT
     /// <summary>Mints a development token into a buffer of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
     public static int WriteDevConnectToken( string serverAddress, ulong clientId, ulong unixTimestamp, Span<byte> connectToken )
     {
@@ -647,6 +648,7 @@ public static unsafe partial class RocketNet
 
     [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
     private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
+#endif // #if ROCKETNET_DEVELOPMENT
 
     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,

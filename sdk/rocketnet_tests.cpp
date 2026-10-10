@@ -8,9 +8,8 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include <sys/socket.h>
 #include <netinet/in.h>
-#endif
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
@@ -44,6 +43,7 @@
 
 #include <sodium.h>
 
+#include <dlfcn.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -9534,8 +9534,21 @@ void rocketnet_test_token_lifetime_bounded()
     rocketnet_test_server_teardown( &test );
 }
 
+// Verify that development token minting function is NOT exported in release builds.
+// This catches the security finding where rocketnet_write_dev_connect_token was
+// being exported in release, allowing token minting with dev keys.
+static void rocketnet_test_dev_token_minting_absent_in_release()
+{
+    #if !ROCKETNET_DEVELOPMENT
+    // In release builds, we check at runtime that the symbol is not exported.
+    void * sym = dlsym( RTLD_DEFAULT, "rocketnet_write_dev_connect_token" );
+    rocketnet_check( sym == NULL );
+    #endif
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
+    { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_suite_environment", rocketnet_test_suite_environment },
