@@ -142,6 +142,8 @@ struct rocketnet_server_xdp_socket_t
     uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES/2];
     std::atomic<int> send_flow_index{-1};
 
+    std::atomic<uint64_t> overflow_count{0};
+
     uint8_t server_ethernet_address[ETH_ALEN];
     uint8_t gateway_ethernet_address[ETH_ALEN];
     uint32_t server_address_big_endian;
@@ -1586,6 +1588,20 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     return server_socket;
 }
 
+uint64_t rocketnet_server_socket_get_overflow_count( rocketnet_server_socket_t * server_socket, int queue )
+{
+    if ( server_socket == NULL || queue < 0 || queue >= server_socket->num_queues )
+        return 0;
+    return server_socket->socket[queue].overflow_count.load( std::memory_order_relaxed );
+}
+
+void rocketnet_server_socket_clear_overflow_count( rocketnet_server_socket_t * server_socket, int queue )
+{
+    if ( server_socket == NULL || queue < 0 || queue >= server_socket->num_queues )
+        return;
+    server_socket->socket[queue].overflow_count.store( 0, std::memory_order_relaxed );
+}
+
 void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
@@ -1672,6 +1688,16 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 void rocketnet_server_socket_update( rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
+
+    for ( int i = 0; i < server_socket->num_queues; i++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[i];
+        uint64_t count = socket->overflow_count.exchange( 0, std::memory_order_relaxed );
+        if ( count > 0 )
+        {
+            rocketnet_warn( "sent %llu packets over capacity this update", (unsigned long long) count );
+        }
+    }
 
     if ( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPING )
     {
@@ -1784,7 +1810,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 
     if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
     {
-        rocketnet_warn( "sent too many packets!" );
+        socket->overflow_count.fetch_add( 1, std::memory_order_relaxed );
         return NULL;
     }
 

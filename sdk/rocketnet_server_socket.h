@@ -87,6 +87,10 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters );
 
+// Test helpers for overflow logging verification
+uint64_t rocketnet_server_socket_get_overflow_count( struct rocketnet_server_socket_t * server_socket, int queue );
+void rocketnet_server_socket_clear_overflow_count( struct rocketnet_server_socket_t * server_socket, int queue );
+
 // send packets (zero copy)
 
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id );
