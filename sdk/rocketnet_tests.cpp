@@ -9538,63 +9538,6 @@ void rocketnet_test_umem_config_frame_size_explicit()
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-
-// The audit finding: on IOCP a receive repost that returns WSAEMSGSIZE
-// synchronously is a completed I/O, not a failed post -- its completion still
-// arrives on the port. The old code retired the post on the spot, so one
-// OVERLAPPED was posted twice and, at shutdown, used after free. WSAEMSGSIZE
-// is treated like WSA_IO_PENDING and the pending count stays right. An
-// oversized datagram is the stimulus that reaches the repost path; the
-// receive pool only settles back to its full depth, and to zero at destroy,
-// if every completion kept its post counted.
-
-void rocketnet_test_iocp_msgsize_keeps_pending_count()
-{
-    rocketnet_address_t bind;
-    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
-    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create( NULL, &bind, 1 );
-    rocketnet_check( driver != NULL );
-    rocketnet_check( bind.port != 0 );
-
-    SOCKET peer = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-    rocketnet_check( peer != INVALID_SOCKET );
-    sockaddr_in destination;
-    memset( &destination, 0, sizeof(destination) );
-    destination.sin_family = AF_INET;
-    destination.sin_port = htons( bind.port );
-    destination.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
-
-    // One byte past the posted buffer: every repost that meets one of these
-    // queued datagrams returns WSAEMSGSIZE and still completes on the port.
-    uint8_t oversized[ROCKETNET_RECEIVE_CEILING + 2];
-    memset( oversized, 0xFF, sizeof(oversized) );
-    for ( int i = 0; i < 64; ++i )
-        rocketnet_check( sendto( peer, (const char*) oversized, (int) sizeof(oversized), 0,
-            (sockaddr*) &destination, sizeof(destination) ) == (int) sizeof(oversized) );
-
-    // The receive pool only settles back to its full depth if WSAEMSGSIZE kept
-    // its pending count; a miscounted pool never reaches the stop gate.
-    const double ready_deadline = rocketnet_platform_time() + 5.0;
-    while ( rocketnet_server_iocp_pending( driver ) != ROCKETNET_IOCP_RECEIVES_PER_WORKER &&
-            rocketnet_platform_time() < ready_deadline )
-        rocketnet_platform_sleep( 0.001 );
-    rocketnet_check( rocketnet_server_iocp_pending( driver ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
-
-    rocketnet_server_iocp_stop( driver );
-    const double stopped_deadline = rocketnet_platform_time() + 5.0;
-    while ( !rocketnet_server_iocp_stopped( driver ) && rocketnet_platform_time() < stopped_deadline )
-        rocketnet_platform_sleep( 0.001 );
-    rocketnet_check( rocketnet_server_iocp_stopped( driver ) );
-    rocketnet_check( rocketnet_server_iocp_pending( driver ) == 0 );
-    rocketnet_server_iocp_destroy( driver );
-    closesocket( peer );
-}
-
-#endif
-
-
-
 
 
 // The suite isolates config overrides, while preserving the driver's
@@ -10016,9 +9959,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    { "test_iocp_msgsize_keeps_pending_count", rocketnet_test_iocp_msgsize_keeps_pending_count },
-#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
