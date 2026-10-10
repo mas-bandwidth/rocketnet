@@ -375,7 +375,7 @@ static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_send_frames < ROCKETNET_XDP_NUM_FRAMES );
+    rocketnet_assert( socket->num_free_send_frames < ROCKETNET_XDP_NUM_FRAMES / 2 );
     socket->send_frames[socket->num_free_send_frames] = frame;
     socket->num_free_send_frames++;
 }
@@ -394,7 +394,7 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_receive_frames < ROCKETNET_XDP_NUM_FRAMES );
+    rocketnet_assert( socket->num_free_receive_frames < ROCKETNET_XDP_NUM_FRAMES / 2 );
     socket->receive_frames[socket->num_free_receive_frames] = frame;
     socket->num_free_receive_frames++;
 }
