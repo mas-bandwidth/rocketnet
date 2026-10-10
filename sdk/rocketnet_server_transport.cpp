@@ -558,6 +558,17 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
+    // Refuse default filter_value with production keys: only development keys may use ROCKETNET_TEST_FILTER_VALUE
+    if ( config->protocol_id != ROCKETNET_DEV_PROTOCOL_ID )
+    {
+        static const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+        if ( memcmp( config->filter_value, test_filter, ROCKETNET_FILTER_VALUE_BYTES ) == 0 )
+        {
+            rocketnet_error( "default filter value is not permitted with production keys: use dev config or a custom filter value" );
+            return NULL;
+        }
+    }
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
