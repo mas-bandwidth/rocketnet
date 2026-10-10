@@ -23,6 +23,9 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_keys.h"
+
+extern uint8_t * rocketnet_test_private_block_ptr;
+
 #include "rocketnet_counters.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_encryption_map.h"
@@ -1198,6 +1201,21 @@ static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_d
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     memcpy( private_fields->client_to_server_key, rocketnet_test_token_c2s_key, 32 );
     memcpy( private_fields->server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+}
+
+void rocketnet_test_connect_token_buffers_wiped()
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_private_block_ptr = NULL;
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
+
+    rocketnet_check( rocketnet_test_private_block_ptr != NULL );
+    for ( int i = 0; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
+        rocketnet_check( rocketnet_test_private_block_ptr[i] == 0 );
 }
 
 void rocketnet_test_connect_token_private()
@@ -9448,6 +9466,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_crypto_scalarmult", rocketnet_test_crypto_scalarmult },
     { "test_crypto_key_derivation", rocketnet_test_crypto_key_derivation },
     { "test_connect_token_private", rocketnet_test_connect_token_private },
+    { "test_connect_token_buffers_wiped", rocketnet_test_connect_token_buffers_wiped },
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },
     { "test_connect_token_frozen", rocketnet_test_connect_token_frozen },
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
