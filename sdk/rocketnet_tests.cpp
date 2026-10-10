@@ -9,6 +9,7 @@
 #include "rocketnet_platform.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#include <sys/socket.h>
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
@@ -846,6 +847,64 @@ void rocketnet_test_v4_mapped_source_dropped()
     bool result = rocketnet_server_gso_sockaddr_to_address_test( &input, true, &out );
     rocketnet_check( !result );  // Should refuse (return false)
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// The receive worker's GRO stride parse, mirrored here for the same reason
+// rocketnet_server_gso_sockaddr_to_address_test is: the driver itself is
+// linux-only and the unit suite is not. A UDP_GRO cmsg is one int of
+// ancillary payload; a record shorter than that is refused rather than read
+// past its end, and the message falls back to its whole length.
+
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
+static int rocketnet_server_gso_segment_bytes_test( const struct msghdr * header, int message_bytes )
+{
+    int segment_bytes = message_bytes;
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg; cmsg = CMSG_NXTHDR( header, cmsg ) )
+    {
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len < CMSG_LEN( sizeof(int) ) )
+                break;
+            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
+            break;
+        }
+    }
+    if ( segment_bytes <= 0 )
+        segment_bytes = message_bytes;
+    return segment_bytes;
+}
+
+void rocketnet_test_gro_short_cmsg_falls_back()
+{
+    // one UDP_GRO control record whose declared length is one byte short of
+    // the stride int the kernel writes. The fourth byte is present in the
+    // buffer, so the unchecked read returns the stride while the checked
+    // read refuses the record.
+    unsigned char control[CMSG_SPACE( sizeof(int) )];
+    memset( control, 0, sizeof(control) );
+
+    struct msghdr header;
+    memset( &header, 0, sizeof(header) );
+    header.msg_control = control;
+    header.msg_controllen = sizeof(control);
+
+    struct cmsghdr * cmsg = CMSG_FIRSTHDR( &header );
+    cmsg->cmsg_level = IPPROTO_UDP;
+    cmsg->cmsg_type = UDP_GRO;
+    cmsg->cmsg_len = CMSG_LEN( sizeof(int) ) - 1;
+
+    const int stride = 128;
+    memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+
+    const int message_bytes = 4096;
+    rocketnet_check( rocketnet_server_gso_segment_bytes_test( &header, message_bytes ) == message_bytes );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #endif
 
 void rocketnet_test_random_bytes()
@@ -9738,6 +9797,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
 #if ROCKETNET_PLATFORM_HAS_IPV6
     { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_gro_short_cmsg_falls_back", rocketnet_test_gro_short_cmsg_falls_back },
+#endif
 #endif
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },

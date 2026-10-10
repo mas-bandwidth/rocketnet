@@ -506,6 +506,13 @@ static void rocketnet_server_gso_worker( void * data )
                 {
                     if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
                     {
+                        // the kernel writes one int. a control message that
+                        // claims less than that is malformed: refuse to read
+                        // it, and the message falls back to its whole length.
+
+                        if ( cmsg->cmsg_len < CMSG_LEN( sizeof(int) ) )
+                            break;
+
                         memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
                         break;
                     }
