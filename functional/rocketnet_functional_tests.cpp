@@ -3164,6 +3164,123 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
+struct rocketnet_test_gso_flood_args_t
+{
+    int fd;
+    struct sockaddr_in server;
+    volatile int * stop;
+    double deadline;
+};
+
+static void rocketnet_test_gso_flood_thread( void * data )
+{
+    struct rocketnet_test_gso_flood_args_t * args = (struct rocketnet_test_gso_flood_args_t*) data;
+
+    // one sendmmsg of sub-floor datagrams per call: the worker drains a full
+    // batch per recvmmsg, so a per-packet sendto loop cannot keep its queue
+    // non-empty -- the flood has to outrun the drain for the hold the audit
+    // names to be observable at all. each batch reuses the same payload, so
+    // the cost is the kernel's, not the test's.
+
+    const int FLOOD_BATCH = 512;
+
+    struct mmsghdr messages[FLOOD_BATCH];
+    struct iovec iovecs[FLOOD_BATCH];
+    uint8_t undersized[32];
+
+    memset( undersized, 0xAB, sizeof(undersized) );
+    memset( messages, 0, sizeof(messages) );
+    memset( iovecs, 0, sizeof(iovecs) );
+
+    for ( int i = 0; i < FLOOD_BATCH; i++ )
+    {
+        iovecs[i].iov_base = undersized;
+        iovecs[i].iov_len = sizeof(undersized);
+        messages[i].msg_hdr.msg_iov = &iovecs[i];
+        messages[i].msg_hdr.msg_iovlen = 1;
+    }
+
+    while ( *args->stop == 0 && rocketnet_platform_time() < args->deadline )
+    {
+        // the socket is connected, so no per-message destination is built;
+        // a full send buffer is expected under the flood and is not a fault
+        sendmmsg( args->fd, messages, FLOOD_BATCH, 0 );
+    }
+}
+
+void rocketnet_test_gso_worker_lock_bounded()
+{
+    // the audit at sdk/rocketnet_server_gso_linux.cpp:443: the GSO worker
+    // held receive_mutex across the whole recvmmsg drain, and a flood of
+    // sub-floor datagrams stages no packet, so the drain could not reach
+    // its exit and the main thread starved on the same mutex. the hold must
+    // be bounded by one batch, not by the flood. the main thread's receive
+    // call takes that mutex, so the time it waits is the hold made visible.
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    rocketnet_check( gso );
+    rocketnet_check( bind_address.port != 0 );
+
+    const int FLOOD_THREADS = 8;
+
+    struct rocketnet_test_gso_flood_args_t args[FLOOD_THREADS];
+    rocketnet_platform_thread_t * threads[FLOOD_THREADS];
+
+    volatile int stop = 0;
+    const double deadline = rocketnet_platform_time() + 3.0;
+
+    for ( int t = 0; t < FLOOD_THREADS; t++ )
+    {
+        const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0 );
+        rocketnet_check( fd >= 0 );
+
+        struct sockaddr_in server;
+        memset( &server, 0, sizeof(server) );
+        server.sin_family = AF_INET;
+        server.sin_port = htons( (uint16_t) bind_address.port );
+        server.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        rocketnet_check( connect( fd, (struct sockaddr*) &server, sizeof(server) ) == 0 );
+
+        memset( &args[t], 0, sizeof(args[t]) );
+        args[t].fd = fd;
+        args[t].server = server;
+        args[t].stop = &stop;
+        args[t].deadline = deadline;
+
+        threads[t] = rocketnet_platform_thread_create( NULL, rocketnet_test_gso_flood_thread, &args[t] );
+        rocketnet_check( threads[t] );
+    }
+
+    // let the flood fill the queue and the worker enter its drain before the
+    // main thread asks for the mutex
+
+    rocketnet_platform_sleep( 0.3 );
+
+    const double start = rocketnet_platform_time();
+    rocketnet_server_gso_receive_packets( gso );
+    const double waited = rocketnet_platform_time() - start;
+
+    stop = 1;
+
+    for ( int t = 0; t < FLOOD_THREADS; t++ )
+    {
+        rocketnet_platform_thread_join( threads[t] );
+        rocketnet_platform_thread_destroy( threads[t] );
+        close( args[t].fd );
+    }
+
+    // before the fix the wait ran until the flood's hard stop (~2.7s); with
+    // the mutex released once per batch it is a handful of batches. a second
+    // is a comparison against the flood, not a wall-clock speed pin.
+
+    rocketnet_check( waited < 1.0 );
+
+    rocketnet_server_gso_destroy( gso );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -3213,6 +3330,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+    { "test_gso_worker_lock_bounded", rocketnet_test_gso_worker_lock_bounded },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },

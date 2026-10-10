@@ -442,9 +442,9 @@ static void rocketnet_server_gso_worker( void * data )
 
         rocketnet_platform_mutex_acquire( &queue->receive_mutex );
 
-        const int on_index = (int) ( queue->receive_counter % 2 );
+        struct rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[queue->receive_counter % 2];
 
-        struct rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[on_index];
+        bool locked = true;
 
         while ( buffer->num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE )
         {
@@ -545,11 +545,29 @@ static void rocketnet_server_gso_worker( void * data )
                 }
             }
 
+            // a flood of sub-floor datagrams stages no packet, so the old
+            // drain loop could not reach its "count < BATCH" exit and held
+            // receive_mutex for the whole flood, starving the main thread.
+            // release the lock once per recvmmsg batch: the hold is then one
+            // batch, not one flood. the main thread may flip the double
+            // buffer while the lock is down, so re-read the counter after
+            // re-acquiring and follow the handoff instead of writing the
+            // buffer the main thread now owns.
+
+            rocketnet_platform_mutex_release( &queue->receive_mutex );
+            locked = false;
+
             if ( count < ROCKETNET_GSO_RECV_BATCH )
                 break;                              // the socket is drained; go back to poll
+
+            rocketnet_platform_mutex_acquire( &queue->receive_mutex );
+            locked = true;
+
+            buffer = &queue->buffers[queue->receive_counter % 2];
         }
 
-        rocketnet_platform_mutex_release( &queue->receive_mutex );
+        if ( locked )
+            rocketnet_platform_mutex_release( &queue->receive_mutex );
     }
 }
 
