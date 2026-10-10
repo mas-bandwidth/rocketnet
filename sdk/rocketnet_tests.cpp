@@ -310,6 +310,64 @@ void rocketnet_test_read_write()
     rocketnet_check( port_bytes[0] == 0xd5 && port_bytes[1] == 0xdd );
 }
 
+void rocketnet_test_bounded_reader_refuses_past_end()
+{
+    uint8_t buffer[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    const uint8_t * end = buffer + sizeof(buffer);
+
+    const uint8_t * r = buffer;
+    uint8_t v8 = 0;
+    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 1 );
+    rocketnet_check( v8 == 1 );
+    rocketnet_check( r == buffer + 1 );
+
+    uint16_t v16 = 0;
+    rocketnet_check( rocketnet_read_uint16_bounded( &r, end, &v16 ) == 1 );
+    rocketnet_check( v16 == 0x0302 );
+    rocketnet_check( r == buffer + 3 );
+
+    uint32_t v32 = 0;
+    rocketnet_check( rocketnet_read_uint32_bounded( &r, end, &v32 ) == 1 );
+    rocketnet_check( v32 == 0x07060504 );
+    rocketnet_check( r == buffer + 7 );
+
+    uint64_t v64 = 0;
+    r = buffer;
+    rocketnet_check( rocketnet_read_uint64_bounded( &r, end, &v64 ) == 1 );
+    rocketnet_check( v64 == 0x0807060504030201ULL );
+    rocketnet_check( r == buffer + 8 );
+
+    uint8_t out[3];
+    r = buffer;
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 3 ) == 1 );
+    rocketnet_check( memcmp( out, buffer, 3 ) == 0 );
+    rocketnet_check( r == buffer + 3 );
+
+    // a bounded read past the end returns failure and leaves the pointer unchanged
+    r = buffer + 7;
+    const uint8_t * before = r;
+    rocketnet_check( rocketnet_read_uint16_bounded( &r, end, &v16 ) == 0 );
+    rocketnet_check( r == before );
+
+    r = buffer + 7;
+    before = r;
+    v8 = 0;
+    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 1 );
+    rocketnet_check( v8 == 8 );
+    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 0 );
+    rocketnet_check( r == buffer + 8 );
+
+    r = buffer + 5;
+    before = r;
+    rocketnet_check( rocketnet_read_uint32_bounded( &r, end, &v32 ) == 0 );
+    rocketnet_check( r == before );
+
+    r = buffer + 6;
+    before = r;
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 4 ) == 0 );
+    rocketnet_check( r == before );
+}
+
 void rocketnet_test_base64()
 {
     const char * vectors[] = { "", "AA==", "AAE=", "AAEC", "AAECAw==", "AAECAwQ=", "AAECAwQF", "AAECAwQFBg==", "AAECAwQFBgc=" };
@@ -9168,6 +9226,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_time", rocketnet_test_time },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
+    { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
     { "test_copy_string", rocketnet_test_copy_string },
