@@ -9262,6 +9262,66 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+void rocketnet_test_client_index_range_checked()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xBEF0ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    
+    // Pump until connected
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // Get mapping to get server's keys and salt
+    struct rocketnet_encryption_mapping_t * mapping = NULL;
+    int iterator = -1;
+    while( rocketnet_encryption_map_next( test.server.encryption_map, &iterator ) ) {
+        struct rocketnet_encryption_mapping_t * m = rocketnet_encryption_map_entry( test.server.encryption_map, iterator );
+        if( m->established ) {
+             mapping = m;
+             break;
+        }
+    }
+    rocketnet_check( mapping != NULL );
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
+    int block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
+    
+    uint8_t * p = plaintext + block_bytes;
+    rocketnet_write_uint32( &p, 0xFFFFFFFFU ); // invalid index
+    rocketnet_write_uint32( &p, (uint32_t) client.max_clients );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                               test.server.filter_value, mapping->send_sequence_session,
+                                               NULL, plaintext, block_bytes + 8,
+                                               test.server.protocol_id, mapping->connection_salt,
+                                               NULL, mapping->keys.session_server_to_client );
+    rocketnet_check( bytes > 0 );
+    
+    // Process the malicious packet
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    
+    int initial_index = client.client_index;
+    
+    // The client should reject this packet
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.3, payload, &payload_bytes ) == 0 );
+    
+    // Ensure index is unchanged
+    rocketnet_check( client.client_index == initial_index );
+    
+    rocketnet_test_server_teardown( &test );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9352,6 +9412,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
+    { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
 #if ROCKETNET_PLATFORM_HAS_IPV6
     { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
