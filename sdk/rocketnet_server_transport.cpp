@@ -788,6 +788,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->send_rate = 10.0;
     memcpy( protocol->filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
+    memcpy( protocol->backend_next_public_key, config->backend_next_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
     memcpy( protocol->server_secret_key, config->server_secret_key, 32 );
 

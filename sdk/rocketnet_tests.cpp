@@ -2646,6 +2646,58 @@ void rocketnet_test_request_path_crypto_refusals()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_backend_next_key_admits()
+{
+    // A backend signing-key rotation needs a window where both the key a
+    // token was minted under and its successor are trusted. The server
+    // holds a current backend public key; this test installs a next one
+    // beside it and proves a token signed by the next key's secret is
+    // admitted, not refused at the signature rung.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t good_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( good_request, 0x777788889999aaaaULL, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, good_request );
+
+    // the configured next key: a fresh signing keypair, its public half
+    // installed exactly as a rotation would install it
+
+    uint8_t next_public[32];
+    uint8_t next_secret[64];
+    crypto_sign_keypair( next_public, next_secret );
+    memcpy( test.server.backend_next_public_key, next_public, ROCKETNET_KEY_BYTES );
+
+    // a token signed by the next key's secret, carrying the cookie the
+    // current-key request above earned (same salt, same source address)
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, next_secret, token_data ) );
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, good_request + ROCKETNET_PREFILTER_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int result = rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == 0 );
+
+    sodium_memzero( next_secret, sizeof(next_secret) );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_request_path_state_refusals()
 {
     struct rocketnet_test_server_t test;
@@ -9873,6 +9925,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
     { "test_cookie_zero_field_hashes_once", rocketnet_test_cookie_zero_field_hashes_once },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
+    { "test_backend_next_key_admits", rocketnet_test_backend_next_key_admits },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },
     { "test_server_full_connect", rocketnet_test_server_full_connect },

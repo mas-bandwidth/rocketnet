@@ -39,6 +39,7 @@ struct rocketnet_server_protocol_t
     uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
 
     uint8_t backend_public_key[ROCKETNET_KEY_BYTES];
+    uint8_t backend_next_public_key[ROCKETNET_KEY_BYTES];   // all-zero when no rotation is in flight
     uint8_t server_public_key[ROCKETNET_KEY_BYTES];
     uint8_t server_secret_key[ROCKETNET_KEY_BYTES];
 
