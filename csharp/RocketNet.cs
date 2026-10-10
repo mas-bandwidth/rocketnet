@@ -35,6 +35,8 @@ public sealed class ClientTransportHandle : SafeHandle
 
     protected override bool ReleaseHandle()
     {
+        if ( IsInvalid )
+            return true;
         RocketNet.ClientTransportDestroyNative( handle );
         return true;
     }
@@ -57,6 +59,8 @@ public sealed class ServerTransportHandle : SafeHandle
 
     protected override bool ReleaseHandle()
     {
+        if ( IsInvalid )
+            return true;
         RocketNet.ServerTransportDestroyNative( handle );
         return true;
     }
