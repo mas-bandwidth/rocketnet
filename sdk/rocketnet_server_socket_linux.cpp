@@ -42,6 +42,7 @@
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_xdp_free_list.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -375,9 +376,12 @@ static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_send_frames < ROCKETNET_XDP_NUM_FRAMES / 2 );
-    socket->send_frames[socket->num_free_send_frames] = frame;
-    socket->num_free_send_frames++;
+    const uint64_t region_begin = 0;
+    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+    if ( !rocketnet_xdp_free_list_push( socket->send_frames, &socket->num_free_send_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
+    {
+        rocketnet_error( "xdp send frame dropped: %llu", (unsigned long long)frame );
+    }
 }
 
 static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
@@ -394,9 +398,12 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_receive_frames < ROCKETNET_XDP_NUM_FRAMES / 2 );
-    socket->receive_frames[socket->num_free_receive_frames] = frame;
-    socket->num_free_receive_frames++;
+    const uint64_t region_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+    if ( !rocketnet_xdp_free_list_push( socket->receive_frames, &socket->num_free_receive_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
+    {
+        rocketnet_error( "xdp receive frame dropped: %llu", (unsigned long long)frame );
+    }
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data );
