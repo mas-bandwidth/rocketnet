@@ -545,8 +545,18 @@ static void rocketnet_server_gso_worker( void * data )
                 }
             }
 
-            if ( count < ROCKETNET_GSO_RECV_BATCH )
-                break;                              // the socket is drained; go back to poll
+            // release the mutex per batch to bound hold time under flood
+            // condition (fix for security audit: dropped msgs not advancing count)
+            rocketnet_platform_mutex_release( &queue->receive_mutex );
+
+            // re-acquire to continue if buffer has room
+            if ( buffer->num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE )
+            {
+                rocketnet_platform_mutex_acquire( &queue->receive_mutex );
+                continue;
+            }
+
+            break;                              // the socket is drained; go back to poll
         }
 
         rocketnet_platform_mutex_release( &queue->receive_mutex );
