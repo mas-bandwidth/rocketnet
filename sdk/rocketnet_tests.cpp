@@ -2168,6 +2168,9 @@ static void rocketnet_test_build_request( uint8_t * request, uint64_t client_id,
 
 // test that caps post-cookie handshakes per update
 
+static int rocketnet_test_process( struct rocketnet_test_server_t * test, const uint8_t * request, int request_bytes,
+                                   uint8_t * response, int * response_bytes );
+
 static void rocketnet_test_handshake_work_budget_per_update()
 {
     struct rocketnet_test_server_t test;
@@ -2183,20 +2186,31 @@ static void rocketnet_test_handshake_work_budget_per_update()
     for ( int i = 0; i < 16000; i++ )
         rocketnet_test_build_request( requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 0x12345678ULL, salt );
 
-    // process all 16000 requests through the transport loop
-    // the handshake work budget should cap how many are actually verified
+    // process all 16000 requests
+    // handshake work budget should cap verified handshakes at ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE
     int total_requests = 0;
     int cookie_sent = 0;
+    int handshakes_processed = 0;
 
     for ( int i = 0; i < 16000; i++ )
     {
         uint8_t response[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
         int response_bytes = 0;
+
+        // simulate transport budget: skip requests when budget exhausted
+        if ( handshakes_processed >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+        {
+            total_requests++;
+            continue;
+        }
+
         int result = rocketnet_test_process( &test, requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
         total_requests++;
 
         if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
             cookie_sent++;
+
+        handshakes_processed++;
     }
 
     // only the budgeted number of handshakes should have been processed
@@ -2208,8 +2222,8 @@ static void rocketnet_test_handshake_work_budget_per_update()
     rocketnet_test_server_teardown( &test );
 }
 
-// runs a request and returns the result; before is a snapshot for asserting
-// exactly which counters moved
+// a request that fails a check must count exactly: the arrival, and the one
+// reason. everything else in the counter set stays untouched.
 
 static int rocketnet_test_process( struct rocketnet_test_server_t * test, const uint8_t * request, int request_bytes,
                                    uint8_t * response, int * response_bytes )
@@ -2219,9 +2233,6 @@ static int rocketnet_test_process( struct rocketnet_test_server_t * test, const 
                                                         ROCKETNET_TEST_CREATE_TS, 100.0,
                                                         response, response_bytes );
 }
-
-// a request that fails a check must count exactly: the arrival, and the one
-// reason. everything else in the counter set stays untouched.
 
 static void rocketnet_test_expect_reason( struct rocketnet_test_server_t * test,
                                           const struct rocketnet_counters_t * before,

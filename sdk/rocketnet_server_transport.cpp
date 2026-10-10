@@ -1010,7 +1010,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         const bool is_connection_request = ( received->packet_bytes[i] == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
         if ( is_connection_request && handshakes_processed >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+        {
+            server_transport->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_DROPPED_BUDGET]++;
             continue;
+        }
 
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
                                           received->packet_data[i], received->packet_bytes[i],
@@ -1109,7 +1112,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         const bool is_connection_request = ( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
         if ( is_connection_request && handshakes_processed >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+        {
+            server_transport->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_DROPPED_BUDGET]++;
             continue;
+        }
 
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
                                           current_timestamp, current_time,
