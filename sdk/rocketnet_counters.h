@@ -298,6 +298,9 @@ enum
     // size errors from off-path salt injection.
     ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
 
+    // XDP RX layer: oversized or out-of-bounds descriptors dropped at entry
+    ROCKETNET_COUNTER_XDP_RX_DESCRIPTOR_DROPPED,
+
     ROCKETNET_NUM_COUNTERS
 };
 

@@ -2127,6 +2127,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             [&](uint32_t count) { xsk_ring_prod__submit(&socket->fill_queue, count); });
     };
     bool reported_frame_pressure = false;
+    uint64_t xdp_rx_descriptor_dropped = 0;
 
     while ( !socket->quit )
     {
@@ -2190,6 +2191,15 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
+                    const int payload_bytes = packet_bytes - header_bytes;
+
+                    // Security: drop oversized payloads that exceed the receive ceiling
+                    if ( payload_bytes > ROCKETNET_RECEIVE_CEILING )
+                    {
+                        xdp_rx_descriptor_dropped++;
+                        continue;
+                    }
+
                     const int index = receive_buffer->num_packets;
 
                     struct ethhdr * __restrict__ eth = (ethhdr*) packet_data;
@@ -2197,8 +2207,6 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
 
                     uint8_t * __restrict__ payload_data = packet_data + header_bytes;
-
-                    const int payload_bytes = packet_bytes - header_bytes;
 
                     rocketnet_address_load_ipv4( &receive_buffer->from[index], (uint32_t) ip->saddr, udp->source );
 
