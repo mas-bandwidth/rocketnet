@@ -99,6 +99,12 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
             if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
             {
+                // Reject non-first fragments: frag_off & 0x3fff is set
+                if ( ip->frag_off & __constant_htons(0x3fff) )
+                {
+                    return XDP_DROP;
+                }
+
                 struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
 
                 if ( (void*)udp + sizeof(struct udphdr) <= data_end )
@@ -132,6 +138,12 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                         {
                             debug_printf( "packet is too large" );
                             server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+                            return XDP_DROP;
+                        }
+
+                        // require udp->len to equal payload length plus 8 (UDP header size)
+                        if ( udp->len != __constant_htons( packet_bytes + sizeof(struct udphdr) ) )
+                        {
                             return XDP_DROP;
                         }
 
