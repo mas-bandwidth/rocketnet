@@ -159,6 +159,7 @@ struct rocketnet_server_transport_t
 
     double time;                                        // the game's clock, last seen
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
+    uint64_t table_time_floor;                          // monotonic floor for table time, never decreases
 
     // the fragmentation shape from the config, and the send arena for
     // over-wire-capacity requests -- allocated once at create, to the
@@ -947,6 +948,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
+    if ( !server_transport->table_time_floor )
+        server_transport->table_time_floor = (uint64_t) ::time( NULL );
 
     rocketnet_server_update_stats( server_transport, time );
 
@@ -959,7 +962,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
 
     const double current_time = time;
-    const uint64_t current_timestamp = (uint64_t) ::time( NULL );
+    const uint64_t raw_timestamp = (uint64_t) ::time( NULL );
+    const uint64_t current_timestamp = server_transport->table_time_floor < raw_timestamp ? raw_timestamp : server_transport->table_time_floor;
+    server_transport->table_time_floor = current_timestamp;
 
     server_transport->payloads.num_payloads = 0;
 

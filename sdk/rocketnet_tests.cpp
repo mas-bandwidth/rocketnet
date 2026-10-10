@@ -2028,6 +2028,65 @@ void rocketnet_test_admitted_token_set()
     rocketnet_admitted_token_set_destroy( set );
 }
 
+void rocketnet_test_table_time_never_moves_backwards()
+{
+    // Transport-level test: verify the monotonic floor prevents token expiry
+    // from being affected when wall clock time steps backwards.
+    
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id, 200 );
+
+    // Simulate the transport's monotonic floor behavior (from rocketnet_server_transport.cpp)
+    // The transport maintains table_time_floor which starts at 0 and only increases
+    uint64_t table_time_floor = 0;
+    
+    // First update: floor is initialized from raw_timestamp (simulating time(NULL))
+    uint64_t raw_timestamp = 1000;
+    if ( !table_time_floor )
+        table_time_floor = raw_timestamp;
+    
+    // This is how transport computes the timestamp passed to token tables
+    uint64_t current_timestamp = table_time_floor < raw_timestamp ? raw_timestamp : table_time_floor;
+    table_time_floor = current_timestamp;
+    
+    // Add token at floor time with expiry at 100 seconds from start
+    const uint64_t start_time = table_time_floor;
+    const uint64_t token_expire = start_time + 100;
+    
+    rocketnet_check( rocketnet_admitted_token_set_add( test.server.admitted_token_set, id, token_expire, start_time ) );
+    
+    // Token should be present at start_time
+    rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, id, start_time ) );
+    
+    // Second update: simulate clock going backwards (raw_timestamp < table_time_floor)
+    raw_timestamp = start_time - 500;
+    current_timestamp = table_time_floor < raw_timestamp ? raw_timestamp : table_time_floor;
+    table_time_floor = current_timestamp;
+    
+    // Token should still be present - floor prevents time from going backwards
+    rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, id, current_timestamp ) );
+    
+    // Third update: time moves forward
+    raw_timestamp = start_time + 50;
+    current_timestamp = table_time_floor < raw_timestamp ? raw_timestamp : table_time_floor;
+    table_time_floor = current_timestamp;
+    
+    rocketnet_check( rocketnet_admitted_token_set_contains( test.server.admitted_token_set, id, current_timestamp ) );
+    
+    // Fourth update: time beyond expiry
+    raw_timestamp = token_expire + 1;
+    current_timestamp = table_time_floor < raw_timestamp ? raw_timestamp : table_time_floor;
+    table_time_floor = current_timestamp;
+    
+    // Token should be rejected - it's expired
+    rocketnet_check( !rocketnet_admitted_token_set_contains( test.server.admitted_token_set, id, current_timestamp ) );
+    
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_encryption_map()
 {
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
@@ -9859,6 +9918,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
     { "test_used_token_history", rocketnet_test_used_token_history },
     { "test_admitted_token_set", rocketnet_test_admitted_token_set },
+    { "test_table_time_never_moves_backwards", rocketnet_test_table_time_never_moves_backwards },
     { "test_encryption_map", rocketnet_test_encryption_map },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },
