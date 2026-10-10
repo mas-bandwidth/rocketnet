@@ -1763,6 +1763,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
   
     rocketnet_assert( result >= 0 );
 
+    if ( result > ROCKETNET_RECEIVE_CEILING )
+        return 0;
+
     return result;
 }
 
@@ -2111,6 +2114,8 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             int bytes = (int) msg[i].msg_datalen;
             rocketnet_address_t parsed;
             if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
+                continue;
+            if ( bytes > ROCKETNET_RECEIVE_CEILING )
                 continue;
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;

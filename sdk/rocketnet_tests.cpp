@@ -1555,6 +1555,33 @@ void rocketnet_test_prefilter()
             rocketnet_check( rocketnet_prefilter_counter( codes[i] ) != rocketnet_prefilter_counter( codes[j] ) );
 }
 
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    uint8_t oversized_packet[ROCKETNET_RECEIVE_CEILING + 1];
+    memset( oversized_packet, 0, sizeof(oversized_packet) );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_prefilter_header( oversized_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+
+    int result = rocketnet_test_process_packet( &test, oversized_packet, ROCKETNET_RECEIVE_CEILING + 1,
+                                                response, &response_bytes,
+                                                payload_out, &payload_out_bytes, &payload_client_index );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_packet_associated_data()
 {
     // the builder reproduces every per-type AD vector from Appendix A exactly
@@ -9847,6 +9874,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
     { "test_connect_token_refusals", rocketnet_test_connect_token_refusals },
     { "test_prefilter", rocketnet_test_prefilter },
+    { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
     { "test_sealed_packets", rocketnet_test_sealed_packets },
     { "test_sealed_packet_refusals", rocketnet_test_sealed_packet_refusals },
