@@ -48,6 +48,9 @@ struct rocketnet_server_protocol_t
     uint8_t cookie_key[ROCKETNET_COOKIE_KEY_BYTES];
     uint8_t previous_cookie_key[ROCKETNET_COOKIE_KEY_BYTES];
     int has_previous_cookie_key;
+    uint8_t previous_server_public_key[ROCKETNET_KEY_BYTES];
+    uint8_t previous_server_secret_key[ROCKETNET_KEY_BYTES];
+    int has_previous_server_key;
     int cookie_lifetime_seconds;                            // default 3
     int max_token_lifetime_seconds;                         // 0 means no limit
 

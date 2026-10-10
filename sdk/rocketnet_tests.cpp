@@ -5563,6 +5563,74 @@ void rocketnet_test_server_keyless_config_has_no_keys()
 }
 
 
+void rocketnet_test_server_previous_keypair_admits()
+{
+    // Security audit: during key rotation, a token sealed to the previous
+    // server key should still be admitted during the overlap period.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // Generate a previous server keypair (simulating rotation state)
+    uint8_t previous_server_public_key[ROCKETNET_KEY_BYTES];
+    uint8_t previous_server_secret_key[ROCKETNET_KEY_BYTES];
+    crypto_box_keypair( previous_server_public_key, previous_server_secret_key );
+
+    // Set up server with both current and previous keys
+    memcpy( test.server.previous_server_public_key, previous_server_public_key, ROCKETNET_KEY_BYTES );
+    memcpy( test.server.previous_server_secret_key, previous_server_secret_key, ROCKETNET_KEY_BYTES );
+    test.server.has_previous_server_key = 1;
+
+    // Build a request sealed with the previous key
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+    memcpy( signed_fields.ipv4_address, server_address, 6 );
+    // Use the previous server public key here
+    memcpy( signed_fields.server_public_key, previous_server_public_key, ROCKETNET_KEY_BYTES );
+
+    memset( &private_fields, 0, sizeof(private_fields) );
+    private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+
+    // Pass the cookie gate
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    // Process the request - this should succeed after the fix
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int result = rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == 1 );
+    rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -9892,6 +9960,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
+    { "test_server_previous_keypair_admits", rocketnet_test_server_previous_keypair_admits },
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
