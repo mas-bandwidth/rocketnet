@@ -190,6 +190,7 @@ const uint8_t rocketnet_dev_server_secret_key[32] =
     0x31, 0x18, 0xd8, 0x39, 0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70,
     0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97};
 
+#if ROCKETNET_DEVELOPMENT
 int rocketnet_write_dev_connect_token( const char * server_address_string,
                                        uint64_t client_id,
                                        uint64_t current_timestamp,
@@ -242,4 +243,4 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
 
     return result;
 }
-
+#endif

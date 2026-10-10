@@ -197,6 +197,19 @@ do                                                                              
     }                                                                                                           \
 } while(0)
 
+void rocketnet_test_dev_token_minting_absent_in_release()
+{
+    // In dev builds (ROCKETNET_DEVELOPMENT=1), verify the dev token minting API works.
+    // In release builds (ROCKETNET_DEVELOPMENT=0), this test doesn't reference the API
+    // because it should not be available - if it were, the test would fail to compile.
+    #if ROCKETNET_DEVELOPMENT
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:0", 1, 1000, token ) );
+    #else
+    rocketnet_check( !ROCKETNET_DEVELOPMENT );
+    #endif
+}
+
 void rocketnet_test_time()
 {
     double start = rocketnet_platform_time();
@@ -9812,6 +9825,7 @@ void rocketnet_test_response_wrong_size_counted()
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
+    { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
