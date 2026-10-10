@@ -103,10 +103,10 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     result = 1;
 
 out:
-    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
-    rocketnet_test_private_block_copied = true;
     sodium_memzero( private_block, sizeof(private_block) );
     sodium_memzero( &private_data, sizeof(private_data) );
+    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
+    rocketnet_test_private_block_copied = true;
     return result;
 }
 
