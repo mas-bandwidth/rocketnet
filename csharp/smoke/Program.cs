@@ -122,6 +122,24 @@ static class Smoke
             return 1;
         }
 
+        if ( args.Length == 2 && args[0] == "--counter-count" )
+        {
+            try
+            {
+                RocketNet.Init();
+                RocketNet.ServerTransportDefaultConfig( out var config );
+                using var server = RocketNet.ServerTransportCreate( IntPtr.Zero, "127.0.0.1:0", ref config, RocketNet.Time() );
+                var _ = RocketNet.CountersSpan( RocketNet.ServerTransportCounters( server ) );
+                Fail( "counter count mismatch silently accepted" );
+            }
+            catch ( BadImageFormatException e ) when ( e.Message.Contains("RocketNet counters:") && e.Message.Contains(args[1]) )
+            {
+                Ok( e.Message );
+                return 0;
+            }
+            return 1;
+        }
+
         // The first matching import also writes a struct before Init.
         RocketNet.ClientTransportDefaultConfig( out var abiDefault );
         if ( abiDefault.GetDriver() != "auto" ) Fail( "ABI-checked default config" );

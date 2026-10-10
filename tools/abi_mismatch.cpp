@@ -4,6 +4,8 @@
 #define rocketnet_abi_field_count real_abi_field_count
 #define rocketnet_abi_field_offset real_abi_field_offset
 #define rocketnet_abi_field_size real_abi_field_size
+#define rocketnet_num_counters real_rocketnet_num_counters
+#include "../sdk/rocketnet_counters.cpp"
 #include "../sdk/rocketnet_abi.cpp"
 #undef rocketnet_abi_version
 #undef rocketnet_abi_type_size
@@ -27,6 +29,9 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_offset(const char * type, const
 { return real_abi_field_offset(type, field) + (mode("offset") ? 1 : 0); }
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_field_size(const char * type, const char * field)
 { return real_abi_field_size(type, field) + (mode("width") ? 1 : 0); }
+
+ROCKETNET_EXPORT_FUNC int rocketnet_num_counters()
+{ return real_rocketnet_num_counters() + (mode("count") ? 1 : 0); }
 
 // If a guard disappears, the test dies here instead of accepting a fake success.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config(rocketnet_client_transport_config_t *) { abort(); }

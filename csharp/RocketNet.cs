@@ -1105,9 +1105,14 @@ public static unsafe partial class RocketNet
     /// indexed by <see cref="Counter"/>.</summary>
     public static ReadOnlySpan<ulong> CountersSpan( IntPtr counters )
     {
-        return counters == IntPtr.Zero
-            ? ReadOnlySpan<ulong>.Empty
-            : new ReadOnlySpan<ulong>( (void*) counters, CounterCount() );
+        if ( counters == IntPtr.Zero )
+            return ReadOnlySpan<ulong>.Empty;
+
+        int nativeCount = CounterCount();
+        if ( nativeCount != NumCounters )
+            throw new BadImageFormatException( $"RocketNet counters: native has {nativeCount}, binding expects {NumCounters}." );
+
+        return new ReadOnlySpan<ulong>( (void*) counters, nativeCount );
     }
 
     /// <summary>A client receive batch: zero-copy spans over the library's payload storage.
