@@ -174,6 +174,7 @@ struct rocketnet_server_socket_t
 
     int interface_index;
     struct xdp_program * program;
+    int link_fd;
     bool attached_native;
     bool attached_skb;
     char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
@@ -1081,6 +1082,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
 
     new ( server_socket ) rocketnet_server_socket_t();
+    server_socket->link_fd = -1;
 
     server_socket->context = context;
 
@@ -1320,16 +1322,16 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_info( "attaching server_xdp to network interface %s", interface_name );
 
-    int ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
-    if ( ret == 0 )
+    server_socket->link_fd = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
+    if ( server_socket->link_fd >= 0 )
     {
         server_socket->attached_native = true;
     } 
     else
     {
         rocketnet_info( "falling back to skb mode..." );
-        ret = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
-        if ( ret == 0 )
+        server_socket->link_fd = xdp_program__attach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
+        if ( server_socket->link_fd >= 0 )
         {
             server_socket->attached_skb = true;
         }
@@ -1607,16 +1609,12 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
     rocketnet_assert( server_socket );
     rocketnet_assert( server_socket->state == ROCKETNET_SERVER_SOCKET_STOPPED );        // IMPORTANT: Please stop the server and wait until state is ROCKETNET_SERVER_SOCKET_STOPPED before destroying it
 
+    if ( server_socket->link_fd >= 0 )
+    {
+        close( server_socket->link_fd );
+    }
     if ( server_socket->program != NULL )
     {
-        if ( server_socket->attached_native )
-        {
-            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_NATIVE, 0 );
-        }
-        if ( server_socket->attached_skb )
-        {
-            xdp_program__detach( server_socket->program, server_socket->interface_index, XDP_MODE_SKB, 0 );
-        }
         xdp_program__close( server_socket->program );
     }
 
