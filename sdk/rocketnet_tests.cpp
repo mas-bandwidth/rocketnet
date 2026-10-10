@@ -9398,8 +9398,96 @@ void rocketnet_test_config_override_logging()
     rocketnet_test_env_restore( &secret_guard );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_windows_msgsize_continues_drain()
+{
+    // Test that oversized datagrams (WSAEMSGSIZE) don't stop the drain.
+    // After the fix: an oversized datagram followed by 10 valid ones
+    // delivers all 10 in one drain call.
 
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create(
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING,
+        0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
 
+    const char * pump_at_create = rocketnet_platform_socket_pump( socket );
+
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+
+    struct sockaddr_in to;
+    memset( &to, 0, sizeof(to) );
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    to.sin_port = htons( bind_address.port );
+
+    // Send an oversized datagram (larger than recv buffer)
+    const int oversized_size = 65536;
+    uint8_t oversized_packet[oversized_size];
+    memset( oversized_packet, 0x55, oversized_size );
+    rocketnet_check( sendto( injector, oversized_packet, oversized_size, 0,
+                           (struct sockaddr*) &to, sizeof(to) ) == oversized_size );
+
+    // Send 10 valid datagrams
+    const int num_valid = 10;
+    uint8_t valid_packet[256];
+    for ( int i = 0; i < num_valid; i++ )
+    {
+        const int bytes = 64 + i * 10;
+        memset( valid_packet, (uint8_t) i, bytes );
+        rocketnet_check( sendto( injector, valid_packet, bytes, 0,
+                               (struct sockaddr*) &to, sizeof(to) ) == bytes );
+    }
+
+    // Wait for all packets to arrive
+    {
+        double deadline = rocketnet_platform_time() + 5.0;
+        for ( ;; )
+        {
+            fd_set readable;
+            FD_ZERO( &readable );
+            FD_SET( socket->handle, &readable );
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;
+            if ( select( socket->handle + 1, &readable, NULL, NULL, &tv ) > 0 )
+                break;
+            rocketnet_check( rocketnet_platform_time() < deadline );
+        }
+        usleep( 200000 );
+    }
+
+    // Drain - should get all 10 valid packets in one call
+    static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
+    static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
+    static uint8_t receive_data[ROCKETNET_TEST_PUMP_PACKETS*ROCKETNET_TEST_PUMP_STRIDE];
+
+    const int received = rocketnet_platform_socket_receive_packets(
+        socket, from, receive_data, ROCKETNET_TEST_PUMP_STRIDE,
+        packet_bytes, ROCKETNET_TEST_PUMP_PACKETS );
+
+    rocketnet_check( received == num_valid );
+
+    for ( int i = 0; i < num_valid; i++ )
+    {
+        const uint8_t * packet = receive_data + (size_t) i * ROCKETNET_TEST_PUMP_STRIDE;
+        rocketnet_check( packet[0] == (uint8_t) i );
+        rocketnet_check( packet_bytes[i] == 64 + i * 10 );
+    }
+
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump_at_create ) == 0 );
+
+    close( injector );
+    rocketnet_platform_socket_destroy( socket );
+}
+#else
+void rocketnet_test_windows_msgsize_continues_drain()
+{
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_windows_msgsize_continues_drain [SKIPPED on non-Windows]" );
+}
+#endif
 
 
 // The suite isolates config overrides, while preserving the driver's
@@ -9785,6 +9873,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_windows_msgsize_continues_drain", rocketnet_test_windows_msgsize_continues_drain },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
