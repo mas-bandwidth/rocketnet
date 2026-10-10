@@ -2212,6 +2212,31 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
                     struct iphdr  * __restrict__ ip  = (iphdr*) ( (uint8_t*)packet_data + sizeof( struct ethhdr ) );
                     struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
 
+                    // Martian source check: drop packets with invalid source addresses
+                    // Martian sources include: 0.0.0.0, 127.0.0.0/8, 224.0.0.0/4, 255.255.255.255, server's own address, port 0
+                    uint32_t saddr = ntohl( ip->saddr );
+                    uint16_t sport = ntohs( udp->source );
+                    bool is_martian = false;
+                    
+                    // 0.0.0.0 (all zeros)
+                    if ( saddr == 0 ) is_martian = true;
+                    // 127.0.0.0/8 (loopback)
+                    else if ( (saddr >> 24) == 127 ) is_martian = true;
+                    // 224.0.0.0/4 (multicast)
+                    else if ( (saddr >> 28) == 14 ) is_martian = true;
+                    // 255.255.255.255 (broadcast)
+                    else if ( saddr == 0xFFFFFFFF ) is_martian = true;
+                    // Server's own address (if configured)
+                    else if ( socket->public_address.data.ip != 0 && saddr == socket->public_address.data.ip ) is_martian = true;
+                    // Port 0
+                    if ( sport == 0 ) is_martian = true;
+
+                    if ( is_martian )
+                    {
+                        socket->xdp_stats.counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_MARTIAN_SOURCE]++;
+                        continue;
+                    }
+
                     uint8_t * __restrict__ payload_data = packet_data + header_bytes;
 
                     const int payload_bytes = packet_bytes - header_bytes;

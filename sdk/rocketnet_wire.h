@@ -139,7 +139,8 @@ struct rocketnet_server_xdp_config_t
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER       3
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE       4
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       6
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_MARTIAN_SOURCE     6
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       7
 
 struct rocketnet_server_xdp_stats_t
 {
