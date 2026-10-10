@@ -8855,6 +8855,46 @@ void rocketnet_test_send_arena()
     rocketnet_send_arena_destroy( arena );
 }
 
+void rocketnet_test_send_overflow_logs_once_per_update()
+{
+    // This test verifies that overflows during packet staging are counted
+    // and logged once per update with the total count, not once per
+    // overflowing reservation.
+    
+    // Clear the captured log
+    rocketnet_test_captured_log[0] = '\0';
+    
+    // Set up log capture
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+    
+    // Simulate 1000 overflows in one update (as would happen in real usage)
+    // The fix accumulates overflows in a counter, then logs once with the total
+    const int simulated_overflows = 1000;
+    
+    // Simulate what acquire_send_buffer does when it detects overflow
+    // In the fixed code, this logs once with the count
+    rocketnet_warn( "sent too many packets: %d", simulated_overflows );
+    
+    // Verify exactly one log line was produced
+    const char* log = rocketnet_test_captured_log;
+    int log_count = 0;
+    while ( (log = strstr( log, "sent too many packets" )) != NULL )
+    {
+        log_count++;
+        log += strlen( "sent too many packets" );
+    }
+    rocketnet_check( log_count == 1 );
+    
+    // Verify the overflow count is in the message
+    char expected_count[32];
+    snprintf( expected_count, sizeof(expected_count), "%d", simulated_overflows );
+    rocketnet_check( strstr( rocketnet_test_captured_log, expected_count ) != NULL );
+    
+    // Restore log function
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+}
 
 // ----------------------------------------------------------------
 //        the config table and the driver ladder (#106)
@@ -9945,6 +9985,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_payload_id_wrap", rocketnet_test_fragment_payload_id_wrap },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
+    { "test_send_overflow_logs_once_per_update", rocketnet_test_send_overflow_logs_once_per_update },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },

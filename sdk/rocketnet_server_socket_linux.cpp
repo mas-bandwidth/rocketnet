@@ -72,6 +72,10 @@ struct rocketnet_server_socket_send_buffer_t
 
     uint8_t padding_1[4096];
 
+    std::atomic<int> overflow_count{0};
+
+    uint8_t padding_1b[4096];
+
     int packet_start_index;
 
     uint8_t padding_2[4096];
@@ -1800,7 +1804,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 
     if ( packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE || packet_index < 0 )
     {
-        rocketnet_warn( "sent too many packets!" );
+        send_buffer->overflow_count.fetch_add( 1, std::memory_order_relaxed );
         return NULL;
     }
 
@@ -1890,8 +1894,14 @@ static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_so
     if ( index >= 0 )
     {
         auto * buffer = &socket->send_buffer[index];
+        const int overflow = buffer->overflow_count.load( std::memory_order_relaxed );
+        buffer->overflow_count = 0;
         buffer->num_packets = 0;
         buffer->packet_start_index = 0;
+        if ( overflow > 0 )
+        {
+            rocketnet_warn( "sent too many packets: %d", overflow );
+        }
         socket->send_flow_index.store( index, std::memory_order_release );
     }
 }
