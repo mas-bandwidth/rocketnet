@@ -1,3 +1,5 @@
+void rocketnet_open_budget_reset( int mapping_index );
+
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
@@ -138,6 +140,8 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 
     struct rocketnet_encryption_mapping_t * mapping = &map->mapping[index];
     memset( mapping, 0, sizeof(struct rocketnet_encryption_mapping_t) );
+
+    rocketnet_open_budget_reset( index );
     mapping->client_index = -1;
     mapping->handshake_deadline = handshake_deadline;
     mapping->send_sequence_handshake = 1;
@@ -204,6 +208,8 @@ void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, i
     map->free_head = index;
 
     map->num_mappings--;
+
+    rocketnet_open_budget_reset( index );
 }
 
 int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map, int * iterator )

@@ -9810,6 +9810,88 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+// A forged sealed packet from a connected client's address would otherwise
+// cost one AEAD open each, without bound -- the audit's server-dos finding.
+// With a per-mapping budget, 10000 junk session packets must spend at most the
+// budget of opens; the rest are dropped before the open.
+void rocketnet_test_failed_open_budget_per_mapping()
+{
+    uint8_t wrong_key[32];
+    memset( wrong_key, 0x42, sizeof(wrong_key) );
+
+    const uint8_t junk_payload[8] = { 0 };
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x5F1A2BULL, &client_keys );
+
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+
+    const int NUM_JUNK_PACKETS = 10000;
+    const int EXPECTED_BUDGET = 100;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+    {
+        int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1000 + i,
+                                                                junk_payload, 8, wrong_key );
+        rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                       payload_out, &payload_out_bytes, &payload_client_index );
+    }
+
+    // At most the budget of AEAD opens ran; every other packet was dropped
+    // before its open, which is what bounds the CPU a forgery flood can cost.
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
+
+    // Verify mapping slot for the first client before disconnect.
+    int first_slot = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( first_slot != -1 );
+
+    // Disconnect the first client so its map slot is returned to the free list.
+    uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+    int burst_count = 0;
+    int burst_bytes = 0;
+    rocketnet_server_protocol_disconnect_client( &test.server, 0, burst, &burst_count, &burst_bytes );
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    // A second client connects and reuses the freed map slot within the one-second window.
+    rocketnet_test_handshake_to_challenge( &test, 0x9F2A3BULL, &client_keys );
+    rocketnet_test_client_build_response( client_response, &client_keys );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    int second_slot = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( second_slot == first_slot );
+
+    // The new mapping must receive its own full budget of opens rather than inheriting prior failures.
+    for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+    {
+        int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 2000 + i,
+                                                                junk_payload, 8, wrong_key );
+        rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                       payload_out, &payload_out_bytes, &payload_client_index );
+    }
+
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET * 2 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) * 2 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9904,6 +9986,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
+    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
