@@ -1104,4 +1104,12 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       
 
 // -----------------------------------------
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern size_t test_last_allocation_bytes;
+#ifdef __cplusplus
+}
+#endif
+
 #endif // #ifndef ROCKETNET_H

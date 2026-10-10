@@ -138,7 +138,7 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
     // the arena plus delivered_capacity x max payload for this mirror;
     // slot records ride along.
 
-    set->delivered = (uint8_t*) rocketnet_malloc( context, (size_t) set->delivered_capacity * (size_t) max_payload_bytes );
+    set->delivered = (uint8_t*) rocketnet_malloc( context, (size_t) set->delivered_capacity * (size_t) max_payload_bytes + 8 );
 
     if ( !set->slots || !set->arena || !set->delivered )
     {
