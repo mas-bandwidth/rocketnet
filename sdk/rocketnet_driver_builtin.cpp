@@ -80,7 +80,7 @@ static void * xdp_create( void * context, const rocketnet_server_driver_config_t
     const int cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
     // The backend retains its existing verify-and-bind preflight and commit
     // barrier. Registration never bypasses either or provisions the machine.
-    return rocketnet_server_socket_create( context, config->public_address, config->transport->filter_value, queues, cpus );
+    return rocketnet_server_socket_create( context, config->public_address, config->transport->filter_value, queues, cpus, config->transport->xdp_target_uid );
 }
 static bool xdp_stop( void * driver )
 {
