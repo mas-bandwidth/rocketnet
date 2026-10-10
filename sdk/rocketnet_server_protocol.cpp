@@ -705,7 +705,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     uint64_t * counters = server->counters->values;
 
     static const struct rocketnet_sealed_type_counters_t table[6] = {
-        { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, -1, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
+        { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, -1, -1, -1 },
         { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE, ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING,
@@ -755,6 +755,13 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( min_wire_bytes != 0 && packet_bytes < min_wire_bytes )
     {
         rocketnet_spam( "server ignored sealed packet. below the type's wire floor" );
+        counters[type_counters->wrong_size]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    if ( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET && packet_bytes != ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES )
+    {
+        rocketnet_spam( "server ignored sealed packet. response wrong size" );
         counters[type_counters->wrong_size]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
