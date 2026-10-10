@@ -1222,6 +1222,61 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
     rocketnet_platform_socket_destroy( socket );
 }
 
+void rocketnet_test_zero_length_flood_bounded()
+{
+    // Test for security finding: zero-length datagram flood should not block receive forever.
+    // A flood of 0-byte datagrams should be bounded by a max-iterations limit.
+    
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    bind_address.port = 0;
+    
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( 
+        NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+    
+    bind_address.port = rocketnet_platform_socket_port( socket );
+    
+    // Preload 10000 zero-byte datagrams using raw socket
+    const int num_zero_bytes = 10000;
+    int sent = 0;
+    for ( int i = 0; i < num_zero_bytes; i++ )
+    {
+        rocketnet_address_t dest = bind_address;
+        sent += int( ::sendto( socket->handle, "", 0, 0, (sockaddr*) &dest, sizeof(dest) ) );
+    }
+    rocketnet_check( sent == num_zero_bytes );
+    
+    // Verify receive returns after bounded attempts (not forever)
+    uint8_t packet[256];
+    rocketnet_address_t from;
+    int iterations = 0;
+    const int max_iterations = 20000;
+    
+    int received = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
+    rocketnet_check( received > 0 );
+    
+    // Drain remaining zero-byte packets - should also be bounded
+    while ( true )
+    {
+        iterations++;
+        rocketnet_assert( iterations <= max_iterations );
+        int recv_result = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
+        if ( recv_result <= 0 )
+            break;
+        if ( recv_result == 0 )
+        {
+            // Got a zero-length packet - keep draining
+            continue;
+        }
+    }
+    
+    // Verify we didn't hang (iterations should be reasonable)
+    rocketnet_check( iterations < max_iterations );
+    
+    rocketnet_platform_socket_destroy( socket );
+}
+
 void rocketnet_test_platform_batch_pump()
 {
     rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
@@ -3187,6 +3242,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_stats", rocketnet_test_transport_stats },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
+    { "test_zero_length_flood_bounded", rocketnet_test_zero_length_flood_bounded },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
