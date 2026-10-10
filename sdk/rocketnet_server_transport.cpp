@@ -1156,6 +1156,8 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
             continue;
         int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
+        if ( mapping_index < 0 )
+            continue;
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );

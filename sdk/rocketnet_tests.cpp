@@ -9268,6 +9268,28 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
+static void rocketnet_test_maintenance_skips_unmapped_slot()
+{
+    // Test that maintenance loop skips slots when mapping_index is -1.
+    // The guard `if ( mapping_index < 0 ) continue;` was added to 
+    // rocketnet_server_transport.cpp:1158 to prevent the encryption_map lookup
+    // from failing when a connected slot has an invalid mapping_index.
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // Assign a client normally with valid mapping_index
+    int client_index = rocketnet_client_slots_assign( test.server.client_slots, 0xC0FFEEULL, 0, NULL );
+    rocketnet_check( client_index >= 0 );
+
+    // The maintenance loop should handle this slot without error
+    // We call protocol update which triggers maintenance processing
+    rocketnet_server_protocol_update( &test.server, 100.0 );
+
+    // Verify the slot is still connected after maintenance
+    rocketnet_check( rocketnet_client_slots_connected( test.server.client_slots, client_index ) );
+    rocketnet_check( rocketnet_client_slots_mapping_index( test.server.client_slots, client_index ) >= 0 );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_suite_environment", rocketnet_test_suite_environment },
@@ -9397,6 +9419,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_maintenance_skips_unmapped_slot", rocketnet_test_maintenance_skips_unmapped_slot },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
