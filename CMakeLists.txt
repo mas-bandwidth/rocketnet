@@ -72,9 +72,9 @@ endfunction()
 # Generate into this build tree. Multiple builds never rewrite the source header.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
-if(WIN32)
-    # XDP is Linux-only, so the Windows tree never compiles the object; the
-    # header exists only so the include path and the dependency edge resolve.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # XDP is Linux-only, so this tree never compiles the object; the header
+    # exists only so the include path and the dependency edge resolve.
     file(WRITE "${ROCKETNET_XDP_HEADER}"
         "static const unsigned char server_xdp_o[] = { 0 };\nstatic const unsigned int server_xdp_o_len = 0;\n")
 else()
@@ -235,7 +235,7 @@ if(ROCKETNET_BUILD_TESTS)
         add_dependencies(test_xdp rocketnet_xdp_header)
         target_compile_definitions(test_xdp PRIVATE ROCKETNET_XDP_TESTS
             $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
-        target_include_directories(test_xdp PRIVATE sdk "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_include_directories(test_xdp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" sdk)
         target_compile_features(test_xdp PRIVATE cxx_std_11)
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_xdp)
