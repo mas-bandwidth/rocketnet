@@ -14,6 +14,25 @@
 #include <sodium.h>
 #include <string.h>
 
+// the cookie mac generations the request ladder has paid on this thread.
+// the gate-cost test reads the delta across one request: first contact --
+// a zero return cookie, the flood's shape -- must pay one mac, the fresh
+// cookie the refusal sends, and none for a verification a zero field can
+// never pass. thread_local because the request path runs per receive
+// thread; like the rest of the dataplane, no shared state between queues.
+
+thread_local uint64_t rocketnet_server_cookie_mac_calls;
+
+static int rocketnet_server_request_cookie_mac( uint8_t * mac,
+                                                const struct rocketnet_address_t * from,
+                                                const uint8_t * connection_salt,
+                                                uint64_t cookie_expire_timestamp,
+                                                const uint8_t * cookie_key )
+{
+    rocketnet_server_cookie_mac_calls++;
+    return rocketnet_generate_cookie_mac( mac, from, connection_salt, cookie_expire_timestamp, cookie_key );
+}
+
 // the address fields of the signed connect data, encoded as the token
 // encodes them, for comparison against this server's advertised addresses
 
@@ -218,23 +237,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
         // in the spec's order: zero field, then the mac, then expiry -- so
         // COOKIE_EXPIRED only ever counts genuine clients with stale
-        // cookies, and a forgery never hides under it
-
-        int mac_matches = 0;
-        {
-            uint8_t expected_mac[ROCKETNET_COOKIE_MAC_BYTES];
-            if ( rocketnet_generate_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->cookie_key ) &&
-                 sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
-            {
-                mac_matches = 1;
-            }
-            else if ( server->has_previous_cookie_key &&
-                      rocketnet_generate_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->previous_cookie_key ) &&
-                      sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
-            {
-                mac_matches = 1;
-            }
-        }
+        // cookies, and a forgery never hides under it. the zero field is
+        // also the flood's shape, so it is tested first and the macs are
+        // computed only for a cookie that could hold one: first contact
+        // pays no verification at all, one hash for the fresh cookie below
+        // and not one more.
 
         static const uint8_t zero_field[ROCKETNET_COOKIE_FIELD_BYTES] = { 0 };
         if ( memcmp( return_cookie, zero_field, ROCKETNET_COOKIE_FIELD_BYTES ) == 0 )
@@ -242,26 +249,45 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             rocketnet_debug( "server sent connection cookie. request carried no cookie" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE]++;
         }
-        else if ( !mac_matches )
-        {
-            rocketnet_debug( "server sent connection cookie. cookie did not verify" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
-        }
-        else if ( cookie_expire <= current_timestamp )
-        {
-            rocketnet_debug( "server sent connection cookie. cookie expired" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
-        }
         else
         {
-            cookie_ok = 1;
+            int mac_matches = 0;
+            {
+                uint8_t expected_mac[ROCKETNET_COOKIE_MAC_BYTES];
+                if ( rocketnet_server_request_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->cookie_key ) &&
+                     sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
+                {
+                    mac_matches = 1;
+                }
+                else if ( server->has_previous_cookie_key &&
+                          rocketnet_server_request_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->previous_cookie_key ) &&
+                          sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
+                {
+                    mac_matches = 1;
+                }
+            }
+
+            if ( !mac_matches )
+            {
+                rocketnet_debug( "server sent connection cookie. cookie did not verify" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
+            }
+            else if ( cookie_expire <= current_timestamp )
+            {
+                rocketnet_debug( "server sent connection cookie. cookie expired" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
+            }
+            else
+            {
+                cookie_ok = 1;
+            }
         }
 
         if ( !cookie_ok )
         {
             uint64_t fresh_expire = current_timestamp + (uint64_t) server->cookie_lifetime_seconds;
             uint8_t fresh_mac[ROCKETNET_COOKIE_MAC_BYTES];
-            if ( !rocketnet_generate_cookie_mac( fresh_mac, from, connection_salt, fresh_expire, server->cookie_key ) )
+            if ( !rocketnet_server_request_cookie_mac( fresh_mac, from, connection_salt, fresh_expire, server->cookie_key ) )
             {
                 rocketnet_assert( 0 );      // the source address was parsed; a bad family is a caller bug
                 rocketnet_debug( "server ignored connection request. internal error" );
