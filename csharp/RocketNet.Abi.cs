@@ -62,6 +62,8 @@ public static unsafe partial class RocketNet
     [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
     delegate nuint AbiFieldQuery( [MarshalAs(UnmanagedType.LPUTF8Str)] string type,
                                  [MarshalAs(UnmanagedType.LPUTF8Str)] string field );
+    [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
+    delegate int NumCountersQuery();
 
     static T AbiExport<T>( IntPtr handle, string name ) where T : Delegate
     {
@@ -87,6 +89,9 @@ public static unsafe partial class RocketNet
         uint version = AbiExport<AbiVersionQuery>( handle, "rocketnet_abi_version" )();
         if ( version != AbiVersion )
             throw new BadImageFormatException( $"RocketNet ABI: native revision {version}, binding requires {AbiVersion}." );
+        int nativeCounters = AbiExport<NumCountersQuery>( handle, "rocketnet_num_counters" )();
+        if ( nativeCounters != NumCounters )
+            throw new BadImageFormatException( $"RocketNet ABI: native counter count {nativeCounters}, binding requires {NumCounters}." );
         var typeSize = AbiExport<AbiTypeSizeQuery>( handle, "rocketnet_abi_type_size" );
         var fieldCount = AbiExport<AbiFieldCountQuery>( handle, "rocketnet_abi_field_count" );
         var fieldOffset = AbiExport<AbiFieldQuery>( handle, "rocketnet_abi_field_offset" );
