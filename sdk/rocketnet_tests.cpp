@@ -8033,6 +8033,57 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+// The delivered mirror is the reassembly arena's own allocation; a
+// word-at-a-time reader of the last slot can touch up to seven bytes past its
+// end, so the allocation must carry slack beyond capacity x max payload.
+
+static size_t rocketnet_test_allocation_sizes[8];
+static int rocketnet_test_allocation_count = 0;
+
+static void * rocketnet_test_capture_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( rocketnet_test_allocation_count < (int) ( sizeof(rocketnet_test_allocation_sizes) / sizeof(rocketnet_test_allocation_sizes[0]) ) )
+        rocketnet_test_allocation_sizes[rocketnet_test_allocation_count] = bytes;
+    ++rocketnet_test_allocation_count;
+    return malloc( bytes );
+}
+
+static void rocketnet_test_capture_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+void rocketnet_test_reassembly_arena_has_slack()
+{
+    const int num_connections = 2;
+    const int num_slots = 4;
+    const int max_payload_bytes = 8192;
+    const int delivered_capacity = 2;
+
+    // the unit worker initializes the library before the test runs and the
+    // allocator replacement is refused once initialized, so step the library
+    // down first; this one-test process initializes nothing afterward
+    rocketnet_term();
+    rocketnet_allocator( rocketnet_test_capture_malloc, rocketnet_test_capture_free );
+
+    rocketnet_test_allocation_count = 0;
+    struct rocketnet_reassembly_set_t * set =
+        rocketnet_reassembly_set_create( NULL, num_connections, num_slots, max_payload_bytes, delivered_capacity );
+    rocketnet_check( set );
+
+    // create allocates the set, the slot records, the slot arena, then the
+    // delivered mirror; the callback sees each request plus the fixed
+    // alignment/ownership overhead, which the first request recovers
+    rocketnet_check( rocketnet_test_allocation_count == 4 );
+    const size_t overhead = rocketnet_test_allocation_sizes[0] - sizeof(struct rocketnet_reassembly_set_t);
+    const size_t delivered_bytes = rocketnet_test_allocation_sizes[3] - overhead;
+    rocketnet_check( delivered_bytes >= (size_t) delivered_capacity * (size_t) max_payload_bytes + 8 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
 // a connected protocol pair on mocked time: the three-round-trip handshake
 // from the rtt test, plus a client-side reassembly set, so the fragment
 // tests start from a live session in a few lines
@@ -9936,6 +9987,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
+    { "test_reassembly_arena_has_slack", rocketnet_test_reassembly_arena_has_slack },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
     { "test_fragment_client_to_server", rocketnet_test_fragment_client_to_server },
