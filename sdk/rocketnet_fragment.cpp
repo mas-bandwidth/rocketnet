@@ -206,12 +206,19 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     rocketnet_assert( set );
     rocketnet_assert( connection_index >= 0 && connection_index < set->num_connections );
     rocketnet_assert( type_data );
-    rocketnet_assert( type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 );     // the reading order's opened-size check
     rocketnet_assert( counters );
     rocketnet_assert( table );
 
     set->completed_payload = NULL;
     set->completed_bytes = 0;
+
+    if ( type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ||
+         type_data_bytes > ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES )
+    {
+        rocketnet_spam( "reassembly refused fragment. invalid fragment size" );
+        counters[table->size_mismatch]++;
+        return 0;
+    }
 
     uint32_t payload_id;
     int fragment_index;
@@ -220,7 +227,6 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
     const uint8_t * fragment_data = type_data + ROCKETNET_FRAGMENT_HEADER_BYTES;
     const int fragment_bytes = type_data_bytes - ROCKETNET_FRAGMENT_HEADER_BYTES;
-    rocketnet_assert( fragment_bytes >= 1 && fragment_bytes <= ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES );
 
     // the standard's checks, in order, each with its own counter. every
     // refusal is decided before anything mutates, so a refused fragment --
