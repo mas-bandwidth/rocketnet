@@ -3164,17 +3164,39 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
-void rocketnet_test_server_gso_worker_lock_bounded()
+struct rocketnet_test_gso_flood_args_t
 {
-    // Under a flood of truncated/invalid datagrams, the mutex held by the
-    // GSO worker must not block the main thread for too long. Dropped
-    // messages should not cause an unbounded hold on receive_mutex.
+    struct rocketnet_platform_socket_t * peer;
+    rocketnet_address_t server_address;
+    double until;
+};
+
+static void rocketnet_test_gso_flood_thread( void * data )
+{
+    struct rocketnet_test_gso_flood_args_t * args = (struct rocketnet_test_gso_flood_args_t*) data;
+
+    // below ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES (33): every datagram takes
+    // the size-check drop path, so num_packets never advances
+
+    uint8_t undersized[32];
+    memset( undersized, 0xAB, sizeof(undersized) );
+
+    while ( rocketnet_platform_time() < args->until )
+        rocketnet_platform_socket_send_packet( args->peer, &args->server_address, undersized, (int) sizeof(undersized) );
+}
+
+void rocketnet_test_gso_worker_lock_bounded()
+{
+    // A flood of sub-floor datagrams is dropped without advancing
+    // num_packets, so a worker that holds receive_mutex across its whole fill
+    // pass never yields it: the main thread's receive_packets waits out the
+    // entire flood. The fix caps a fill pass at one recvmmsg batch and
+    // releases the mutex per batch, so the main thread's wait stays bounded
+    // however long the flood runs.
     //
-    // This test sends packets below the minimum wire size, which triggers
-    // the size check drop path (lines 528-531 in rocketnet_server_gso_linux.cpp).
-    // Before the fix, dropped messages wouldn't advance num_packets and the
-    // mutex would be held across the entire flood. After the fix, the mutex
-    // is released per batch.
+    // The test keeps the receive queue backed up for the whole flood with
+    // several senders, then measures the longest single receive_packets wait
+    // the main thread sees while the flood is live.
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
@@ -3193,29 +3215,47 @@ void rocketnet_test_server_gso_worker_lock_bounded()
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
     server_address.port = bind_address.port;
 
-    // Send many undersized packets to trigger the size check drop path
-    // ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES is typically ~50 bytes
-    const int num_flood_packets = ROCKETNET_GSO_RECV_BATCH * 8;
-    uint8_t undersized[32];  // Below minimum packet size
-    memset( undersized, 0xAB, sizeof(undersized) );
+    const int num_flood_threads = 16;
+    const double flood_seconds = 3.0;
 
-    for ( int i = 0; i < num_flood_packets; i++ )
+    struct rocketnet_test_gso_flood_args_t args;
+    args.peer = peer;
+    args.server_address = server_address;
+    args.until = rocketnet_platform_time() + flood_seconds;
+
+    struct rocketnet_platform_thread_t * threads[num_flood_threads];
+    for ( int i = 0; i < num_flood_threads; i++ )
     {
-        rocketnet_platform_socket_send_packet( peer, &server_address, undersized, (int) sizeof(undersized) );
+        threads[i] = rocketnet_platform_thread_create( NULL, rocketnet_test_gso_flood_thread, &args );
+        rocketnet_check( threads[i] );
     }
 
-    // Give worker time to process
-    rocketnet_platform_sleep( 0.2 );
+    double worst_wait = 0.0;
+    while ( rocketnet_platform_time() < args.until )
+    {
+        const double start = rocketnet_platform_time();
+        rocketnet_server_gso_receive_packets( gso );
+        const double waited = rocketnet_platform_time() - start;
+        if ( waited > worst_wait )
+            worst_wait = waited;
+    }
 
-    // Drain any received packets
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    for ( int i = 0; i < num_flood_threads; i++ )
+    {
+        rocketnet_platform_thread_join( threads[i] );
+        rocketnet_platform_thread_destroy( threads[i] );
+    }
+
     rocketnet_server_gso_receive_packets( gso );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
 
-    // Main thread should not have been blocked for an extended period.
-    // The fix ensures mutex is released per batch even when dropping.
-    // Undersized packets increment dropped_size counter.
+    // the flood must have driven the drop path, and the main thread must
+    // never have waited anything like the flood's length for the mutex
+
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] > 0 );
+    rocketnet_check( worst_wait < 1.0 );
 
     rocketnet_platform_socket_destroy( peer );
     rocketnet_server_gso_destroy( gso );
@@ -3270,7 +3310,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
-    { "test_server_gso_worker_lock_bounded", rocketnet_test_server_gso_worker_lock_bounded },
+    { "test_gso_worker_lock_bounded", rocketnet_test_gso_worker_lock_bounded },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
