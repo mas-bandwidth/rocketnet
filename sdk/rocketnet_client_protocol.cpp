@@ -794,6 +794,13 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
     int client_index = (int) rocketnet_read_uint32( &p );
     int max_clients = (int) rocketnet_read_uint32( &p );
 
+    if ( client_index < 0 || client_index >= max_clients || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_spam( "client rejected keep-alive. invalid index" );
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE]++;
+        return 0;
+    }
+
     client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED]++;
     rocketnet_spam( "client received keep alive" );
 
