@@ -8,7 +8,7 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
