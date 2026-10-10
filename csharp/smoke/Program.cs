@@ -171,7 +171,7 @@ static class Smoke
         serverConfig.MaxClientSlots = 4;
         string serverDriver = args.Length == 1 && args[0] == "--iocp" ? "iocp" : "portable";
         serverConfig.SetDriver( serverDriver );
-        IntPtr server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
+        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
         if ( server == IntPtr.Zero )
             Fail( $"server create on {address}" );
         if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
@@ -194,7 +194,7 @@ static class Smoke
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
         if ( clientConfig.GetDriver() != "auto" )
             Fail( $"client default config driver is '{clientConfig.GetDriver()}', expected 'auto'" );
-        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
+        ClientTransportHandle client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
         if ( client == IntPtr.Zero )
             Fail( "client create" );
         if ( RocketNet.ClientTransportDriver( client ).Length == 0 )
@@ -516,6 +516,15 @@ static class Smoke
             Fail( "server still counts the disconnected client" );
         Ok( $"server disconnect observed by client (state '{RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( client ) )}')" );
         RocketNet.ClientTransportDestroy( client );
+        try
+        {
+            RocketNet.ClientTransportDestroy( client );
+            Fail( "destroying a client twice did not throw" );
+        }
+        catch ( ObjectDisposedException )
+        {
+            Ok( "smoke_csharp_double_destroy_throws" );
+        }
 
         // negative control 1: one corrupted byte in the clear signed fields
         // (byte 0 is the version) and the client refuses the token at create
@@ -539,7 +548,7 @@ static class Smoke
         if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), unixNow, sealedBad ) == 0 )
             Fail( "write dev connect token (negative 2)" );
         sealedBad[100] ^= 0xFF;         // inside the sealed private block, under the signature
-        IntPtr sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
+        ClientTransportHandle sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
         if ( sealedClient == IntPtr.Zero )
             Fail( "sealed-block corruption should pass the client's local checks" );
         ulong refusals = 0;

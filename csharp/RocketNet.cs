@@ -26,6 +26,50 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
+/// <summary>Owns a native RocketNet client transport.</summary>
+public sealed class ClientTransportHandle : SafeHandle
+{
+    internal ClientTransportHandle( IntPtr handle ) : base( IntPtr.Zero, true ) => SetHandle( handle );
+
+    public override bool IsInvalid => handle == IntPtr.Zero;
+
+    protected override bool ReleaseHandle()
+    {
+        RocketNet.ClientTransportDestroyNative( handle );
+        return true;
+    }
+
+    public static implicit operator IntPtr( ClientTransportHandle client )
+    {
+        ArgumentNullException.ThrowIfNull( client );
+        if ( client.IsClosed )
+            throw new ObjectDisposedException( nameof(ClientTransportHandle) );
+        return client.DangerousGetHandle();
+    }
+}
+
+/// <summary>Owns a native RocketNet server transport.</summary>
+public sealed class ServerTransportHandle : SafeHandle
+{
+    internal ServerTransportHandle( IntPtr handle ) : base( IntPtr.Zero, true ) => SetHandle( handle );
+
+    public override bool IsInvalid => handle == IntPtr.Zero;
+
+    protected override bool ReleaseHandle()
+    {
+        RocketNet.ServerTransportDestroyNative( handle );
+        return true;
+    }
+
+    public static implicit operator IntPtr( ServerTransportHandle server )
+    {
+        ArgumentNullException.ThrowIfNull( server );
+        if ( server.IsClosed )
+            throw new ObjectDisposedException( nameof(ServerTransportHandle) );
+        return server.DangerousGetHandle();
+    }
+}
+
 /// <summary>The rocketnet C SDK surface: raw P/Invoke plus thin span helpers.</summary>
 public static unsafe partial class RocketNet
 {
@@ -652,36 +696,36 @@ public static unsafe partial class RocketNet
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
     /// monotonic; pass the same clock to every call that takes one. Returns IntPtr.Zero on
     /// refusal — an invalid token refuses here.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
     {
         ArgumentNullException.ThrowIfNull( connectToken );
         return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, ref config, time );
     }
 
     /// <summary>Creates a client from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
     {
         ValidateConnectTokenLength( connectToken.Length );
         fixed ( byte* token = connectToken )
-            return ClientTransportCreateNative( context, token, ref config, time );
+            return new ClientTransportHandle( ClientTransportCreateNative( context, token, ref config, time ) );
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
     private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, ref ClientTransportConfig config, double time );
 
     /// <summary>Creates a client with the default (development) config.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
     {
         ArgumentNullException.ThrowIfNull( connectToken );
         return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, nullConfig, time );
     }
 
     /// <summary>Creates a client with default config from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
     {
         ValidateConnectTokenLength( connectToken.Length );
         fixed ( byte* token = connectToken )
-            return ClientTransportCreateNative( context, token, nullConfig, time );
+            return new ClientTransportHandle( ClientTransportCreateNative( context, token, nullConfig, time ) );
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
@@ -695,7 +739,16 @@ public static unsafe partial class RocketNet
 
     /// <summary>Destroys the client. Disconnect and pump a few updates first.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportDestroy( IntPtr client );
+    internal static extern void ClientTransportDestroyNative( IntPtr client );
+
+    /// <summary>Destroys the client exactly once.</summary>
+    public static void ClientTransportDestroy( ClientTransportHandle client )
+    {
+        ArgumentNullException.ThrowIfNull( client );
+        if ( client.IsClosed )
+            throw new ObjectDisposedException( nameof(ClientTransportHandle) );
+        client.Dispose();
+    }
 
     /// <summary>Advances the client one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_update", CallingConvention = CallingConvention.Cdecl )]
@@ -871,11 +924,27 @@ public static unsafe partial class RocketNet
     /// <summary>Creates a server on the public address clients dial, e.g. "127.0.0.1:40000".
     /// Returns IntPtr.Zero on refusal.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
+    public static ServerTransportHandle ServerTransportCreate( IntPtr context, string publicAddress, ref ServerTransportConfig config, double time )
+    {
+        ArgumentNullException.ThrowIfNull( publicAddress );
+        return new ServerTransportHandle( ServerTransportCreateNative( context, publicAddress, ref config, time ) );
+    }
+
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]
+    private static extern IntPtr ServerTransportCreateNative( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
 
     /// <summary>Destroys the server. Stop and wait for stopped first.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportDestroy( IntPtr server );
+    internal static extern void ServerTransportDestroyNative( IntPtr server );
+
+    /// <summary>Destroys the server exactly once.</summary>
+    public static void ServerTransportDestroy( ServerTransportHandle server )
+    {
+        ArgumentNullException.ThrowIfNull( server );
+        if ( server.IsClosed )
+            throw new ObjectDisposedException( nameof(ServerTransportHandle) );
+        server.Dispose();
+    }
 
     /// <summary>Begins the stop: redundant disconnects go out, then the state reaches stopped.
     /// Main thread, never while a fill is open.</summary>
