@@ -2108,9 +2108,10 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
         for ( ssize_t i = 0; i < result; i++ )
         {
-            int bytes = (int) msg[i].msg_datalen;
+            size_t datalen = msg[i].msg_datalen;
+            int bytes = datalen > (size_t) packet_stride ? packet_stride : (int) datalen;
             rocketnet_address_t parsed;
-            if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
+            if ( ( msg[i].msg_flags & MSG_TRUNC ) || datalen > (size_t) packet_stride || bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
