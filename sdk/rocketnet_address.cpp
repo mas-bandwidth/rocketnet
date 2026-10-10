@@ -207,6 +207,9 @@ bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_add
     if ( a->type != b->type )
         return false;
 
+    if ( a->type != ROCKETNET_ADDRESS_IPV4 && a->type != ROCKETNET_ADDRESS_IPV6 )
+        return false;
+
     if ( a->type == ROCKETNET_ADDRESS_IPV4 )
     {
         if ( a->port != b->port )
