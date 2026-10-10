@@ -417,6 +417,27 @@ void rocketnet_test_copy_string()
     }
 }
 
+void rocketnet_test_copy_string_zero_size_writes_nothing()
+{
+    // dest_size 0 must write nothing and return 0. The old loop's
+    // dest_size - 1 underflowed to SIZE_MAX, so it copied the whole
+    // source over the caller's buffer regardless of its size. Fill the
+    // destination and its neighbours with a canary and require every
+    // byte to survive the call.
+
+    const char source[] = "hello";
+
+    unsigned char storage[16];
+    memset( storage, 0xAB, sizeof( storage ) );
+
+    const size_t result = rocketnet_copy_string( (char*) storage + 4, source, 0 );
+
+    rocketnet_check( result == 0 );
+
+    for ( size_t i = 0; i < sizeof( storage ); i++ )
+        rocketnet_check( storage[i] == 0xAB );
+}
+
 void rocketnet_test_address()
 {
     {
@@ -9156,6 +9177,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
     { "test_copy_string", rocketnet_test_copy_string },
+    { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
     { "test_address", rocketnet_test_address },
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },
