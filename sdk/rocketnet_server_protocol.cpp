@@ -23,6 +23,32 @@
 
 thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
+// Budget for failed AEAD opens per mapping per second (DoS protection)
+static int rocketnet_failed_open_budget_per_mapping = 100;
+static uint64_t rocketnet_failed_open_count[ROCKETNET_MAX_CLIENTS];
+static double rocketnet_failed_open_window_start[ROCKETNET_MAX_CLIENTS];
+
+static int rocketnet_check_failed_open_budget( int mapping_index, double current_time )
+{
+    if ( mapping_index < 0 || mapping_index >= ROCKETNET_MAX_CLIENTS )
+        return 0;
+
+    double window_start = rocketnet_failed_open_window_start[mapping_index];
+    if ( current_time - window_start >= 1.0 )
+    {
+        rocketnet_failed_open_count[mapping_index] = 0;
+        rocketnet_failed_open_window_start[mapping_index] = current_time;
+    }
+
+    return ( rocketnet_failed_open_count[mapping_index] >= (uint64_t)rocketnet_failed_open_budget_per_mapping ) ? 1 : 0;
+}
+
+static void rocketnet_record_failed_open( int mapping_index )
+{
+    if ( mapping_index >= 0 && mapping_index < ROCKETNET_MAX_CLIENTS )
+        rocketnet_failed_open_count[mapping_index]++;
+}
+
 static int rocketnet_server_request_cookie_mac( uint8_t * mac,
                                                 const struct rocketnet_address_t * from,
                                                 const uint8_t * connection_salt,
@@ -765,12 +791,22 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     const uint8_t * ephemeral = packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET ? mapping->client_ephemeral_public_key : NULL;
 
+    // Budget check: skip AEAD open if we've exceeded failed opens per second
+    if ( session_phase && rocketnet_check_failed_open_budget( mapping_index, current_time ) )
+    {
+        rocketnet_spam( "server ignored sealed packet. open budget exceeded" );
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_data, packet_bytes, packet_type,
                                                      sequence, server->protocol_id, mapping->connection_salt,
                                                      ephemeral, key );
     if ( opened_bytes < 0 )
     {
+        // Record failed open for budget tracking
+        rocketnet_record_failed_open( mapping_index );
+
         rocketnet_spam( "server ignored sealed packet. did not open" );
         counters[type_counters->did_not_open]++;
         rocketnet_server_integrity_failure( server, mapping_index, mapping );

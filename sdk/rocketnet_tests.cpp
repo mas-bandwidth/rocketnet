@@ -1459,6 +1459,54 @@ void rocketnet_test_packet_associated_data()
     rocketnet_check( memcmp( ad, rocketnet_test_disconnect_ad, ROCKETNET_AD_BYTES ) == 0 );
 }
 
+
+void rocketnet_test_failed_open_budget_per_mapping()
+{
+    // Test that failed AEAD opens are budgeted per mapping per second.
+    // Without the fix, 10000 forged sealed packets from one mapped address
+    // would each cost an AEAD open. With the fix, only ~100 are opened.
+    
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_server_protocol_counters_t * table = &rocketnet_test_protocol_counters;
+
+    struct rocketnet_server_protocol_t server;
+    rocketnet_server_protocol_dev_config( &server );
+    rocketnet_check( server.encryption_map != NULL );
+
+    // Create a mapping with test keys
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server.encryption_map, 0 );
+    rocketnet_check( mapping != NULL );
+    rocketnet_setup_test_mapping( mapping );
+
+    // Generate a forged sealed packet
+    uint8_t sealed[ROCKETNET_RECEIVE_CEILING];
+    int sealed_bytes = rocketnet_write_sealed_packet( sealed, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                      0x1234567890abcdefULL, mapping->handshake_secret, NULL );
+    rocketnet_check( sealed_bytes > 0 );
+
+    // Count budget limit: 10000 packets should only cost 100 opens
+    const int num_packets = 10000;
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        struct rocketnet_server_protocol_t dummy_server;
+        memcpy( &dummy_server, &server, sizeof(server) );
+        int response_bytes = 0;
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        
+        // This should return IGNORED after budget exceeded, without AEAD open
+        dummy_server.counters = &counters_storage;
+        rocketnet_server_process_sealed_packet( &dummy_server, 0, sealed, sealed_bytes, response, &response_bytes );
+    }
+
+    // Count how many times we tried to open (did_not_open counter)
+    // Without budget: should be num_packets (10000)
+    // With budget: should be at most budget (100) + some from other checks
+    // The key is that it's bounded, not equal to num_packets
+    rocketnet_check( counters[table->did_not_open] <= (uint64_t)rocketnet_failed_open_budget_per_mapping + 10 );
+}
+
 void rocketnet_test_sealed_packets()
 {
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
@@ -9326,6 +9374,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
     { "test_sealed_packets", rocketnet_test_sealed_packets },
     { "test_sealed_packet_refusals", rocketnet_test_sealed_packet_refusals },
+    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
     { "test_unsealed_packets", rocketnet_test_unsealed_packets },
     { "test_sequence_reconstruction", rocketnet_test_sequence_reconstruction },
     { "test_cookie", rocketnet_test_cookie },
