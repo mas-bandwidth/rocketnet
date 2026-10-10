@@ -466,6 +466,15 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
         }
 
+        if ( rocketnet_encryption_map_find( server->encryption_map, from ) != -1 )
+        {
+            sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_debug( "server ignored connection request. duplicate address" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+            counters[ROCKETNET_COUNTER_MAPPING_DUPLICATE]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
         int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
         if ( index == -1 )
         {
