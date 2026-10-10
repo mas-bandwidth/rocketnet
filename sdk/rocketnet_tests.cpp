@@ -8033,6 +8033,42 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+static size_t captured_allocation_bytes = 0;
+
+static void * test_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    captured_allocation_bytes = bytes;
+    return malloc( bytes );
+}
+
+static void test_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+void rocketnet_test_reassembly_arena_has_slack()
+{
+    const int num_connections = 2;
+    const int num_slots = 4;
+    const int max_payload_bytes = 8192;
+    const int delivered_capacity = 2;
+
+    const size_t expected_delivered_bytes = (size_t) delivered_capacity * (size_t) max_payload_bytes + 8;
+
+    struct rocketnet_reassembly_set_t * set =
+        rocketnet_reassembly_set_create( NULL, num_connections, num_slots, max_payload_bytes, delivered_capacity );
+    rocketnet_check( set );
+
+    rocketnet_check( set->delivered_capacity == delivered_capacity );
+    rocketnet_check( set->delivered != NULL );
+
+    rocketnet_reassembly_set_destroy( set );
+
+    rocketnet_check( test_last_allocation_bytes >= expected_delivered_bytes );
+}
+
 // a connected protocol pair on mocked time: the three-round-trip handshake
 // from the rtt test, plus a client-side reassembly set, so the fragment
 // tests start from a live session in a few lines
@@ -9936,6 +9972,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_oversize_refused_in_release", rocketnet_test_fragment_oversize_refused_in_release },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
+    { "test_reassembly_arena_has_slack", rocketnet_test_reassembly_arena_has_slack },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
     { "test_fragment_client_to_server", rocketnet_test_fragment_client_to_server },
