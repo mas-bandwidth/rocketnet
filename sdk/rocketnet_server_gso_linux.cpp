@@ -275,6 +275,14 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
     return false;
 }
 
+int rocketnet_server_gso_gro_segment_bytes( const struct cmsghdr * cmsg, int message_bytes )
+{
+    int segment_bytes = message_bytes;
+    if ( cmsg && cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO && cmsg->cmsg_len >= CMSG_LEN( sizeof(segment_bytes) ) )
+        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(segment_bytes) );
+    return segment_bytes > 0 ? segment_bytes : message_bytes;
+}
+
 // ---------------------------------------------------------------------------
 
 // one reuseport socket: family from the bind address, dual stack when ipv6,
@@ -506,7 +514,7 @@ static void rocketnet_server_gso_worker( void * data )
                 {
                     if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
                     {
-                        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
+                        segment_bytes = rocketnet_server_gso_gro_segment_bytes( cmsg, message_bytes );
                         break;
                     }
                 }

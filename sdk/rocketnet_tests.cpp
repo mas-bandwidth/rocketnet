@@ -35,6 +35,15 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_socket.h"
+#include "rocketnet_server_gso.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
+extern int rocketnet_server_gso_gro_segment_bytes( const struct cmsghdr * cmsg, int message_bytes );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -8957,6 +8966,28 @@ void rocketnet_test_driver_ladder_parse()
     rocketnet_check( ladder.num_candidates == 2 );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+void rocketnet_test_gro_short_cmsg_falls_back()
+{
+    alignas( struct cmsghdr ) char control[CMSG_SPACE( sizeof(int) )] = {};
+    struct msghdr message = {};
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+
+    struct cmsghdr * cmsg = CMSG_FIRSTHDR( &message );
+    cmsg->cmsg_level = IPPROTO_UDP;
+    cmsg->cmsg_type = UDP_GRO;
+    cmsg->cmsg_len = CMSG_LEN( sizeof(int) ) - 1;
+    const int short_stride = 1;
+    memcpy( CMSG_DATA( cmsg ), &short_stride, sizeof(short_stride) );
+
+    rocketnet_check( rocketnet_server_gso_gro_segment_bytes( cmsg, 1200 ) == 1200 );
+
+    cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+    rocketnet_check( rocketnet_server_gso_gro_segment_bytes( cmsg, 1200 ) == short_stride );
+}
+#endif
+
 
 
 // #109: a port-zero public address asks the KERNEL for a port, so it only
@@ -9380,6 +9411,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_gro_short_cmsg_falls_back", rocketnet_test_gro_short_cmsg_falls_back },
+#endif
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
