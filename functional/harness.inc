@@ -14,7 +14,6 @@
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_counters.h"
-#include "rocketnet_wire.h"
 
 #include <climits>
 

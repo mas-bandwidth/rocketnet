@@ -252,11 +252,15 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     int server_key_matches = 0;
+    int server_key_is_previous = 0;
     if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
         server_key_matches = 1;
     else if ( server->has_previous_server_key &&
               sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->previous_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
+    {
         server_key_matches = 1;
+        server_key_is_previous = 1;
+    }
 
     if ( !server_key_matches )
     {
@@ -363,8 +367,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    const uint8_t * server_public_key = server_key_is_previous ? server->previous_server_public_key : server->server_public_key;
+    const uint8_t * server_secret_key = server_key_is_previous ? server->previous_server_secret_key : server->server_secret_key;
+
     struct rocketnet_connect_token_private_t private_data;
-    if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
+    if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server_public_key, server_secret_key ) )
     {
         rocketnet_debug( "server ignored connection request. could not open sealed private block" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK]++;
