@@ -9262,6 +9262,64 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+void rocketnet_test_failed_open_budget_per_mapping()
+{
+    // Test that failed AEAD opens are budgeted per mapping per second
+    // Before the fix: 10000 junk packets each cost an AEAD open
+    // After the fix: only budgeted opens occur; excess is dropped without opening
+
+    uint8_t wrong_key[32];
+    memset( wrong_key, 0x42, sizeof(wrong_key) );
+
+    const uint8_t junk_payload[8] = { 0 };
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x5F1A2BULL, &client_keys );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+
+    // Establish connection first
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    // Reset counters for clean budget test
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED] = 0;
+
+    // Send many junk packets - with budget this should be limited
+    const int NUM_JUNK_PACKETS = 10000;
+    const int EXPECTED_BUDGET = 100;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < NUM_JUNK_PACKETS; i++ )
+    {
+        int packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1000 + i,
+                                                                junk_payload, 8, wrong_key );
+        rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                       payload_out, &payload_out_bytes, &payload_client_index );
+    }
+
+    // Before fix: did_not_open counter should be NUM_JUNK_PACKETS
+    // After fix: budget_exceeded counter should be NUM_JUNK_PACKETS - EXPECTED_BUDGET
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED] == (NUM_JUNK_PACKETS - EXPECTED_BUDGET) );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9349,6 +9407,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
+    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
@@ -9397,6 +9456,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_failed_open_budget_per_mapping", rocketnet_test_failed_open_budget_per_mapping },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;

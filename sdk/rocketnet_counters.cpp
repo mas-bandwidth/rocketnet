@@ -71,6 +71,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE:                                 return "PAYLOAD_ZERO_SEQUENCE";
         case ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED:                              return "PAYLOAD_ALREADY_RECEIVED";
         case ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN:                                  return "PAYLOAD_DID_NOT_OPEN";
+        case ROCKETNET_COUNTER_PAYLOAD_OPEN_BUDGET_EXCEEDED:                          return "PAYLOAD_OPEN_BUDGET_EXCEEDED";
         case ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED:                                 return "PAYLOAD_NOT_CONNECTED";
         case ROCKETNET_COUNTER_PAYLOAD_DELIVERED:                                     return "PAYLOAD_DELIVERED";
         case ROCKETNET_COUNTER_DISCONNECT_RECEIVED:                                   return "DISCONNECT_RECEIVED";
