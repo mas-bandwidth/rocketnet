@@ -9810,6 +9810,23 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_maintenance_skips_unmapped_slot()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES] = {0};
+
+    int slot = rocketnet_client_slots_assign( test.server.client_slots, 0xDEADBEEF, -1, dummy_user_data );
+    rocketnet_check( slot >= 0 );
+    rocketnet_check( rocketnet_client_slots_connected( test.server.client_slots, slot ) == 1 );
+    rocketnet_check( rocketnet_client_slots_mapping_index( test.server.client_slots, slot ) == -1 );
+
+    rocketnet_server_protocol_update( &test.server, 100.0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9856,8 +9873,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_cookie", rocketnet_test_cookie },
     { "test_connection_keys", rocketnet_test_connection_keys },
     { "test_counters", rocketnet_test_counters },
-    { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
-    { "test_used_token_history", rocketnet_test_used_token_history },
+     { "test_maintenance_skips_unmapped_slot", rocketnet_test_maintenance_skips_unmapped_slot },
+     { "test_response_wrong_size_counted", rocketnet_test_response_wrong_size_counted },
+     { "test_used_token_history", rocketnet_test_used_token_history },
     { "test_admitted_token_set", rocketnet_test_admitted_token_set },
     { "test_encryption_map", rocketnet_test_encryption_map },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
