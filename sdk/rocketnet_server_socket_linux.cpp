@@ -48,6 +48,9 @@
 #include <stdio.h>
 #include <atomic>
 
+// XDP umem frame size must match libxdp expectation
+static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
+
 struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
@@ -1432,7 +1435,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, NULL );
+        // create umem with explicit config
+        struct xsk_umem_config umem_config;
+        memset( &umem_config, 0, sizeof(umem_config) );
+        umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
+        umem_config.frame_headroom = 0;
+
+        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
         if ( result ) 
         {
             rocketnet_error( "server could not create umem" );

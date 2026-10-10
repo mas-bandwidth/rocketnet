@@ -43,6 +43,8 @@ extern bool rocketnet_test_private_block_copied;
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_socket.h"
+#include <xdp/xsk.h>
+#include <xdp/libxdp.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -9493,6 +9495,16 @@ void rocketnet_test_config_override_logging()
     rocketnet_test_env_restore( &secret_guard );
 }
 
+// Verify XDP umem config frame_size matches the expected constant
+void rocketnet_test_umem_config_frame_size_explicit()
+{
+    struct xsk_umem_config config;
+    memset( &config, 0, sizeof(config) );
+    config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
+    config.frame_headroom = 0;
+    rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
+}
+
 
 
 
@@ -9914,6 +9926,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
