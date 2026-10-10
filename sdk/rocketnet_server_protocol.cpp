@@ -82,6 +82,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    const uint8_t * connection_salt = packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES;
+
     // one lookup serves the next two rungs: a mapping with a slot is a
     // connected client, whose address never provokes anything from this
     // path; a mapping without one is a handshake in flight, answered with
@@ -99,6 +101,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
+            if ( memcmp( mapping->connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) != 0 )
+            {
+                rocketnet_debug( "server ignored connection request. mapping salt does not match" );
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
             *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
             rocketnet_debug( "server resent stored connection challenge" );
@@ -113,7 +120,6 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // signature (64).
 
     const uint8_t * return_cookie = packet_data + ROCKETNET_PREFILTER_BYTES;
-    const uint8_t * connection_salt = return_cookie + ROCKETNET_COOKIE_FIELD_BYTES;
     const uint8_t * client_ephemeral_public_key = connection_salt + ROCKETNET_CONNECTION_SALT_BYTES;
     const uint8_t * signed_connect_data = client_ephemeral_public_key + ROCKETNET_KEY_BYTES;
     const uint8_t * signature = signed_connect_data + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
