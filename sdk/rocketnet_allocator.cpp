@@ -1,0 +1,695 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#include "rocketnet_allocator.h"
+#include "rocketnet_platform.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <inttypes.h>
+
+// Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
+// send store checked by tla/RNSendStore.tla.
+
+// ----------------------------------------------------------------
+//          the entry sizes, pinned to section 14's figures
+// ----------------------------------------------------------------
+
+static_assert( sizeof(rn_channel_send_t) == 32, "channel send state is 32 bytes (14)" );
+static_assert( sizeof(rn_channel_receive_t) == 16, "channel receive state is 16 bytes (14)" );
+static_assert( sizeof(rn_send_number_t) == 32, "the sender's per-number entry is 32 bytes (14)" );
+static_assert( sizeof(rn_receive_descriptor_t) == 32, "the receiver's descriptor is 32 bytes (14)" );
+static_assert( sizeof(rn_held_entry_t) == 16, "a held-ordered index entry is 16 bytes (14)" );
+static_assert( sizeof(rn_send_descriptor_t) == 64, "a send descriptor is 64 bytes (14)" );
+static_assert( sizeof(rn_sent_packet_t) == 32, "a sent-packet entry is 32 bytes (14)" );
+static_assert( sizeof(rn_sent_index_t) == 16, "a sent-packet index entry is 16 bytes (14)" );
+static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
+static_assert( sizeof(rn_sequenced_hold_t) == 1208, "a sequenced hold is 1208 bytes (14)" );
+static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
+static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
+
+static uint64_t rn_align64( uint64_t value )
+{
+    return ( value + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uint64_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 );
+}
+
+static void rn_count( rocketnet_counters_t * counters, int counter )
+{
+    // an object's regions share its counters, and different connections may
+    // send from different threads (16.1), so a refusal adds atomically
+    if ( counters )
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
+}
+
+// ----------------------------------------------------------------
+//                            the layout
+// ----------------------------------------------------------------
+
+static const char * const rn_part_names[RN_NUM_PARTS] =
+{
+    "channel send state",
+    "channel receive state",
+    "sender per-number table",
+    "receiver descriptors",
+    "received bitset",
+    "held-ordered index",
+    "receive ring",
+    "send descriptors",
+    "send store",
+    "sent-packet ring",
+    "sent-packet index",
+    "sent-packet references",
+    "delivered entries",
+    "sequenced holds",
+    "receipt ring",
+};
+
+static const char * const rn_part_formulas[RN_NUM_PARTS] =
+{
+    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1208Ru", "16Rq",
+};
+
+const char * rn_region_part_name( int part )
+{
+    return part >= 0 && part < RN_NUM_PARTS ? rn_part_names[part] : NULL;
+}
+
+const char * rn_region_part_formula( int part )
+{
+    return part >= 0 && part < RN_NUM_PARTS ? rn_part_formulas[part] : NULL;
+}
+
+// Section 14: each part is its formula's term exactly, at a 64-aligned offset
+// (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
+// exact region is the formula plus at most 63 bytes per part.
+
+bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout )
+{
+    rocketnet_assert( layout );
+
+    rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    if ( !rocketnet_message_validate_config( config ) )
+        return false;
+
+    const uint64_t C = (uint64_t) config->num_channels;
+    const uint64_t W = (uint64_t) config->window_messages;
+    const uint64_t B = (uint64_t) config->receive_ring_bytes;
+    const uint64_t Q = (uint64_t) config->send_queue_messages;
+    const uint64_t S = (uint64_t) config->send_buffer_bytes;
+    const uint64_t P = (uint64_t) config->packets_in_flight;
+    const uint64_t Du = (uint64_t) config->unreliable_deliveries;
+    const uint64_t Ru = (uint64_t) config->sequenced_holds;
+    const uint64_t Rq = (uint64_t) config->receipt_ring;
+
+    memset( layout, 0, sizeof(*layout) );
+    layout->bytes[RN_PART_CHANNEL_SEND] = sizeof(rn_channel_send_t) * C;
+    layout->bytes[RN_PART_CHANNEL_RECEIVE] = sizeof(rn_channel_receive_t) * C;
+    layout->bytes[RN_PART_SEND_NUMBERS] = sizeof(rn_send_number_t) * W;
+    layout->bytes[RN_PART_RECEIVE_DESCRIPTORS] = sizeof(rn_receive_descriptor_t) * W;
+    layout->bytes[RN_PART_RECEIVED_BITS] = W / 8;                                   // W is a power of two, at least 64: whole u64 words
+    layout->bytes[RN_PART_HELD_INDEX] = sizeof(rn_held_entry_t) * 2 * W;
+    layout->bytes[RN_PART_RECEIVE_RING] = B;
+    layout->bytes[RN_PART_SEND_DESCRIPTORS] = sizeof(rn_send_descriptor_t) * Q;
+    layout->bytes[RN_PART_SEND_STORE] = S;
+    layout->bytes[RN_PART_SENT_PACKETS] = sizeof(rn_sent_packet_t) * P;
+    layout->bytes[RN_PART_SENT_INDEX] = sizeof(rn_sent_index_t) * 2 * P;
+    layout->bytes[RN_PART_SENT_REFS] = sizeof(uint32_t) * 16 * P;
+    layout->bytes[RN_PART_DELIVERIES] = sizeof(rn_delivery_t) * ( W + Du );
+    layout->bytes[RN_PART_SEQUENCED_HOLDS] = sizeof(rn_sequenced_hold_t) * Ru;
+    layout->bytes[RN_PART_RECEIPTS] = sizeof(rn_receipt_t) * Rq;
+
+    uint64_t offset = 0;
+    for ( int part = 0; part < RN_NUM_PARTS; part++ )
+    {
+        layout->offset[part] = offset;
+        layout->formula_bytes += layout->bytes[part];
+        offset = rn_align64( offset + layout->bytes[part] );
+    }
+    layout->region_bytes = offset;
+
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+        layout->store_chunks[c] = rn_send_store_chunks_for( S, c );
+
+    return true;
+}
+
+// ----------------------------------------------------------------
+//                          the send store
+// ----------------------------------------------------------------
+
+// A chunk's link (RNSendStore): free, the next free chunk; allocated,
+// IN_USE, HEAD on a chain's first chunk, and the next chunk of its chain.
+
+#define RN_LINK_IN_USE          0x80000000u
+#define RN_LINK_HEAD            0x40000000u
+#define RN_LINK_INDEX           0x3FFFFFFFu
+#define RN_LINK_END             RN_LINK_INDEX
+
+static const uint32_t rn_class_bytes[RN_STORE_NUM_CLASSES] = { RN_STORE_SMALL_BYTES, RN_STORE_MEDIUM_BYTES, RN_STORE_LARGE_BYTES };
+
+static uint64_t rn_send_store_third( uint64_t store_bytes )
+{
+    // each class a third of S by bytes (4), kept 64-aligned so every class's chunks are
+    return ( store_bytes / RN_STORE_NUM_CLASSES ) & ~(uint64_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 );
+}
+
+uint32_t rn_send_store_chunks_for( uint64_t store_bytes, int class_index )
+{
+    rocketnet_assert( class_index >= 0 && class_index < RN_STORE_NUM_CLASSES );
+    // each chunk with its u32 link, both inside the class's third: no byte outside S
+    return (uint32_t) ( rn_send_store_third( store_bytes ) / ( rn_class_bytes[class_index] + sizeof(uint32_t) ) );
+}
+
+int rn_send_store_class_for( int bytes )
+{
+    // the smallest class that fits, and only that class: no fallback to a larger one (4)
+    if ( bytes <= RN_STORE_SMALL_BYTES )
+        return RN_STORE_SMALL;
+    if ( bytes <= RN_STORE_MEDIUM_BYTES )
+        return RN_STORE_MEDIUM;
+    return RN_STORE_LARGE;
+}
+
+uint32_t rn_send_store_chunks_needed( int bytes )
+{
+    // a block is ceil( bytes / F ) large chunks, one per fragment (4, 8)
+    if ( bytes <= RN_STORE_LARGE_BYTES )
+        return 1;
+    return (uint32_t) ( ( (uint64_t) bytes + RN_STORE_LARGE_BYTES - 1 ) / RN_STORE_LARGE_BYTES );
+}
+
+void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes )
+{
+    rocketnet_assert( store );
+    rocketnet_assert( memory || bytes == 0 );
+
+    const uint64_t third = rn_send_store_third( bytes );
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
+        rn_store_class_t * cls = &store->classes[c];
+        cls->chunk_bytes = rn_class_bytes[c];
+        cls->num_chunks = rn_send_store_chunks_for( bytes, c );
+        rocketnet_assert( cls->num_chunks < RN_LINK_END );
+        cls->data = memory + (uint64_t) c * third;
+        cls->link = (uint32_t*) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
+        for ( uint32_t i = 0; i < cls->num_chunks; i++ )
+            cls->link[i] = i + 1 < cls->num_chunks ? i + 1 : RN_LINK_END;
+        cls->free_head = cls->num_chunks > 0 ? 0 : RN_LINK_END;
+        cls->free_count = cls->num_chunks;
+    }
+}
+
+uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
+{
+    rocketnet_assert( store );
+    if ( bytes <= 0 )
+        return RN_CHUNK_NONE;
+
+    const int c = rn_send_store_class_for( bytes );
+    const uint32_t needed = rn_send_store_chunks_needed( bytes );
+    rn_store_class_t * cls = &store->classes[c];
+
+    // all or none (RNSendStore AllOrNone): a block the class cannot hold whole takes nothing
+    if ( cls->free_count < needed )
+        return RN_CHUNK_NONE;
+
+    uint32_t first = RN_LINK_END;
+    uint32_t previous = RN_LINK_END;
+    for ( uint32_t n = 0; n < needed; n++ )
+    {
+        const uint32_t i = cls->free_head;
+        rocketnet_assert( i < cls->num_chunks );
+        rocketnet_assert( ( cls->link[i] & RN_LINK_IN_USE ) == 0 );
+        cls->free_head = cls->link[i];
+        cls->link[i] = RN_LINK_IN_USE | RN_LINK_END;
+        if ( previous == RN_LINK_END )
+        {
+            first = i;
+            cls->link[i] |= RN_LINK_HEAD;
+        }
+        else
+        {
+            cls->link[previous] = ( cls->link[previous] & ~RN_LINK_INDEX ) | i;
+        }
+        previous = i;
+    }
+    cls->free_count -= needed;
+
+    return ( (uint32_t) c << 30 ) | first;
+}
+
+bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
+{
+    rocketnet_assert( store );
+    if ( handle == RN_CHUNK_NONE )
+        return false;
+    const int c = rn_send_store_chunk_class( handle );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return false;
+    rn_store_class_t * cls = &store->classes[c];
+    uint32_t i = handle & RN_LINK_INDEX;
+    if ( i >= cls->num_chunks )
+        return false;
+
+    // only a chain's head, still allocated, frees (RNSendStore NoDoubleAllocate):
+    // a second free of the same chain finds the flag already cleared and refuses
+    if ( ( cls->link[i] & ( RN_LINK_IN_USE | RN_LINK_HEAD ) ) != ( RN_LINK_IN_USE | RN_LINK_HEAD ) )
+        return false;
+
+    while ( i != RN_LINK_END )
+    {
+        rocketnet_assert( i < cls->num_chunks && ( cls->link[i] & RN_LINK_IN_USE ) != 0 );
+        const uint32_t next = cls->link[i] & RN_LINK_INDEX;
+        // the in-use flag clears in the same store that pushes the chunk:
+        // no state where a chunk is both free-listed and in use
+        cls->link[i] = cls->free_head;
+        cls->free_head = i;
+        cls->free_count++;
+        i = next;
+    }
+    return true;
+}
+
+void rn_send_store_free( rn_send_store_t * store, uint32_t handle )
+{
+    const bool freed = rn_send_store_free_checked( store, handle );
+    rocketnet_assert( freed );
+    (void) freed;
+}
+
+uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle )
+{
+    rocketnet_assert( store );
+    rocketnet_assert( handle != RN_CHUNK_NONE );
+    const rn_store_class_t * cls = &store->classes[rn_send_store_chunk_class( handle )];
+    const uint32_t i = handle & RN_LINK_INDEX;
+    rocketnet_assert( i < cls->num_chunks );
+    return cls->data + (uint64_t) i * cls->chunk_bytes;
+}
+
+uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle )
+{
+    rocketnet_assert( store );
+    rocketnet_assert( handle != RN_CHUNK_NONE );
+    const int c = rn_send_store_chunk_class( handle );
+    const rn_store_class_t * cls = &store->classes[c];
+    const uint32_t i = handle & RN_LINK_INDEX;
+    rocketnet_assert( i < cls->num_chunks && ( cls->link[i] & RN_LINK_IN_USE ) != 0 );
+    const uint32_t next = cls->link[i] & RN_LINK_INDEX;
+    return next == RN_LINK_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
+}
+
+uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index )
+{
+    rocketnet_assert( store && class_index >= 0 && class_index < RN_STORE_NUM_CLASSES );
+    return store->classes[class_index].free_count;
+}
+
+uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index )
+{
+    rocketnet_assert( store && class_index >= 0 && class_index < RN_STORE_NUM_CLASSES );
+    return store->classes[class_index].num_chunks;
+}
+
+// ----------------------------------------------------------------
+//                            the region
+// ----------------------------------------------------------------
+
+static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_region_layout_t * layout, const rocketnet_message_config_t * config, rocketnet_counters_t * counters )
+{
+    memset( region, 0, sizeof(*region) );
+    region->base = base;
+    region->bytes = layout->region_bytes;
+    region->counters = counters;
+
+    region->num_channels = (uint32_t) config->num_channels;
+    region->window = (uint32_t) config->window_messages;
+    region->ring_bytes = (uint32_t) config->receive_ring_bytes;
+    region->queue = (uint32_t) config->send_queue_messages;
+    region->packets = (uint32_t) config->packets_in_flight;
+    region->held_entries = 2 * region->window;
+    region->sent_index_entries = 2 * region->packets;
+    region->sent_ref_entries = 16 * region->packets;
+    region->delivery_entries = region->window + (uint32_t) config->unreliable_deliveries;
+    region->holds = (uint32_t) config->sequenced_holds;
+    region->receipt_entries = (uint32_t) config->receipt_ring;
+    region->max_message_bytes = (uint32_t) config->max_message_bytes;
+
+    // every typed carve-out at its part's offset, nothing outside the region
+    region->channel_send = (rn_channel_send_t*) ( base + layout->offset[RN_PART_CHANNEL_SEND] );
+    region->channel_receive = (rn_channel_receive_t*) ( base + layout->offset[RN_PART_CHANNEL_RECEIVE] );
+    region->send_numbers = (rn_send_number_t*) ( base + layout->offset[RN_PART_SEND_NUMBERS] );
+    region->receive_descriptors = (rn_receive_descriptor_t*) ( base + layout->offset[RN_PART_RECEIVE_DESCRIPTORS] );
+    region->received_bits = (uint64_t*) ( base + layout->offset[RN_PART_RECEIVED_BITS] );
+    region->held_index = (rn_held_entry_t*) ( base + layout->offset[RN_PART_HELD_INDEX] );
+    region->receive_ring = base + layout->offset[RN_PART_RECEIVE_RING];
+    region->send_descriptors = (rn_send_descriptor_t*) ( base + layout->offset[RN_PART_SEND_DESCRIPTORS] );
+    region->sent_packets = (rn_sent_packet_t*) ( base + layout->offset[RN_PART_SENT_PACKETS] );
+    region->sent_index = (rn_sent_index_t*) ( base + layout->offset[RN_PART_SENT_INDEX] );
+    region->sent_refs = (uint32_t*) ( base + layout->offset[RN_PART_SENT_REFS] );
+    region->deliveries = (rn_delivery_t*) ( base + layout->offset[RN_PART_DELIVERIES] );
+    region->sequenced_holds = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
+    region->receipts = (rn_receipt_t*) ( base + layout->offset[RN_PART_RECEIPTS] );
+
+    // the store's memory is S at its offset; its class tables live in the region struct
+    region->store_memory = base + layout->offset[RN_PART_SEND_STORE];
+    region->store_bytes = layout->bytes[RN_PART_SEND_STORE];
+    rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
+}
+
+void rn_region_carve( rn_region_t * region )
+{
+    rocketnet_assert( region && region->base );
+
+    // the fixed tables to their empty state (4.1). O(tables), once per
+    // connection, never on a send or receive path. The ring and the store's
+    // chunks keep their bytes: every reader of them writes first.
+
+    memset( region->channel_send, 0, sizeof(rn_channel_send_t) * region->num_channels );
+    memset( region->channel_receive, 0, sizeof(rn_channel_receive_t) * region->num_channels );
+    for ( uint32_t c = 0; c < region->num_channels; c++ )
+    {
+        region->channel_send[c].queue_head = RN_DESCRIPTOR_NONE;
+        region->channel_send[c].queue_tail = RN_DESCRIPTOR_NONE;
+        region->channel_send[c].ready_prev = RN_DESCRIPTOR_NONE;
+        region->channel_send[c].ready_next = RN_DESCRIPTOR_NONE;
+        region->channel_receive[c].held_sequenced = RN_DESCRIPTOR_NONE;
+    }
+
+    memset( region->send_numbers, 0, sizeof(rn_send_number_t) * region->window );
+    for ( uint32_t n = 0; n < region->window; n++ )
+        region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
+    memset( region->receive_descriptors, 0, sizeof(rn_receive_descriptor_t) * region->window );
+    memset( region->received_bits, 0, region->window / 8 );
+    memset( region->held_index, 0, sizeof(rn_held_entry_t) * region->held_entries );
+
+    // the send descriptor pool: an intrusive LIFO free list through next
+    memset( region->send_descriptors, 0, sizeof(rn_send_descriptor_t) * region->queue );
+    for ( uint32_t d = 0; d < region->queue; d++ )
+        region->send_descriptors[d].next = d + 1 < region->queue ? d + 1 : RN_DESCRIPTOR_NONE;
+    region->descriptors_free_head = region->queue > 0 ? 0 : RN_DESCRIPTOR_NONE;
+    region->descriptors_free = region->queue;
+
+    // the store's free lists, rethreaded in place
+    rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
+
+    memset( region->sent_packets, 0, sizeof(rn_sent_packet_t) * region->packets );
+    memset( region->sent_index, 0, sizeof(rn_sent_index_t) * region->sent_index_entries );
+    memset( region->sent_refs, 0, sizeof(uint32_t) * region->sent_ref_entries );
+    memset( region->deliveries, 0, sizeof(rn_delivery_t) * region->delivery_entries );
+    for ( uint32_t h = 0; h < region->holds; h++ )
+    {
+        rn_sequenced_hold_t * hold = &region->sequenced_holds[h];
+        hold->bytes = 0;
+        hold->ordering = 0;
+        hold->sequencing = 0;
+        hold->channel = 0;
+        hold->used = 0;
+        hold->code = 0;
+    }
+    memset( region->receipts, 0, sizeof(rn_receipt_t) * region->receipt_entries );
+
+    region->carves++;
+}
+
+uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
+{
+    rocketnet_assert( region );
+
+    // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
+    if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
+        return RN_DESCRIPTOR_NONE;
+
+    // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
+    // taken from either pool when one of them refuses
+
+    if ( region->descriptors_free == 0 )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+        return RN_DESCRIPTOR_NONE;
+    }
+
+    const uint32_t chunk = rn_send_store_alloc( &region->store, bytes );
+    if ( chunk == RN_CHUNK_NONE )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        return RN_DESCRIPTOR_NONE;
+    }
+
+    const uint32_t d = region->descriptors_free_head;
+    rocketnet_assert( d < region->queue );
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    rocketnet_assert( !descriptor->in_use );
+    region->descriptors_free_head = descriptor->next;
+    region->descriptors_free--;
+
+    memset( descriptor, 0, sizeof(*descriptor) );
+    descriptor->chunk = chunk;
+    descriptor->bytes = (uint32_t) bytes;
+    descriptor->next = RN_DESCRIPTOR_NONE;
+    descriptor->fragments = (uint16_t) rn_send_store_chunks_needed( bytes );
+    descriptor->in_use = 1;
+    return d;
+}
+
+void rn_region_send_free( rn_region_t * region, uint32_t d )
+{
+    rocketnet_assert( region );
+    rocketnet_assert( d < region->queue );
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    rocketnet_assert( descriptor->in_use );
+    if ( d >= region->queue || !descriptor->in_use )
+        return;
+    rn_send_store_free( &region->store, descriptor->chunk );
+    descriptor->in_use = 0;
+    descriptor->chunk = RN_CHUNK_NONE;
+    descriptor->next = region->descriptors_free_head;
+    region->descriptors_free_head = d;
+    region->descriptors_free++;
+}
+
+bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes )
+{
+    rocketnet_assert( region );
+    const uintptr_t address = (uintptr_t) p;
+    const uintptr_t base = (uintptr_t) region->base;
+    if ( address < base || bytes > region->bytes )
+        return false;
+    return (uint64_t) ( address - base ) <= region->bytes - bytes;
+}
+
+bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes )
+{
+    // placement is the sender's; the receiver only checks bounds (4.3, 6.3), so
+    // a sender that breaks them is a violation, never a write outside the ring
+    rocketnet_assert( region );
+    if ( bytes == 0 || offset % 16 != 0 || offset >= region->ring_bytes )
+        return false;
+    return bytes <= region->ring_bytes - offset;
+}
+
+// ----------------------------------------------------------------
+//                            the arena
+// ----------------------------------------------------------------
+
+struct rn_arena_t
+{
+    void * context;
+    uint64_t bytes;
+    int num_regions;
+    rn_region_layout_t layout;
+    rn_region_t * regions;
+    uint8_t * memory;
+};
+
+rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
+{
+    rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    if ( num_regions < 1 || num_regions > ( 1 << 20 ) )
+    {
+        rocketnet_error( "message arena of %d regions refused (1 to %d)", num_regions, 1 << 20 );
+        return NULL;
+    }
+
+    rn_region_layout_t layout;
+    if ( !rn_region_layout( config, &layout ) )
+        return NULL;
+
+    // one allocation for the object: its header, its region structs, then
+    // num_regions regions back to back, each 64-aligned (4)
+
+    const uint64_t header = rn_align64( sizeof(rn_arena_t) ) + rn_align64( sizeof(rn_region_t) * (uint64_t) num_regions );
+    if ( layout.region_bytes > ( UINT64_MAX - header ) / (uint64_t) num_regions || header + layout.region_bytes * (uint64_t) num_regions > (uint64_t) SIZE_MAX )
+    {
+        rocketnet_error( "message arena of %d regions of %" PRIu64 " bytes is too large", num_regions, layout.region_bytes );
+        return NULL;
+    }
+    const uint64_t bytes = header + layout.region_bytes * (uint64_t) num_regions;
+
+    uint8_t * memory = (uint8_t*) rocketnet_malloc( context, (size_t) bytes );
+    if ( !memory )
+    {
+        rocketnet_error( "message arena allocation of %" PRIu64 " bytes failed", bytes );
+        return NULL;
+    }
+
+    rn_arena_t * arena = (rn_arena_t*) memory;
+    memset( arena, 0, sizeof(*arena) );
+    arena->context = context;
+    arena->bytes = bytes;
+    arena->num_regions = num_regions;
+    arena->layout = layout;
+    arena->regions = (rn_region_t*) ( memory + rn_align64( sizeof(rn_arena_t) ) );
+    arena->memory = memory + header;
+
+    for ( int i = 0; i < num_regions; i++ )
+    {
+        rn_region_point( &arena->regions[i], arena->memory + layout.region_bytes * (uint64_t) i, &layout, config, counters );
+        rn_region_carve( &arena->regions[i] );
+    }
+
+    return arena;
+}
+
+void rn_arena_destroy( rn_arena_t * arena )
+{
+    if ( !arena )
+        return;
+    rocketnet_free( arena->context, arena );
+}
+
+int rn_arena_num_regions( const rn_arena_t * arena )
+{
+    rocketnet_assert( arena );
+    return arena->num_regions;
+}
+
+rn_region_t * rn_arena_region( rn_arena_t * arena, int index )
+{
+    rocketnet_assert( arena );
+    if ( index < 0 || index >= arena->num_regions )
+        return NULL;
+    return &arena->regions[index];
+}
+
+uint64_t rn_arena_bytes( const rn_arena_t * arena )
+{
+    rocketnet_assert( arena );
+    return arena->bytes;
+}
+
+// ----------------------------------------------------------------
+//                     the sizing, before connect
+// ----------------------------------------------------------------
+
+uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config )
+{
+    rn_region_layout_t layout;
+    if ( !rn_region_layout( config, &layout ) )
+        return 0;
+    return layout.region_bytes;
+}
+
+struct rn_text_t
+{
+    char * buffer;
+    int size;
+    int length;
+};
+
+static void rn_text_append( rn_text_t * text, const char * format, ... )
+{
+    // snprintf's contract over many appends: write what fits, always
+    // terminate, count the full length. Integers and strings only, so
+    // nothing here allocates.
+    char * at = NULL;
+    size_t room = 0;
+    if ( text->buffer && text->length < text->size )
+    {
+        at = text->buffer + text->length;
+        room = (size_t) ( text->size - text->length );
+    }
+    va_list args;
+    va_start( args, format );
+    const int written = vsnprintf( at, room, format, args );
+    va_end( args );
+    if ( written > 0 )
+        text->length += written;
+}
+
+int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size )
+{
+    if ( buffer && buffer_size > 0 )
+        buffer[0] = '\0';
+    if ( buffer_size < 0 )
+        buffer_size = 0;
+
+    rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    rn_region_layout_t layout;
+    if ( !rn_region_layout( config, &layout ) )
+        return 0;
+    if ( num_connections < 0 )
+        num_connections = 0;
+
+    rn_text_t text = { buffer, buffer_size, 0 };
+    rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 96.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq\n" );
+    rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
+                    config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
+                    config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
+                    config->sequenced_holds, config->receipt_ring );
+    for ( int part = 0; part < RN_NUM_PARTS; part++ )
+        rn_text_append( &text, "  %-24s %-9s %" PRIu64 "\n", rn_part_names[part], rn_part_formulas[part], layout.bytes[part] );
+    rn_text_append( &text, "store classes %u x %d, %u x %d, %u x %d\n",
+                    layout.store_chunks[RN_STORE_SMALL], RN_STORE_SMALL_BYTES,
+                    layout.store_chunks[RN_STORE_MEDIUM], RN_STORE_MEDIUM_BYTES,
+                    layout.store_chunks[RN_STORE_LARGE], RN_STORE_LARGE_BYTES );
+    rn_text_append( &text, "formula bytes %" PRIu64 "\n", layout.formula_bytes );
+    rn_text_append( &text, "alignment padding %" PRIu64 "\n", layout.region_bytes - layout.formula_bytes );
+    rn_text_append( &text, "region bytes %" PRIu64 "\n", layout.region_bytes );
+    rn_text_append( &text, "%d connections %" PRIu64 " bytes\n", num_connections, layout.region_bytes * (uint64_t) num_connections );
+    return text.length;
+}
+
+uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections )
+{
+    char text[4096];
+    if ( rocketnet_message_connection_sizing( config, num_connections, text, (int) sizeof(text) ) == 0 )
+        return 0;
+
+    // one log line per text line
+    char * line = text;
+    while ( *line )
+    {
+        char * end = strchr( line, '\n' );
+        if ( end )
+            *end = '\0';
+        rocketnet_info( "%s", line );
+        if ( !end )
+            break;
+        line = end + 1;
+    }
+
+    return rocketnet_message_connection_bytes( config );
+}
