@@ -215,3 +215,35 @@ void rocketnet_test_config_out_of_range_refuses_create()
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_iocp_msgsize_keeps_pending_count()
+{
+    struct rocketnet_test_env_guard_t guard;
+    rocketnet_test_env_save( &guard, "ROCKETNET_DRIVER" );
+    setenv( "ROCKETNET_DRIVER", "iocp", 1 );
+    
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config( &server_config );
+    
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( 
+        NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server != NULL );
+    
+    for ( int i = 0; i < 100; ++i )
+    {
+        struct rocketnet_address_t client_addr;
+        rocketnet_address_make_ipv4( &client_addr, 127, 0, 0, 1, (uint16_t)(50000 + i) );
+        
+        char oversized[2048];
+        memset( oversized, 0xFF, sizeof(oversized) );
+        
+        int sent = rocketnet_server_transport_send( server, &client_addr, (uint8_t*) oversized, sizeof(oversized) );
+        (void) sent;
+    }
+    
+    rocketnet_server_transport_stop( server );
+    rocketnet_check( rocketnet_server_transport_destroy( server ) == 0 );
+    rocketnet_test_env_restore( &guard );
+}
+#endif
