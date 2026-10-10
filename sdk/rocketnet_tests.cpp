@@ -2193,6 +2193,28 @@ void rocketnet_test_request_path_happy()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_challenge_resend_checks_salt()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x1111222233334444ULL, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    const uint8_t different_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 8, 7, 6, 5, 4, 3, 2, 1 };
+    memcpy( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, different_salt, sizeof(different_salt) );
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_request_path_refusals()
 {
     struct rocketnet_test_server_t test;
@@ -9267,6 +9289,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_keep_alive_unestablished_under_payload_traffic", rocketnet_test_keep_alive_unestablished_under_payload_traffic },
     { "test_keep_alive_pacing_survives_early_ack", rocketnet_test_keep_alive_pacing_survives_early_ack },
     { "test_request_path_happy", rocketnet_test_request_path_happy },
+    { "test_challenge_resend_checks_salt", rocketnet_test_challenge_resend_checks_salt },
     { "test_request_path_refusals", rocketnet_test_request_path_refusals },
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
