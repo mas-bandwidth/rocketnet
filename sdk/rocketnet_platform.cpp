@@ -509,8 +509,12 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int iterations = 0;
+    const int max_iterations = 20000;
     for ( ;; )
     {
+        rocketnet_assert( iterations < max_iterations );
+        iterations++;
         from_length = sizeof( sockaddr_from );
 
         result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
@@ -1702,8 +1706,12 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int iterations = 0;
+    const int max_iterations = 20000;
     for ( ;; )
     {
+        rocketnet_assert( iterations < max_iterations );
+        iterations++;
         from_length = sizeof( sockaddr_from );
 
         result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
@@ -2871,8 +2879,12 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int iterations = 0;
+    const int max_iterations = 20000;
     for ( ;; )
     {
+        rocketnet_assert( iterations < max_iterations );
+        iterations++;
         from_length = sizeof( sockaddr_from );
 
         result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
