@@ -1200,7 +1200,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-    mapping->send_sequence_session++;
+    rocketnet_platform_atomic_add_u64( &mapping->send_sequence_session, 1 );
 
     // the sequence this packet actually carried, reported to the caller
     // rather than left to be re-derived from the counter. re-reading
@@ -1506,7 +1506,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     if ( bytes == 0 )
         return 0;
 
-    mapping->send_sequence_session++;
+    rocketnet_platform_atomic_add_u64( &mapping->send_sequence_session, 1 );
 
     if ( server->acks )
     {

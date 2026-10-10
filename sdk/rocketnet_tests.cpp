@@ -233,6 +233,46 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     rocketnet_check( count == 0 );
 }
 
+void rocketnet_test_session_sequence_never_repeats()
+{
+    struct rocketnet_test_environment_t isolated;
+    rocketnet_check( rocketnet_sodium_init() );
+    uint8_t private_key[32];
+    uint8_t public_key[32];
+    crypto_box_keypair( public_key, private_key );
+
+    struct rocketnet_config_t cfg;
+    rocketnet_config_defaults( &cfg );
+    cfg.max_clients = 2;
+    cfg.protocol_id = 1;
+    cfg.create_timestamp = 1000;
+    cfg.expire_timestamp = 2000;
+    cfg.timeout_seconds = 30;
+    cfg.server_public_address = "127.0.0.1:443";
+    cfg.public_address = "127.0.0.1:443";
+
+    struct rocketnet_server_protocol_t server;
+    rocketnet_server_protocol_init( &server, &cfg, private_key );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &cfg, private_key );
+
+    uint64_t sequence1 = 0, sequence2 = 0;
+    uint8_t packet1[1500], packet2[1500];
+
+    for ( int i = 0; i < 256; i++ )
+    {
+        uint64_t seq1 = 0, seq2 = 0;
+        rocketnet_server_protocol_keep_alive( &server, 0, 1000.0, packet1, &seq1 );
+        rocketnet_server_protocol_send_payload( &server, 0, (const uint8_t*)"x", 1, 1000.0, packet2, &seq2 );
+        if ( i == 0 ) sequence1 = seq1; sequence2 = seq2;
+        rocketnet_check( seq1 > i );
+        rocketnet_check( seq2 > i );
+    }
+
+    rocketnet_server_protocol_free( &server );
+    rocketnet_client_protocol_free( &client );
+}
+
 void rocketnet_test_endian()
 {
     uint32_t value = 0x11223344;
@@ -9818,6 +9858,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
+    { "test_session_sequence_never_repeats", rocketnet_test_session_sequence_never_repeats },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
