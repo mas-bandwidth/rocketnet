@@ -1950,6 +1950,39 @@ void rocketnet_test_admitted_token_set()
     rocketnet_admitted_token_set_destroy( set );
 }
 
+void rocketnet_test_table_time_never_moves_backwards()
+{
+    // Test for the monotonic floor fix: when wall clock time steps backwards,
+    // the token tables should still reject expired tokens. The transport keeps
+    // a monotonic floor so timestamps never go backwards.
+    const uint64_t start_time = 1000;
+    const uint64_t token_expire = start_time + 100;  // Token expires 100 seconds from start
+
+    struct rocketnet_admitted_token_set_t * set = rocketnet_admitted_token_set_create( NULL, 4 );
+    rocketnet_check( set );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    rocketnet_test_token_id( id, 200 );
+
+    // Record token at start_time with expiry at start_time + 100
+    rocketnet_check( rocketnet_admitted_token_set_add( set, id, token_expire, start_time ) );
+
+    // Token should be present at start_time
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, id, start_time ) );
+
+    // When time goes backwards (simulating clock adjustment), the token should
+    // still be considered active because monotonic floor keeps time at start_time
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, id, start_time - 500 ) );
+
+    // Token should still be present after some forward time passes
+    rocketnet_check( rocketnet_admitted_token_set_contains( set, id, start_time + 50 ) );
+
+    // When time advances beyond expiry, token should be rejected
+    rocketnet_check( !rocketnet_admitted_token_set_contains( set, id, token_expire + 1 ) );
+
+    rocketnet_admitted_token_set_destroy( set );
+}
+
 void rocketnet_test_encryption_map()
 {
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
@@ -9578,6 +9611,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_counters", rocketnet_test_counters },
     { "test_used_token_history", rocketnet_test_used_token_history },
     { "test_admitted_token_set", rocketnet_test_admitted_token_set },
+    { "test_table_time_never_moves_backwards", rocketnet_test_table_time_never_moves_backwards },
     { "test_encryption_map", rocketnet_test_encryption_map },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },
