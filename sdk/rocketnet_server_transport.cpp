@@ -994,26 +994,24 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         int payload_bytes = 0;
         int payload_client_index = -1;
 
-        struct rocketnet_server_frame_t frame;
-        uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame );
         uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
-
-        if ( response )
-            response += ROCKETNET_FRAME_WIRE_OFFSET;
 
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
-                                         response ? response : response_overflow, &response_bytes,
+                                         response_overflow, &response_bytes,
                                          payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
 
-        if ( response )
+        if ( response_bytes > 0 )
         {
-            if ( response_bytes > 0 )
+            struct rocketnet_server_frame_t frame;
+            uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame );
+            if ( response )
+            {
+                memcpy( response + ROCKETNET_FRAME_WIRE_OFFSET, response_overflow, response_bytes );
                 rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
-            else
-                rocketnet_server_abort_send_frame( server_transport, &frame );
+            }
         }
 
         if ( payload && payload_bytes > 0 )
@@ -1084,25 +1082,23 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         int payload_bytes = 0;
         int payload_client_index = -1;
 
-        struct rocketnet_server_frame_t frame;
-        uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &from, &frame );
         uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
 
-        if ( response )
-            response += ROCKETNET_FRAME_WIRE_OFFSET;
-
         rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
                                          current_timestamp, current_time,
-                                         response ? response : response_overflow, &response_bytes,
+                                         response_overflow, &response_bytes,
                                          payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
 
-        if ( response )
+        if ( response_bytes > 0 )
         {
-            if ( response_bytes > 0 )
+            struct rocketnet_server_frame_t frame;
+            uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &from, &frame );
+            if ( response )
+            {
+                memcpy( response + ROCKETNET_FRAME_WIRE_OFFSET, response_overflow, response_bytes );
                 rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
-            else
-                rocketnet_server_abort_send_frame( server_transport, &frame );
+            }
         }
 
         if ( payload && payload_bytes > 0 )

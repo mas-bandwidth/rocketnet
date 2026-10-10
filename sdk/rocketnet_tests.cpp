@@ -9810,6 +9810,66 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_junk_flood_keeps_keepalives()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x7ACEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_check( !rocketnet_client_slots_confirmed( test.server.client_slots, 0 ) );
+
+    struct rocketnet_counters_t before;
+    memcpy( &before, &test.counters, sizeof(before) );
+
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof(block) );
+    block.largest = 5;
+    block.first_range_length = 5;
+    block.num_ranges = 0;
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PAYLOAD_BYTES];
+    int block_bytes = rocketnet_ack_block_write( plaintext, &block );
+
+    uint8_t junk_packet[ROCKETNET_RECEIVE_CEILING];
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    int junk_bytes = rocketnet_write_sealed_packet( junk_packet, ROCKETNET_CONNECTION_ACK_PACKET, tag, 100, NULL,
+                                                    plaintext, block_bytes,
+                                                    ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, client_keys.session_client_to_server );
+    rocketnet_check( junk_bytes > 0 );
+
+    for ( int i = 0; i < 16000; i++ )
+    {
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+        rocketnet_check( rocketnet_test_process_packet( &test, junk_packet, junk_bytes, response, &response_bytes,
+                                                        payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( response_bytes == 0 );
+    }
+
+    uint8_t keepalive[ROCKETNET_RECEIVE_CEILING];
+    int ka_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, 100.15, keepalive );
+    rocketnet_check( ka_bytes > 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9863,6 +9923,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },
     { "test_server_keep_alive_pacing", rocketnet_test_server_keep_alive_pacing },
+    { "test_junk_flood_keeps_keepalives", rocketnet_test_junk_flood_keeps_keepalives },
     { "test_client_payload_before_first_keep_alive", rocketnet_test_client_payload_before_first_keep_alive },
     { "test_client_keep_alive_suppression", rocketnet_test_client_keep_alive_suppression },
     { "test_keep_alive_unestablished_under_payload_traffic", rocketnet_test_keep_alive_unestablished_under_payload_traffic },
