@@ -1570,7 +1570,8 @@ void rocketnet_test_receive_drops_oversize_datagram()
     memset( oversized_packet, 0, sizeof(oversized_packet) );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    rocketnet_write_prefilter_header( oversized_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+    uint8_t * p = oversized_packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
 
     int result = rocketnet_test_process_packet( &test, oversized_packet, ROCKETNET_RECEIVE_CEILING + 1,
                                                 response, &response_bytes,
@@ -2175,6 +2176,14 @@ static int rocketnet_test_verify_payload( const uint8_t * payload_data, int payl
 
 // one test server, built fresh per test: the vector keys, advertised at the
 // vector address, empty tables, zeroed counters
+
+struct rocketnet_test_server_t;
+
+static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test );
+static void rocketnet_test_server_teardown( struct rocketnet_test_server_t * test );
+static int rocketnet_test_process_packet( struct rocketnet_test_server_t * test, const uint8_t * packet, int packet_bytes,
+                                          uint8_t * response, int * response_bytes,
+                                          uint8_t * out_payload, int * out_payload_bytes, int * out_payload_client_index );
 
 struct rocketnet_test_server_t
 {

@@ -5,6 +5,7 @@
 
 #include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_wire.h"
 #include "rocketnet_route.h"
 #include <limits.h>
 
@@ -17,6 +18,7 @@
 
 #include "rocketnet_platform.h"
 #include <limits.h>
+#include "rocketnet_wire.h"
 #include "rocketnet_address.h"
 
 #include <netdb.h>
@@ -513,7 +515,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? ( MSG_DONTWAIT | MSG_TRUNC ) : MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1706,7 +1708,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1764,7 +1766,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( result >= 0 );
 
     if ( result > ROCKETNET_RECEIVE_CEILING )
-        return 0;
+        return -1;
 
     return result;
 }
@@ -2141,6 +2143,8 @@ per_packet:
         int bytes = rocketnet_platform_socket_receive_packet( socket, &from[total], packet_data + (size_t) total * (size_t) packet_stride, packet_stride );
         if ( bytes == 0 )
             break;
+        if ( bytes < 0 )
+            continue;
         packet_bytes[total] = bytes;
         total++;
     }
@@ -2279,6 +2283,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 #include "rocketnet_platform.h"
 #include <limits.h>
+#include "rocketnet_wire.h"
 #include "rocketnet_address.h"
 
 #if ROCKETNET_UNREAL_ENGINE
@@ -2880,7 +2885,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
+        result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length );
 
         if ( result == SOCKET_ERROR )
         {
