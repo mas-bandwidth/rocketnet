@@ -4001,6 +4001,50 @@ void rocketnet_test_client_server_connect()
     rocketnet_test_server_teardown( &test );
 }
 
+static int rocketnet_test_token_keys_are_zero( const struct rocketnet_connect_token_t * token )
+{
+    for ( size_t i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
+        if ( token->client_to_server_key[i] != 0 || token->server_to_client_key[i] != 0 )
+            return 0;
+    }
+    return 1;
+}
+
+void rocketnet_test_client_token_keys_wiped_on_disconnect()
+{
+    // the parsed token carries the two per-session keys, and the client has no
+    // use for them once the attempt is over: the deliberate disconnect wipes
+    // the token with the session keys and the ephemeral secret
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    memset( &client_counters, 0, sizeof(client_counters) );
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &client_counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0xC0DEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // while the attempt lives the token still holds its keys
+    rocketnet_check( !rocketnet_test_token_keys_are_zero( &client.token ) );
+
+    uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+    int burst_count = 0;
+    int burst_bytes = 0;
+    rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    // the token keys are gone with the session keys
+    rocketnet_check( rocketnet_test_token_keys_are_zero( &client.token ) );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_client_server_loss_walk()
 {
     // every handshake packet lost once, and the connection still completes:
@@ -9202,6 +9246,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_receive_refusals", rocketnet_test_server_receive_refusals },
     { "test_client_connect_validations", rocketnet_test_client_connect_validations },
     { "test_client_server_connect", rocketnet_test_client_server_connect },
+    { "test_client_token_keys_wiped_on_disconnect", rocketnet_test_client_token_keys_wiped_on_disconnect },
     { "test_client_server_loss_walk", rocketnet_test_client_server_loss_walk },
     { "test_client_denied_when_server_full", rocketnet_test_client_denied_when_server_full },
     { "test_client_timeout_paths", rocketnet_test_client_timeout_paths },

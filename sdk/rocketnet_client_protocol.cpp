@@ -1333,5 +1333,6 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 
     sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( &client->token, sizeof(client->token) );
     sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
 }
