@@ -310,6 +310,96 @@ void rocketnet_test_read_write()
     rocketnet_check( port_bytes[0] == 0xd5 && port_bytes[1] == 0xdd );
 }
 
+void rocketnet_test_bounded_reader_refuses_past_end()
+{
+    // the bounded readers take end, one past the last readable byte. a read
+    // that does not fit whole fails and leaves both the cursor and the output
+    // exactly as they were, so a parse that runs out of input stops on the
+    // byte it ran out on instead of reading past the buffer. a read that fits
+    // is the unbounded read with the cursor advanced past the value.
+
+    uint8_t buffer[8] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+    const uint8_t * end = buffer + sizeof( buffer );
+
+    // each width fits exactly and reads little-endian
+
+    const uint8_t * p = buffer;
+    uint64_t value64 = 0;
+    rocketnet_check( rocketnet_read_uint64_bounded( &p, end, &value64 ) );
+    rocketnet_check( value64 == 0x8877665544332211ULL );
+    rocketnet_check( p == end );
+
+    p = buffer;
+    uint8_t value8 = 0;
+    uint16_t value16 = 0;
+    uint32_t value32 = 0;
+    rocketnet_check( rocketnet_read_uint8_bounded( &p, end, &value8 ) && value8 == 0x11 );
+    rocketnet_check( rocketnet_read_uint16_bounded( &p, end, &value16 ) && value16 == 0x3322 );
+    rocketnet_check( p == buffer + 3 );
+    rocketnet_check( rocketnet_read_uint32_bounded( &p, end, &value32 ) && value32 == 0x77665544 );
+    rocketnet_check( p == buffer + 7 );
+
+    // one byte short of a uint64 refuses and leaves the cursor and the output
+    // where they were
+
+    const uint64_t untouched64 = 0x5A5A5A5A5A5A5A5AULL;
+    value64 = untouched64;
+    rocketnet_check( !rocketnet_read_uint64_bounded( &p, end, &value64 ) );
+    rocketnet_check( p == buffer + 7 );
+    rocketnet_check( value64 == untouched64 );
+
+    // the last byte still reads, and then every width refuses at end with the
+    // cursor and the output untouched
+
+    rocketnet_check( rocketnet_read_uint8_bounded( &p, end, &value8 ) && value8 == 0x88 );
+    rocketnet_check( p == end );
+
+    const uint8_t * at_end = end;
+    value8 = 0xA5;
+    value16 = 0xA5A5;
+    value32 = 0xA5A5A5A5;
+    value64 = untouched64;
+    rocketnet_check( !rocketnet_read_uint8_bounded( &at_end, end, &value8 ) );
+    rocketnet_check( !rocketnet_read_uint16_bounded( &at_end, end, &value16 ) );
+    rocketnet_check( !rocketnet_read_uint32_bounded( &at_end, end, &value32 ) );
+    rocketnet_check( !rocketnet_read_uint64_bounded( &at_end, end, &value64 ) );
+    rocketnet_check( at_end == end );
+    rocketnet_check( value8 == 0xA5 && value16 == 0xA5A5 && value32 == 0xA5A5A5A5 && value64 == untouched64 );
+
+    // the two and four byte widths one byte short
+
+    const uint8_t * short16 = end - 1;
+    value16 = 0;
+    rocketnet_check( !rocketnet_read_uint16_bounded( &short16, end, &value16 ) );
+    rocketnet_check( short16 == end - 1 && value16 == 0 );
+    const uint8_t * short32 = end - 1;
+    value32 = 0;
+    rocketnet_check( !rocketnet_read_uint32_bounded( &short32, end, &value32 ) );
+    rocketnet_check( short32 == end - 1 && value32 == 0 );
+
+    // the bounded byte copy obeys the same rule
+
+    const uint8_t * copy = buffer + 4;
+    uint8_t bytes[8];
+    memset( bytes, 0x5A, sizeof( bytes ) );
+    rocketnet_check( !rocketnet_read_bytes_bounded( &copy, end, bytes, 5 ) );
+    rocketnet_check( copy == buffer + 4 && bytes[0] == 0x5A );
+    rocketnet_check( rocketnet_read_bytes_bounded( &copy, end, bytes, 4 ) );
+    rocketnet_check( copy == end );
+    rocketnet_check( bytes[0] == 0x55 && bytes[1] == 0x66 && bytes[2] == 0x77 && bytes[3] == 0x88 );
+
+    // an empty copy is allowed at end and moves nothing; a negative length is
+    // refused rather than cast to a huge size
+
+    const uint8_t * empty = end;
+    rocketnet_check( rocketnet_read_bytes_bounded( &empty, end, bytes, 0 ) );
+    rocketnet_check( empty == end );
+
+    const uint8_t * negative = buffer;
+    rocketnet_check( !rocketnet_read_bytes_bounded( &negative, end, bytes, -1 ) );
+    rocketnet_check( negative == buffer );
+}
+
 void rocketnet_test_base64()
 {
     const char * vectors[] = { "", "AA==", "AAE=", "AAEC", "AAECAw==", "AAECAwQ=", "AAECAwQF", "AAECAwQFBg==", "AAECAwQFBgc=" };
@@ -9153,6 +9243,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_time", rocketnet_test_time },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
+    { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
     { "test_copy_string", rocketnet_test_copy_string },

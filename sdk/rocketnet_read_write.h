@@ -8,6 +8,7 @@
 #ifndef ROCKETNET_READ_WRITE_H
 #define ROCKETNET_READ_WRITE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -107,6 +108,60 @@ inline void rocketnet_read_bytes( const uint8_t ** p, uint8_t * data, int bytes 
 {
     memcpy( data, *p, (size_t) bytes );
     *p += bytes;
+}
+
+// Bounded readers. The readers above trust a size check made elsewhere; these
+// take end, one past the last readable byte, and refuse a read that does not
+// fit whole. A refused read returns false and leaves *p and *value exactly as
+// they were, so a parse that runs out of input stops on the byte it ran out on
+// instead of reading past the buffer. A read that fits succeeds and advances
+// *p past the value, exactly as the unbounded reader above would.
+
+inline bool rocketnet_read_bounded_available( const uint8_t * p, const uint8_t * end, int bytes )
+{
+    if ( bytes < 0 || p > end )
+        return false;
+    return (size_t) ( end - p ) >= (size_t) bytes;
+}
+
+inline bool rocketnet_read_uint8_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * value )
+{
+    if ( !rocketnet_read_bounded_available( *p, end, 1 ) )
+        return false;
+    *value = rocketnet_read_uint8( p );
+    return true;
+}
+
+inline bool rocketnet_read_uint16_bounded( const uint8_t ** p, const uint8_t * end, uint16_t * value )
+{
+    if ( !rocketnet_read_bounded_available( *p, end, 2 ) )
+        return false;
+    *value = rocketnet_read_uint16( p );
+    return true;
+}
+
+inline bool rocketnet_read_uint32_bounded( const uint8_t ** p, const uint8_t * end, uint32_t * value )
+{
+    if ( !rocketnet_read_bounded_available( *p, end, 4 ) )
+        return false;
+    *value = rocketnet_read_uint32( p );
+    return true;
+}
+
+inline bool rocketnet_read_uint64_bounded( const uint8_t ** p, const uint8_t * end, uint64_t * value )
+{
+    if ( !rocketnet_read_bounded_available( *p, end, 8 ) )
+        return false;
+    *value = rocketnet_read_uint64( p );
+    return true;
+}
+
+inline bool rocketnet_read_bytes_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * data, int bytes )
+{
+    if ( !rocketnet_read_bounded_available( *p, end, bytes ) )
+        return false;
+    rocketnet_read_bytes( p, data, bytes );
+    return true;
 }
 
 #endif // #ifndef ROCKETNET_READ_WRITE_H
