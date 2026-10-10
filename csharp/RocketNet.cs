@@ -25,6 +25,39 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+/// <summary>Owns a native RocketNet client transport. The runtime marshals it with
+/// AddRef/Release around every call and refuses a closed one with ObjectDisposedException,
+/// and the native destroy runs exactly once, from <see cref="ReleaseHandle"/>.</summary>
+public sealed class ClientTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    /// <summary>Creates an empty handle; the P/Invoke marshaller fills it with the native pointer.</summary>
+    public ClientTransportHandle() : base( true ) { }
+
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        RocketNet.ClientTransportDestroyNative( handle );
+        return true;
+    }
+}
+
+/// <summary>Owns a native RocketNet server transport. The runtime marshals it with
+/// AddRef/Release around every call and refuses a closed one with ObjectDisposedException,
+/// and the native destroy runs exactly once, from <see cref="ReleaseHandle"/>.</summary>
+public sealed class ServerTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    /// <summary>Creates an empty handle; the P/Invoke marshaller fills it with the native pointer.</summary>
+    public ServerTransportHandle() : base( true ) { }
+
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        RocketNet.ServerTransportDestroyNative( handle );
+        return true;
+    }
+}
 
 /// <summary>The rocketnet C SDK surface: raw P/Invoke plus thin span helpers.</summary>
 public static unsafe partial class RocketNet
@@ -150,6 +183,7 @@ public static unsafe partial class RocketNet
         ConnectionRequestSentChallenge,
         ConnectionRequestInternalError,
         ConnectionResponseReceived,
+        ConnectionResponseWrongSize,
         ConnectionResponseNoMapping,
         ConnectionResponseZeroSequence,
         ConnectionResponseDidNotOpen,
@@ -343,7 +377,7 @@ public static unsafe partial class RocketNet
         /// <summary>Native function pointer for void (*)( void * context, int previous_state,
         /// int current_state ), or IntPtr.Zero for none. Delegate marshaling is deliberately
         /// not built here: the callback fires on library threads, and the pinning and lifetime
-        /// rules that makes safe are not worth the surface in v1 — poll <see cref="ClientTransportState(IntPtr)"/>.</summary>
+        /// rules that makes safe are not worth the surface in v1 — poll <see cref="ClientTransportState(ClientTransportHandle)"/>.</summary>
         public IntPtr StateChangeCallback;
 
         /// <summary>Reads the driver candidate list as a string.</summary>
@@ -407,6 +441,10 @@ public static unsafe partial class RocketNet
         /// tokens validate against are always the same one. Read and write through
         /// <see cref="GetPublicAddress"/> / <see cref="SetPublicAddress"/>.</summary>
         public fixed byte PublicAddress[AddressStringLength];
+
+        /// <summary>Upper bound in seconds on a connect token's signed lifetime (native
+        /// max_timeout_seconds).</summary>
+        public int MaxTimeoutSeconds;
 
         /// <summary>Reads the driver candidate list as a string.</summary>
         public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
@@ -650,16 +688,16 @@ public static unsafe partial class RocketNet
 
     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
-    /// monotonic; pass the same clock to every call that takes one. Returns IntPtr.Zero on
-    /// refusal — an invalid token refuses here.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
+    /// monotonic; pass the same clock to every call that takes one. Returns a handle whose
+    /// IsInvalid is true on refusal — an invalid token refuses here.</summary>
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, byte[] connectToken, ref ClientTransportConfig config, double time )
     {
         ArgumentNullException.ThrowIfNull( connectToken );
         return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, ref config, time );
     }
 
     /// <summary>Creates a client from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, ref ClientTransportConfig config, double time )
     {
         ValidateConnectTokenLength( connectToken.Length );
         fixed ( byte* token = connectToken )
@@ -667,17 +705,17 @@ public static unsafe partial class RocketNet
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, ref ClientTransportConfig config, double time );
+    private static extern ClientTransportHandle ClientTransportCreateNative( IntPtr context, byte* connectToken, ref ClientTransportConfig config, double time );
 
     /// <summary>Creates a client with the default (development) config.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
     {
         ArgumentNullException.ThrowIfNull( connectToken );
         return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, nullConfig, time );
     }
 
     /// <summary>Creates a client with default config from a token of exactly <see cref="ConnectTokenBytes"/> bytes.</summary>
-    public static IntPtr ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
+    public static ClientTransportHandle ClientTransportCreate( IntPtr context, ReadOnlySpan<byte> connectToken, IntPtr nullConfig, double time )
     {
         ValidateConnectTokenLength( connectToken.Length );
         fixed ( byte* token = connectToken )
@@ -685,7 +723,7 @@ public static unsafe partial class RocketNet
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    private static extern IntPtr ClientTransportCreateNative( IntPtr context, byte* connectToken, IntPtr nullConfig, double time );
+    private static extern ClientTransportHandle ClientTransportCreateNative( IntPtr context, byte* connectToken, IntPtr nullConfig, double time );
 
     private static void ValidateConnectTokenLength( int length )
     {
@@ -693,21 +731,32 @@ public static unsafe partial class RocketNet
             throw new ArgumentException( $"A connect token must contain exactly {ConnectTokenBytes} bytes.", "connectToken" );
     }
 
-    /// <summary>Destroys the client. Disconnect and pump a few updates first.</summary>
+    /// <summary>Destroys the client. Disconnect and pump a few updates first. Destroy runs
+    /// exactly once: the native destroy happens on Dispose, and a second call throws.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportDestroy( IntPtr client );
+    internal static extern void ClientTransportDestroyNative( IntPtr client );
+
+    /// <summary>Destroys the client exactly once, or throws ObjectDisposedException when it is
+    /// already closed.</summary>
+    public static void ClientTransportDestroy( ClientTransportHandle client )
+    {
+        ArgumentNullException.ThrowIfNull( client );
+        if ( client.IsClosed )
+            throw new ObjectDisposedException( nameof(ClientTransportHandle) );
+        client.Dispose();
+    }
 
     /// <summary>Advances the client one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_update", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportUpdate( IntPtr client, double time );
+    public static extern void ClientTransportUpdate( ClientTransportHandle client, double time );
 
     /// <summary>The convenience send: copies and flushes inline. Main thread only, never
     /// during an open fill — the simple form, not a fill-phase participant.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_send_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportSendPacket( IntPtr client, byte* packetData, int packetBytes );
+    public static extern void ClientTransportSendPacket( ClientTransportHandle client, byte* packetData, int packetBytes );
 
     /// <summary>The convenience send over a span.</summary>
-    public static void ClientTransportSendPacket( IntPtr client, ReadOnlySpan<byte> payload )
+    public static void ClientTransportSendPacket( ClientTransportHandle client, ReadOnlySpan<byte> payload )
     {
         fixed ( byte* p = payload )
             ClientTransportSendPacket( client, p, payload.Length );
@@ -719,7 +768,7 @@ public static unsafe partial class RocketNet
     /// <see cref="Counter.ReceiveCursorTooSmall"/>, never truncated. Size the buffer by
     /// <see cref="ClientTransportMaxPayloadBytes"/> to never refuse.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_receive_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportReceivePacket( IntPtr client, byte* packetData, int packetCapacity );
+    public static extern int ClientTransportReceivePacket( ClientTransportHandle client, byte* packetData, int packetCapacity );
 
     // the guard's configured maximum, cached so the wrapper costs one
     // P/Invoke per client rather than one per receive call. The pair is
@@ -727,14 +776,14 @@ public static unsafe partial class RocketNet
     // threads only mis-sizes the guard, and the native call is safe at
     // any capacity -- an oversize payload is refused and counted there.
 
-    static IntPtr cachedMaxPayloadClient;
+    static ClientTransportHandle? cachedMaxPayloadClient;
     static int cachedMaxPayloadBytes;
 
     /// <summary>The copying receive cursor over a span: requires the configured maximum
     /// payload so nothing is ever refused through this wrapper.</summary>
-    public static int ClientTransportReceivePacket( IntPtr client, Span<byte> buffer )
+    public static int ClientTransportReceivePacket( ClientTransportHandle client, Span<byte> buffer )
     {
-        if ( client != cachedMaxPayloadClient )
+        if ( !ReferenceEquals( client, cachedMaxPayloadClient ) )
         {
             cachedMaxPayloadBytes = ClientTransportMaxPayloadBytes( client );
             cachedMaxPayloadClient = client;
@@ -749,18 +798,18 @@ public static unsafe partial class RocketNet
     /// and reassembles -- the config's MaxPayloadBytes after defaulting. Size receive
     /// buffers by this.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_max_payload_bytes", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportMaxPayloadBytes( IntPtr client );
+    public static extern int ClientTransportMaxPayloadBytes( ClientTransportHandle client );
 
     /// <summary>Number of payloads delivered by the last update. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_num_payloads", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportNumPayloads( IntPtr client );
+    public static extern int ClientTransportNumPayloads( ClientTransportHandle client );
 
     /// <summary>One delivered payload by index. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_payload", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportPayload( IntPtr client, int payloadIndex, out int payloadBytes );
+    public static extern IntPtr ClientTransportPayload( ClientTransportHandle client, int payloadIndex, out int payloadBytes );
 
     /// <summary>One delivered payload by index as a span. Valid until the next update.</summary>
-    public static ReadOnlySpan<byte> ClientTransportPayloadSpan( IntPtr client, int payloadIndex )
+    public static ReadOnlySpan<byte> ClientTransportPayloadSpan( ClientTransportHandle client, int payloadIndex )
     {
         IntPtr data = ClientTransportPayload( client, payloadIndex, out int bytes );
         return data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
@@ -769,11 +818,11 @@ public static unsafe partial class RocketNet
     /// <summary>The whole receive batch as parallel arrays in one call — the zero-per-item
     /// form. Valid until the next update. Returns the number of payloads.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_payloads", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportPayloads( IntPtr client, out byte** payloadData, out int* payloadBytes );
+    public static extern int ClientTransportPayloads( ClientTransportHandle client, out byte** payloadData, out int* payloadBytes );
 
     /// <summary>The receive batch as a zero-copy indexed view — one interop crossing.
     /// Valid until the next update.</summary>
-    public static ClientTransportPayloadBatch ClientTransportPayloads( IntPtr client )
+    public static ClientTransportPayloadBatch ClientTransportPayloads( ClientTransportHandle client )
     {
         int count = ClientTransportPayloads( client, out byte** data, out int* bytes );
         return new ClientTransportPayloadBatch( count, data, bytes );
@@ -786,59 +835,59 @@ public static unsafe partial class RocketNet
     /// the configured maximum, never the request itself. Returns the frame, or IntPtr.Zero
     /// when no packet is available (ring or arena full, not connected, request out of range).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportStartPacket( IntPtr client, int requestBytes, ref PacketContext context );
+    public static extern IntPtr ClientTransportStartPacket( ClientTransportHandle client, int requestBytes, ref PacketContext context );
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportFinishPacket( IntPtr client, ref PacketContext context, int payloadBytes );
+    public static extern int ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
 
     /// <summary>Releases an acquired packet without sending it.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportAbortPacket( IntPtr client, ref PacketContext context );
+    public static extern void ClientTransportAbortPacket( ClientTransportHandle client, ref PacketContext context );
 
     /// <summary>Flushes everything staged. Required once per frame, after update; see the
     /// send family contract on <see cref="ServerTransportStartPacket"/>.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_send_packets", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportSendPackets( IntPtr client );
+    public static extern void ClientTransportSendPackets( ClientTransportHandle client );
 
     /// <summary>The client state, one of the ClientTransportState constants.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_state", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportState( IntPtr client );
+    public static extern int ClientTransportState( ClientTransportHandle client );
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_driver", CallingConvention = CallingConvention.Cdecl )]
-    static extern IntPtr client_transport_driver( IntPtr client );
+    static extern IntPtr client_transport_driver( ClientTransportHandle client );
 
     /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
     /// that won the ladder at create ("portable", "msgx"), never the requested list.</summary>
-    public static string ClientTransportDriver( IntPtr client ) => Marshal.PtrToStringUTF8( client_transport_driver( client ) ) ?? string.Empty;
+    public static string ClientTransportDriver( ClientTransportHandle client ) => Marshal.PtrToStringUTF8( client_transport_driver( client ) ) ?? string.Empty;
 
     /// <summary>The client's slot index on the server, -1 when not connected.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_client_index", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportClientIndex( IntPtr client );
+    public static extern int ClientTransportClientIndex( ClientTransportHandle client );
 
     /// <summary>Disconnects deliberately. Main thread, never while a fill is open.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_disconnect", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportDisconnect( IntPtr client );
+    public static extern void ClientTransportDisconnect( ClientTransportHandle client );
 
     /// <summary>The client's counters block; read it with <see cref="CountersSpan"/>.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_counters", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportCounters( IntPtr client );
+    public static extern IntPtr ClientTransportCounters( ClientTransportHandle client );
 
     /// <summary>Reads the client's connection quality stats (rocketnet_client_transport_stats).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_stats", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportGetStats( IntPtr client, out ClientTransportStats stats );
+    public static extern void ClientTransportGetStats( ClientTransportHandle client, out ClientTransportStats stats );
 
     /// <summary>The client's delivery notification batch: packet ids newly acknowledged by the
     /// last update, valid until the next update. The packet id is the one in
     /// <see cref="PacketContext.PacketId"/> from StartPacket. Returns the batch count.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_acked_packets", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportAckedPackets( IntPtr client, out ulong* packetIds );
+    public static extern int ClientTransportAckedPackets( ClientTransportHandle client, out ulong* packetIds );
 
     /// <summary>The client's acked packet ids as a span -- one interop crossing.
     /// Valid until the next update.</summary>
-    public static ReadOnlySpan<ulong> ClientTransportAckedPacketsSpan( IntPtr client )
+    public static ReadOnlySpan<ulong> ClientTransportAckedPacketsSpan( ClientTransportHandle client )
     {
         int count = ClientTransportAckedPackets( client, out ulong* packetIds );
         return count == 0 ? ReadOnlySpan<ulong>.Empty : new ReadOnlySpan<ulong>( packetIds, count );
@@ -869,22 +918,33 @@ public static unsafe partial class RocketNet
     public static extern ulong ServerTransportRequiredMemory( ref ServerTransportConfig config, [MarshalAs( UnmanagedType.LPUTF8Str )] string driver );
 
     /// <summary>Creates a server on the public address clients dial, e.g. "127.0.0.1:40000".
-    /// Returns IntPtr.Zero on refusal.</summary>
+    /// Returns a handle whose IsInvalid is true on refusal.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
+    public static extern ServerTransportHandle ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
 
-    /// <summary>Destroys the server. Stop and wait for stopped first.</summary>
+    /// <summary>Destroys the server. Stop and wait for stopped first. Destroy runs exactly
+    /// once: the native destroy happens on Dispose, and a second call throws.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportDestroy( IntPtr server );
+    internal static extern void ServerTransportDestroyNative( IntPtr server );
+
+    /// <summary>Destroys the server exactly once, or throws ObjectDisposedException when it is
+    /// already closed.</summary>
+    public static void ServerTransportDestroy( ServerTransportHandle server )
+    {
+        ArgumentNullException.ThrowIfNull( server );
+        if ( server.IsClosed )
+            throw new ObjectDisposedException( nameof(ServerTransportHandle) );
+        server.Dispose();
+    }
 
     /// <summary>Begins the stop: redundant disconnects go out, then the state reaches stopped.
     /// Main thread, never while a fill is open.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_stop", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportStop( IntPtr server );
+    public static extern void ServerTransportStop( ServerTransportHandle server );
 
     /// <summary>The server state, one of the Server state constants.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_state", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportState( IntPtr server );
+    public static extern int ServerTransportState( ServerTransportHandle server );
 
     /// <summary>The commit barrier for host processes that must never commit an XDP data
     /// plane (test harnesses, smokes): installed once, the xdp driver's create refuses
@@ -894,31 +954,31 @@ public static unsafe partial class RocketNet
     public static extern void ForbidXdpCommit();
 
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_driver", CallingConvention = CallingConvention.Cdecl )]
-    static extern IntPtr server_transport_driver( IntPtr server );
+    static extern IntPtr server_transport_driver( ServerTransportHandle server );
 
     /// <summary>The granted driver, request-vs-granted style (#106): the name of the candidate
     /// that won the ladder at create ("xdp", "gso", "msgx", "portable"), never the requested
     /// list. Performance claims attach to what this returns.</summary>
-    public static string ServerTransportDriver( IntPtr server ) => Marshal.PtrToStringUTF8( server_transport_driver( server ) ) ?? string.Empty;
+    public static string ServerTransportDriver( ServerTransportHandle server ) => Marshal.PtrToStringUTF8( server_transport_driver( server ) ) ?? string.Empty;
 
     /// <summary>The server's actual bound UDP port, including a port selected from zero.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_port", CallingConvention = CallingConvention.Cdecl )]
-    public static extern ushort ServerTransportPort( IntPtr server );
+    public static extern ushort ServerTransportPort( ServerTransportHandle server );
 
     /// <summary>Advances the server one frame at the given game time.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportUpdate( IntPtr server, double time );
+    public static extern void ServerTransportUpdate( ServerTransportHandle server, double time );
 
     /// <summary>Number of payloads delivered by the last update. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_num_payloads", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportNumPayloads( IntPtr server );
+    public static extern int ServerTransportNumPayloads( ServerTransportHandle server );
 
     /// <summary>One delivered payload by index, with its sender. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_payload", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportPayload( IntPtr server, int payloadIndex, out int clientIndex, out int payloadBytes );
+    public static extern IntPtr ServerTransportPayload( ServerTransportHandle server, int payloadIndex, out int clientIndex, out int payloadBytes );
 
     /// <summary>One delivered payload by index as a span, with its sender. Valid until the next update.</summary>
-    public static ReadOnlySpan<byte> ServerTransportPayloadSpan( IntPtr server, int payloadIndex, out int clientIndex )
+    public static ReadOnlySpan<byte> ServerTransportPayloadSpan( ServerTransportHandle server, int payloadIndex, out int clientIndex )
     {
         IntPtr data = ServerTransportPayload( server, payloadIndex, out clientIndex, out int bytes );
         return data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
@@ -927,11 +987,11 @@ public static unsafe partial class RocketNet
     /// <summary>The whole receive batch as parallel arrays in one call — the zero-per-item
     /// form. Valid until the next update. Returns the number of payloads.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_payloads", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportPayloads( IntPtr server, out int* clientIndex, out byte** payloadData, out int* payloadBytes );
+    public static extern int ServerTransportPayloads( ServerTransportHandle server, out int* clientIndex, out byte** payloadData, out int* payloadBytes );
 
     /// <summary>The receive batch as a zero-copy indexed view — one interop crossing.
     /// Valid until the next update.</summary>
-    public static ServerTransportPayloadBatch ServerTransportPayloads( IntPtr server )
+    public static ServerTransportPayloadBatch ServerTransportPayloads( ServerTransportHandle server )
     {
         int count = ServerTransportPayloads( server, out int* clientIndex, out byte** data, out int* bytes );
         return new ServerTransportPayloadBatch( count, clientIndex, data, bytes );
@@ -959,30 +1019,30 @@ public static unsafe partial class RocketNet
     /// capacity or the configured maximum), never the request itself. Returns the frame, or
     /// IntPtr.Zero when no packet is available.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportStartPacket( IntPtr server, int clientIndex, int requestBytes, ref PacketContext context );
+    public static extern IntPtr ServerTransportStartPacket( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context );
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportFinishPacket( IntPtr server, ref PacketContext context, int payloadBytes );
+    public static extern int ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
 
     /// <summary>Releases an acquired packet without sending it.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportAbortPacket( IntPtr server, ref PacketContext context );
+    public static extern void ServerTransportAbortPacket( ServerTransportHandle server, ref PacketContext context );
 
     /// <summary>Flushes everything staged. Required once per frame, after update; see the
     /// send family contract above.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_send_packets", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportSendPackets( IntPtr server );
+    public static extern void ServerTransportSendPackets( ServerTransportHandle server );
 
     /// <summary>The convenience send: copies into an acquired packet and stages it.
     /// Flushed by the frame's SendPackets.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_send_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportSendPacket( IntPtr server, int clientIndex, byte* payloadData, int payloadBytes );
+    public static extern void ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, byte* payloadData, int payloadBytes );
 
     /// <summary>The convenience send over a span.</summary>
-    public static void ServerTransportSendPacket( IntPtr server, int clientIndex, ReadOnlySpan<byte> payload )
+    public static void ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, ReadOnlySpan<byte> payload )
     {
         fixed ( byte* p = payload )
             ServerTransportSendPacket( server, clientIndex, p, payload.Length );
@@ -992,49 +1052,49 @@ public static unsafe partial class RocketNet
     /// goes out on the next flush and the slot frees immediately. Main thread, never while
     /// a fill is open.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_disconnect_client", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportDisconnectClient( IntPtr server, int clientIndex );
+    public static extern void ServerTransportDisconnectClient( ServerTransportHandle server, int clientIndex );
 
     /// <summary>Number of connected clients.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_num_connected_clients", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportNumConnectedClients( IntPtr server );
+    public static extern int ServerTransportNumConnectedClients( ServerTransportHandle server );
 
     /// <summary>Nonzero when the slot holds a connected client.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_is_client_connected", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportIsClientConnected( IntPtr server, int clientIndex );
+    public static extern int ServerTransportIsClientConnected( ServerTransportHandle server, int clientIndex );
 
     /// <summary>The connected client's id from its connect token.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_client_id", CallingConvention = CallingConvention.Cdecl )]
-    public static extern ulong ServerTransportClientId( IntPtr server, int clientIndex );
+    public static extern ulong ServerTransportClientId( ServerTransportHandle server, int clientIndex );
 
     /// <summary>The server's counters block; read it with <see cref="CountersSpan"/>.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_counters", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportCounters( IntPtr server );
+    public static extern IntPtr ServerTransportCounters( ServerTransportHandle server );
 
     /// <summary>The configured maximum payload this server sends (fragmenting transparently)
     /// and reassembles per client -- the config's MaxPayloadBytes after defaulting. Size the
     /// buffers payloads are copied into by this.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_max_payload_bytes", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportMaxPayloadBytes( IntPtr server );
+    public static extern int ServerTransportMaxPayloadBytes( ServerTransportHandle server );
 
     /// <summary>Reads the server's whole-socket rate stats (rocketnet_server_transport_stats).</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_stats", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportGetStats( IntPtr server, out ServerTransportStats stats );
+    public static extern void ServerTransportGetStats( ServerTransportHandle server, out ServerTransportStats stats );
 
     /// <summary>Reads one slot's connection quality stats (rocketnet_server_transport_client_stats).
     /// An out-of-range slot reads as zeros.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_client_stats", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportGetClientStats( IntPtr server, int clientIndex, out ServerTransportClientStats stats );
+    public static extern void ServerTransportGetClientStats( ServerTransportHandle server, int clientIndex, out ServerTransportClientStats stats );
 
     /// <summary>The delivery notification batch: packet ids newly acknowledged by the last
     /// update, as parallel arrays with the client index of each. Valid until the next update.
     /// The packet id is the one in <see cref="PacketContext.PacketId"/> from StartPacket --
     /// the join key back to whatever the game sent. Returns the batch count.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_acked_packets", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportAckedPackets( IntPtr server, out int* clientIndex, out ulong* packetIds );
+    public static extern int ServerTransportAckedPackets( ServerTransportHandle server, out int* clientIndex, out ulong* packetIds );
 
     /// <summary>The server's acked batch as a zero-copy indexed view -- one interop crossing.
     /// Valid until the next update.</summary>
-    public static ServerTransportAckedBatch ServerTransportAckedPackets( IntPtr server )
+    public static ServerTransportAckedBatch ServerTransportAckedPackets( ServerTransportHandle server )
     {
         int count = ServerTransportAckedPackets( server, out int* clientIndex, out ulong* packetIds );
         return new ServerTransportAckedBatch( count, clientIndex, packetIds );
@@ -1071,15 +1131,15 @@ public static unsafe partial class RocketNet
     // -----------------------------------------
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
-    static extern byte* ClientPacketPayloadNative( IntPtr client, in PacketContext context, out int capacity );
+    static extern byte* ClientPacketPayloadNative( ClientTransportHandle client, in PacketContext context, out int capacity );
 
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_packet_payload", CallingConvention = CallingConvention.Cdecl )]
-    static extern byte* ServerPacketPayloadNative( IntPtr server, in PacketContext context, out int capacity );
+    static extern byte* ServerPacketPayloadNative( ServerTransportHandle server, in PacketContext context, out int capacity );
 
     /// <summary>Validates the packet's owner, metadata and active lease before exposing memory.
     /// Empty for invalid contexts. The span expires at finish, abort, update, flush or destroy;
     /// callers must not retain it across those operations or race them.</summary>
-    public static Span<byte> ClientTransportPacketPayloadSpan( IntPtr client, in PacketContext context )
+    public static Span<byte> ClientTransportPacketPayloadSpan( ClientTransportHandle client, in PacketContext context )
     {
         byte* payload = ClientPacketPayloadNative(client, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
@@ -1087,7 +1147,7 @@ public static unsafe partial class RocketNet
 
     /// <summary>The server counterpart of <see cref="ClientTransportPacketPayloadSpan"/>,
     /// with the same lease validation and lifetime.</summary>
-    public static Span<byte> ServerTransportPacketPayloadSpan( IntPtr server, in PacketContext context )
+    public static Span<byte> ServerTransportPacketPayloadSpan( ServerTransportHandle server, in PacketContext context )
     {
         byte* payload = ServerPacketPayloadNative(server, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
