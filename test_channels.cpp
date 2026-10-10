@@ -31,6 +31,7 @@
 
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
+#include "rocketnet_channel.h"
 
 #include <stdarg.h>
 #include <new>
@@ -2120,6 +2121,189 @@ static void test_channels_allocator_no_live_allocation()
 
 // -----------------------------------------
 
+// Layer 3's first half (docs/CHANNELS.md 5, 7.2, 9.3, 11.2): small UNRELIABLE
+// messages aggregate into one RECORDS frame, a packet-sized message takes the
+// zero-copy SINGLE form, a message above the wire frame is one transport
+// payload the transport fragments, and receive delivers in arrival order with
+// no state. No socket, no clock, no allocation inside the machine: the arena's
+// one allocation at create is layer 1's.
+
+static void test_channels_unreliable_aggregates_and_zero_copy()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_channel_t sender;
+    rn_channel_t receiver;
+    rn_channel_init( &sender, region, &config );
+    rn_channel_init( &receiver, region, &config );
+
+    // small messages aggregate into one frame until the budget
+
+    static const uint8_t small_a[5] = { 1, 2, 3, 4, 5 };
+    static const uint8_t small_b[5] = { 6, 7, 8, 9, 10 };
+    static const uint8_t small_c[7] = { 11, 12, 13, 14, 15, 16, 17 };
+    check( rn_channel_send( &sender, small_a, 5, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0 ) == RN_CHANNEL_OK );
+    check( rn_channel_send( &sender, small_b, 5, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 1 ) == RN_CHANNEL_OK );
+    check( rn_channel_send( &sender, small_c, 7, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 2 ) == RN_CHANNEL_OK );
+    check( rn_channel_next_bytes( &sender ) == ROCKETNET_MAX_PAYLOAD_BYTES );
+
+    uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+    int fragmented = 1;
+    int length = rn_channel_write( &sender, frame, sizeof( frame ), &fragmented );
+    check( length == 1 + ( 3 + 5 ) + ( 3 + 5 ) + ( 3 + 7 ) );    // the form byte and three records
+    check( fragmented == 0 );
+    check( frame[length - 1] == ROCKETNET_MESSAGE_FORM_RECORDS );
+    check( rn_channel_next_bytes( &sender ) == 0 );
+    check( rn_channel_write( &sender, frame, sizeof( frame ), &fragmented ) == 0 );
+
+    // receive, in arrival order, each pointing into the frame (zero copy)
+
+    rn_delivery_t deliveries[8];
+    int count = -1;
+    check( rn_channel_receive( &receiver, frame, length, deliveries, 8, &count ) == RN_CHANNEL_OK );
+    check( count == 3 );
+    check( deliveries[0].bytes == 5 && memcmp( deliveries[0].data, small_a, 5 ) == 0 );
+    check( deliveries[1].bytes == 5 && memcmp( deliveries[1].data, small_b, 5 ) == 0 );
+    check( deliveries[2].bytes == 7 && memcmp( deliveries[2].data, small_c, 7 ) == 0 );
+    check( deliveries[0].data == frame + 3 );
+    check( deliveries[1].data == frame + 3 + 5 + 3 );
+    check( deliveries[0].code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+
+    // a packet-sized message takes the zero-copy SINGLE form
+
+    uint8_t single[ROCKETNET_MAX_PAYLOAD_BYTES];
+    rn_channel_message_context_t context;
+    memset( &context, 0, sizeof( context ) );
+    const int packet_sized = ROCKETNET_MESSAGE_SINGLE_BYTES;
+    uint8_t * root = rn_channel_start_message( &sender, single, sizeof( single ), packet_sized, &context );
+    check( root == single );
+    check( context.active );
+    for ( int i = 0; i < packet_sized; i++ )
+        root[i] = (uint8_t) ( i * 13 + 7 );
+    length = rn_channel_finish_message( &sender, &context, packet_sized );
+    check( length == packet_sized + 1 );
+    check( single[packet_sized] == ROCKETNET_MESSAGE_FORM_SINGLE );
+    check( !context.active );
+    for ( int i = 0; i < packet_sized; i++ )
+        check( single[i] == (uint8_t) ( i * 13 + 7 ) );          // the application's bytes are untouched: no copy
+
+    count = -1;
+    check( rn_channel_receive( &receiver, single, length, deliveries, 8, &count ) == RN_CHANNEL_OK );
+    check( count == 1 );
+    check( deliveries[0].bytes == packet_sized );
+    check( deliveries[0].data == single );                       // zero copy on receive too
+    check( deliveries[0].data[0] == (uint8_t) 7 );
+
+    // above the wire frame and under the maximum: one fragmented transport payload
+
+    uint8_t large[5000];
+    for ( int i = 0; i < 5000; i++ )
+        large[i] = (uint8_t) ( i * 3 + 1 );
+    check( rn_channel_send( &sender, large, 5000, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_HIGH, 3 ) == RN_CHANNEL_OK );
+    check( rn_channel_next_bytes( &sender ) == 3 + 5000 + 1 );
+    uint8_t large_frame[8192];
+    length = rn_channel_write( &sender, large_frame, sizeof( large_frame ), &fragmented );
+    check( length == 3 + 5000 + 1 );
+    check( fragmented == 1 );
+    check( length > ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( large_frame[length - 1] == ROCKETNET_MESSAGE_FORM_RECORDS );
+
+    count = -1;
+    check( rn_channel_receive( &receiver, large_frame, length, deliveries, 8, &count ) == RN_CHANNEL_OK );
+    check( count == 1 );
+    check( deliveries[0].bytes == 5000 );
+    check( memcmp( deliveries[0].data, large, 5000 ) == 0 );
+
+    // every refusal is named
+
+    check( rn_channel_send( &sender, large, 5000, ROCKETNET_RELIABLE_ORDERED, ROCKETNET_PRIORITY_MEDIUM, 0 ) == RN_CHANNEL_REFUSED_TYPE_NOT_ENABLED );
+    check( rn_channel_send( &sender, large, 5000, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, config.num_channels ) == RN_CHANNEL_REFUSED_CHANNEL );
+    check( rn_channel_send( &sender, large, config.max_message_bytes + 1, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0 ) == RN_CHANNEL_REFUSED_TOO_LARGE );
+    check( rn_channel_send( &sender, NULL, 0, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0 ) == RN_CHANNEL_REFUSED_ARGUMENT );
+    memset( &context, 0, sizeof( context ) );
+    check( rn_channel_start_message( &sender, single, sizeof( single ), ROCKETNET_MESSAGE_SINGLE_BYTES + 1, &context ) == NULL );
+    check( context.refusal == RN_CHANNEL_REFUSED_SINGLE_TOO_LARGE );
+    check( rn_channel_start_message( &sender, single, sizeof( single ), packet_sized, &context ) == single );
+    check( rn_channel_start_message( &sender, single, sizeof( single ), packet_sized, &context ) == NULL );
+    check( context.refusal == RN_CHANNEL_REFUSED_CONTEXT_OPEN );
+    rn_channel_abort_message( &sender, &context );
+
+    // a malformed payload is refused whole and nothing is delivered
+
+    uint8_t malformed[4] = { 0, 2, 0x00, 0x02 };                 // the form byte is neither 0x00 nor 0x01
+    count = -1;
+    check( rn_channel_receive( &receiver, malformed, 4, deliveries, 8, &count ) == RN_CHANNEL_VIOLATION );
+    check( count == 0 );
+
+    // the delivery budget drops the rest and says so
+
+    check( rn_channel_send( &sender, small_a, 5, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_OK );
+    check( rn_channel_send( &sender, small_b, 5, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_OK );
+    length = rn_channel_write( &sender, frame, sizeof( frame ), &fragmented );
+    count = -1;
+    check( rn_channel_receive( &receiver, frame, length, deliveries, 1, &count ) == RN_CHANNEL_REFUSED_DELIVERY_FULL );
+    check( count == 1 );
+
+    rn_arena_destroy( arena );
+
+    // exhaustion is the region's counter, per R8: the descriptor pool first
+
+    rocketnet_message_config_t lean;
+    rocketnet_message_default_config( &lean );
+    lean.send_buffer_bytes = 12288;
+    lean.send_queue_messages = 16;
+    lean.max_message_bytes = 1191;
+    check( rocketnet_message_validate_config( &lean ) == 1 );
+
+    rocketnet_counters_t lean_counters;
+    memset( &lean_counters, 0, sizeof( lean_counters ) );
+    rn_arena_t * lean_arena = rn_arena_create( NULL, &lean, 1, &lean_counters );
+    check( lean_arena );
+    rn_region_t * lean_region = rn_arena_region( lean_arena, 0 );
+    rn_region_carve( lean_region );
+    rn_channel_t lean_sender;
+    rn_channel_init( &lean_sender, lean_region, &lean );
+
+    for ( int i = 0; i < 16; i++ )
+        check( rn_channel_send( &lean_sender, small_a, 1, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_OK );
+    check( rn_channel_send( &lean_sender, small_a, 1, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_REFUSED_QUEUE_FULL );
+    check( rn_counter( &lean_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 1 );
+    rn_arena_destroy( lean_arena );
+
+    // and then the store: a 1191-byte message is two large chunks, the class
+    // holds three, so the second message is the store's refusal
+
+    rocketnet_message_default_config( &lean );
+    lean.send_buffer_bytes = 12288;
+    lean.send_queue_messages = 1024;
+    lean.max_message_bytes = 1191;
+    check( rocketnet_message_validate_config( &lean ) == 1 );
+    memset( &lean_counters, 0, sizeof( lean_counters ) );
+    lean_arena = rn_arena_create( NULL, &lean, 1, &lean_counters );
+    check( lean_arena );
+    lean_region = rn_arena_region( lean_arena, 0 );
+    rn_region_carve( lean_region );
+    rn_channel_init( &lean_sender, lean_region, &lean );
+
+    uint8_t max_sized[1191];
+    for ( int i = 0; i < 1191; i++ )
+        max_sized[i] = (uint8_t) i;
+    check( rn_channel_send( &lean_sender, max_sized, 1191, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_OK );
+    check( rn_channel_send( &lean_sender, max_sized, 1191, ROCKETNET_UNRELIABLE, ROCKETNET_PRIORITY_LOW, 0 ) == RN_CHANNEL_REFUSED_STORE_FULL );
+    check( rn_counter( &lean_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    rn_arena_destroy( lean_arena );
+}
+
+// -----------------------------------------
+
 struct channels_test_t
 {
     const char * name;
@@ -2141,6 +2325,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
     { "test_channels_allocator_trap_witness", "ChannelsAllocatorTrapWitness", test_channels_allocator_trap_witness },
     { "test_channels_allocator_no_live_allocation", "ChannelsAllocatorNoLiveAllocation", test_channels_allocator_no_live_allocation },
+    { "test_channels_unreliable_aggregates_and_zero_copy", "ChannelsUnreliableAggregatesSmallAndZeroCopiesPacketSized", test_channels_unreliable_aggregates_and_zero_copy },
 };
 
 int rocketnet_channels_test_count()

@@ -311,6 +311,39 @@ taught the design four things, now in 13.2 and 13.3:
   length, so it checks the shortest block it could be part of, and a base
   below 0 is a span outside the ring.
 
+**As built, the UNRELIABLE first half of layer 3.** `sdk/rocketnet_channel.{h,cpp}`
+is the per-connection machine the card `rn-l3-unreliable.w1` asks for: the
+UNRELIABLE send and receive paths over the transports, pure per R4 (one struct
+plus the region, no socket, no clock, no allocation). The code taught the
+design three things, all in the machine:
+
+- **The copying path and the zero-copy path have different frame thresholds.**
+  A RECORDS record costs three header bytes and the payload keeps the trailing
+  form byte, so the copying path packs one record into a 1192-byte frame only
+  up to 1188 message bytes. The zero-copy SINGLE form has nothing before the
+  message, so `start_message` carries up to 1191. A 1189-to-1191-byte message
+  is therefore a fragmented transport payload on the copying path and one wire
+  frame on the zero-copy path. Both are L2.3's; the machine refuses a SINGLE
+  request above `ROCKETNET_MESSAGE_SINGLE_BYTES` rather than silently copying
+  it, and `rn_channel_write` sets its `fragmented` answer by the payload's
+  length against 1192.
+- **Aggregation is bounded by the caller's frame, not by a separate budget.**
+  `rn_channel_write` packs code-0 records into `min(capacity, 1192)`; the first
+  record that does not fit ends the packet, as 9.3 says. `rn_channel_next_bytes`
+  is the frame size to ask the transport for: 1192 for an aggregation, or the
+  one-record payload above a frame for a large head.
+- **Receive holds nothing.** `rn_channel_receive` runs layer 2's whole-payload
+  checks, then hands each code-0 record up in arrival order with its `data`
+  pointing into the payload. The delivery budget (`unreliable_deliveries`) and
+  the caller's capacity are the only bounds, and a full budget drops the rest
+  and says so, which unreliable semantics allow (6.3 step 4).
+
+Its refusal codes are named in the header. The two exhaustion refusals are the
+region's own counters (`MESSAGE_SEND_QUEUE_FULL`, `MESSAGE_SEND_STORE_FULL`);
+the rest are the machine's answer, for layer 8 to count under the `MESSAGE_*`
+names of section 12. It changed no byte on the wire, so STANDARD.md _Messages_
+stands as layer 2 wrote it.
+
 ## 6. Layer 3: the reliable window
 
 ### 6.1 What it owns
