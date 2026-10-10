@@ -1121,16 +1121,22 @@ void rocketnet_test_platform_socket()
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// The receive seam drops a datagram past the receive ceiling instead of
+// delivering it truncated as a short packet. The platform's own pump is the
+// one under test -- darwin's recvmsg_x batch on macOS, the portable loop
+// elsewhere -- so the red test is the same real-socket injection on every
+// POSIX bench.
 
 void rocketnet_test_darwin_oversize_datagram_dropped()
 {
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, "0.0.0.0" );
-    rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create_with_pump( NULL, &bind_address,
-        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, "msgx" );
+    rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create( NULL, &bind_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( receiver );
-    rocketnet_check( strcmp( rocketnet_platform_socket_pump( receiver ), "msgx" ) == 0 );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( receiver ), ROCKETNET_TEST_EXPECTED_PUMP ) == 0 );
 
     int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     rocketnet_check( injector >= 0 );
@@ -1176,7 +1182,7 @@ void rocketnet_test_darwin_oversize_datagram_dropped()
     rocketnet_platform_socket_destroy( receiver );
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
 {
@@ -3249,6 +3255,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+    { "test_darwin_oversize_datagram_dropped", rocketnet_test_darwin_oversize_datagram_dropped },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
@@ -3272,7 +3279,6 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_darwin_oversize_datagram_dropped", rocketnet_test_darwin_oversize_datagram_dropped },
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
     { "test_driver_pump_alias", rocketnet_test_driver_pump_alias },
 #endif
