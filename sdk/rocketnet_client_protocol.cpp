@@ -467,7 +467,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
     uint8_t nonce_out[ROCKETNET_SESSION_NONCE_BYTES];
-    int opened_bytes = rocketnet_open_sealed_packet( server_ephemeral_public_key, nonce_out,
+    int opened_bytes = rocketnet_open_sealed_packet( server_ephemeral_public_key, nonce_out, ROCKETNET_KEY_BYTES,
                                                      packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_CHALLENGE_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
@@ -580,7 +580,8 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
-        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, packet_data, packet_bytes,
+        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
+                                                     packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
                                                      NULL, client->keys.handshake_server_to_client );
@@ -594,7 +595,8 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
                                          client->token.client_to_server_key,
                                          client->token.server_to_client_key,
                                          client->connection_salt, carried_nonce );
-        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, packet_data, packet_bytes,
+        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
+                                                     packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
                                                      NULL, temporary_keys.handshake_server_to_client );
@@ -691,7 +693,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
         return -1;
     }
 
-    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_data, packet_bytes, packet_type,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_bytes, packet_data, packet_bytes, packet_type,
                                                      sequence, client->signed_fields.protocol_id,
                                                      client->connection_salt, NULL,
                                                      client->keys.session_server_to_client );

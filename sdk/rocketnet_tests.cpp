@@ -1518,7 +1518,7 @@ void rocketnet_test_sealed_packets()
         // back on the types that carry one
         uint8_t opened[ROCKETNET_RECEIVE_CEILING];
         uint8_t session_nonce_out[ROCKETNET_SESSION_NONCE_BYTES];
-        int opened_bytes = rocketnet_open_sealed_packet( opened, cases[i].session_nonce ? session_nonce_out : NULL,
+        int opened_bytes = rocketnet_open_sealed_packet( opened, cases[i].session_nonce ? session_nonce_out : NULL, ROCKETNET_RECEIVE_CEILING,
                                                          packet, bytes, cases[i].packet_type, cases[i].sequence,
                                                          ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                          cases[i].client_ephemeral, cases[i].key );
@@ -1545,32 +1545,32 @@ void rocketnet_test_sealed_packet_refusals()
 
     // NEGATIVE: sequence zero is never built and never opens
     rocketnet_check( rocketnet_write_sealed_packet( packet + 100, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag, 0, NULL, payload_data, 5, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == 0 );
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: the wrong key refuses
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_s2c_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_s2c_key ) == -1 );
 
     // NEGATIVE: the wrong sequence refuses -- the nonce is the sequence
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 4, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 4, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: the wrong protocol id refuses -- it lives in the AD
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID + 1, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID + 1, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: the wrong salt refuses -- it lives in the AD
     const uint8_t wrong_salt[8] = { 0 };
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, wrong_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, wrong_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: a different claimed type refuses -- the type lives in the AD,
     // so a challenge cannot be replayed as a denied
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: truncation refuses, at every cut
     for ( int cut = 1; cut <= 16; cut++ )
-        rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes - cut, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+        rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes - cut, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: a flipped ciphertext byte refuses
     packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + 2] ^= 1;
-    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
     packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + 2] ^= 1;
 
     // NEGATIVE: the nonce and ephemeral argument discipline is enforced both
@@ -1579,7 +1579,7 @@ void rocketnet_test_sealed_packet_refusals()
     uint8_t session_nonce_out[ROCKETNET_SESSION_NONCE_BYTES];
     rocketnet_check( rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag, 1, NULL, rocketnet_test_server_eph_public, 32, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, rocketnet_test_client_eph_public, rocketnet_test_handshake_s2c_key ) == 0 );
     rocketnet_check( rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag, 3, rocketnet_test_session_nonce, payload_data, 5, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == 0 );
-    rocketnet_check( rocketnet_open_sealed_packet( opened, session_nonce_out, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+    rocketnet_check( rocketnet_open_sealed_packet( opened, session_nonce_out, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
 
     // NEGATIVE: request and cookie are not sealed types
     rocketnet_check( rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_REQUEST_PACKET, tag, 1, NULL, payload_data, 5, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == 0 );
@@ -1614,6 +1614,31 @@ void rocketnet_test_unsealed_packets()
     const uint8_t * p = cookie + ROCKETNET_PREFILTER_BYTES + 8;
     rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_CREATE_TS + 3 );
     rocketnet_check( memcmp( cookie + ROCKETNET_PREFILTER_BYTES + 16, rocketnet_test_cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
+}
+
+void rocketnet_test_open_sealed_respects_capacity()
+{
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    
+    // Build a valid payload packet with 12 bytes of data
+    const uint8_t payload[12] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag, 3,
+                                                      NULL, payload, 12,
+                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                      NULL, rocketnet_test_session_c2s_key );
+    rocketnet_check( packet_bytes > 0 );
+    
+    // Try to open into a 32-byte buffer - should fail because 
+    // header + plaintext + tag exceeds capacity
+    uint8_t small_out[32];
+    int opened = rocketnet_open_sealed_packet( small_out, NULL, 32, packet, packet_bytes,
+                                                ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
+                                                ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                                NULL, rocketnet_test_session_c2s_key );
+    
+    // Should return -1 when plaintext won't fit in output buffer
+    rocketnet_check( opened == -1 );
 }
 
 void rocketnet_test_sequence_reconstruction()
@@ -2162,7 +2187,7 @@ void rocketnet_test_request_path_happy()
     rocketnet_derive_handshake_keys( &handshake_keys, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
                                      rocketnet_test_salt, session_nonce );
 
-    int opened_bytes = rocketnet_open_sealed_packet( opened, session_nonce, response, response_bytes,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, session_nonce, ROCKETNET_RECEIVE_CEILING, response, response_bytes,
                                                      ROCKETNET_CONNECTION_CHALLENGE_PACKET, sequence,
                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                      rocketnet_test_client_eph_public,
@@ -2548,7 +2573,7 @@ void rocketnet_test_request_path_slots_and_denial()
     rocketnet_derive_handshake_keys( &keys, rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
                                      rocketnet_test_salt, session_nonce );
     uint8_t opened[64];
-    int opened_bytes = rocketnet_open_sealed_packet( opened, session_nonce, response, response_bytes,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, session_nonce, ROCKETNET_RECEIVE_CEILING, response, response_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                      ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                      NULL, keys.handshake_server_to_client );
@@ -3012,7 +3037,7 @@ static void rocketnet_test_client_derive_from_challenge( const uint8_t * challen
                                      rocketnet_test_salt, session_nonce );
 
     uint8_t server_ephemeral[ROCKETNET_KEY_BYTES];
-    rocketnet_check( rocketnet_open_sealed_packet( server_ephemeral, session_nonce, challenge, challenge_bytes,
+    rocketnet_check( rocketnet_open_sealed_packet( server_ephemeral, session_nonce, ROCKETNET_KEY_BYTES, challenge, challenge_bytes,
                                                    ROCKETNET_CONNECTION_CHALLENGE_PACKET, sequence,
                                                    ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                    rocketnet_test_client_eph_public,
@@ -3159,7 +3184,7 @@ void rocketnet_test_server_full_connect()
         const uint8_t * p = response + ROCKETNET_PREFILTER_BYTES;
         uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
         uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-        rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, response, response_bytes,
+        rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, response, response_bytes,
                                                        ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
                                                        ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                        NULL, client_keys.session_server_to_client ) == ROCKETNET_ACK_BLOCK_MIN_BYTES + 8 );
@@ -3282,7 +3307,7 @@ void rocketnet_test_server_response_denials()
         rocketnet_check( sequence == 2 );
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         uint8_t opened[64];
-        rocketnet_check( rocketnet_open_sealed_packet( opened, session_nonce, response, response_bytes,
+        rocketnet_check( rocketnet_open_sealed_packet( opened, session_nonce, ROCKETNET_RECEIVE_CEILING, response, response_bytes,
                                                        ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                        ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                        NULL, client_keys.handshake_server_to_client ) == 0 );
@@ -8323,7 +8348,7 @@ void rocketnet_test_fragment_vector()
 
     // and it opens back to the frozen plaintext
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet, bytes, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
                                                      6, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                      NULL, rocketnet_test_session_c2s_key );
     rocketnet_check( opened_bytes == 18 );
@@ -9301,6 +9326,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_sealed_packets", rocketnet_test_sealed_packets },
     { "test_sealed_packet_refusals", rocketnet_test_sealed_packet_refusals },
     { "test_unsealed_packets", rocketnet_test_unsealed_packets },
+    { "test_open_sealed_respects_capacity", rocketnet_test_open_sealed_respects_capacity },
     { "test_sequence_reconstruction", rocketnet_test_sequence_reconstruction },
     { "test_cookie", rocketnet_test_cookie },
     { "test_connection_keys", rocketnet_test_connection_keys },
