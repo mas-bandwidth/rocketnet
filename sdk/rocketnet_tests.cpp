@@ -9412,6 +9412,58 @@ void rocketnet_test_xdp_empty_map_drops()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
+// the production stride parse lives in rocketnet_server_gso_linux.cpp; the
+// suite drives that symbol directly rather than re-deriving the fix here, so
+// the red/green is the worker's own behavior
+
+int rocketnet_server_gso_segment_bytes( struct msghdr * msg_header, int message_bytes );
+
+void rocketnet_test_gro_short_cmsg_falls_back()
+{
+    const int message_bytes = 1400;
+
+    struct msghdr msg;
+    memset( &msg, 0, sizeof(msg) );
+
+    char control[CMSG_SPACE(sizeof(int))];
+    memset( control, 0, sizeof(control) );
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+    rocketnet_check( cmsg != NULL );
+
+    cmsg->cmsg_level = IPPROTO_UDP;
+    cmsg->cmsg_type = UDP_GRO;
+
+    // a control record one byte short of the stride int: the bytes it does
+    // not declare still hold a plausible stride, and the parse must not read
+    // them -- it falls back to the whole message length instead
+
+    cmsg->cmsg_len = CMSG_LEN( sizeof(int) ) - 1;
+    const int smuggled = message_bytes / 4;
+    memcpy( CMSG_DATA( cmsg ), &smuggled, sizeof(smuggled) );
+
+    rocketnet_check( rocketnet_server_gso_segment_bytes( &msg, message_bytes ) == message_bytes );
+
+    // and a well formed record still reads its stride: the fallback is the
+    // short record's, not a blanket refusal to parse
+
+    cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+    rocketnet_check( rocketnet_server_gso_segment_bytes( &msg, message_bytes ) == smuggled );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 
 
 static void rocketnet_test_config_bytes_exact_fields( const char * name, void * config,
@@ -9951,6 +10003,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_gro_short_cmsg_falls_back", rocketnet_test_gro_short_cmsg_falls_back },
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },

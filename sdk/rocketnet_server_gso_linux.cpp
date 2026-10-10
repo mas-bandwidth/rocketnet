@@ -7,6 +7,51 @@
 
 #include "rocketnet.h"
 
+// The GRO stride parse is a named seam so the unit suite can drive the
+// production function itself rather than re-deriving it: the linux worker
+// below calls it, and the suite (linux and mac -- both carry the cmsg macros
+// this is built from) calls the same symbol. A platform without the macros
+// compiles it out with the body.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <string.h>
+
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+
+int rocketnet_server_gso_segment_bytes( struct msghdr * msg_header, int message_bytes )
+{
+    int segment_bytes = message_bytes;
+
+    for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( msg_header ); cmsg; cmsg = CMSG_NXTHDR( msg_header, cmsg ) )
+    {
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            // a control record that does not cover the stride int is
+            // malformed: read nothing from it and fall back to the whole
+            // message below
+
+            if ( cmsg->cmsg_len >= CMSG_LEN( sizeof(int) ) )
+            {
+                memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
+            }
+
+            break;
+        }
+    }
+
+    if ( segment_bytes <= 0 )
+        segment_bytes = message_bytes;
+
+    return segment_bytes;
+}
+
+#endif
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // The GSO transport driver (#97). See rocketnet_server_gso.h for the shape
@@ -501,17 +546,7 @@ static void rocketnet_server_gso_worker( void * data )
                 // the GRO segment stride: absent, the message is one
                 // datagram and the stride is its whole length
 
-                int segment_bytes = message_bytes;
-                for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &queue->messages[i].msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( &queue->messages[i].msg_hdr, cmsg ) )
-                {
-                    if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
-                    {
-                        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
-                        break;
-                    }
-                }
-                if ( segment_bytes <= 0 )
-                    segment_bytes = message_bytes;
+                const int segment_bytes = rocketnet_server_gso_segment_bytes( &queue->messages[i].msg_hdr, message_bytes );
 
                 if ( segment_bytes < message_bytes )
                     buffer->gro_batches++;
