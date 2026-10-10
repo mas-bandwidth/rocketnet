@@ -1121,6 +1121,63 @@ void rocketnet_test_platform_socket()
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+void rocketnet_test_darwin_oversize_datagram_dropped()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create_with_pump( NULL, &bind_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, "msgx" );
+    rocketnet_check( receiver );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( receiver ), "msgx" ) == 0 );
+
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+    struct sockaddr_in to;
+    memset( &to, 0, sizeof(to) );
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    to.sin_port = htons( bind_address.port );
+
+    uint8_t oversized[2000];
+    memset( oversized, 0x7c, sizeof(oversized) );
+    uint8_t valid[32];
+    for ( int i = 0; i < (int) sizeof(valid); i++ )
+        valid[i] = (uint8_t) ( i + 1 );
+    rocketnet_check( sendto( injector, oversized, sizeof(oversized), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(oversized) );
+    rocketnet_check( sendto( injector, valid, sizeof(valid), 0, (struct sockaddr*) &to, sizeof(to) ) == (ssize_t) sizeof(valid) );
+
+    double deadline = rocketnet_platform_time() + 5.0;
+    for ( ;; )
+    {
+        fd_set readable;
+        FD_ZERO( &readable );
+        FD_SET( receiver->handle, &readable );
+        struct timeval timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100000;
+        if ( select( receiver->handle + 1, &readable, NULL, NULL, &timeout ) > 0 )
+            break;
+        rocketnet_check( rocketnet_platform_time() < deadline );
+    }
+    usleep( 200000 );
+
+    const int stride = 1426;
+    rocketnet_address_t from[2];
+    int packet_bytes[2];
+    uint8_t packet_data[2 * stride];
+    const int received = rocketnet_platform_socket_receive_packets( receiver, from, packet_data, stride, packet_bytes, 2 );
+    rocketnet_check( received == 1 );
+    rocketnet_check( packet_bytes[0] == (int) sizeof(valid) );
+    rocketnet_check( memcmp( packet_data, valid, sizeof(valid) ) == 0 );
+
+    close( injector );
+    rocketnet_platform_socket_destroy( receiver );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
 {
     rocketnet_address_t bind_address;
@@ -3215,6 +3272,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_darwin_oversize_datagram_dropped", rocketnet_test_darwin_oversize_datagram_dropped },
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
     { "test_driver_pump_alias", rocketnet_test_driver_pump_alias },
 #endif
