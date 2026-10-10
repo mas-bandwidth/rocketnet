@@ -260,7 +260,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-    client->send_sequence_session++;
+    rocketnet_platform_atomic_add_u64( &client->send_sequence_session, 1 );
 
     if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time ) )
     {
@@ -1140,7 +1140,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     if ( bytes == 0 )
         return 0;
 
-    client->send_sequence_session++;
+    rocketnet_platform_atomic_add_u64( &client->send_sequence_session, 1 );
 
     if ( !rocketnet_ack_endpoint_record_sent( &client->ack, sequence, bytes, 0, 0, 0, current_time ) )
     {

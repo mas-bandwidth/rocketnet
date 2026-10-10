@@ -9262,6 +9262,55 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+struct thread_ctx
+{
+    struct rocketnet_server_protocol_t * server;
+    volatile int stop;
+};
+
+static void keep_alive_thread( void * arg )
+{
+    struct thread_ctx * ctx = (struct thread_ctx *) arg;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
+    for ( int i = 0; i < 25; i++ )
+        rocketnet_server_write_keep_alive( ctx->server, 0, 100.0 + i * 0.001, packet );
+}
+
+void rocketnet_test_session_sequence_never_repeats()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x9ACEULL, &client_keys );
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    struct thread_ctx ctx0 = { &test.server, 0 };
+    struct thread_ctx ctx1 = { &test.server, 0 };
+
+    struct rocketnet_platform_thread_t * thread0 = rocketnet_platform_thread_create( NULL, keep_alive_thread, &ctx0 );
+    struct rocketnet_platform_thread_t * thread1 = rocketnet_platform_thread_create( NULL, keep_alive_thread, &ctx1 );
+
+    rocketnet_platform_thread_join( thread0 );
+    rocketnet_platform_thread_destroy( thread0 );
+    rocketnet_platform_thread_join( thread1 );
+    rocketnet_platform_thread_destroy( thread1 );
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, 0 );
+    rocketnet_check( mapping->send_sequence_session == 52 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9347,6 +9396,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_slots", rocketnet_test_client_slots },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
+    { "test_session_sequence_never_repeats", rocketnet_test_session_sequence_never_repeats },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
     { "test_value_tracker", rocketnet_test_value_tracker },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
