@@ -3048,6 +3048,32 @@ void rocketnet_test_client_slots()
     rocketnet_client_slots_destroy( slots );
 }
 
+void rocketnet_test_client_id_out_of_range_returns_zero()
+{
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
+    rocketnet_check( slots );
+
+    // negative index returns 0
+    rocketnet_check( rocketnet_client_slots_client_id( slots, -1 ) == 0 );
+
+    // index >= max_clients returns 0
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 4 ) == 0 );
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 100 ) == 0 );
+
+    // unconnected slot returns 0
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 0 ) == 0 );
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 3 ) == 0 );
+
+    // now assign one, connected at index 1, and verify
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xAB, sizeof(user_data) );
+    int idx = rocketnet_client_slots_assign( slots, 0x12345678ULL, 5, user_data );
+    rocketnet_check( idx == 0 );
+    rocketnet_check( rocketnet_client_slots_client_id( slots, 0 ) == 0x12345678ULL );
+
+    rocketnet_client_slots_destroy( slots );
+}
+
 // --- the server receive path, end to end ---
 
 // drives a request through the single receive entry
@@ -9546,6 +9572,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },
+    { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
     { "test_platform_mutex", rocketnet_test_platform_mutex },
