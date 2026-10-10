@@ -9813,7 +9813,9 @@ void rocketnet_test_response_wrong_size_counted()
 // A forged sealed packet from a connected client's address would otherwise
 // cost one AEAD open each, without bound -- the audit's server-dos finding.
 // With a per-mapping budget, 10000 junk session packets must spend at most the
-// budget of opens; the rest are dropped before the open.
+// budget of opens; the rest are dropped before the open. The budget belongs to
+// the mapping, not the map slot it happened to occupy: a client that reconnects
+// into a reused slot does not inherit the dead mapping's failures.
 void rocketnet_test_failed_open_budget_per_mapping()
 {
     uint8_t wrong_key[32];
@@ -9857,6 +9859,38 @@ void rocketnet_test_failed_open_budget_per_mapping()
     // before its open, which is what bounds the CPU a forgery flood can cost.
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
+
+    // the mapping goes away and its slot is reused. the free list is LIFO, so
+    // the next mapping lands on the same index: a new client cannot inherit
+    // the failures the previous mapping in this slot ran up.
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    rocketnet_encryption_map_remove( test.server.encryption_map, mapping_index );
+
+    rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.8:56789" ) );
+
+    struct rocketnet_connection_keys_t next_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x6F2B3CULL, &next_keys );
+
+    uint8_t next_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( next_response, &next_keys );
+    rocketnet_check( rocketnet_test_process_packet( &test, next_response, sizeof(next_response), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == mapping_index );
+
+    test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
+    test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] = 0;
+
+    int next_packet_bytes = rocketnet_test_write_session_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1,
+                                                                 junk_payload, 8, wrong_key );
+    rocketnet_test_process_packet( &test, packet, next_packet_bytes, response, &response_bytes,
+                                   payload_out, &payload_out_bytes, &payload_client_index );
+
+    // the fresh mapping's first forged packet reaches the open: the budget is
+    // its own, not the dead mapping's
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == 0 );
 
     rocketnet_test_server_teardown( &test );
 }
