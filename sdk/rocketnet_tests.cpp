@@ -2149,12 +2149,13 @@ static void rocketnet_test_handshake_work_budget_per_update()
 
     // build 16000 cookie-valid requests; all use the same client_id
     // to ensure they're valid and would pass the cookie gate
-    uint8_t requests[16000][ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t * requests = (uint8_t*)malloc( 16000 * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_check( requests );
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     const uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 0 };
 
     for ( int i = 0; i < 16000; i++ )
-        rocketnet_test_build_request( requests[i], 0x12345678ULL, salt );
+        rocketnet_test_build_request( requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 0x12345678ULL, salt );
 
     // process all 16000 requests through the transport loop
     // the handshake work budget should cap how many are actually verified
@@ -2165,7 +2166,7 @@ static void rocketnet_test_handshake_work_budget_per_update()
     {
         uint8_t response[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
         int response_bytes = 0;
-        int result = rocketnet_test_process( &test, requests[i], ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
+        int result = rocketnet_test_process( &test, requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
         total_requests++;
 
         if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
@@ -2177,6 +2178,7 @@ static void rocketnet_test_handshake_work_budget_per_update()
     rocketnet_check( total_requests == 16000 );
     rocketnet_check( cookie_sent <= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
 
+    free( requests );
     rocketnet_test_server_teardown( &test );
 }
 
