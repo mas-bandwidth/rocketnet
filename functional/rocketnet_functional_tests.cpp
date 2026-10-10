@@ -1481,6 +1481,50 @@ void rocketnet_test_platform_pump_zero_length_chaff()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_windows_msgsize_continues_drain()
+{
+    // WSAEMSGSIZE handling: an oversized datagram should not end the drain.
+    // After the fix, WSAEMSGSIZE, WSAECONNRESET, and WSAENETRESET count the
+    // datagram and continue the drain.
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    rocketnet_address_parse( &local_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256, 256 );
+    rocketnet_check( socket );
+    local_address.port = bind_address.port;
+
+    uint8_t oversized[512];
+    memset( oversized, 0xFF, sizeof(oversized) );
+
+    uint8_t valid[32];
+    memset( valid, 0x55, sizeof(valid) );
+
+    rocketnet_platform_socket_send_packet( socket, &local_address, oversized, sizeof(oversized) );
+
+    for ( int i = 0; i < 10; i++ )
+        rocketnet_platform_socket_send_packet( socket, &local_address, valid, sizeof(valid) );
+
+    uint8_t buffer[512];
+    memset( buffer, 0, sizeof(buffer) );
+    rocketnet_address_t from;
+    int bytes;
+
+    int count = 0;
+    while ( rocketnet_platform_socket_receive_packet( socket, &from, buffer, sizeof(buffer) ) )
+    {
+        if ( rocketnet_address_equal( &from, &local_address ) )
+            count++;
+    }
+
+    rocketnet_check( count == 10 );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+#endif
+
 void rocketnet_test_transport_acks_and_client_stats()
 {
     // The transports end to end over UDP loopback: eight clients fill every
@@ -3192,6 +3236,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+#else
+    { "test_windows_msgsize_continues_drain", rocketnet_test_windows_msgsize_continues_drain },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
