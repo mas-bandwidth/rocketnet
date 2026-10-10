@@ -9237,6 +9237,34 @@ public:
     }
 };
 
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    // Test that oversized datagrams are properly rejected by the prefilter.
+    // The platform receive path must detect datagrams larger than
+    // ROCKETNET_RECEIVE_CEILING and drop them instead of truncating.
+
+    // Create a datagram that exceeds the receive ceiling (1427 > 1426)
+    const int oversize_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING + 16];
+    uint8_t * p = packet;
+
+    // Write valid prefilter header for a keep-alive packet
+    uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+    memset( p, 0, sizeof(packet) - (p - packet) );
+
+    // The prefilter check must reject datagrams exceeding the ceiling
+    rocketnet_check( rocketnet_prefilter_check( packet, oversize_bytes, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
+
+    // The ceiling itself must be accepted (boundary test)
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+
+    // Note: Full platform receive behavior requires functional tests with real sockets.
+    // The fix in rocketnet_platform.cpp receives into stride+1 and drops datagrams
+    // where msg_datalen > ROCKETNET_RECEIVE_CEILING, ensuring oversized packets
+    // are dropped instead of truncated and processed.
+}
+
 void rocketnet_test_suite_environment()
 {
     const std::string original_driver = getenv("ROCKETNET_DRIVER") ? getenv("ROCKETNET_DRIVER") : "";
@@ -9397,6 +9425,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
