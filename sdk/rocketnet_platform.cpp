@@ -2881,11 +2881,20 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         {
             int error = WSAGetLastError();
 
-            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
+            if ( error == WSAEWOULDBLOCK || error == WSAETIMEDOUT )
+            {
+                return 0;
+            }
+            else if ( error == WSAEMSGSIZE || error == WSAECONNRESET || error == WSAENETRESET )
             {
                 rocketnet_debug( "recvfrom failed with error %d", error );
+                continue;
             }
-            return 0;
+            else
+            {
+                rocketnet_debug( "recvfrom failed with error %d", error );
+                return 0;
+            }
         }
 
         if ( result == 0 )

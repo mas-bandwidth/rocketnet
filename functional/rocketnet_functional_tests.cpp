@@ -3169,6 +3169,87 @@ void rocketnet_test_server_gso_send_overflow()
 
 extern void rocketnet_test_lifecycle_driver();
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_windows_msgsize_continues_drain()
+{
+    // This test verifies that WSAEMSGSIZE errors don't prematurely end the
+    // receive drain. On Windows, when recvfrom returns WSAEMSGSIZE for an
+    // oversized datagram, the fix should continue the drain to receive
+    // subsequent valid datagrams.
+
+    rocketnet_platform_socket_t * send_socket = NULL;
+    rocketnet_platform_socket_t * recv_socket = NULL;
+    {
+        rocketnet_address_t bind_address_send;
+        rocketnet_address_t bind_address_recv;
+        rocketnet_address_t local_address;
+        rocketnet_address_parse( &bind_address_send, "127.0.0.1" );
+        rocketnet_address_parse( &bind_address_recv, "127.0.0.1" );
+        rocketnet_address_parse( &local_address, "127.0.0.1" );
+
+        // Create send socket on a random port
+        send_socket = rocketnet_platform_socket_create( NULL, &bind_address_send, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+        rocketnet_check( send_socket );
+
+        // Create receive socket on a specific port
+        bind_address_recv.port = 0;
+        recv_socket = rocketnet_platform_socket_create( NULL, &bind_address_recv, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+        rocketnet_check( recv_socket );
+
+        local_address.port = bind_address_recv.port;
+
+        // Send one oversized datagram that will trigger WSAEMSGSIZE on receive
+        uint8_t oversized_packet[ROCKETNET_RECEIVE_CEILING + 1024];
+        memset( oversized_packet, 0xAA, sizeof(oversized_packet) );
+        rocketnet_platform_socket_send_packet( send_socket, &local_address, oversized_packet, sizeof(oversized_packet) );
+
+        // Send 10 valid datagrams after the oversized one
+        const int valid_count = 10;
+        for ( int i = 0; i < valid_count; i++ )
+        {
+            uint8_t valid_packet[256];
+            memset( valid_packet, (uint8_t)i, sizeof(valid_packet) );
+            rocketnet_platform_socket_send_packet( send_socket, &local_address, valid_packet, sizeof(valid_packet) );
+        }
+
+        // Now drain the receive socket - should receive all 10 valid datagrams
+        uint8_t buffer[ROCKETNET_RECEIVE_CEILING];
+        int received_count = 0;
+        rocketnet_address_t from;
+        memset( &from, 0, sizeof(from) );
+
+        // Try to receive all packets - with the fix, valid datagrams arrive despite oversized one
+        while ( received_count < valid_count )
+        {
+            int bytes = rocketnet_platform_socket_receive_packet( recv_socket, &from, buffer, sizeof(buffer) );
+            if ( bytes > 0 )
+            {
+                // Verify it's one of the valid packets (should be 256 bytes)
+                rocketnet_check( bytes == 256 );
+                received_count++;
+            }
+            else if ( bytes < 0 )
+            {
+                // On Windows with non-blocking socket, WSAEWOULDBLOCK or WSAETIMEDOUT means no more data ready
+                int error = WSAGetLastError();
+                if ( error == WSAEWOULDBLOCK || error == WSAETIMEDOUT )
+                    break;
+            }
+            else
+            {
+                // bytes == 0 means socket drained prematurely (this was the bug)
+                break;
+            }
+        }
+
+        rocketnet_check( received_count == valid_count );
+
+        rocketnet_platform_socket_destroy( recv_socket );
+        rocketnet_platform_socket_destroy( send_socket );
+    }
+}
+#endif
+
 struct rocketnet_functional_test_t
 {
     const char * name;
@@ -3222,6 +3303,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_config_env_aliases", rocketnet_test_config_env_aliases },
     { "test_client_driver", rocketnet_test_client_driver },
     { "test_lifecycle_driver", rocketnet_test_lifecycle_driver },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_windows_msgsize_continues_drain", rocketnet_test_windows_msgsize_continues_drain },
+#endif
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
