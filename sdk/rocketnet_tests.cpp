@@ -39,6 +39,9 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_socket.h"
+#include <bpf/libbpf.h>
+#include <xdp/libxdp.h>
+#include <rocketnet_server_xdp.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -9337,6 +9340,30 @@ void rocketnet_test_xdp_interrupt_matcher()
 
 // Verify that the XDP program returns XDP_DROP when bpf_redirect_map
 // fails (e.g., empty xskmap), and REDIRECTED is only incremented on success.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+void rocketnet_test_xdp_object_loads_without_shell()
+{
+    setenv( "PATH", "/nonexistent", 1 );
+    setenv( "CC", "false", 1 );
+
+    struct bpf_object_open_opts open_opts;
+    memset( &open_opts, 0, sizeof(open_opts) );
+    open_opts.sz = sizeof(open_opts);
+    struct bpf_object * bpf_obj = bpf_object__open_mem( server_xdp_o, server_xdp_o_len, &open_opts );
+    rocketnet_check( !libxdp_get_error( bpf_obj ) );
+    if ( !libxdp_get_error( bpf_obj ) )
+    {
+        struct xdp_program * prog = xdp_program__from_bpf_obj( bpf_obj, "server_xdp" );
+        rocketnet_check( !libxdp_get_error( prog ) );
+        if ( prog )
+        {
+            xdp_program__close( prog );
+        }
+    }
+}
+#endif
+
 void rocketnet_test_xdp_empty_map_drops()
 {
     // This test validates the fix for the security audit finding where:
@@ -9861,6 +9888,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
+    { "test_xdp_object_loads_without_shell", rocketnet_test_xdp_object_loads_without_shell },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
 };
