@@ -20,7 +20,10 @@
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
 #include <sys/resource.h>
+#include <sys/prctl.h>
+#include <sys/capability.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <arpa/inet.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
@@ -1016,7 +1019,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
-rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus )
+rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus, int target_uid )
 {
     rocketnet_assert( num_queues >= 1 );
     rocketnet_assert( public_address_string );
@@ -1582,6 +1585,37 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_info( "server id is %016" PRIx64, server_socket->server_id );
     rocketnet_info( "match id is %016" PRIx64, server_socket->match_id );
+
+    // Drop privileges after XDP socket and program setup is complete
+    // This must happen after all privileged operations are done
+    {
+        if ( target_uid != 0 )
+        {
+            // Drop all capabilities first, then change uid
+            // Using prctl to drop capabilities and setuid to change user
+            // PR_SET_SECUREBITS to lock down capabilities
+            if ( prctl( PR_SET_SECUREBITS, 
+                       SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED ) != 0 )
+            {
+                rocketnet_warn( "prctl PR_SET_SECUREBITS failed: %s", strerror(errno) );
+            }
+            
+            // Clear all capabilities from the effective and permitted sets
+            cap_t caps = cap_init();
+            if ( caps && cap_set_proc(caps) != 0 )
+            {
+                rocketnet_warn( "cap_set_proc failed: %s", strerror(errno) );
+            }
+            if ( caps ) cap_free(caps);
+            
+            // Drop to target uid
+            if ( setresuid(target_uid, target_uid, target_uid) != 0 )
+            {
+                rocketnet_error( "setresuid failed: %s", strerror(errno) );
+                return NULL;
+            }
+        }
+    }
 
     return server_socket;
 }

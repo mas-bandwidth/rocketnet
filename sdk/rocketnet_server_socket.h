@@ -67,7 +67,7 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 // bookkeeping, thread stacks and allocator overhead; no privileged operations.
 uint64_t rocketnet_server_socket_memory_required(int num_queues);
 
-struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * filter_value, int num_xdp_queues = 7, int num_os_cpus = 1 );
+struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * filter_value, int num_xdp_queues, int num_os_cpus, int target_uid );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 
