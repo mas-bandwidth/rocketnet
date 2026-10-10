@@ -191,6 +191,22 @@ void rocketnet_test_time()
     rocketnet_check( finish > start );
 }
 
+void rocketnet_test_xdp_free_list_refuses_overflow()
+{
+    uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES/2];
+    int num_free_send_frames = 0;
+
+    const int max_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
+
+    for ( int j = 0; j < max_frames; j++ )
+    {
+        send_frames[j] = (uint64_t)j * 4096;
+        num_free_send_frames++;
+    }
+
+    rocketnet_check( num_free_send_frames == ROCKETNET_XDP_NUM_FRAMES / 2 );
+}
+
 void rocketnet_test_endian()
 {
     uint32_t value = 0x11223344;
@@ -9272,6 +9288,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
+    { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
