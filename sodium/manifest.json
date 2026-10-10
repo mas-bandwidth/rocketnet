@@ -7,6 +7,9 @@
     "sodium.c": "b2bf049faccbcf18725c6805cdafe409f332604477e17e4224df152ee3eb0dd5",
     "sodium.h": "393663bfe1905a262c2828dd41a79136cf9024477433466c66586a48bd0e6876"
   },
+  "baseline_upstream_version": "1.0.22",
+  "baseline_upstream_commit": "77e1ce5d6dee871c49ef211222ba18ef0c486bda",
+  "baseline_upstream_archive_sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349",
   "public_headers": [
     "crypto_box.h",
     "crypto_generichash.h",

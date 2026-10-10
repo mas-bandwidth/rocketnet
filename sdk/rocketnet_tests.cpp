@@ -1216,6 +1216,69 @@ void rocketnet_test_crypto_key_derivation()
     }
 }
 
+// The bundled sodium is a two-file vendor. The extension added from the pinned
+// libsodium release archive is traceable by construction, but the baseline
+// netcode pair supplies the ChaCha20/Poly1305 AEAD, random, core, runtime and
+// utilities, and the audit found those families were not pinned to an upstream
+// release. sodium/manifest.json now records the baseline's upstream version,
+// release commit and archive SHA256 beside the extension's, and the existing
+// tools/generate_sodium.py --check regenerates the committed pair from those
+// pinned inputs and compares it byte for byte. This test runs that existing
+// comparison and pins the baseline provenance, so a regeneration that drops the
+// baseline traceability goes red.
+
+static bool rocketnet_test_sodium_manifest_traces_baseline_upstream()
+{
+    FILE * file = fopen( "sodium/manifest.json", "rb" );
+    if ( file == NULL )
+        return false;
+
+    std::string manifest;
+    char buffer[4096];
+    size_t got;
+    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+        manifest.append( buffer, got );
+    fclose( file );
+
+    // the baseline pin carries the same release, release commit and archive as
+    // the extension below it, so the AEAD/RNG/utilities are as traceable as the
+    // files added from the archive
+    return manifest.find( "\"baseline_upstream_version\": \"1.0.22\"" ) != std::string::npos
+        && manifest.find( "\"baseline_upstream_commit\": \"77e1ce5d6dee871c49ef211222ba18ef0c486bda\"" ) != std::string::npos
+        && manifest.find( "\"baseline_upstream_archive_sha256\": \"adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349\"" ) != std::string::npos;
+}
+
+static bool rocketnet_test_sodium_pinned_inputs_check()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const char * command = "python tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check";
+    FILE * pipe = _popen( command, "r" );
+#else
+    const char * command = "python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check";
+    FILE * pipe = popen( command, "r" );
+#endif
+    if ( pipe == NULL )
+        return false;
+
+    // drain the check's one status line so a passing run stays silent
+    char line[512];
+    while ( fgets( line, sizeof(line), pipe ) != NULL )
+    {
+    }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return _pclose( pipe ) == 0;
+#else
+    return pclose( pipe ) == 0;
+#endif
+}
+
+void rocketnet_test_sodium_matches_pinned_upstream()
+{
+    rocketnet_check( rocketnet_test_sodium_manifest_traces_baseline_upstream() );
+    rocketnet_check( rocketnet_test_sodium_pinned_inputs_check() );
+}
+
 static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                                struct rocketnet_connect_token_private_t * private_fields )
 {
@@ -9840,6 +9903,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_crypto_generichash", rocketnet_test_crypto_generichash },
     { "test_crypto_scalarmult", rocketnet_test_crypto_scalarmult },
     { "test_crypto_key_derivation", rocketnet_test_crypto_key_derivation },
+    { "test_sodium_matches_pinned_upstream", rocketnet_test_sodium_matches_pinned_upstream },
     { "test_connect_token_private", rocketnet_test_connect_token_private },
     { "test_connect_token_buffers_wiped", rocketnet_test_connect_token_buffers_wiped },
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },

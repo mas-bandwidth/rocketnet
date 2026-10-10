@@ -8,16 +8,20 @@ and a system sodium header in the same translation unit.
 ## Provenance
 
 The input baseline is the byte-for-byte netcode pair at
-`fc473eb628e080acaaebed2659e1f9ee85c6a7c2`, also shared by yojimbo. Its upstream
-provenance and 1.0.21/1.0.22 hardening patches are recorded in netcode's
-`sodium/NOTES.md`. It contains optimized ChaCha20/Poly1305, random, core,
-runtime and utilities. We verify its two SHA256 values before extending it;
-we do not claim to reconstruct its historical local patches from upstream.
+`fc473eb628e080acaaebed2659e1f9ee85c6a7c2`, also shared by yojimbo: a pruned
+amalgamation of the pinned libsodium release below. Its provenance and the
+1.0.21/1.0.22 hardening patches inside the slice are recorded in netcode's
+`sodium/NOTES.md`, and `manifest.json` pins the baseline to that same release,
+archive SHA256 and release commit. It contains optimized ChaCha20/Poly1305,
+random, core, runtime and utilities. We verify its two SHA256 values before
+extending it, so every bundled family -- the AEAD, RNG and utilities as much as
+the extension -- is traceable to the pinned upstream release.
 
 The extension comes from the official libsodium 1.0.22 release archive, whose
 SHA256 is `adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349`
 and release commit is `77e1ce5d6dee871c49ef211222ba18ef0c486bda`.
-`manifest.json` records both input pins and the exact 34 added C sources.
+`manifest.json` records both input pins and the exact 34 added C sources, and
+pins the baseline pair to the same upstream release below.
 They supply BLAKE2b, SHA-512, SipHash-2-4, X25519, Ed25519, XSalsa20,
 secretbox and sealed boxes. Unneeded password hashes, AEAD families and
 external assembly are omitted. X25519 uses upstream ref10 (51-bit limbs when
