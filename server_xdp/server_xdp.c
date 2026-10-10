@@ -99,10 +99,27 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 
             if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
             {
+                // fragment check: drop any non-first fragment
+                // (frag_off & 0x3fff != 0 means more fragments or MF bit set)
+                if ( ip->frag_off & htons(0x3fff) )
+                {
+                    debug_printf( "dropping IP fragment" );
+                    return XDP_DROP;
+                }
+
                 struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
 
                 if ( (void*)udp + sizeof(struct udphdr) <= data_end )
                 {
+                    // validate udp->len matches actual payload (header + data)
+                    __u16 udp_len = udp->len;
+                    __u16 expected_len = sizeof(struct udphdr) + ( data_end - (void*)udp - sizeof(struct udphdr) );
+                    if ( udp_len != expected_len )
+                    {
+                        debug_printf( "udp len mismatch" );
+                        return XDP_DROP;
+                    }
+
                     int key = 0;
                     struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
                     if ( config == NULL || config->public_port == 0 )

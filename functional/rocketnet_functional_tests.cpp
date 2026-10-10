@@ -2313,6 +2313,68 @@ void rocketnet_test_server_port_zero_driver()
     rocketnet_test_env_restore( &driver_guard );
 }
 
+
+void rocketnet_test_xdp_drops_fragments()
+{
+    // The XDP filter must drop non-first fragments. Without the fix,
+    // a fragment with frag_off set would be parsed as UDP with an
+    // attacker-chosen source port, and trailing bytes counted as payload.
+    // With the fix, any fragment (frag_off & 0x3fff) is dropped.
+
+#if ROCKETNET_XDP && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    #include <linux/if_ether.h>
+    #include <linux/ip.h>
+    #include <linux/udp.h>
+    #include <linux/bpf.h>
+
+    // Build a non-first IP fragment with UDP header
+    // Ethernet header
+    uint8_t pkt[128];
+    memset(pkt, 0, sizeof(pkt));
+
+    // MAC addresses
+    pkt[0] = 0x00; pkt[1] = 0x11; pkt[2] = 0x22;  // dst MAC
+    pkt[3] = 0x33; pkt[4] = 0x44; pkt[5] = 0x55;  // src MAC
+    pkt[6] = 0x08; pkt[7] = 0x00;  // ETH_P_IP
+
+    // IP header (20 bytes)
+    struct iphdr *ip = (struct iphdr *)(pkt + 14);
+    ip->version = 4;
+    ip->ihl = 5;
+    ip->tos = 0;
+    ip->tot_len = htons(40);  // IP + UDP header
+    ip->id = htons(12345);
+    // Set MF bit and fragment offset (non-first fragment)
+    ip->frag_off = htons(0x2000 | 0x0010);  // MF bit set, offset 16
+    ip->ttl = 64;
+    ip->protocol = IPPROTO_UDP;
+    ip->saddr = inet_addr("192.168.1.100");
+    ip->daddr = inet_addr("192.168.1.200");
+
+    // UDP header (8 bytes)
+    struct udphdr *udp = (struct udphdr *)(pkt + 14 + 20);
+    udp->source = htons(5000);
+    udp->dest = htons(40888);
+    udp->len = htons(8);
+    udp->check = 0;
+
+    // Run BPF_PROG_TEST_RUN
+    struct bpf_test_run_args args = {
+        .data = pkt,
+        .size = 14 + 20 + 8,  // ETH + IP + UDP
+    };
+
+    int ret = bpf_prog_test_run(0, &args);
+
+    // Expect XDP_DROP for non-first fragment
+    rocketnet_check(ret == 0);
+    rocketnet_check(args.retval == XDP_DROP);
+#else
+    // Skip test when XDP not available
+    rocketnet_check(1);
+#endif
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 void rocketnet_test_server_driver_pin_gso()
 {
@@ -3206,6 +3268,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_test_server_driver_pin_gso },
     { "test_server_driver_pin_xdp", rocketnet_test_server_driver_pin_xdp },
+    { "test_xdp_drops_fragments", rocketnet_test_xdp_drops_fragments },
     { "test_server_driver_ladder_fall", rocketnet_test_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_test_server_gso_probe },
     { "test_server_gso_wire_ipv4", rocketnet_test_server_gso_wire_ipv4 },
