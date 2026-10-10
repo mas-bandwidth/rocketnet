@@ -2166,6 +2166,48 @@ static void rocketnet_test_build_request( uint8_t * request, uint64_t client_id,
                                                token.signed_connect_data, token.signature );
 }
 
+// test that caps post-cookie handshakes per update
+
+static void rocketnet_test_handshake_work_budget_per_update()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // build 16000 cookie-valid requests; all use the same client_id
+    // to ensure they're valid and would pass the cookie gate
+    uint8_t * requests = (uint8_t*)malloc( 16000 * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_check( requests );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 0 };
+
+    for ( int i = 0; i < 16000; i++ )
+        rocketnet_test_build_request( requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 0x12345678ULL, salt );
+
+    // process all 16000 requests through the transport loop
+    // the handshake work budget should cap how many are actually verified
+    int total_requests = 0;
+    int cookie_sent = 0;
+
+    for ( int i = 0; i < 16000; i++ )
+    {
+        uint8_t response[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
+        int response_bytes = 0;
+        int result = rocketnet_test_process( &test, requests + i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
+        total_requests++;
+
+        if ( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+            cookie_sent++;
+    }
+
+    // only the budgeted number of handshakes should have been processed
+    // the rest should have been dropped/ignored
+    rocketnet_check( total_requests == 16000 );
+    rocketnet_check( cookie_sent <= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+
+    free( requests );
+    rocketnet_test_server_teardown( &test );
+}
+
 // runs a request and returns the result; before is a snapshot for asserting
 // exactly which counters moved
 
@@ -9785,6 +9827,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
