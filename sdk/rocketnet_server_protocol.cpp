@@ -472,6 +472,17 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
         }
 
+        // an address already in the map is refused here, with a counted
+        // reason, rather than left to the map's add guard alone
+
+        if ( rocketnet_encryption_map_find( server->encryption_map, from ) != -1 )
+        {
+            sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_debug( "server ignored connection request. address already has an encryption mapping" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
         int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
         if ( index == -1 )
         {
