@@ -58,6 +58,20 @@ static void rocketnet_open_budget_record_failure( int mapping_index )
         rocketnet_open_budget_failures[mapping_index]++;
 }
 
+// A slot is reusable: the mapping that held it leaves and the next request
+// that lands there is a different client, not a continuation. Clear the
+// budget when the mapping is allocated so a fresh mapping never inherits the
+// failures the previous occupant of its slot ran up.
+
+static void rocketnet_open_budget_reset( int mapping_index, double current_time )
+{
+    if ( mapping_index >= 0 && mapping_index < ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_open_budget_failures[mapping_index] = 0;
+        rocketnet_open_budget_window_start[mapping_index] = current_time;
+    }
+}
+
 static int rocketnet_server_request_cookie_mac( uint8_t * mac,
                                                 const struct rocketnet_address_t * from,
                                                 const uint8_t * connection_salt,
@@ -516,6 +530,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
+        rocketnet_open_budget_reset( index, current_time );
 
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );
         mapping->keys = keys;
