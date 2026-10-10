@@ -125,7 +125,12 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
 {
     rocketnet_assert( map );
     rocketnet_assert( address );
-    rocketnet_assert( rocketnet_encryption_map_find( map, address ) == -1 );
+
+    // an address the map already holds is refused, not mapped twice; the old
+    // check was an assert and vanished under NDEBUG
+
+    if ( rocketnet_encryption_map_find( map, address ) != -1 )
+        return -1;
 
     if ( map->free_head == -1 )
         return -1;

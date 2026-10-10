@@ -2081,6 +2081,31 @@ void rocketnet_test_encryption_map()
     rocketnet_encryption_map_destroy( map );
 }
 
+void rocketnet_test_encryption_map_duplicate_add_refused()
+{
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 8 );
+    rocketnet_check( map );
+
+    struct rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "10.0.0.1:30000" ) );
+
+    // an address the map already holds is refused, not mapped a second time,
+    // and the guard must hold with NDEBUG, where assert-only checks vanish.
+
+    int index_a = rocketnet_encryption_map_add( map, &address, 100.0 );
+    rocketnet_check( index_a != -1 );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address ) == index_a );
+
+    int index_b = rocketnet_encryption_map_add( map, &address, 200.0 );
+    rocketnet_check( index_b == -1 );
+
+    // the refusal leaves the map as it was: one mapping, at the first index
+    rocketnet_check( rocketnet_encryption_map_num_mappings( map ) == 1 );
+    rocketnet_check( rocketnet_encryption_map_find( map, &address ) == index_a );
+
+    rocketnet_encryption_map_destroy( map );
+}
+
 void rocketnet_test_encryption_map_iterator()
 {
     struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 8 );
@@ -9860,6 +9885,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_used_token_history", rocketnet_test_used_token_history },
     { "test_admitted_token_set", rocketnet_test_admitted_token_set },
     { "test_encryption_map", rocketnet_test_encryption_map },
+    { "test_encryption_map_duplicate_add_refused", rocketnet_test_encryption_map_duplicate_add_refused },
     { "test_encryption_map_iterator", rocketnet_test_encryption_map_iterator },
     { "test_server_update_sweep", rocketnet_test_server_update_sweep },
     { "test_server_keep_alive_pacing", rocketnet_test_server_keep_alive_pacing },
