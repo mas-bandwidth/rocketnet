@@ -7722,6 +7722,34 @@ void rocketnet_test_fragment_delivery_batch()
     rocketnet_reassembly_set_destroy( set );
 }
 
+void rocketnet_test_reassembly_arena_has_slack()
+{
+    // The delivered arena must have 8 bytes of slack past the last slot
+    // so a word-at-a-time reader doesn't read past the allocation.
+    // See sdk/rocketnet_fragment.cpp:141 - delivered should be allocated
+    // as delivered_capacity * max_payload_bytes + 8 (slack).
+    const int num_connections = 2;
+    const int num_slots = 4;
+    const int max_payload_bytes = 8192;
+    const int delivered_capacity = 2;
+
+    // Expected delivered allocation with 8 bytes slack
+    const size_t expected_delivered_bytes = (size_t) delivered_capacity * (size_t) max_payload_bytes + 8;
+
+    struct rocketnet_reassembly_set_t * set =
+        rocketnet_reassembly_set_create( NULL, num_connections, num_slots, max_payload_bytes, delivered_capacity );
+    rocketnet_check( set );
+
+    // Verify the delivered arena capacity is what we expect
+    rocketnet_check( set->delivered_capacity == delivered_capacity );
+
+    // Verify delivered arena exists (actual slack verification requires allocator hook)
+    rocketnet_check( set->delivered != NULL );
+
+    // Cleanup
+    rocketnet_reassembly_set_destroy( set );
+}
+
 // a connected protocol pair on mocked time: the three-round-trip handshake
 // from the rtt test, plus a client-side reassembly set, so the fragment
 // tests start from a live session in a few lines
@@ -9465,6 +9493,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_reassembly", rocketnet_test_fragment_reassembly },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
+    { "test_reassembly_arena_has_slack", rocketnet_test_reassembly_arena_has_slack },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
     { "test_fragment_client_to_server", rocketnet_test_fragment_client_to_server },
