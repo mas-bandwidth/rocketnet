@@ -30,31 +30,33 @@ file(READ "${OUTPUT_DIR}/rocketnet_server_xdp.h.tmp" header_content)
 string(REPLACE "unsigned char" "static const unsigned char" header_content "${header_content}")
 string(REPLACE "unsigned int" "static const unsigned int" header_content "${header_content}")
 
-# On Linux the object is compiled here, at build time, from the same shared
-# source list, and embedded alongside the archive. The dataplane opens those
-# bytes from memory with bpf_object__open_mem: nothing compiles at runtime and
-# no shell runs. No other platform builds the XDP dataplane, so there is no
-# object to embed there and the header needs only the archive.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    file(MAKE_DIRECTORY "${OUTPUT_DIR}/object/server_xdp")
-    file(MAKE_DIRECTORY "${OUTPUT_DIR}/object/sdk")
-    foreach(source IN LISTS ROCKETNET_XDP_SOURCES)
-        configure_file("${SOURCE_DIR}/${source}" "${OUTPUT_DIR}/object/${source}" COPYONLY)
-    endforeach()
-    execute_process(COMMAND make
-        WORKING_DIRECTORY "${OUTPUT_DIR}/object/server_xdp" RESULT_VARIABLE make_result)
-    if(NOT make_result EQUAL 0)
-        message(FATAL_ERROR "XDP object build failed: ${make_result}")
-    endif()
-    execute_process(COMMAND "${XXD}" -i -n server_xdp_o "${OUTPUT_DIR}/object/server_xdp/server_xdp.o"
-        OUTPUT_FILE "${OUTPUT_DIR}/server_xdp_o.h.tmp" RESULT_VARIABLE xxd_object_result)
-    if(NOT xxd_object_result EQUAL 0)
-        message(FATAL_ERROR "XDP object embedding failed: ${xxd_object_result}")
-    endif()
-    file(READ "${OUTPUT_DIR}/server_xdp_o.h.tmp" object_content)
-    string(REPLACE "unsigned char" "static const unsigned char" object_content "${object_content}")
-    string(REPLACE "unsigned int" "static const unsigned int" object_content "${object_content}")
-    set(header_content "${header_content}\n${object_content}")
+# This script runs as a CMake *script* (`cmake -P`), where CMAKE_SYSTEM_NAME
+# is empty, so the caller must have selected the platform: only the Linux
+# branch of the CMakeLists invokes it. That branch always builds the XDP
+# dataplane, so the object is compiled here, at build time, from the same
+# shared source list, and embedded alongside the archive. Reading the target
+# system name here would always see nothing and silently skip the object,
+# leaving server_xdp_o undefined when the dataplane compiles. The dataplane
+# opens these bytes from memory with bpf_object__open_mem: nothing compiles at
+# runtime and no shell runs.
+file(MAKE_DIRECTORY "${OUTPUT_DIR}/object/server_xdp")
+file(MAKE_DIRECTORY "${OUTPUT_DIR}/object/sdk")
+foreach(source IN LISTS ROCKETNET_XDP_SOURCES)
+    configure_file("${SOURCE_DIR}/${source}" "${OUTPUT_DIR}/object/${source}" COPYONLY)
+endforeach()
+execute_process(COMMAND make
+    WORKING_DIRECTORY "${OUTPUT_DIR}/object/server_xdp" RESULT_VARIABLE make_result)
+if(NOT make_result EQUAL 0)
+    message(FATAL_ERROR "XDP object build failed: ${make_result}")
 endif()
+execute_process(COMMAND "${XXD}" -i -n server_xdp_o "${OUTPUT_DIR}/object/server_xdp/server_xdp.o"
+    OUTPUT_FILE "${OUTPUT_DIR}/server_xdp_o.h.tmp" RESULT_VARIABLE xxd_object_result)
+if(NOT xxd_object_result EQUAL 0)
+    message(FATAL_ERROR "XDP object embedding failed: ${xxd_object_result}")
+endif()
+file(READ "${OUTPUT_DIR}/server_xdp_o.h.tmp" object_content)
+string(REPLACE "unsigned char" "static const unsigned char" object_content "${object_content}")
+string(REPLACE "unsigned int" "static const unsigned int" object_content "${object_content}")
+set(header_content "${header_content}\n${object_content}")
 
 file(WRITE "${OUTPUT_DIR}/rocketnet_server_xdp.h" "${header_content}")
