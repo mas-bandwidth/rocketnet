@@ -289,9 +289,9 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // at all and the kernel refuses every second binder outright. A multi-queue
 // server must set it, so it refuses a second RocketNet binder itself (the
 // probe in create) and documents the deployment requirement: run under a
-// dedicated UID that no other process can use, or use SO_REUSEPORT_BPF with a
-// BPF program to restrict which sockets receive traffic (requires elevated
-// privileges to load the BPF program).
+// dedicated UID that no other process can use, or attach a reuseport eBPF
+// program with SO_ATTACH_REUSEPORT_EBPF, set before bind, to restrict which
+// sockets receive traffic (loading it requires CAP_BPF).
 
 static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, bool reuseport, uint16_t * bound_port )
 {
