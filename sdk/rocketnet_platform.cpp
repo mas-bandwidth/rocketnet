@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_route.h"
+#include "rocketnet_wire.h"
 #include <limits.h>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
