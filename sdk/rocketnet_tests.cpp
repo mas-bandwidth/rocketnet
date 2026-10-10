@@ -8,7 +8,7 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
@@ -9534,10 +9534,49 @@ void rocketnet_test_token_lifetime_bounded()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_token_timeout_clamped()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // Build a token with maximum timeout (INT32_MAX): should be clamped to 60
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+
+    signed_fields.timeout_seconds = 2147483647;  // INT32_MAX
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    // Verify the timeout was clamped to max_timeout_seconds (default 60)
+    int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( index != -1 );
+    rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->timeout_seconds == 60 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
+    { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
     { "test_endian", rocketnet_test_endian },
