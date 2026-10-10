@@ -2027,6 +2027,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
+    server->max_token_lifetime_seconds = 0;
     server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
@@ -9262,6 +9263,48 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+// A token with expire = UINT64_MAX should be refused when max_token_lifetime_seconds
+// is configured. This test verifies the fix for the security audit finding
+// that tokens could have unbounded lifetime.
+void rocketnet_test_token_lifetime_bounded()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // Configure max token lifetime to 300 seconds
+    test.server.max_token_lifetime_seconds = 300;
+
+    // Build a request with token expire set to UINT64_MAX (far future)
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.expire_timestamp = UINT64_MAX;
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+
+        const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                                   rocketnet_test_client_eph_public,
+                                                   token.signed_connect_data, token.signature );
+        
+        rocketnet_test_pass_cookie_gate( &test, request );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        struct rocketnet_counters_t before = test.counters;
+        
+        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_INVALID );
+    }
+
+    rocketnet_test_server_teardown( &test );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9397,6 +9440,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;

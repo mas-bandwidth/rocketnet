@@ -158,6 +158,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     uint64_t token_expire_timestamp;
+    uint64_t token_create_timestamp;
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_EXPIRE;
         token_expire_timestamp = rocketnet_read_uint64( &p );
@@ -166,6 +167,27 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             rocketnet_debug( "server ignored connection request. connect token expired" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
+        p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_CREATE;
+        token_create_timestamp = rocketnet_read_uint64( &p );
+
+        if ( server->max_token_lifetime_seconds > 0 )
+        {
+            if ( token_create_timestamp > current_timestamp )
+            {
+                rocketnet_debug( "server ignored connection request. connect token created in the future" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_INVALID]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
+
+            uint64_t lifetime = token_expire_timestamp - token_create_timestamp;
+            if ( lifetime > (uint64_t) server->max_token_lifetime_seconds )
+            {
+                rocketnet_debug( "server ignored connection request. connect token lifetime exceeds maximum" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_INVALID]++;
+                return ROCKETNET_SERVER_PROCESS_IGNORED;
+            }
         }
     }
 
