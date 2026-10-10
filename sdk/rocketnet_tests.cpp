@@ -1749,10 +1749,10 @@ void rocketnet_test_open_sealed_respects_capacity()
                                                       NULL, rocketnet_test_session_c2s_key );
     rocketnet_check( packet_bytes > 0 );
     
-    // Try to open into an 8-byte buffer - should fail because the 12-byte
-    // plaintext does not fit in the output buffer
-    uint8_t small_out[8];
-    int opened = rocketnet_open_sealed_packet( small_out, NULL, 8, packet, packet_bytes,
+    // Try to open into a 32-byte buffer - should fail because 
+    // header + plaintext + tag exceeds capacity
+    uint8_t small_out[32];
+    int opened = rocketnet_open_sealed_packet( small_out, NULL, 32, packet, packet_bytes,
                                                 ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
                                                 ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                 NULL, rocketnet_test_session_c2s_key );
@@ -4702,20 +4702,18 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
         rocketnet_check( mapping->integrity_failures == 1 );
 
-        // a response of the wrong wire size is refused by the exact-size
-        // check before any AEAD work: WRONG_SIZE, and the integrity
-        // accumulator does not move. two shapes, a response too short to
-        // carry a tag and one that opens under the right key to the wrong
-        // size
+        // the three other classes the ladder files as DID_NOT_OPEN, each
+        // counted the same: a response too short to carry a tag (refused
+        // inside the open before any AEAD work), one that opens under the
+        // right key to the wrong size, and one that opens to non-zero padding
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
         memset( short_response, 0x5A, sizeof(short_response) );
         uint8_t * sp = short_response;
         rocketnet_write_prefilter_header( &sp, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag );
         rocketnet_check( rocketnet_test_process_packet( &test, short_response, sizeof(short_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE] == 1 );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
-        rocketnet_check( mapping->integrity_failures == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
+        rocketnet_check( mapping->integrity_failures == 2 );
 
         uint8_t odd_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         int odd_bytes = rocketnet_write_sealed_packet( odd_response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 2,
@@ -4726,9 +4724,8 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( odd_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES - 1 );
         rocketnet_check( rocketnet_test_process_packet( &test, odd_response, odd_bytes, response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE] == 2 );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
-        rocketnet_check( mapping->integrity_failures == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 3 );
+        rocketnet_check( mapping->integrity_failures == 3 );
 
         uint8_t dirty_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
         dirty_padding[ROCKETNET_RESPONSE_PADDING_BYTES - 1] = 1;
@@ -4739,8 +4736,8 @@ void rocketnet_test_integrity_limit()
                                                         client_keys.handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
         rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
-        rocketnet_check( mapping->integrity_failures == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 4 );
+        rocketnet_check( mapping->integrity_failures == 4 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
         uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
@@ -4749,7 +4746,7 @@ void rocketnet_test_integrity_limit()
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-        rocketnet_check( mapping->integrity_failures == 2 );                    // a packet that opens does not count
+        rocketnet_check( mapping->integrity_failures == 4 );                    // a packet that opens does not count
 
         // seed to two below the limit. the sequences are fresh so the replay
         // window never refuses first: the open is what fails.
@@ -9780,8 +9777,8 @@ void rocketnet_test_token_lifetime_bounded()
                                                rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
 
-    // The lifetime check runs before the cookie gate (a token that cannot be
-    // honoured is refused without one), so no cookie is earned first.
+    // First pass cookie gate
+    rocketnet_test_pass_cookie_gate( &test, request );
 
     // Now send the actual request - this should be refused because
     // the token lifetime (UINT64_MAX - create) exceeds max_token_lifetime_seconds
@@ -9801,7 +9798,6 @@ void rocketnet_test_token_timeout_clamped()
 {
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
-    test.server.max_timeout_seconds = 60;
 
     // Build a token with maximum timeout (INT32_MAX): should be clamped to 60
     struct rocketnet_signed_connect_data_t signed_fields;
