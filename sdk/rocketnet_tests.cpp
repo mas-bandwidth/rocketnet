@@ -48,6 +48,10 @@ extern bool rocketnet_test_private_block_copied;
 #include <xdp/libxdp.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include "rocketnet_server_iocp.h"
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 
 #include <sodium.h>
 
@@ -9810,6 +9814,66 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// The audit finding: a synchronous WSAEMSGSIZE from a receive repost was
+// treated as "no completion", so the post was retired on the spot while its
+// IOCP completion still arrived -- a double post of one operation, and at
+// shutdown a use after free. WSAEMSGSIZE is a completion exactly like
+// WSA_IO_PENDING, so the post must stay counted. The stimulus is an
+// oversized-datagram stress that outruns the posted receive pool, so reposts
+// meet queued datagrams. The unit suite otherwise drives rules without
+// sockets; the IOCP driver is Windows-only, so its defect is pinned here.
+void rocketnet_test_iocp_msgsize_keeps_pending_count()
+{
+    rocketnet_address_t bind;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create( NULL, &bind, 1 );
+    rocketnet_check( driver != NULL );
+    rocketnet_check( bind.port != 0 );
+
+    SOCKET peer = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( peer != INVALID_SOCKET );
+    sockaddr_in destination;
+    memset( &destination, 0, sizeof(destination) );
+    destination.sin_family = AF_INET;
+    destination.sin_port = htons( bind.port );
+    destination.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    // One byte past the posted buffer, and far more of them than the pool has
+    // receives: the surplus waits on the socket, so a repost that meets one
+    // returns WSAEMSGSIZE synchronously -- and still completes on the port.
+    uint8_t oversized[ROCKETNET_RECEIVE_CEILING + 2];
+    memset( oversized, 0xFF, sizeof(oversized) );
+    const int datagrams = ROCKETNET_IOCP_RECEIVES_PER_WORKER * 4;
+    for ( int i = 0; i < datagrams; ++i )
+        rocketnet_check( sendto( peer, (const char*) oversized, (int) sizeof(oversized), 0,
+            (sockaddr*) &destination, sizeof(destination) ) == (int) sizeof(oversized) );
+
+    // The receive pool settles back to its full depth only if WSAEMSGSIZE kept
+    // its pending count. The repost-failure counter is the same statement made
+    // directly: an oversize datagram is not a failed repost.
+    const double ready_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_server_iocp_pending( driver ) != ROCKETNET_IOCP_RECEIVES_PER_WORKER &&
+            rocketnet_platform_time() < ready_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( driver, counters );
+    rocketnet_check( counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED] == 0 );
+    rocketnet_check( rocketnet_server_iocp_pending( driver ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+
+    rocketnet_server_iocp_stop( driver );
+    const double stopped_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_iocp_stopped( driver ) && rocketnet_platform_time() < stopped_deadline )
+        rocketnet_platform_sleep( 0.001 );
+    rocketnet_check( rocketnet_server_iocp_stopped( driver ) );
+    rocketnet_check( rocketnet_server_iocp_pending( driver ) == 0 );
+    rocketnet_server_iocp_destroy( driver );
+    closesocket( peer );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9954,6 +10018,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_iocp_msgsize_keeps_pending_count", rocketnet_test_iocp_msgsize_keeps_pending_count },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
