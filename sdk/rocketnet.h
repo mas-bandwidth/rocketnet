@@ -709,7 +709,8 @@ struct rocketnet_server_transport_t;
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
-    INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )
+    INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 ) \
+    BYTES_FIELD(  backend_next_public_key, 32,                           ROCKETNET_CONFIG_ZERO_BYTES,                          0 )
 
 struct rocketnet_server_transport_config_t
 {
