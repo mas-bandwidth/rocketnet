@@ -28,8 +28,9 @@ def main():
     check(args.bin / f"{prefix}rocketnet_abi_legacy{suffix}", "--abi-refusal", "missing")
     for mode in ("revision", "size", "field count", "offset", "width"):
         check(args.bin / f"{prefix}rocketnet_abi_mismatch{suffix}", "--abi-refusal", mode, mode=mode)
+    check(args.bin / f"{prefix}rocketnet_abi_mismatch{suffix}", "--counters-layout", mode="counter count")
     check(args.bin / f"{prefix}rocketnet{suffix}", "--abi-only")
-    print("Managed ABI: matching library accepted; missing/legacy and five mismatch cases refused")
+    print("Managed ABI: matching library accepted; missing/legacy, five layout mismatches and the counters count refused")
 
 
 if __name__ == "__main__":
