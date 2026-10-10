@@ -394,9 +394,14 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
-    rocketnet_assert( dest );
     rocketnet_assert( source );
-    rocketnet_assert( dest_size >= 1 );
+
+    // A zero dest_size has no room for the terminator: the loop below
+    // would underflow its bound to SIZE_MAX and copy without limit.
+    // A null dest can never receive the copy either.
+    if ( dest == NULL || dest_size == 0 )
+        return 0;
+
     memset( dest, 0, dest_size );
     size_t i = 0;
     for ( ; i < dest_size - 1; i++ )
