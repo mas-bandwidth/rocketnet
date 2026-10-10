@@ -3168,6 +3168,63 @@ void rocketnet_test_server_gso_send_overflow()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
+// Test that oversize datagrams are dropped, not processed after truncation
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    // Create a server transport
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    int server_port = rocketnet_server_transport_port( server );
+
+    // Get initial counter values
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+    uint64_t prefilter_before = server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+    uint64_t integrity_before = server_counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED];
+
+    // Create a raw UDP socket to send an oversize datagram directly
+    int sock = socket( AF_INET, SOCK_DGRAM, 0 );
+    rocketnet_check( sock >= 0 );
+
+    // Build a 1427-byte datagram that exceeds ROCKETNET_RECEIVE_CEILING (1426)
+    const int oversize_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+    uint8_t datagram[oversize_bytes];
+
+    // Write valid prefilter header for a keep-alive packet
+    uint8_t * p = datagram;
+    uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+    memset( p, 0, sizeof(datagram) - (p - datagram) );
+
+    // Send the datagram to the server
+    struct sockaddr_in server_addr;
+    memset( &server_addr, 0, sizeof(server_addr) );
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr( "127.0.0.1" );
+    server_addr.sin_port = htons( server_port );
+
+    rocketnet_check( sendto( sock, datagram, oversize_bytes, 0, (struct sockaddr*) &server_addr, sizeof(server_addr) ) == oversize_bytes );
+
+    // Close the raw socket
+    close( sock );
+
+    // Update the server transport to process received packets
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+    // Verify counters
+    server_counters = rocketnet_server_transport_counters( server );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == prefilter_before + 1 );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == integrity_before );
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_destroy( server );
+}
+
+
 extern void rocketnet_test_lifecycle_driver();
 
 struct rocketnet_functional_test_t
@@ -3222,6 +3279,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_driver_all_skipped_uses_auto", rocketnet_test_driver_all_skipped_uses_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases },
     { "test_client_driver", rocketnet_test_client_driver },
+    { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
     { "test_lifecycle_driver", rocketnet_test_lifecycle_driver },
 };
 
