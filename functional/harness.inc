@@ -215,3 +215,48 @@ void rocketnet_test_config_out_of_range_refuses_create()
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
 }
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// An oversized datagram makes WSARecvFrom complete with WSAEMSGSIZE. On a
+// repost that is a completion (like WSA_IO_PENDING): the pending receive count
+// must not be double-decremented and must reach exactly zero at stop.
+void rocketnet_test_iocp_msgsize_keeps_pending_count()
+{
+    struct rocketnet_address_t bind;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1:0" ) );
+
+    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create( NULL, &bind, 1 );
+    rocketnet_check( driver != NULL );
+
+    SOCKET peer = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( peer != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    char oversized[ROCKETNET_RECEIVE_CEILING + 128] = {};
+    for ( int i = 0; i < 64; ++i )
+        rocketnet_check( sendto( peer, oversized, sizeof(oversized), 0, (sockaddr*) &to, sizeof(to) ) == (int) sizeof(oversized) );
+
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_iocp_receive_packets( driver );
+        if ( rocketnet_server_iocp_pending( driver ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_server_iocp_stop( driver );
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_iocp_stopped( driver ) && rocketnet_platform_time() < stop_deadline )
+        rocketnet_platform_sleep( 0.001 );
+
+    rocketnet_check( rocketnet_server_iocp_stopped( driver ) );
+    rocketnet_check( rocketnet_server_iocp_pending( driver ) == 0 );
+    rocketnet_server_iocp_destroy( driver );
+    closesocket( peer );
+}
+#endif
