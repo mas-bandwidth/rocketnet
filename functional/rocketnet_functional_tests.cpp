@@ -3166,8 +3166,8 @@ void rocketnet_test_server_gso_send_overflow()
 
 struct rocketnet_test_gso_flood_args_t
 {
-    struct rocketnet_platform_socket_t * peer;
-    rocketnet_address_t server_address;
+    int fd;
+    struct sockaddr_in server_address;
     double until;
 };
 
@@ -3176,13 +3176,30 @@ static void rocketnet_test_gso_flood_thread( void * data )
     struct rocketnet_test_gso_flood_args_t * args = (struct rocketnet_test_gso_flood_args_t*) data;
 
     // below ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES (33): every datagram takes
-    // the size-check drop path, so num_packets never advances
+    // the size-check drop path, so num_packets never advances. sendmmsg costs
+    // one syscall per batch, the rate the worker drains at, so a handful of
+    // senders keep the receive queue backed up on a host of any core count --
+    // the one-syscall-per-datagram sendto path cannot outrun the worker.
 
     uint8_t undersized[32];
     memset( undersized, 0xAB, sizeof(undersized) );
 
+    const int batch = ROCKETNET_GSO_RECV_BATCH;
+    struct iovec iov[batch];
+    struct mmsghdr messages[batch];
+    memset( messages, 0, sizeof(messages) );
+    for ( int i = 0; i < batch; i++ )
+    {
+        iov[i].iov_base = undersized;
+        iov[i].iov_len = sizeof(undersized);
+        messages[i].msg_hdr.msg_name = &args->server_address;
+        messages[i].msg_hdr.msg_namelen = sizeof(args->server_address);
+        messages[i].msg_hdr.msg_iov = &iov[i];
+        messages[i].msg_hdr.msg_iovlen = 1;
+    }
+
     while ( rocketnet_platform_time() < args->until )
-        rocketnet_platform_socket_send_packet( args->peer, &args->server_address, undersized, (int) sizeof(undersized) );
+        sendmmsg( args->fd, messages, batch, 0 );
 }
 
 void rocketnet_test_gso_worker_lock_bounded()
@@ -3194,9 +3211,11 @@ void rocketnet_test_gso_worker_lock_bounded()
     // releases the mutex per batch, so the main thread's wait stays bounded
     // however long the flood runs.
     //
-    // The test keeps the receive queue backed up for the whole flood with
-    // several senders, then measures the longest single receive_packets wait
-    // the main thread sees while the flood is live.
+    // The test keeps the receive queue backed up for the whole flood, then
+    // measures the longest single receive_packets wait the main thread sees
+    // while the flood is live. Every sender owns its own socket and sends in
+    // batches, so the senders move datagrams at the worker's own syscall rate
+    // and hold the queue at a full recvmmsg batch for the flood's length.
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
@@ -3204,34 +3223,36 @@ void rocketnet_test_gso_worker_lock_bounded()
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
     rocketnet_check( gso );
 
-    rocketnet_address_t peer_address;
-    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
-    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
-    rocketnet_check( peer );
-    rocketnet_check( peer_address.port != 0 );
-
     rocketnet_address_t server_address;
     rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
     server_address.port = bind_address.port;
 
+    struct sockaddr_in destination;
+    memset( &destination, 0, sizeof(destination) );
+    destination.sin_family = AF_INET;
+    destination.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    destination.sin_port = htons( server_address.port );
+
     const int num_flood_threads = 16;
     const double flood_seconds = 3.0;
+    const double until = rocketnet_platform_time() + flood_seconds;
 
-    struct rocketnet_test_gso_flood_args_t args;
-    args.peer = peer;
-    args.server_address = server_address;
-    args.until = rocketnet_platform_time() + flood_seconds;
-
+    struct rocketnet_test_gso_flood_args_t args[num_flood_threads];
+    int fds[num_flood_threads];
     struct rocketnet_platform_thread_t * threads[num_flood_threads];
     for ( int i = 0; i < num_flood_threads; i++ )
     {
-        threads[i] = rocketnet_platform_thread_create( NULL, rocketnet_test_gso_flood_thread, &args );
+        fds[i] = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        rocketnet_check( fds[i] >= 0 );
+        args[i].fd = fds[i];
+        args[i].server_address = destination;
+        args[i].until = until;
+        threads[i] = rocketnet_platform_thread_create( NULL, rocketnet_test_gso_flood_thread, &args[i] );
         rocketnet_check( threads[i] );
     }
 
     double worst_wait = 0.0;
-    while ( rocketnet_platform_time() < args.until )
+    while ( rocketnet_platform_time() < until )
     {
         const double start = rocketnet_platform_time();
         rocketnet_server_gso_receive_packets( gso );
@@ -3257,7 +3278,8 @@ void rocketnet_test_gso_worker_lock_bounded()
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] > 0 );
     rocketnet_check( worst_wait < 1.0 );
 
-    rocketnet_platform_socket_destroy( peer );
+    for ( int i = 0; i < num_flood_threads; i++ )
+        close( fds[i] );
     rocketnet_server_gso_destroy( gso );
 }
 
