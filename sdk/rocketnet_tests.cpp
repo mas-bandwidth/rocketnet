@@ -417,6 +417,17 @@ void rocketnet_test_copy_string()
     }
 }
 
+void rocketnet_test_copy_string_zero_size_writes_nothing()
+{
+    // Test that dest_size 0 returns 0 and does not write
+    char buffer[256];
+    for (size_t i = 0; i < sizeof(buffer); i++) buffer[i] = 0xFF;
+    size_t result = rocketnet_copy_string( buffer, "hello", 0 );
+    rocketnet_check( result == 0 );
+    rocketnet_check( (unsigned char)buffer[0] == 0xFF );
+    rocketnet_check( (unsigned char)buffer[255] == 0xFF );
+}
+
 void rocketnet_test_address()
 {
     {
@@ -9170,8 +9181,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_read_write", rocketnet_test_read_write },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
-    { "test_copy_string", rocketnet_test_copy_string },
-    { "test_address", rocketnet_test_address },
+     { "test_copy_string", rocketnet_test_copy_string },
+     { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
+     { "test_address", rocketnet_test_address },
     { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },
