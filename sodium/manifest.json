@@ -2,14 +2,38 @@
   "upstream_version": "1.0.22",
   "upstream_commit": "77e1ce5d6dee871c49ef211222ba18ef0c486bda",
   "archive_sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349",
-  "baseline_commit": "fc473eb628e080acaaebed2659e1f9ee85c6a7c2",
-  "baseline_sha256": {
-    "sodium.c": "b2bf049faccbcf18725c6805cdafe409f332604477e17e4224df152ee3eb0dd5",
-    "sodium.h": "393663bfe1905a262c2828dd41a79136cf9024477433466c66586a48bd0e6876"
-  },
-  "baseline_upstream_version": "1.0.22",
-  "baseline_upstream_commit": "77e1ce5d6dee871c49ef211222ba18ef0c486bda",
-  "baseline_upstream_archive_sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349",
+  "library_version_major": 26,
+  "library_version_minor": 4,
+  "headers": [
+    "crypto_stream/chacha20/stream_chacha20.h",
+    "include/sodium/export.h",
+    "include/sodium/crypto_stream_chacha20.h",
+    "crypto_stream/chacha20/ref/chacha20_ref.h",
+    "include/sodium/core.h",
+    "include/sodium/crypto_aead_chacha20poly1305.h",
+    "include/sodium/crypto_aead_xchacha20poly1305.h",
+    "include/sodium/crypto_core_hchacha20.h",
+    "include/sodium/crypto_onetimeauth_poly1305.h",
+    "include/sodium/crypto_onetimeauth.h",
+    "include/sodium/crypto_verify_16.h",
+    "include/sodium/crypto_verify_32.h",
+    "include/sodium/crypto_verify_64.h",
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-avx2.h",
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-ssse3.h",
+    "crypto_onetimeauth/poly1305/onetimeauth_poly1305.h",
+    "crypto_onetimeauth/poly1305/sse2/poly1305_sse2.h",
+    "crypto_onetimeauth/poly1305/donna/poly1305_donna.h",
+    "include/sodium/private/chacha20_ietf_ext.h",
+    "include/sodium/private/common.h",
+    "include/sodium/private/implementations.h",
+    "include/sodium/private/mutex.h",
+    "include/sodium/private/sse2_64_32.h",
+    "include/sodium/randombytes.h",
+    "include/sodium/randombytes_sysrandom.h",
+    "include/sodium/runtime.h",
+    "include/sodium/utils.h",
+    "include/sodium/version.h"
+  ],
   "public_headers": [
     "crypto_box.h",
     "crypto_generichash.h",
@@ -20,6 +44,23 @@
     "crypto_sign.h"
   ],
   "sources": [
+    "crypto_aead/chacha20poly1305/aead_chacha20poly1305.c",
+    "crypto_aead/xchacha20poly1305/aead_xchacha20poly1305.c",
+    "crypto_core/hchacha20/core_hchacha20.c",
+    "crypto_onetimeauth/poly1305/donna/poly1305_donna.c",
+    "crypto_onetimeauth/poly1305/onetimeauth_poly1305.c",
+    "crypto_onetimeauth/poly1305/sse2/poly1305_sse2.c",
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-avx2.c",
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-ssse3.c",
+    "crypto_stream/chacha20/ref/chacha20_ref.c",
+    "crypto_stream/chacha20/stream_chacha20.c",
+    "randombytes/randombytes.c",
+    "randombytes/sysrandom/randombytes_sysrandom.c",
+    "sodium/core.c",
+    "sodium/runtime.c",
+    "sodium/utils.c",
+    "crypto_verify/verify.c",
+    "sodium/version.c",
     "crypto_box/crypto_box.c",
     "crypto_box/crypto_box_easy.c",
     "crypto_box/crypto_box_seal.c",
@@ -56,6 +97,49 @@
     "crypto_stream/xsalsa20/stream_xsalsa20.c"
   ],
   "renames": {
+    "randombytes/randombytes.c": [
+      "implementation"
+    ],
+    "crypto_stream/chacha20/stream_chacha20.c": [
+      "implementation"
+    ],
+    "crypto_onetimeauth/poly1305/onetimeauth_poly1305.c": [
+      "implementation"
+    ],
+    "crypto_aead/xchacha20poly1305/aead_xchacha20poly1305.c": [
+      "_pad0"
+    ],
+    "crypto_onetimeauth/poly1305/sse2/poly1305_sse2.c": [
+      "poly1305_state_internal_t",
+      "poly1305_init",
+      "poly1305_blocks",
+      "poly1305_update",
+      "poly1305_finish",
+      "poly1305_final",
+      "poly1305_state_internal"
+    ],
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-ssse3.c": [
+      "chacha_ctx",
+      "chacha_keysetup",
+      "chacha_ivsetup",
+      "chacha_ietf_ivsetup",
+      "chacha20_encrypt_bytes",
+      "stream_ref",
+      "stream_ietf_ext_ref",
+      "stream_ref_xor_ic",
+      "stream_ietf_ext_ref_xor_ic"
+    ],
+    "crypto_stream/chacha20/dolbeau/chacha20_dolbeau-avx2.c": [
+      "chacha_ctx",
+      "chacha_keysetup",
+      "chacha_ivsetup",
+      "chacha_ietf_ivsetup",
+      "chacha20_encrypt_bytes",
+      "stream_ref",
+      "stream_ietf_ext_ref",
+      "stream_ref_xor_ic",
+      "stream_ietf_ext_ref_xor_ic"
+    ],
     "crypto_generichash/blake2b/ref/blake2b-ref.c": [
       "blake2b_IV"
     ],
@@ -92,6 +176,13 @@
       "HAVE_AMD64_ASM",
       "HAVE_EMMINTRIN_H",
       "HAVE_AVX2INTRIN_H"
+    ]
+  },
+  "prune": {
+    "sodium/core.c": [
+      "    _crypto_pwhash_argon2_pick_best_implementation();\n",
+      "    _crypto_aead_aegis128l_pick_best_implementation();\n",
+      "    _crypto_aead_aegis256_pick_best_implementation();\n"
     ]
   }
 }

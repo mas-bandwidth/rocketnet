@@ -1216,36 +1216,57 @@ void rocketnet_test_crypto_key_derivation()
     }
 }
 
-// The bundled sodium is a two-file vendor. The extension added from the pinned
-// libsodium release archive is traceable by construction, but the baseline
-// netcode pair supplies the ChaCha20/Poly1305 AEAD, random, core, runtime and
-// utilities, and the audit found those families were not pinned to an upstream
-// release. sodium/manifest.json now records the baseline's upstream version,
-// release commit and archive SHA256 beside the extension's, and the existing
-// tools/generate_sodium.py --check regenerates the committed pair from those
-// pinned inputs and compares it byte for byte. This test runs that existing
-// comparison and pins the baseline provenance, so a regeneration that drops the
-// baseline traceability goes red.
+// The bundled sodium is a two-file vendor. Every family it supplies -- the
+// ChaCha20/Poly1305 AEAD, randombytes, core, runtime and utilities as much as
+// the extension -- is now amalgamated by tools/generate_sodium.py from the
+// pinned libsodium release archive recorded in sodium/manifest.json; the audit
+// found the baseline netcode pair that used to supply those families was not
+// traceable to any release. This test holds that provenance two ways: the
+// committed source carries the archive's sections rather than an unpinned
+// hand-amalgamated baseline, and the existing tools/generate_sodium.py --check
+// rebuilds the committed pair from the pinned archive and compares it byte for
+// byte. Reintroducing an unpinned baseline, or a pair that no longer
+// regenerates from the archive, goes red.
 
-static bool rocketnet_test_sodium_manifest_traces_baseline_upstream()
+static bool rocketnet_test_sodium_read( const char * path, std::string & out )
 {
-    FILE * file = fopen( "sodium/manifest.json", "rb" );
+    FILE * file = fopen( path, "rb" );
     if ( file == NULL )
         return false;
 
-    std::string manifest;
     char buffer[4096];
     size_t got;
     while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
-        manifest.append( buffer, got );
+        out.append( buffer, got );
     fclose( file );
+    return true;
+}
 
-    // the baseline pin carries the same release, release commit and archive as
-    // the extension below it, so the AEAD/RNG/utilities are as traceable as the
-    // files added from the archive
-    return manifest.find( "\"baseline_upstream_version\": \"1.0.22\"" ) != std::string::npos
-        && manifest.find( "\"baseline_upstream_commit\": \"77e1ce5d6dee871c49ef211222ba18ef0c486bda\"" ) != std::string::npos
-        && manifest.find( "\"baseline_upstream_archive_sha256\": \"adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349\"" ) != std::string::npos;
+static bool rocketnet_test_sodium_pair_regenerated_from_upstream()
+{
+    std::string source;
+    if ( !rocketnet_test_sodium_read( "sodium/sodium.c", source ) )
+        return false;
+
+    // the base families come from the pinned archive, not a hand-kept netcode
+    // baseline (whose concatenated sections carried their own "sodium_x.c"
+    // banners)
+    static const char * families[] = {
+        "crypto_aead/chacha20poly1305/aead_chacha20poly1305.c",
+        "crypto_stream/chacha20/stream_chacha20.c",
+        "randombytes/randombytes.c",
+        "randombytes/sysrandom/randombytes_sysrandom.c",
+        "sodium/core.c",
+        "sodium/runtime.c",
+        "sodium/utils.c",
+    };
+    for ( size_t i = 0; i < sizeof(families)/sizeof(families[0]); i++ )
+    {
+        const std::string marker = std::string( "/* ===== upstream " ) + families[i] + " ===== */";
+        if ( source.find( marker ) == std::string::npos )
+            return false;
+    }
+    return source.find( "================= sodium_" ) == std::string::npos;
 }
 
 static bool rocketnet_test_sodium_pinned_inputs_check()
@@ -1275,7 +1296,7 @@ static bool rocketnet_test_sodium_pinned_inputs_check()
 
 void rocketnet_test_sodium_matches_pinned_upstream()
 {
-    rocketnet_check( rocketnet_test_sodium_manifest_traces_baseline_upstream() );
+    rocketnet_check( rocketnet_test_sodium_pair_regenerated_from_upstream() );
     rocketnet_check( rocketnet_test_sodium_pinned_inputs_check() );
 }
 

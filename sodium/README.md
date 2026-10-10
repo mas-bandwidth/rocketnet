@@ -7,22 +7,25 @@ and a system sodium header in the same translation unit.
 
 ## Provenance
 
-The input baseline is the byte-for-byte netcode pair at
-`fc473eb628e080acaaebed2659e1f9ee85c6a7c2`, also shared by yojimbo: a pruned
-amalgamation of the pinned libsodium release below. Its provenance and the
-1.0.21/1.0.22 hardening patches inside the slice are recorded in netcode's
-`sodium/NOTES.md`, and `manifest.json` pins the baseline to that same release,
-archive SHA256 and release commit. It contains optimized ChaCha20/Poly1305,
-random, core, runtime and utilities. We verify its two SHA256 values before
-extending it, so every bundled family -- the AEAD, RNG and utilities as much as
-the extension -- is traceable to the pinned upstream release.
+`sodium.c` and `sodium.h` are amalgamated by `tools/generate_sodium.py` from the
+official libsodium release archive pinned below, whose SHA256 and release
+commit `manifest.json` records. Every bundled family -- the ChaCha20/Poly1305
+AEAD, randombytes, core, runtime and utilities as much as the Ed25519 and
+sealed box extension -- is taken from that one archive, so the whole pair is
+traceable to the pinned release; no separately patched baseline is carried.
+`manifest.json` records the pins and the exact source and header lists the
+generator consumes.
 
-The extension comes from the official libsodium 1.0.22 release archive, whose
-SHA256 is `adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349`
-and release commit is `77e1ce5d6dee871c49ef211222ba18ef0c486bda`.
-`manifest.json` records both input pins and the exact 34 added C sources, and
-pins the baseline pair to the same upstream release below.
-They supply BLAKE2b, SHA-512, SipHash-2-4, X25519, Ed25519, XSalsa20,
+The archive is libsodium 1.0.22, whose SHA256 is
+`adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349` and release
+commit is `77e1ce5d6dee871c49ef211222ba18ef0c486bda`. It ships source but not
+autoconf's generated `config.h`, so the amalgamation derives the few build
+macros the bundled slice needs (128-bit integer support, the memory fences, and
+the x86 intrinsic availability used to select the C SIMD kernels) from the
+compiler and target. Those derivations are mechanical and recorded in the
+generator, not hand edits to upstream crypto.
+
+The extension adds BLAKE2b, SHA-512, SipHash-2-4, X25519, Ed25519, XSalsa20,
 secretbox and sealed boxes. Unneeded password hashes, AEAD families and
 external assembly are omitted. X25519 uses upstream ref10 (51-bit limbs when
 the compiler has 128-bit arithmetic, 25.5-bit otherwise); BLAKE2b retains its upstream runtime-selected C intrinsics implementations.
@@ -31,7 +34,7 @@ uses unaligned typed loads that UBSan correctly rejects on frozen token input.
 Selecting the reference avoids that C alignment violation without changing
 cryptographic arithmetic or suppressing sanitizer checks. Salsa20 serves sealed
 boxes; the packet AEAD remains on optimized ChaCha20/Poly1305. ChaCha20
-and Poly1305 retain the baseline's optimized paths.
+and Poly1305 retain upstream's optimized paths.
 
 The ISC license is in `LICENSE`; original source notices and the BLAKE2 CC0
 notice remain in the generated files. Installing the SDK installs the sodium
@@ -53,17 +56,14 @@ output directory. A missing input, hash mismatch, unresolved include or changed
 output fails the check.
 
 The generator keeps architecture conditions and header guards at their original
-include sites, expands implementation body headers in place, brackets recorded
-static-name collisions with define/undef, and clears file-local macros. It adds
-the three upstream implementation-selector calls to initialization and prefixes
+include sites, expands implementation body headers in place, brackets symbols
+reused by sibling translation units with define/undef, drops the initialization
+calls for families this subset omits, and clears file-local macros. It prefixes
 private symbols through header aliases. GCC target options are pushed/popped
 at each original C-file boundary; intrinsics headers are loaded before target
 pragmas so their declarations do not inherit a preceding AVX2 section. The
 standard `__STDC_WANT_LIB_EXT1__` feature macro is retained for the translation
-unit rather than undefined between files. Existing `nonnull` declarations are refreshed from the pinned upstream headers:
-the baseline carried stale annotations that rejected valid NULL/zero-length
-AEAD inputs under UBSan. The fixed-vector test executes that call explicitly.
-These are amalgamation adaptations;
+unit rather than undefined between files. These are amalgamation adaptations;
 cryptographic arithmetic and protocol encodings are unchanged.
 
 ## Check
