@@ -1068,8 +1068,51 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     const int stats_index = server_transport->current_stats_index;
 
+    // First pass: prefilter all packets and separate valid packets into established
+    // and unmapped groups. This ensures established clients are prioritized.
+    struct { int i; int established; } valid_packets[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    int num_valid = 0;
+
     for ( int i = 0; i < num_received; i++ )
     {
+        uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+        const int packet_bytes = receive_buffer->packet_bytes[i];
+
+        // Cheap prefilter check to discard invalid packets early
+        int packet_type = rocketnet_prefilter_check( receive_frame, packet_bytes, server_transport->protocol.filter_value );
+        if ( packet_type < 0 )
+            continue;  // Invalid packet, skip
+
+        // Check if source is an established (mapped) client
+        int mapping_index = rocketnet_encryption_map_find( server_transport->protocol.encryption_map, &receive_buffer->from[i] );
+        int is_established = ( mapping_index >= 0 && server_transport->protocol.encryption_map->mapping[mapping_index].client_index >= 0 );
+
+        valid_packets[num_valid].i = i;
+        valid_packets[num_valid].established = is_established;
+        num_valid++;
+
+        if ( num_valid >= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS )
+            break;
+    }
+
+    // Sort: established packets first, then unmapped
+    for ( int i = 0; i < num_valid; i++ )
+    {
+        for ( int j = i + 1; j < num_valid; j++ )
+        {
+            if ( valid_packets[i].established < valid_packets[j].established )
+            {
+                struct { int i; int established; } tmp = valid_packets[i];
+                valid_packets[i] = valid_packets[j];
+                valid_packets[j] = tmp;
+            }
+        }
+    }
+
+    // Second pass: process packets in priority order
+    for ( int vi = 0; vi < num_valid; vi++ )
+    {
+        int i = valid_packets[vi].i;
         struct rocketnet_address_t from = receive_buffer->from[i];
         uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
         const int packet_bytes = receive_buffer->packet_bytes[i];

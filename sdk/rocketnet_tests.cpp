@@ -3586,6 +3586,84 @@ void rocketnet_test_server_receive_refusals()
     rocketnet_test_server_teardown( &test );
 }
 
+// Test that when a receive batch contains many junk packets plus some client
+// packets, all client packets are processed. The fix: prefilter first, then
+// process established (mapped) clients before unmapped ones.
+void rocketnet_test_receive_prefers_established_clients()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+
+    // First, establish a client by completing the handshake
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t * p = request;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, tag );
+    rocketnet_write_uint64( &p, 0xE0E0ULL );
+    memcpy( p, rocketnet_test_backend_public_key, 32 );
+    p += 32;
+    memcpy( p, rocketnet_test_client_eph_public, 32 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_HANDLED );
+
+    // Add the mapping for this client
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );
+    rocketnet_check( mapping_index >= 0 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    mapping->established = 1;
+    mapping->client_index = 0;
+
+    // Build valid client packets
+    uint8_t client_packets[10][ROCKETNET_CONNECTION_PAYLOAD_WIRE_BYTES];
+    int packet_bytes = 0;
+    for ( int i = 0; i < 10; i++ )
+    {
+        const uint8_t payload[4] = { 1, 2, 3, 4 };
+        packet_bytes = rocketnet_test_write_session_packet( client_packets[i], ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1 + i, payload, 4, mapping->keys.session_client_to_server );
+    }
+
+    // Build junk packets (wrong filter value)
+    uint8_t junk_packet[ROCKETNET_RECEIVE_CEILING];
+    p = junk_packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, tag );
+    p += ROCKETNET_PREFILTER_BYTES;
+    memset( p, 0, sizeof(junk_packet) - ROCKETNET_PREFILTER_BYTES );
+    // Set wrong filter value
+    junk_packet[2] = 0xFF; junk_packet[3] = 0xFF; junk_packet[4] = 0xFF; junk_packet[5] = 0xFF;
+
+    // Process: 1000 junk packets + 10 client packets
+    // Without the fix: some client packets would be dropped when the 256 limit is hit
+    // With the fix: all 10 client packets should be processed
+    uint8_t out_payload[ROCKETNET_RECEIVE_CEILING];
+    int out_payload_bytes = 0;
+    int out_payload_client_index = -1;
+    int processed_client_packets = 0;
+
+    // First process the junk packets (1000)
+    for ( int i = 0; i < 1000; i++ )
+    {
+        rocketnet_test_process_packet( &test, junk_packet, ROCKETNET_RECEIVE_CEILING, response, &response_bytes, out_payload, &out_payload_bytes, &out_payload_client_index );
+    }
+
+    // Then process the client packets (10)
+    for ( int i = 0; i < 10; i++ )
+    {
+        int result = rocketnet_test_process_packet( &test, client_packets[i], packet_bytes, response, &response_bytes, out_payload, &out_payload_bytes, &out_payload_client_index );
+        if ( result == ROCKETNET_SERVER_PROCESS_HANDLED && out_payload_client_index >= 0 )
+            processed_client_packets++;
+    }
+
+    // All 10 client packets should be processed
+    rocketnet_check( processed_client_packets == 10 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 // --- client and server, pumped against each other in memory ---
 
 static void rocketnet_test_mint_token( uint8_t * token_data, uint64_t client_id, uint64_t create, uint64_t expire, int32_t timeout )
@@ -9878,6 +9956,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_full_connect", rocketnet_test_server_full_connect },
     { "test_server_response_denials", rocketnet_test_server_response_denials },
     { "test_server_receive_refusals", rocketnet_test_server_receive_refusals },
+    { "test_receive_prefers_established_clients", rocketnet_test_receive_prefers_established_clients },
     { "test_client_connect_validations", rocketnet_test_client_connect_validations },
     { "test_client_server_connect", rocketnet_test_client_server_connect },
     { "test_client_token_keys_wiped_on_disconnect", rocketnet_test_client_token_keys_wiped_on_disconnect },
