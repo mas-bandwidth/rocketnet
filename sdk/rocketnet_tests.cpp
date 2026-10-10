@@ -9330,32 +9330,85 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
 // pre-flight's and the script's shared boundary rule cannot drift
 // unwitnessed
 
+// The XDP RX loop's descriptor gate, exported from the Linux socket. This test
+// calls it directly: no socket, no AF_XDP rings.
+bool rocketnet_server_socket_xdp_rx_descriptor_bounded( uint64_t addr,
+                                                        uint32_t desc_len,
+                                                        uint64_t receive_begin,
+                                                        uint64_t receive_end,
+                                                        int header_bytes,
+                                                        int receive_ceiling,
+                                                        bool * frame_recyclable,
+                                                        uint64_t * dropped );
+
+// Audit fix (kernel-drivers, 2026-10-05): the XDP RX loop trusted desc->addr
+// and desc->len. A descriptor whose address lies outside the receive half of
+// the umem, or whose payload exceeds the staging slot's receive ceiling, is
+// dropped and counted; only a frame this process placed in the receive half is
+// eligible to be handed back to the fill ring. This drives the gate with the
+// audit's harness descriptor -- an in-range address and len 5000 -- and pins
+// the address and ceiling edges around it.
 void rocketnet_test_xdp_rx_oversize_descriptor_dropped()
 {
-    // Test that XDP RX descriptors with oversized payloads are dropped and counted.
-    // The security audit found that the RX loop at server_socket_linux.cpp:2185-2207
-    // trusted desc->addr and desc->len without UMEM bound or ceiling checks before
-    // the memcpy into the 4096-byte slot. The fix drops and counts when payload_bytes
-    // exceeds ROCKETNET_RECEIVE_CEILING.
+    const uint64_t receive_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+    const uint64_t receive_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+    const int header_bytes = 14 + 20 + 8;    // ethhdr + iphdr + udphdr
+    const uint32_t oversized_length = 5000;  // payload 4958 > ROCKETNET_RECEIVE_CEILING (1426)
 
-    // Counter starts at zero
-    struct rocketnet_counters_t before;
-    memset( &before, 0, sizeof(before) );
+    uint64_t dropped = 0;
+    bool recyclable = false;
 
-    // Simulate an oversized descriptor: len 5000 exceeds ROCKETNET_RECEIVE_CEILING (1426)
-    // In the real code, this would be caught at the RX processing seam where
-    // desc->len is checked before memcpy. This test verifies the counter increments
-    // when an oversized packet would be dropped.
+    // The audit's descriptor: an in-range frame carrying a payload above the
+    // ceiling. It is dropped and counted, and the frame is still ours to reuse.
+    rocketnet_check( !rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_begin, oversized_length, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 1 );
+    rocketnet_check( recyclable );
 
-    // Since this is a unit test and cannot exercise actual XDP hardware, we verify
-    // that the counter constant exists and increments correctly when we directly
-    // trigger the drop condition.
-    before.values[ROCKETNET_COUNTER_XDP_RX_DESCRIPTOR_DROPPED] = 0;
+    // An address below the receive half is not ours: dropped, never recycled.
+    dropped = 0;
+    recyclable = true;
+    rocketnet_check( !rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_begin - ROCKETNET_XDP_FRAME_SIZE, header_bytes + 64, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 1 );
+    rocketnet_check( !recyclable );
 
-    // Simulate the drop: in the real code, this happens when desc->len > ROCKETNET_RECEIVE_CEILING
-    before.values[ROCKETNET_COUNTER_XDP_RX_DESCRIPTOR_DROPPED]++;
+    // An address at the end of the receive half (and so past it) is not ours.
+    dropped = 0;
+    recyclable = true;
+    rocketnet_check( !rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_end, header_bytes + 64, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 1 );
+    rocketnet_check( !recyclable );
 
-    rocketnet_check( before.values[ROCKETNET_COUNTER_XDP_RX_DESCRIPTOR_DROPPED] == 1 );
+    // A descriptor that starts inside the half but runs past its end is refused.
+    dropped = 0;
+    recyclable = false;
+    rocketnet_check( !rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_end - 8, header_bytes + 64, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 1 );
+    rocketnet_check( recyclable );
+
+    // A well-formed descriptor exactly at the ceiling is accepted, counted not.
+    dropped = 0;
+    recyclable = false;
+    rocketnet_check( rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_begin, (uint32_t) header_bytes + ROCKETNET_RECEIVE_CEILING, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 0 );
+    rocketnet_check( recyclable );
+
+    // A below-header descriptor is inside the region and so accepted; the loop's
+    // minimum wire length check, not this gate, refuses its payload.
+    dropped = 0;
+    rocketnet_check( rocketnet_server_socket_xdp_rx_descriptor_bounded(
+        receive_begin, 8, receive_begin, receive_end,
+        header_bytes, ROCKETNET_RECEIVE_CEILING, &recyclable, &dropped ) );
+    rocketnet_check( dropped == 0 );
 }
 
 void rocketnet_test_xdp_interrupt_matcher()
