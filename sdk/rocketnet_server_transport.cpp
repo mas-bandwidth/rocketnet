@@ -1068,6 +1068,13 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     const int stats_index = server_transport->current_stats_index;
 
+    // First pass: drain with cheap prefilter and mark packets from established clients
+    // This ensures established clients are processed before unmapped sources
+    int established_count = 0;
+    int unmapped_count = 0;
+    int established_start[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    int unmapped_start[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+
     for ( int i = 0; i < num_received; i++ )
     {
         struct rocketnet_address_t from = receive_buffer->from[i];
@@ -1076,6 +1083,45 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         server_transport->stats_frames[stats_index].packets_received++;
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+        // Cheap prefilter check before full processing
+        int packet_type = rocketnet_prefilter_check( receive_frame, packet_bytes, server_transport->protocol.filter_value );
+        if ( packet_type < 0 )
+        {
+            server_transport->counters.values[ rocketnet_prefilter_counter( packet_type ) ]++;
+            continue;
+        }
+
+        // Check if source is an established client
+        int is_established = 0;
+        int mapping_index = rocketnet_encryption_map_find( server_transport->protocol.encryption_map, &from );
+        if ( mapping_index >= 0 )
+        {
+            struct rocketnet_encryption_mapping_t * mapping =
+                rocketnet_encryption_map_entry( server_transport->protocol.encryption_map, mapping_index );
+            is_established = mapping->established;
+        }
+
+        if ( is_established )
+            established_start[established_count++] = i;
+        else
+            unmapped_start[unmapped_count++] = i;
+    }
+
+    // Process established clients first, then unmapped sources
+    const int num_process = established_count + unmapped_count;
+    int process_order[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
+    for ( int i = 0; i < established_count; i++ )
+        process_order[i] = established_start[i];
+    for ( int i = 0; i < unmapped_count; i++ )
+        process_order[established_count + i] = unmapped_start[i];
+
+    for ( int j = 0; j < num_process; j++ )
+    {
+        int i = process_order[j];
+        struct rocketnet_address_t from = receive_buffer->from[i];
+        uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+        const int packet_bytes = receive_buffer->packet_bytes[i];
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;

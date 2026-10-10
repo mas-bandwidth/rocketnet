@@ -9534,9 +9534,69 @@ void rocketnet_test_umem_config_frame_size_explicit()
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
 
+void rocketnet_test_receive_prefers_established_clients()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
 
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
 
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xF00DULL, &client_keys );
 
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    rocketnet_test_client_build_response( client_response, &client_keys );
+
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
+
+    uint8_t keep_alive_data[8];
+    uint8_t * ka = keep_alive_data;
+    rocketnet_write_uint32( &ka, 0 );
+    rocketnet_write_uint32( &ka, 4 );
+    uint8_t client_packet[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_check( rocketnet_test_write_session_packet( client_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1,
+                                                          keep_alive_data, 8,
+                                                          client_keys.session_client_to_server ) == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    rocketnet_check( rocketnet_test_process_packet( &test, client_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, response, &response_bytes,
+                                                    payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+
+    const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t junk_packet[ROCKETNET_RECEIVE_CEILING];
+    memset( junk_packet, 0, sizeof(junk_packet) );
+    junk_packet[0] = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
+    junk_packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
+    junk_packet[2] = 0xFF; junk_packet[3] = 0xFF; junk_packet[4] = 0xFF; junk_packet[5] = 0xFF;
+
+    int valid_delivered = 0;
+
+    for ( int i = 0; i < 1000; i++ )
+    {
+        rocketnet_check( rocketnet_test_process_packet( &test, junk_packet, sizeof(junk_packet), response, &response_bytes,
+                                                        payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
+
+    for ( int i = 0; i < 10; i++ )
+    {
+        uint8_t valid_packet[ROCKETNET_RECEIVE_CEILING];
+        const uint8_t data[] = { 0x01, 0x02, 0x03, 0x04 };
+        int packet_bytes = rocketnet_test_write_session_packet( valid_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 2 + i, data, sizeof(data), client_keys.session_client_to_server );
+
+        rocketnet_check( rocketnet_test_process_packet( &test, valid_packet, packet_bytes, response, &response_bytes,
+                                                        payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( payload_bytes > 0 );
+        valid_delivered++;
+    }
+
+    rocketnet_check( valid_delivered == 10 );
+
+    rocketnet_test_server_teardown( &test );
+}
 
 // The suite isolates config overrides, while preserving the driver's
 // deliberate CI pin and the optional verbose-output switch. Names come
@@ -9957,6 +10017,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+    { "test_receive_prefers_established_clients", rocketnet_test_receive_prefers_established_clients },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
