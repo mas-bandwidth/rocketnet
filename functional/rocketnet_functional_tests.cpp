@@ -3164,6 +3164,81 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
+void rocketnet_test_gso_second_binder_gets_nothing()
+{
+    // SECURITY (2026-10-05 audit). The GSO driver's SO_REUSEPORT group is the
+    // one shareable surface the audit named: another process of the same uid
+    // could join it and take a share of the traffic. The driver refuses that
+    // joiner. A single-socket server never sets SO_REUSEPORT at all, so the
+    // kernel refuses every second binder, and a second RocketNet binder is
+    // refused by the driver's own port probe. Running under a dedicated uid
+    // is the documented deployment for the multi-queue group.
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    rocketnet_check( gso );
+    rocketnet_check( bind_address.port != 0 );
+    rocketnet_check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT ) == 0 );
+
+    // the second same-uid binder, asked for through the driver, is refused:
+    // it creates nothing and so receives nothing.
+
+    rocketnet_address_t second_address = bind_address;
+    rocketnet_check( rocketnet_server_gso_create( NULL, &second_address, 1, 0 ) == NULL );
+
+    // the raw join an attacker would actually attempt -- a second same-uid
+    // socket that sets SO_REUSEPORT -- is refused by the kernel, because the
+    // first binder holds the port without a shareable group.
+
+    int joiner = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( joiner >= 0 );
+    int one = 1;
+    rocketnet_check( setsockopt( joiner, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) == 0 );
+    struct sockaddr_in join_address;
+    memset( &join_address, 0, sizeof(join_address) );
+    join_address.sin_family = AF_INET;
+    join_address.sin_port = rocketnet_platform_htons( bind_address.port );
+    join_address.sin_addr.s_addr = inet_addr( "127.0.0.1" );
+    rocketnet_check( bind( joiner, (struct sockaddr*) &join_address, sizeof(join_address) ) != 0 );
+
+    // packets sent to the port all arrive at the first binder. the refused
+    // joiner has no socket in the group and receives none of them.
+
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+
+    const int num_packets = 8;
+    const int packet_bytes = 64;
+    uint8_t packet[64];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        memset( packet, 0, sizeof(packet) );
+        packet[0] = (uint8_t) ( 0xA0 + i );
+        rocketnet_platform_socket_send_packet( peer, &bind_address, packet, packet_bytes );
+    }
+
+    int received = 0;
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && received < num_packets )
+    {
+        rocketnet_server_gso_receive_packets( gso );
+        struct rocketnet_server_socket_process_packets_t * batch = rocketnet_server_gso_process_packets( gso );
+        received += batch->num_packets;
+        if ( batch->num_packets == 0 )
+            rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( received == num_packets );
+
+    close( joiner );
+    rocketnet_platform_socket_destroy( peer );
+    rocketnet_server_gso_destroy( gso );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -3213,6 +3288,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+    { "test_gso_second_binder_gets_nothing", rocketnet_test_gso_second_binder_gets_nothing },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },

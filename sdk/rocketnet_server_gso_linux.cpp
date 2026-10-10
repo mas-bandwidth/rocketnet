@@ -282,8 +282,18 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
 // with what the kernel actually granted read back and reported -- the box's
 // default rmem/wmem sysctls are tiny, so never assume the request was
 // honored.
+//
+// SECURITY NOTE (2026-10-05 audit): SO_REUSEPORT allows any process with the
+// same UID to join the port group and receive a share of incoming traffic.
+// A single-queue server never needs the group, so it does not set the option
+// at all and the kernel refuses every second binder outright. A multi-queue
+// server must set it, so it refuses a second RocketNet binder itself (the
+// probe in create) and documents the deployment requirement: run under a
+// dedicated UID that no other process can use, or use SO_REUSEPORT_BPF with a
+// BPF program to restrict which sockets receive traffic (requires elevated
+// privileges to load the BPF program).
 
-static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, uint16_t * bound_port )
+static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, bool reuseport, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
 
@@ -294,12 +304,15 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    int one = 1;
-    if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( reuseport )
     {
-        rocketnet_error( "gso driver: failed to set SO_REUSEPORT: %s", strerror( errno ) );
-        close( fd );
-        return -1;
+        int one = 1;
+        if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+        {
+            rocketnet_error( "gso driver: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+            close( fd );
+            return -1;
+        }
     }
 
     if ( ipv6 )
@@ -582,6 +595,43 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         return NULL;
     }
 
+    // SECURITY (2026-10-05 audit): SO_REUSEPORT lets any same-uid process
+    // join the port group and take a share of the traffic. The driver refuses
+    // a foreign joiner: before it opens its own group it probes the requested
+    // address and port with a bind that carries no SO_REUSEPORT, which the
+    // kernel refuses with EADDRINUSE while any socket already owns the port --
+    // in this process or another. The port is therefore never handed to a
+    // second binder, and the documented deployment runs under a dedicated uid
+    // so a raw reuseport socket of the same uid cannot join either.
+
+    if ( bind_address->port != 0 )
+    {
+        const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+
+        int probe = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        if ( probe >= 0 )
+        {
+            if ( ipv6 )
+            {
+                int zero = 0;
+                setsockopt( probe, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero) );
+            }
+
+            struct sockaddr_storage sockaddr;
+            const socklen_t socklen = rocketnet_server_gso_address_to_sockaddr( bind_address, ipv6, &sockaddr );
+            const int probe_result = socklen > 0 ? bind( probe, (struct sockaddr*) &sockaddr, socklen ) : 0;
+            const int probe_errno = errno;
+            close( probe );
+
+            if ( socklen > 0 && probe_result < 0 )
+            {
+                rocketnet_error( "gso driver: refusing to join a foreign binder on %sport %d: %s",
+                                 ipv6 ? "ipv6 " : "", bind_address->port, strerror( probe_errno ) );
+                return NULL;
+            }
+        }
+    }
+
     struct rocketnet_server_gso_t * gso = (struct rocketnet_server_gso_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_gso_t) );
     if ( !gso )
         return NULL;
@@ -608,8 +658,12 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         gso->queues[i].fd = -1;
     }
 
-    // open the reuseport group. the first socket may discover an ephemeral
-    // port; the rest join it.
+    // open the group. the first socket may discover an ephemeral port; the
+    // rest join it. SO_REUSEPORT is set only when there is more than one
+    // queue to shard across: a single-socket server is exclusive and needs
+    // no shareable group (see the security note above open_socket).
+
+    const bool reuseport = num_queues > 1;
 
     uint16_t bound_port = bind_address->port;
 
@@ -621,7 +675,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         queue->ipv6 = gso->ipv6;
         queue->gso = gso;
 
-        queue->fd = rocketnet_server_gso_open_socket( bind_address, i, &bound_port );
+        queue->fd = rocketnet_server_gso_open_socket( bind_address, i, reuseport, &bound_port );
         if ( queue->fd < 0 )
         {
             rocketnet_server_gso_destroy( gso );
@@ -631,7 +685,8 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
     bind_address->port = bound_port;
     gso->bind_address = *bind_address;
-    gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
+    if ( reuseport )
+        gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
     // the group -- the #81 probe's checks as the driver's own selection
