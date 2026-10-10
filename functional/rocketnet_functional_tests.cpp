@@ -9,6 +9,7 @@
 */
 
 #include "harness.inc"
+#include "rocketnet_wire.h"
 
 void rocketnet_test_server_refuses_keyless_config()
 {
