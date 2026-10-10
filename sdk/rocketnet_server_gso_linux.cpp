@@ -506,7 +506,10 @@ static void rocketnet_server_gso_worker( void * data )
                 {
                     if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
                     {
-                        memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
+                        if ( cmsg->cmsg_len >= CMSG_LEN(sizeof(int)) )
+                        {
+                            memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof(int) );
+                        }
                         break;
                     }
                 }

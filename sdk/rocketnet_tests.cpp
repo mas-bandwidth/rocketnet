@@ -9534,6 +9534,42 @@ void rocketnet_test_umem_config_frame_size_explicit()
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
 
+void rocketnet_test_gro_short_cmsg_falls_back()
+{
+    #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/udp.h>
+
+    struct msghdr msg;
+    memset( &msg, 0, sizeof(msg) );
+
+    char control[CMSG_SPACE(sizeof(int))];
+    memset( control, 0, sizeof(control) );
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    if (cmsg)
+    {
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_GRO;
+        cmsg->cmsg_len = 8;
+
+        int message_bytes = 1400;
+        int segment_bytes = message_bytes;
+
+        if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
+        {
+            if ( cmsg->cmsg_len >= CMSG_LEN(sizeof(int)) )
+            {
+                memcpy( &segment_bytes, CMSG_DATA(cmsg), sizeof(int) );
+            }
+        }
+
+        rocketnet_check( segment_bytes == message_bytes );
+    }
+    #endif
+}
+
 
 
 
@@ -9957,6 +9993,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+    { "test_gro_short_cmsg_falls_back", rocketnet_test_gro_short_cmsg_falls_back },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
