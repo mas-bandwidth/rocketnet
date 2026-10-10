@@ -195,7 +195,6 @@ typedef __int64 int64_t;
 #define SCNx64 "I64x"
 #else
 #include <inttypes.h>
-#include "rocketnet_wire.h"
 #endif
 
 #if defined( _MSC_VER ) && _MSC_VER < 1900

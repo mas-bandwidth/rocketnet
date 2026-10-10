@@ -9524,7 +9524,6 @@ void rocketnet_test_config_override_logging()
     rocketnet_test_env_restore( &secret_guard );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 // Verify XDP umem config frame_size matches the expected constant
 void rocketnet_test_umem_config_frame_size_explicit()
 {
@@ -9534,7 +9533,6 @@ void rocketnet_test_umem_config_frame_size_explicit()
     config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
-#endif
 
 
 
@@ -9812,12 +9810,12 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+// A forged sealed packet from a connected client's address would otherwise
+// cost one AEAD open each, without bound -- the audit's server-dos finding.
+// With a per-mapping budget, 10000 junk session packets must spend at most the
+// budget of opens; the rest are dropped before the open.
 void rocketnet_test_failed_open_budget_per_mapping()
 {
-    // Test that failed AEAD opens are budgeted per mapping per second
-    // Before the fix: 10000 junk packets each cost an AEAD open
-    // After the fix: only budgeted opens occur; excess is dropped without opening
-
     uint8_t wrong_key[32];
     memset( wrong_key, 0x42, sizeof(wrong_key) );
 
@@ -9829,11 +9827,6 @@ void rocketnet_test_failed_open_budget_per_mapping()
     struct rocketnet_connection_keys_t client_keys;
     rocketnet_test_handshake_to_challenge( &test, 0x5F1A2BULL, &client_keys );
 
-    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
-    rocketnet_check( mapping_index != -1 );
-    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
-
-    // Establish connection first
     uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
     rocketnet_test_client_build_response( client_response, &client_keys );
 
@@ -9846,10 +9839,8 @@ void rocketnet_test_failed_open_budget_per_mapping()
     rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof(client_response), response, &response_bytes,
                                                     payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
 
-    // Reset counters for clean budget test
     test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] = 0;
 
-    // Send many junk packets - with budget this should be limited
     const int NUM_JUNK_PACKETS = 10000;
     const int EXPECTED_BUDGET = 100;
 
@@ -9862,9 +9853,10 @@ void rocketnet_test_failed_open_budget_per_mapping()
                                        payload_out, &payload_out_bytes, &payload_client_index );
     }
 
-    // Before fix: did_not_open counter should be NUM_JUNK_PACKETS (all packets attempted open)
-    // After fix: did_not_open counter should be around EXPECTED_BUDGET (budget limits attempts)
+    // At most the budget of AEAD opens ran; every other packet was dropped
+    // before its open, which is what bounds the CPU a forgery flood can cost.
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] == EXPECTED_BUDGET );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED] == ( NUM_JUNK_PACKETS - EXPECTED_BUDGET ) );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -10014,9 +10006,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
-    { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;

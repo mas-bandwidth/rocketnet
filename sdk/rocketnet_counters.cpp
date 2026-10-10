@@ -212,6 +212,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW:                            return "SEND_HISTORY_OVERFLOW";
         case ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED:                        return "INTEGRITY_LIMIT_REACHED";
         case ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE:                       return "CLIENT_COOKIE_WRONG_SIZE";
+        case ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED:                           return "OPEN_BUDGET_EXCEEDED";
         default:
             rocketnet_assert( 0 );
             return "???";
