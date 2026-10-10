@@ -1437,9 +1437,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // create umem with explicit config
         struct xsk_umem_config umem_config;
+        memset( &umem_config, 0, sizeof(umem_config) );
         umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-        umem_config.head_room = 0;
-        umem_config.chunk_size = 0;
+        umem_config.frame_headroom = 0;
 
         int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
         if ( result ) 

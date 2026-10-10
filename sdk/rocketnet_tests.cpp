@@ -9404,9 +9404,9 @@ void rocketnet_test_config_override_logging()
 void rocketnet_test_umem_config_frame_size_explicit()
 {
     struct xsk_umem_config config;
+    memset( &config, 0, sizeof(config) );
     config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-    config.head_room = 0;
-    config.chunk_size = 0;
+    config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
 
