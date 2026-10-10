@@ -23,6 +23,41 @@
 
 thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
+// The open budget, in front of the integrity limit: a forged sealed packet
+// from a connected mapping would otherwise cost one AEAD open each, without
+// bound -- the audit's server-dos finding. Count the opens that fail per
+// mapping in a one-second window and drop session packets beyond the budget
+// before opening them. The integrity limit stays the cryptographic backstop;
+// this is the CPU bound that keeps a flood from reaching it.
+
+static const int rocketnet_open_budget_per_mapping = 100;
+static uint64_t rocketnet_open_budget_failures[ROCKETNET_MAX_CLIENTS];
+static double rocketnet_open_budget_window_start[ROCKETNET_MAX_CLIENTS];
+
+static int rocketnet_open_budget_exceeded( struct rocketnet_server_protocol_t * server, int mapping_index, double current_time )
+{
+    if ( mapping_index < 0 || mapping_index >= ROCKETNET_MAX_CLIENTS )
+        return 0;
+
+    if ( current_time - rocketnet_open_budget_window_start[mapping_index] >= 1.0 )
+    {
+        rocketnet_open_budget_window_start[mapping_index] = current_time;
+        rocketnet_open_budget_failures[mapping_index] = 0;
+    }
+
+    if ( rocketnet_open_budget_failures[mapping_index] < (uint64_t) rocketnet_open_budget_per_mapping )
+        return 0;
+
+    server->counters->values[ROCKETNET_COUNTER_OPEN_BUDGET_EXCEEDED]++;
+    return 1;
+}
+
+static void rocketnet_open_budget_record_failure( int mapping_index )
+{
+    if ( mapping_index >= 0 && mapping_index < ROCKETNET_MAX_CLIENTS )
+        rocketnet_open_budget_failures[mapping_index]++;
+}
+
 static int rocketnet_server_request_cookie_mac( uint8_t * mac,
                                                 const struct rocketnet_address_t * from,
                                                 const uint8_t * connection_salt,
@@ -806,6 +841,15 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
     const uint8_t * ephemeral = packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET ? mapping->client_ephemeral_public_key : NULL;
 
+    // the budget sits immediately before the open, after every cheaper
+    // refusal, so only a genuine open attempt is counted against it
+
+    if ( session_phase && rocketnet_open_budget_exceeded( server, mapping_index, current_time ) )
+    {
+        rocketnet_spam( "server ignored sealed packet. open budget exceeded" );
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet_data, packet_bytes, packet_type,
                                                      sequence, server->protocol_id, mapping->connection_salt,
@@ -814,6 +858,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     {
         rocketnet_spam( "server ignored sealed packet. did not open" );
         counters[type_counters->did_not_open]++;
+        if ( session_phase )
+            rocketnet_open_budget_record_failure( mapping_index );
         rocketnet_server_integrity_failure( server, mapping_index, mapping );
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
