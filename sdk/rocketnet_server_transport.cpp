@@ -551,6 +551,25 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
+    // a published development key is an authentication bypass, not a label:
+    // the matching secret is printed in the standard and compiled into the
+    // library, so any reader of the standard can forge what a server that
+    // trusts either public key accepts. Both halves are compared -- the
+    // backend key was never checked at all -- and a build configured for
+    // release refuses either one before a driver opens; configuration alone
+    // cannot put it back.
+
+    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
+                                 memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
+
+#if !ROCKETNET_DEVELOPMENT
+    if ( development_keys )
+    {
+        rocketnet_error( "server config uses a published development key: this build is configured for release and refuses it, because anyone holding the published secret can forge what this server would trust. supply production keys" );
+        return NULL;
+    }
+#endif
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
@@ -601,9 +620,6 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-
-    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0;
-    (void) development_keys;
 
     // THE LADDER (#106): candidates tried left to right, first grant wins.
     // an operator who wrote the list owns the list -- nothing is appended

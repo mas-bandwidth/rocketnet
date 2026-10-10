@@ -5275,6 +5275,59 @@ void rocketnet_test_server_keyless_config_has_no_keys()
 }
 
 
+// The published development keys are an authentication bypass, not a label:
+// the backend secret is printed in STANDARD.md and compiled into the library,
+// so any reader of the standard can mint a token a server trusting the
+// matching backend public key accepts. The start line already names the
+// server half, but the backend half was never compared at all, and a release
+// build never refuses either -- the finding. create must refuse when EITHER
+// public key is a published test key, and configuration alone cannot put it
+// back.
+
+void rocketnet_test_dev_keys_refused_in_release()
+{
+    // the finding's exact shape: the dev config's server keypair is replaced
+    // with a freshly generated one and the published dev backend public key
+    // is left in place. a release build must refuse; before the fix create
+    // accepts it and a token minted with the published dev backend secret is
+    // a full authentication bypass.
+
+    uint8_t production_server_public[32];
+    uint8_t production_server_secret[32];
+    crypto_box_keypair( production_server_public, production_server_secret );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    memcpy( config.server_public_key, production_server_public, 32 );
+    memcpy( config.server_secret_key, production_server_secret, 32 );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, 0.0 );
+    if ( server )
+        rocketnet_server_transport_destroy( server );
+    rocketnet_check( server == NULL );
+
+    // the other half, so the check is on either key rather than only the one
+    // the finding names: a production backend with the published server key
+    // is refused too -- an on-path reader of that server's sealed blocks
+    // holds the published secret half.
+
+    uint8_t production_backend_public[32];
+    uint8_t production_backend_secret[64];
+    crypto_sign_keypair( production_backend_public, production_backend_secret );
+
+    rocketnet_server_transport_default_config( &config );
+    memcpy( config.backend_public_key, production_backend_public, 32 );
+    memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
+
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, 0.0 );
+    if ( server )
+        rocketnet_server_transport_destroy( server );
+    rocketnet_check( server == NULL );
+}
+
+
 void rocketnet_test_transport_payload_capacity()
 {
     // The capacity invariant that was violated, stated where it will be
@@ -9288,6 +9341,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
+    { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
