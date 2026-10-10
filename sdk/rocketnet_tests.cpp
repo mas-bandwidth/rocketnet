@@ -9815,9 +9815,19 @@ void rocketnet_test_response_wrong_size_counted()
 // packets must not displace them: the receive loop drains the cheap
 // prefilter, drops what fails before any per-connection state is touched,
 // and processes mapped (established) sources before unmapped ones. This
-// crosses the real transport seam over loopback: 1000 junk datagrams are
+// crosses the real transport seam over loopback: junk datagrams are
 // queued first, then the connected client's ten payloads, and a single
 // server update must deliver all ten.
+//
+// The flood is sized against the kernel receive queue, not just the 256
+// packet budget. It must exceed 256 so the first-come path spends the
+// whole update on junk, but it must stay inside a default host's socket
+// buffer or the kernel drops the client's payloads (sent last) before any
+// code reads them and the test goes red for the wrong reason. On a default
+// Linux, net.core.rmem_max is 212992, so the portable driver's requested
+// 1 MB SO_RCVBUF is clamped to about 425984 bytes -- roughly 447 of these
+// 64-byte datagrams once per-skb overhead is counted. 300 sits between the
+// budget and that ceiling with room for the ten payloads.
 
 void rocketnet_test_receive_prefers_established_clients()
 {
@@ -9870,7 +9880,9 @@ void rocketnet_test_receive_prefers_established_clients()
     junk[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
     junk[2] = 0xFF; junk[3] = 0xFF; junk[4] = 0xFF; junk[5] = 0xFF;
 
-    for ( int i = 0; i < 1000; i++ )
+    const int junk_packets = 300;
+
+    for ( int i = 0; i < junk_packets; i++ )
         rocketnet_platform_socket_send_packet( junk_socket, &server_address_parsed, junk, sizeof(junk) );
 
     // the connected client stages ten payloads after the junk and flushes
