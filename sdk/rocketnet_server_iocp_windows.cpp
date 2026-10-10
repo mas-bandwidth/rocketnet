@@ -422,7 +422,12 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
 {
     rocketnet_assert( packet_id < ROCKETNET_IOCP_SEND_QUEUE_SIZE );
     rocketnet_assert( frame == iocp->sends[packet_id].frame );
-    rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+    rocketnet_assert( packet_bytes > 0 );
+
+    // Drop oversized packets instead of asserting (release builds strip assertions)
+    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
+
     (void) frame;
     iocp->sends[packet_id].packet_bytes = packet_bytes;
 }

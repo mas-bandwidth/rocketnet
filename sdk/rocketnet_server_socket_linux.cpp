@@ -1828,7 +1828,10 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     rocketnet_assert( server_socket );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    // Drop oversized packets instead of asserting (release builds strip assertions)
+    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
 
     const int queue = packet_id % server_socket->num_queues;
 

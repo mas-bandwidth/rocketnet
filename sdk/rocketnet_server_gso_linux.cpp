@@ -828,7 +828,10 @@ void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, ui
     rocketnet_assert( gso );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    // Drop oversized packets instead of asserting (release builds strip assertions)
+    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+        return;
 
     (void) packet_id;
 
