@@ -51,10 +51,10 @@ static class Smoke
     }
 
 
-    static void Pump( IntPtr client, IntPtr server )
+    static void Pump( ClientTransportHandle? client, ServerTransportHandle server )
     {
         time += TimeStep;
-        if ( client != IntPtr.Zero )
+        if ( client != null )
             RocketNet.ClientTransportUpdate( client, time );
         RocketNet.ServerTransportUpdate( server, time );
         RocketNet.ServerTransportSendPackets( server );
@@ -161,18 +161,19 @@ static class Smoke
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig typoConfig );
         typoConfig.SetDriver( "protable" );
         RocketNet.LogLevel( RocketNet.LogLevelNone );       // the refusal is the assertion; its chatter is not
-        IntPtr typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig, time );
+        ServerTransportHandle typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig, time );
         RocketNet.LogLevel( RocketNet.LogLevelError );
-        if ( typoServer != IntPtr.Zero )
+        if ( !typoServer.IsInvalid )
             Fail( "a typo driver list must refuse create" );
+        typoServer.Dispose();
         Ok( "config mirror: default driver 'auto', typo driver list refused at create" );
 
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig serverConfig );
         serverConfig.MaxClientSlots = 4;
         string serverDriver = args.Length == 1 && args[0] == "--iocp" ? "iocp" : "portable";
         serverConfig.SetDriver( serverDriver );
-        IntPtr server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
-        if ( server == IntPtr.Zero )
+        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
+        if ( server.IsInvalid )
             Fail( $"server create on {address}" );
         if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
             Fail( $"granted driver is '{RocketNet.ServerTransportDriver( server )}', expected the pinned '{serverDriver}'" );
@@ -194,8 +195,8 @@ static class Smoke
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
         if ( clientConfig.GetDriver() != "auto" )
             Fail( $"client default config driver is '{clientConfig.GetDriver()}', expected 'auto'" );
-        IntPtr client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
-        if ( client == IntPtr.Zero )
+        ClientTransportHandle client = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, ref clientConfig, time );
+        if ( client.IsInvalid )
             Fail( "client create" );
         if ( RocketNet.ClientTransportDriver( client ).Length == 0 )
             Fail( "client granted driver reads back empty" );
@@ -516,6 +517,24 @@ static class Smoke
             Fail( "server still counts the disconnected client" );
         Ok( $"server disconnect observed by client (state '{RocketNet.ClientTransportStateName( RocketNet.ClientTransportState( client ) )}')" );
         RocketNet.ClientTransportDestroy( client );
+        try
+        {
+            RocketNet.ClientTransportDestroy( client );
+            Fail( "destroying a client twice did not throw" );
+        }
+        catch ( ObjectDisposedException )
+        {
+            Ok( "smoke_csharp_double_destroy_throws" );
+        }
+        try
+        {
+            RocketNet.ClientTransportState( client );
+            Fail( "using a client after destroy did not throw" );
+        }
+        catch ( ObjectDisposedException )
+        {
+            Ok( "smoke_csharp_use_after_destroy_throws" );
+        }
 
         // negative control 1: one corrupted byte in the clear signed fields
         // (byte 0 is the version) and the client refuses the token at create
@@ -525,10 +544,11 @@ static class Smoke
             Fail( "write dev connect token (negative 1)" );
         badToken[0] ^= 0xFF;
         RocketNet.Quiet( true );        // the refusal logs an error by design; keep the receipt clean
-        IntPtr badClient = RocketNet.ClientTransportCreate( IntPtr.Zero, badToken, IntPtr.Zero, time );
+        ClientTransportHandle badClient = RocketNet.ClientTransportCreate( IntPtr.Zero, badToken, IntPtr.Zero, time );
         RocketNet.Quiet( false );
-        if ( badClient != IntPtr.Zero )
+        if ( !badClient.IsInvalid )
             Fail( "corrupted token (version byte) was accepted at client create" );
+        badClient.Dispose();
         Ok( "negative control: corrupted token byte 0 refused at create (invalid connect token)" );
 
         // negative control 2: one corrupted byte inside the sealed block and the
@@ -539,8 +559,8 @@ static class Smoke
         if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), unixNow, sealedBad ) == 0 )
             Fail( "write dev connect token (negative 2)" );
         sealedBad[100] ^= 0xFF;         // inside the sealed private block, under the signature
-        IntPtr sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
-        if ( sealedClient == IntPtr.Zero )
+        ClientTransportHandle sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
+        if ( sealedClient.IsInvalid )
             Fail( "sealed-block corruption should pass the client's local checks" );
         ulong refusals = 0;
         for ( int i = 0; i < 1000 && refusals == 0; i++ )
@@ -573,7 +593,7 @@ static class Smoke
 
         RocketNet.ServerTransportStop( server );
         for ( int i = 0; i < 1000 && RocketNet.ServerTransportState( server ) != RocketNet.ServerTransportStopped; i++ )
-            Pump( IntPtr.Zero, server );
+            Pump( null, server );
         if ( RocketNet.ServerTransportState( server ) != RocketNet.ServerTransportStopped )
             Fail( "server did not stop" );
         RocketNet.ServerTransportDestroy( server );
