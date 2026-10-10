@@ -9699,6 +9699,34 @@ static void rocketnet_test_protocol_id_zero_refused( void )
     rocketnet_check( server == NULL );
 }
 
+static void rocketnet_test_filter_value_default_refused( void )
+{
+    struct rocketnet_server_transport_config_t config;
+
+    // Start with the default config (valid values for all fields): filter_value
+    // is left at ROCKETNET_TEST_FILTER_VALUE, the published test constant.
+
+    rocketnet_server_transport_default_config( &config );
+
+    // Replace with production keys and a production protocol id
+
+    memcpy( config.backend_public_key, rocketnet_test_backend_public_key, 32 );
+    memcpy( config.server_public_key, rocketnet_test_server_public_key, 32 );
+    memcpy( config.server_secret_key, rocketnet_test_server_secret_key, 32 );
+    config.protocol_id = 1;
+
+    // The published test filter value must not be inherited by a production
+    // server: create refuses it before any driver or socket is acquired.
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
+        NULL,
+        "127.0.0.1:0",
+        &config,
+        rocketnet_platform_time() );
+
+    rocketnet_check( server == NULL );
+}
+
 void rocketnet_test_token_lifetime_bounded()
 {
     struct rocketnet_test_server_t test;
@@ -9813,6 +9841,7 @@ void rocketnet_test_response_wrong_size_counted()
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
+    { "test_filter_value_default_refused", rocketnet_test_filter_value_default_refused },
     { "test_token_lifetime_bounded", rocketnet_test_token_lifetime_bounded },
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
