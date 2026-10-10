@@ -47,6 +47,84 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
+// The failed-verify budget (2026-10-05 security audit, high): one valid cookie
+// used to buy unlimited Ed25519 signature verifies from a real source address,
+// because nothing between the cookie gate and the verify charged failed
+// verifies to the source. The bucket below is the charge: small, fixed, keyed
+// by source address, and consulted at the cookie gate -- before the used-token
+// history and all asymmetric work -- so a source with a spent budget is
+// refused at the gate, answered exactly as the gate answers every source
+// whose cookie it will not honour: a fresh cookie packet, no asymmetric work.
+// The budget binds to the source, never to the cookie, so a fresh cookie
+// refills nothing; the window slides from the last failure, so a source that
+// stays silent for it regains its budget. Legitimate traffic is never charged:
+// a client's retransmits are byte-identical, so its signature never fails to
+// verify, and distinct clients behind a NAT hold distinct addresses. A full
+// table fails open -- an untracked source is charged as soon as a slot frees.
+// The bucket is one per process, not per server: a second server transport in
+// the same process sees the same charges. Its refusals are counted with the
+// cookie gate's refusal counter, COOKIE_DID_NOT_VERIFY, because the wire
+// behavior of the two is identical -- when counters.h is next in scope this
+// wants its own counter, say CONNECTION_REQUEST_VERIFY_BUDGET_SPENT.
+
+#define ROCKETNET_VERIFY_BUDGET_ENTRIES        64
+#define ROCKETNET_VERIFY_BUDGET_FAILURES       4
+#define ROCKETNET_VERIFY_BUDGET_WINDOW_SECONDS 3
+
+static struct
+{
+    struct rocketnet_address_t address;
+    uint64_t window_expire;                                 // not past current_timestamp when the slot is free
+    int failures;
+}
+rocketnet_verify_budget[ROCKETNET_VERIFY_BUDGET_ENTRIES];
+
+// is this source's budget spent? the walk is a fixed-size sweep: entries are
+// unordered and small, and the request path past the gate is the handshake
+// path, not the payload path.
+
+static int rocketnet_verify_budget_spent( const struct rocketnet_address_t * from, uint64_t current_timestamp )
+{
+    for ( int i = 0; i < ROCKETNET_VERIFY_BUDGET_ENTRIES; i++ )
+    {
+        if ( rocketnet_verify_budget[i].window_expire > current_timestamp &&
+             rocketnet_address_equal( &rocketnet_verify_budget[i].address, from ) )
+        {
+            return rocketnet_verify_budget[i].failures >= ROCKETNET_VERIFY_BUDGET_FAILURES ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+// charge one failed verify to its source: extend the entry's window from the
+// last failure, or claim a free or expired slot for a source with none
+
+static void rocketnet_verify_budget_charge( const struct rocketnet_address_t * from, uint64_t current_timestamp )
+{
+    int free_slot = -1;
+    for ( int i = 0; i < ROCKETNET_VERIFY_BUDGET_ENTRIES; i++ )
+    {
+        if ( rocketnet_verify_budget[i].window_expire > current_timestamp )
+        {
+            if ( rocketnet_address_equal( &rocketnet_verify_budget[i].address, from ) )
+            {
+                rocketnet_verify_budget[i].failures++;
+                rocketnet_verify_budget[i].window_expire = current_timestamp + ROCKETNET_VERIFY_BUDGET_WINDOW_SECONDS;
+                return;
+            }
+        }
+        else if ( free_slot == -1 )
+        {
+            free_slot = i;
+        }
+    }
+    if ( free_slot == -1 )
+        return;                                             // full: fails open, nothing is denied
+    rocketnet_verify_budget[free_slot].address = *from;
+    rocketnet_verify_budget[free_slot].failures = 1;
+    rocketnet_verify_budget[free_slot].window_expire = current_timestamp + ROCKETNET_VERIFY_BUDGET_WINDOW_SECONDS;
+}
+
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
                                                  const uint8_t * packet_data,
@@ -252,6 +330,16 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             rocketnet_debug( "server sent connection cookie. cookie expired" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED]++;
         }
+        else if ( rocketnet_verify_budget_spent( from, current_timestamp ) )
+        {
+            // the cookie is real but this source's failed-verify budget is
+            // spent (the failed-verify budget, above): the gate answers with
+            // a fresh cookie and no asymmetric work, exactly as for a cookie
+            // that did not verify, and counts with the gate's refusal counter
+
+            rocketnet_debug( "server sent connection cookie. failed verify budget spent" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY]++;
+        }
         else
         {
             cookie_ok = 1;
@@ -291,6 +379,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
+        rocketnet_verify_budget_charge( from, current_timestamp );
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
