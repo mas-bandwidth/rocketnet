@@ -113,6 +113,11 @@
 
 #define ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES      ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES
 
+// the handshake work budget: max post-cookie handshakes (connection request
+// packets) processed per transport update; caps DoS from staged attempts
+
+#define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE  100
+
 // The kernel filter's configuration, written by userspace at server start
 // and read per-packet in the XDP program. One definition serves both sides
 // of the map, and the padding is explicit so the layout cannot depend on
