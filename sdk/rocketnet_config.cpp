@@ -351,9 +351,15 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             case ROCKETNET_CONFIG_KIND_UINT64:
             case ROCKETNET_CONFIG_KIND_BYTES:
             {
-                // any value of the full width is structurally valid;
-                // semantic checks (keys present, and so on) stay with the
-                // transport that owns the meaning
+                if ( field->flags & ROCKETNET_CONFIG_REFUSE_TEST_VALUE )
+                {
+                    static const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+                    if ( memcmp( base, test_filter, field->size ) == 0 )
+                    {
+                        rocketnet_error( "%s config %s has test default filter value", transport_name, field->name );
+                        return false;
+                    }
+                }
             }
             break;
 

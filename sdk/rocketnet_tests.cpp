@@ -8,7 +8,7 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
@@ -9534,6 +9534,23 @@ void rocketnet_test_token_lifetime_bounded()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_filter_value_default_refused()
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+
+    struct rocketnet_server_transport_config_t config;
+
+    rocketnet_server_transport_default_config( &config );
+
+    rocketnet_check( memcmp( config.filter_value, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
+
+    crypto_box_keypair( config.server_public_key, config.server_secret_key );
+    crypto_box_keypair( config.backend_public_key, config.server_secret_key );
+
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9665,6 +9682,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
+    { "test_filter_value_default_refused", rocketnet_test_filter_value_default_refused },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
