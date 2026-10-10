@@ -551,6 +551,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
+    // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+    if ( config->protocol_id == 0 )
+    {
+        rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        return NULL;
+    }
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
