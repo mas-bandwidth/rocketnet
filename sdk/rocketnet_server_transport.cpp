@@ -1068,8 +1068,25 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     const int stats_index = server_transport->current_stats_index;
 
+    // two-pass receive loop: first pass identifies established clients so
+    // their packets are processed before unestablished ones; this ensures
+    // established client traffic is not displaced by junk or handshake traffic
+
+    struct rocketnet_encryption_map_t * encryption_map = server_transport->protocol.encryption_map;
+    int established[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS];
     for ( int i = 0; i < num_received; i++ )
     {
+        established[i] = rocketnet_encryption_map_find( encryption_map, &receive_buffer->from[i] ) >= 0 &&
+            rocketnet_encryption_map_entry( encryption_map,
+                rocketnet_encryption_map_find( encryption_map, &receive_buffer->from[i] ) )->established;
+    }
+
+    // first pass: process established client packets
+    for ( int i = 0; i < num_received; i++ )
+    {
+        if ( !established[i] )
+            continue;
+
         struct rocketnet_address_t from = receive_buffer->from[i];
         uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
         const int packet_bytes = receive_buffer->packet_bytes[i];
@@ -1114,10 +1131,74 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->payloads.num_payloads++;
         }
 
-        // a fragment that completed its payload delivers here, in arrival
-        // position: the reassembled bytes live in the reassembly's
-        // delivered arena, valid until the next update, and join the same
-        // batch attributed to their client slot
+        struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
+        if ( reassembly->completed_bytes > 0 )
+        {
+            if ( server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE )
+            {
+                const int index = server_transport->payloads.num_payloads;
+                server_transport->payloads.client_index[index] = payload_client_index;
+                server_transport->payloads.payload_data[index] = reassembly->completed_payload;
+                server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+                server_transport->payloads.num_payloads++;
+            }
+            else
+            {
+                rocketnet_spam( "server dropped reassembled payload. receive batch full" );
+                server_transport->counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL]++;
+            }
+        }
+    }
+
+    // second pass: process remaining packets
+    for ( int i = 0; i < num_received; i++ )
+    {
+        if ( established[i] )
+            continue;
+
+        struct rocketnet_address_t from = receive_buffer->from[i];
+        uint8_t * receive_frame = receive_buffer->data + i * ROCKETNET_RECEIVE_CEILING;
+        const int packet_bytes = receive_buffer->packet_bytes[i];
+
+        server_transport->stats_frames[stats_index].packets_received++;
+        server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+        uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
+            server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
+
+        uint8_t payload_overflow[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+
+        struct rocketnet_server_frame_t frame;
+        uint8_t * response = rocketnet_server_reserve_send_frame( server_transport, &from, &frame );
+        uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+
+        if ( response )
+            response += ROCKETNET_FRAME_WIRE_OFFSET;
+
+        rocketnet_server_protocol_process_packet( &server_transport->protocol, &from, receive_frame, packet_bytes,
+                                         current_timestamp, current_time,
+                                         response ? response : response_overflow, &response_bytes,
+                                         payload ? payload : payload_overflow, &payload_bytes, &payload_client_index );
+
+        if ( response )
+        {
+            if ( response_bytes > 0 )
+                rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
+            else
+                rocketnet_server_abort_send_frame( server_transport, &frame );
+        }
+
+        if ( payload && payload_bytes > 0 )
+        {
+            const int index = server_transport->payloads.num_payloads;
+            server_transport->payloads.client_index[index] = payload_client_index;
+            server_transport->payloads.payload_data[index] = payload;
+            server_transport->payloads.payload_bytes[index] = payload_bytes;
+            server_transport->payloads.num_payloads++;
+        }
 
         struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
         if ( reassembly->completed_bytes > 0 )

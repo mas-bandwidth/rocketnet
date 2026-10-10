@@ -37,6 +37,7 @@ extern bool rocketnet_test_private_block_copied;
 #include "rocketnet_client_slots.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_wire.h"
 #include "rocketnet_config.h"
 #include "rocketnet_xdp_free_list.h"
 
@@ -9810,6 +9811,49 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_receive_prefers_established_clients()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0xABCD1234ULL, &client_keys );
+
+    uint8_t response2[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes2 = 0;
+    uint8_t payload2[ROCKETNET_RECEIVE_CEILING];
+    int payload2_bytes = 0;
+    int payload2_client_index = -1;
+    rocketnet_check( rocketnet_test_process_packet( &test, 
+        response, response_bytes, response2, &response_bytes2,
+        payload2, &payload2_bytes, &payload2_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+
+    uint8_t client_packet[ROCKETNET_RECEIVE_CEILING];
+
+    for ( int i = 0; i < 10; i++ )
+    {
+        uint8_t payload[16];
+        memset( payload, (uint8_t)(i + 1), sizeof(payload) );
+        int packet_bytes = rocketnet_test_write_session_packet( client_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1 + i,
+                                             payload, sizeof(payload), client_keys.session_client_to_server );
+
+        rocketnet_check( rocketnet_test_process_packet( &test, client_packet, packet_bytes,
+                                                        response, &response_bytes,
+                                                        payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+        rocketnet_check( payload_out_bytes == 16 );
+        rocketnet_check( payload_client_index >= 0 );
+        rocketnet_check( memcmp( payload_out, payload, 16 ) == 0 );
+    }
+
+    rocketnet_test_server_teardown( &test );
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -9878,6 +9922,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_full_connect", rocketnet_test_server_full_connect },
     { "test_server_response_denials", rocketnet_test_server_response_denials },
     { "test_server_receive_refusals", rocketnet_test_server_receive_refusals },
+    { "test_receive_prefers_established_clients", rocketnet_test_receive_prefers_established_clients },
     { "test_client_connect_validations", rocketnet_test_client_connect_validations },
     { "test_client_server_connect", rocketnet_test_client_server_connect },
     { "test_client_token_keys_wiped_on_disconnect", rocketnet_test_client_token_keys_wiped_on_disconnect },
