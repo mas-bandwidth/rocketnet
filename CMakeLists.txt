@@ -90,6 +90,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_allocator.cpp
     sdk/rocketnet_address.cpp
     sdk/rocketnet_base64.cpp
+    sdk/rocketnet_channel.cpp
     sdk/rocketnet_client_protocol.cpp
     sdk/rocketnet_client_slots.cpp
     sdk/rocketnet_client_transport.cpp
