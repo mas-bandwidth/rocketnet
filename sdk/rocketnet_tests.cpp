@@ -40,10 +40,6 @@ extern bool rocketnet_test_private_block_copied;
 #include "rocketnet_config.h"
 #include "rocketnet_xdp_free_list.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#include "rocketnet_server_iocp.h"
-#endif
-
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -9537,6 +9533,8 @@ void rocketnet_test_umem_config_frame_size_explicit()
     config.frame_headroom = 0;
     rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
 }
+
+
 
 
 
