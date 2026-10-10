@@ -1235,46 +1235,46 @@ void rocketnet_test_zero_length_flood_bounded()
         NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
     rocketnet_check( socket );
     
-    bind_address.port = rocketnet_platform_socket_port( socket );
+    // Get actual bound port using getsockname
+    struct sockaddr_in sock_addr;
+    socklen_t sock_addr_len = sizeof(sock_addr);
+    rocketnet_check( getsockname( socket->handle, (struct sockaddr*) &sock_addr, &sock_addr_len ) == 0 );
+    uint16_t bound_port = ntohs( sock_addr.sin_port );
     
-    // Preload 10000 zero-byte datagrams using raw socket
+    // Create injector socket to send zero-byte datagrams
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+    
+    struct sockaddr_in dest;
+    memset( &dest, 0, sizeof(dest) );
+    dest.sin_family = AF_INET;
+    dest.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    dest.sin_port = htons( bound_port );
+    
+    // Preload 10000 zero-byte datagrams
     const int num_zero_bytes = 10000;
-    int sent = 0;
     for ( int i = 0; i < num_zero_bytes; i++ )
     {
-        rocketnet_address_t dest = bind_address;
-        sent += int( ::sendto( socket->handle, "", 0, 0, (sockaddr*) &dest, sizeof(dest) ) );
+        rocketnet_check( ::sendto( injector, "", 0, 0, (struct sockaddr*) &dest, sizeof(dest) ) == 0 );
     }
-    rocketnet_check( sent == num_zero_bytes );
     
-    // Verify receive returns after bounded attempts (not forever)
+    // Verify receive is bounded when receiving only zero-byte datagrams
+    // Should return EAGAIN after exhausting the socket buffer without hanging
     uint8_t packet[256];
     rocketnet_address_t from;
-    int iterations = 0;
-    const int max_iterations = 20000;
     
+    // First call - should drain zero-byte packets and return EAGAIN (or -1)
+    // The key: zero-length reads should count against max_iterations
+    // so 10000 zero-byte datagrams won't cause a hang
     int received = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
-    rocketnet_check( received > 0 );
     
-    // Drain remaining zero-byte packets - should also be bounded
-    while ( true )
-    {
-        iterations++;
-        rocketnet_assert( iterations <= max_iterations );
-        int recv_result = rocketnet_platform_socket_receive_packet( socket, &from, packet, sizeof(packet) );
-        if ( recv_result <= 0 )
-            break;
-        if ( recv_result == 0 )
-        {
-            // Got a zero-length packet - keep draining
-            continue;
-        }
-    }
-    
-    // Verify we didn't hang (iterations should be reasonable)
-    rocketnet_check( iterations < max_iterations );
+    // After draining zero-byte packets, should get EAGAIN or -1 (no more data)
+    // If it hangs or asserts, the fix is not working
+    // received should be -1 (EAGAIN) since all zero-byte packets were consumed
+    rocketnet_check( received <= 0 );
     
     rocketnet_platform_socket_destroy( socket );
+    ::close( injector );
 }
 
 void rocketnet_test_platform_batch_pump()
