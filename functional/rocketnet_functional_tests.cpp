@@ -2374,12 +2374,41 @@ void rocketnet_test_server_driver_pin_xdp()
     rocketnet_test_env_restore( &driver_guard );
 }
 
+// The process's effective capability mask, read straight from
+// /proc/self/status: the kernel prints it as hex, and the privilege drop's
+// whole point is that it reads zero. A file that cannot be opened reads as
+// non-zero -- the check fails rather than passing silently.
+
+static bool rocketnet_test_effective_capability_mask_is_zero()
+{
+    FILE * status = fopen( "/proc/self/status", "r" );
+    if ( !status )
+        return false;
+
+    char line[256];
+    bool zero = false;
+    while ( fgets( line, sizeof(line), status ) )
+    {
+        unsigned long long mask = 0;
+        if ( sscanf( line, "CapEff:\t%llx", &mask ) == 1 )
+        {
+            zero = ( mask == 0 );
+            break;
+        }
+    }
+
+    fclose( status );
+    return zero;
+}
+
 void rocketnet_test_xdp_drops_privilege_after_create()
 {
-    // Verify that after XDP socket creation, the process drops privileges.
-    // When XDP is provisioned and create succeeds, geteuid() should be non-zero
-    // (dropped from root) if xdp_target_uid is configured to a non-root user.
-    // This test is skipped when XDP is unavailable or not provisioned.
+    // The audit's finding: the XDP server runs as root for its whole life,
+    // so a parser bug in the process is root with CAP_BPF and CAP_NET_ADMIN.
+    // With a target uid configured, create must drop to it and shed every
+    // capability once the program and sockets are set up: after create the
+    // effective uid is the target, and the effective capability mask is
+    // empty. The test stands down where the machine cannot grant xdp.
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
@@ -2387,38 +2416,34 @@ void rocketnet_test_xdp_drops_privilege_after_create()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "xdp" );
-    
-    // Set target uid to a non-root user for privilege dropping
-    config.xdp_target_uid = 65534; // nobody user
+    config.xdp_target_uid = 65534; // nobody: a uid guaranteed not to be root
 
     const bool provisioned = rocketnet_server_socket_preflight( "127.0.0.1:40114", 7 );
-
     if ( !provisioned )
     {
-        // XDP not provisioned on this machine, skip test
         printf( "[SKIPPED] test_xdp_drops_privilege_after_create\n" );
         rocketnet_test_env_restore( &driver_guard );
         return;
     }
 
-    // XDP is provisioned; temporarily allow commit to test socket creation.
-    rocketnet_server_socket_allow_commit();
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( 
-        NULL, "127.0.0.1:40114", &config, rocketnet_platform_time() );
+    // the suite's commit barrier is process-wide; lift it for this one
+    // committing create, the test that is allowed to mutate the host
 
+    rocketnet_server_socket_allow_commit();
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
+        NULL, "127.0.0.1:40114", &config, rocketnet_platform_time() );
     if ( !server )
     {
-        // XDP create failed - either due to commit barrier or other reason.
-        // In the normal test suite, the barrier will cause this to fail.
         printf( "[SKIPPED] test_xdp_drops_privilege_after_create\n" );
         rocketnet_test_env_restore( &driver_guard );
         return;
     }
 
-    // Socket created successfully; verify privilege was dropped.
     rocketnet_check( geteuid() != 0 );
+    rocketnet_check( rocketnet_test_effective_capability_mask_is_zero() );
 
     rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
     rocketnet_server_transport_destroy( server );
     rocketnet_test_env_restore( &driver_guard );
 }

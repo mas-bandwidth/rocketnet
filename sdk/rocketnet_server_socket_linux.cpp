@@ -21,7 +21,10 @@
 #include <xdp/libxdp.h>
 #include <sys/resource.h>
 #include <sys/prctl.h>
-#include <sys/capability.h>
+#include <sys/syscall.h>
+#include <linux/capability.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -1029,6 +1032,78 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
+// The XDP data plane needs euid 0 only to build and attach the BPF program
+// and to bind the AF_XDP sockets. Once create has done all of that, nothing
+// on the packet path needs a single capability, so this drops the process to
+// the operator's configured uid and sheds every capability it still holds.
+// The point is the parser: a malformed packet that trips a bug must reach
+// code running as the target user with an empty capability set, not as root
+// with CAP_BPF and CAP_NET_ADMIN.
+//
+// The order matters. The bounding set and the credentials are dropped while
+// the process is still root, because each needs a capability the next step
+// removes; the capability sets left behind by the uid change -- the
+// inheritable set survives it -- are cleared afterwards, where dropping (as
+// opposed to adding) needs no privilege at all. Only the reach-the-target-uid
+// step is fatal to the create; the rest are hardening that is logged when a
+// host refuses it.
+
+static bool rocketnet_server_socket_drop_privileges( int target_uid )
+{
+    // 1. empty the capability bounding set, so no later execve (a setuid
+    //    binary, a file capability) can confer a capability back on any
+    //    thread. needs CAP_SETPCAP, held here before the uid changes.
+
+    for ( int cap = 0; cap <= CAP_LAST_CAP; cap++ )
+        prctl( PR_CAPBSET_DROP, cap, 0, 0, 0 );
+
+    // 2. no_new_privs is the belt to the bounding set's braces: from here an
+    //    execve can never grant more privilege than the process already has
+
+    if ( prctl( PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0 ) != 0 )
+        rocketnet_warn( "xdp privilege drop: PR_SET_NO_NEW_PRIVS failed (%s)", strerror( errno ) );
+
+    // 3. supplementary groups, then the primary gid and every uid. the
+    //    target uid's own primary gid is used when the system knows the uid;
+    //    the credential change itself is not optional -- a create that cannot
+    //    reach the configured uid refuses rather than keep running as root.
+
+    if ( setgroups( 0, NULL ) != 0 )
+        rocketnet_warn( "xdp privilege drop: setgroups(0) failed (%s)", strerror( errno ) );
+
+    struct passwd * entry = getpwuid( target_uid );
+    if ( entry != NULL && setresgid( entry->pw_gid, entry->pw_gid, entry->pw_gid ) != 0 )
+    {
+        rocketnet_error( "xdp privilege drop: setresgid(%d) failed (%s)", (int) entry->pw_gid, strerror( errno ) );
+        return false;
+    }
+
+    if ( setresuid( target_uid, target_uid, target_uid ) != 0 )
+    {
+        rocketnet_error( "xdp privilege drop: setresuid(%d) failed (%s)", target_uid, strerror( errno ) );
+        return false;
+    }
+
+    // 4. clear the effective, permitted and inheritable capability sets the
+    //    credential change leaves behind, and the ambient set above them.
+    //    the raw capset keeps the audit's remedy off a new runtime
+    //    dependency: <linux/capability.h> and the syscall the kernel has
+    //    always taken, not libcap.
+
+    struct __user_cap_header_struct header;
+    struct __user_cap_data_struct data[2];
+    memset( &header, 0, sizeof( header ) );
+    memset( data, 0, sizeof( data ) );
+    header.version = _LINUX_CAPABILITY_VERSION_3;
+    header.pid = 0;
+    if ( syscall( SYS_capset, &header, data ) != 0 )
+        rocketnet_warn( "xdp privilege drop: capset(0) failed (%s)", strerror( errno ) );
+
+    prctl( PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0 );
+
+    return true;
+}
+
 rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus, int target_uid )
 {
     rocketnet_assert( num_queues >= 1 );
@@ -1605,31 +1680,15 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // Drop privileges after XDP socket and program setup is complete
     // This must happen after all privileged operations are done
     {
-        if ( target_uid != 0 )
+        if ( target_uid != 0 && !rocketnet_server_socket_drop_privileges( target_uid ) )
         {
-            // Drop all capabilities first, then change uid
-            // Using prctl to drop capabilities and setuid to change user
-            // PR_SET_SECUREBITS to lock down capabilities
-            if ( prctl( PR_SET_SECUREBITS, 
-                       SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED ) != 0 )
-            {
-                rocketnet_warn( "prctl PR_SET_SECUREBITS failed: %s", strerror(errno) );
-            }
-            
-            // Clear all capabilities from the effective and permitted sets
-            cap_t caps = cap_init();
-            if ( caps && cap_set_proc(caps) != 0 )
-            {
-                rocketnet_warn( "cap_set_proc failed: %s", strerror(errno) );
-            }
-            if ( caps ) cap_free(caps);
-            
-            // Drop to target uid
-            if ( setresuid(target_uid, target_uid, target_uid) != 0 )
-            {
-                rocketnet_error( "setresuid failed: %s", strerror(errno) );
-                return NULL;
-            }
+            // the data plane was built, but the process cannot reach the
+            // configured uid: refuse rather than hand back a root server.
+            // the socket is live, so it is stopped before it is destroyed.
+
+            server_socket->state = ROCKETNET_SERVER_SOCKET_STOPPED;
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
         }
     }
 
