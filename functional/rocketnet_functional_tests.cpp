@@ -3164,6 +3164,105 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
+struct rocketnet_test_gso_flood_args_t
+{
+    rocketnet_address_t server_address;
+    double until;
+};
+
+static void rocketnet_test_gso_flood_thread( void * data )
+{
+    struct rocketnet_test_gso_flood_args_t * args = (struct rocketnet_test_gso_flood_args_t*) data;
+
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+
+    // below ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES (33): every datagram takes
+    // the size-check drop path, so num_packets never advances
+
+    uint8_t undersized[32];
+    memset( undersized, 0xAB, sizeof(undersized) );
+
+    while ( rocketnet_platform_time() < args->until )
+    {
+        for ( int i = 0; i < 32; i++ )
+            rocketnet_platform_socket_send_packet( peer, &args->server_address, undersized, (int) sizeof(undersized) );
+    }
+
+    rocketnet_platform_socket_destroy( peer );
+}
+
+void rocketnet_test_gso_worker_lock_bounded()
+{
+    // A flood of sub-floor datagrams is dropped without advancing
+    // num_packets, so a worker that holds receive_mutex across its whole fill
+    // pass never yields it: the main thread's receive_packets waits out the
+    // entire flood. The fix caps a fill pass at one recvmmsg batch and
+    // releases the mutex per batch, so the main thread's wait stays bounded
+    // however long the flood runs.
+    //
+    // The test keeps the receive queue backed up for the whole flood with
+    // several senders, then measures the longest single receive_packets wait
+    // the main thread sees while the flood is live.
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 1, 0 );
+    rocketnet_check( gso );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind_address.port;
+
+    const int num_flood_threads = 16;
+    const double flood_seconds = 3.0;
+
+    struct rocketnet_test_gso_flood_args_t args;
+    args.server_address = server_address;
+    args.until = rocketnet_platform_time() + flood_seconds;
+
+    struct rocketnet_platform_thread_t * threads[num_flood_threads];
+    for ( int i = 0; i < num_flood_threads; i++ )
+    {
+        threads[i] = rocketnet_platform_thread_create( NULL, rocketnet_test_gso_flood_thread, &args );
+        rocketnet_check( threads[i] );
+    }
+
+    double worst_wait = 0.0;
+    while ( rocketnet_platform_time() < args.until )
+    {
+        const double start = rocketnet_platform_time();
+        rocketnet_server_gso_receive_packets( gso );
+        const double waited = rocketnet_platform_time() - start;
+        if ( waited > worst_wait )
+            worst_wait = waited;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    for ( int i = 0; i < num_flood_threads; i++ )
+    {
+        rocketnet_platform_thread_join( threads[i] );
+        rocketnet_platform_thread_destroy( threads[i] );
+    }
+
+    rocketnet_server_gso_receive_packets( gso );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+
+    // the flood must have driven the drop path, and the main thread must
+    // never have waited anything like the flood's length for the mutex
+
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] > 0 );
+    rocketnet_check( worst_wait < 0.2 );
+
+    rocketnet_server_gso_destroy( gso );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -3213,6 +3312,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+    { "test_gso_worker_lock_bounded", rocketnet_test_gso_worker_lock_bounded },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },

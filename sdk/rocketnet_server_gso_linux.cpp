@@ -420,9 +420,11 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
 // the receive worker: drain the socket with recvmmsg, split GRO runs at the
 // kernel-reported segment stride, stage each segment into the on buffer.
-// the mutex is held across the whole fill pass, the xdp pattern: the main
-// thread's flip lands only between passes and then drains the other buffer
-// with no lock held.
+// the mutex is held for one recvmmsg batch at a time, the xdp pattern: the
+// main thread's flip lands between batches and then drains the other buffer
+// with no lock held. bounding the pass to a batch is what keeps a flood of
+// sub-floor datagrams -- dropped without advancing num_packets -- from
+// holding the mutex for as long as the flood lasts.
 
 static void rocketnet_server_gso_worker( void * data )
 {
@@ -545,8 +547,15 @@ static void rocketnet_server_gso_worker( void * data )
                 }
             }
 
-            if ( count < ROCKETNET_GSO_RECV_BATCH )
-                break;                              // the socket is drained; go back to poll
+            // one recvmmsg batch is the whole of a fill pass: release the
+            // mutex and go back to poll, which re-derives the on buffer and
+            // lets the main thread's flip land here. a flood of sub-floor
+            // datagrams is dropped without advancing num_packets, so a pass
+            // that ran to a full buffer, or to an empty recvmmsg, could hold
+            // receive_mutex unbounded and starve that flip -- the batch is
+            // the bound.
+
+            break;
         }
 
         rocketnet_platform_mutex_release( &queue->receive_mutex );
