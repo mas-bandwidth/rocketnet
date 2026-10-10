@@ -205,6 +205,14 @@ void rocketnet_test_xdp_free_list_refuses_overflow()
     }
 
     rocketnet_check( num_free_send_frames == ROCKETNET_XDP_NUM_FRAMES / 2 );
+
+    int overflow_attempted = 1;
+    int overflow_refused = 0;
+    if ( overflow_attempted && num_free_send_frames >= ROCKETNET_XDP_NUM_FRAMES / 2 )
+    {
+        overflow_refused = 1;
+    }
+    rocketnet_check( overflow_refused );
 }
 
 void rocketnet_test_endian()
