@@ -509,6 +509,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int zero_length_count = 0;
+    const int zero_length_max = 100;  /* bounded skip for zero-length flood */
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
@@ -526,11 +528,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
         if ( result == 0 )
         {
-            // a zero-length datagram is legal UDP carrying nothing the
-            // protocol admits -- and returning 0 here would read as
-            // "socket drained", letting byte-less chaff cap an entire
-            // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            zero_length_count++;
+            if ( zero_length_count >= zero_length_max )
+            {
+                /* flood of zero-length datagrams: stop skipping */
+                return 0;
+            }
+            /* skip the zero-length datagram */
             continue;
         }
 
@@ -1702,6 +1706,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int zero_length_count = 0;
+    const int zero_length_max = 100;  /* bounded skip for zero-length flood */
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
@@ -1719,11 +1725,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
         if ( result == 0 )
         {
-            // a zero-length datagram is legal UDP carrying nothing the
-            // protocol admits -- and returning 0 here would read as
-            // "socket drained", letting byte-less chaff cap an entire
-            // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            zero_length_count++;
+            if ( zero_length_count >= zero_length_max )
+            {
+                /* flood of zero-length datagrams: stop skipping */
+                return 0;
+            }
+            /* skip the zero-length datagram */
             continue;
         }
 
@@ -2871,6 +2879,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     socklen_t from_length;
 
     int result;
+    int zero_length_count = 0;
+    const int zero_length_max = 100;  /* bounded skip for zero-length flood */
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
@@ -2890,11 +2900,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
         if ( result == 0 )
         {
-            // a zero-length datagram is legal UDP carrying nothing the
-            // protocol admits -- and returning 0 here would read as
-            // "socket drained", letting byte-less chaff cap an entire
-            // drain at one packet (#100's review). skip it, keep reading:
-            // both pumps share this semantic.
+            zero_length_count++;
+            if ( zero_length_count >= zero_length_max )
+            {
+                /* flood of zero-length datagrams: stop skipping */
+                return 0;
+            }
+            /* skip the zero-length datagram */
             continue;
         }
 

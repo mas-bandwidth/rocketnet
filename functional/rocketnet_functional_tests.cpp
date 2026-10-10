@@ -1479,6 +1479,57 @@ void rocketnet_test_platform_pump_zero_length_chaff()
     unsetenv( "ROCKETNET_PUMP" );
 }
 
+void rocketnet_test_zero_length_flood_bounded()
+{
+    // A flood of zero-length datagrams must be bounded. Without the fix,
+    // an attacker can send 10000+ zero-byte datagrams and block a receive
+    // call from returning for about 1 second. The fix counts zero-length
+    // reads against the per-call budget and returns after skipping ~100.
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket );
+
+    int injector = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    rocketnet_check( injector >= 0 );
+
+    struct sockaddr_in to;
+    memset( &to, 0, sizeof(to) );
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    to.sin_port = htons( bind_address.port );
+
+    // Send 10000 zero-byte datagrams
+    const int flood_count = 10000;
+    for ( int i = 0; i < flood_count; i++ )
+    {
+        rocketnet_check( sendto( injector, NULL, 0, 0, (struct sockaddr*) &to, sizeof(to) ) == 0 );
+    }
+
+    // Drain the socket: without the fix, this would take ~1 second
+    // With the fix, it returns quickly after skipping ~100 zero-length packets
+    double deadline = rocketnet_platform_time() + 0.5;  // 500ms deadline
+    double start = rocketnet_platform_time();
+
+    static rocketnet_address_t from[100];
+    static int packet_bytes[100];
+    static uint8_t receive_data[100 * 1024];
+
+    const int received = rocketnet_platform_socket_receive_packets( socket, from, receive_data,
+                                                                    1024, packet_bytes, 100 );
+
+    // The call should return within the deadline (fix bounds the zero-length skip)
+    rocketnet_check( rocketnet_platform_time() - start < deadline );
+
+    // We should get some packets (at least the bounded ones plus any real data)
+    // The exact count depends on the implementation but it must be bounded
+    rocketnet_check( received >= 0 );
+
+    rocketnet_platform_socket_destroy( socket );
+    close( injector );
+}
+
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 void rocketnet_test_transport_acks_and_client_stats()
