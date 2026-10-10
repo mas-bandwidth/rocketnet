@@ -56,6 +56,8 @@ public static unsafe partial class RocketNet
     [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
     delegate uint AbiVersionQuery();
     [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
+    delegate int CounterCountQuery();
+    [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
     delegate nuint AbiTypeSizeQuery( [MarshalAs(UnmanagedType.LPUTF8Str)] string type );
     [UnmanagedFunctionPointer( CallingConvention.Cdecl )]
     delegate int AbiFieldCountQuery( [MarshalAs(UnmanagedType.LPUTF8Str)] string type );
@@ -87,6 +89,13 @@ public static unsafe partial class RocketNet
         uint version = AbiExport<AbiVersionQuery>( handle, "rocketnet_abi_version" )();
         if ( version != AbiVersion )
             throw new BadImageFormatException( $"RocketNet ABI: native revision {version}, binding requires {AbiVersion}." );
+        // CountersSpan spans the counters block as NumCounters ulong values, so the
+        // loaded library must report exactly that many counters; refuse a block of
+        // another length here, before any counters or struct-writing call can hand
+        // the span an out-of-bounds block.
+        int nativeCounters = AbiExport<CounterCountQuery>( handle, "rocketnet_num_counters" )();
+        if ( nativeCounters != NumCounters )
+            throw new BadImageFormatException( $"RocketNet ABI: counter count {nativeCounters}, binding requires {NumCounters}." );
         var typeSize = AbiExport<AbiTypeSizeQuery>( handle, "rocketnet_abi_type_size" );
         var fieldCount = AbiExport<AbiFieldCountQuery>( handle, "rocketnet_abi_field_count" );
         var fieldOffset = AbiExport<AbiFieldQuery>( handle, "rocketnet_abi_field_offset" );
