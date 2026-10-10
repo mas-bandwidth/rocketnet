@@ -1179,6 +1179,47 @@ static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
 
 #define ROCKETNET_MSGX_BATCH 32
 
+// the batch receive stages into a per-thread scratch whose slots are one
+// byte larger than the caller's stride. the kernel reports a datagram's
+// length as min( datagram, iov_len ), so a slot of stride+1 makes every
+// datagram longer than a slot report stride+1 -- one past the ceiling, a
+// detectable over-run -- where the caller-sized slot made the kernel clamp
+// it to the stride and it read as a real packet. measured, not assumed:
+// a 2000-byte datagram into a 1426-byte slot reports 1426 (the red test's
+// observation), so one spare byte is the whole difference. the scratch is
+// thread-local and sized once, grown only if a call asks for more than it
+// holds; the batch keeps one syscall per chunk. when it cannot be had the
+// batch receives into the caller's slots directly, keeping the old clamp
+// -- undetected truncation, but never a byte past a slot.
+
+struct rocketnet_msgx_staging_t
+{
+    uint8_t * data;
+    size_t bytes;
+    ~rocketnet_msgx_staging_t()
+    {
+        if ( data )
+            rocketnet_free( NULL, data );
+    }
+};
+
+static thread_local struct rocketnet_msgx_staging_t rocketnet_msgx_staging;
+
+// returns the scratch sized for one chunk of stride+1 slots, or NULL when
+// allocation fails and the caller should receive into its own slots
+
+static uint8_t * rocketnet_msgx_staging_for( int want, int packet_stride )
+{
+    size_t needed = (size_t) want * ( (size_t) packet_stride + 1 );
+    if ( rocketnet_msgx_staging.data && rocketnet_msgx_staging.bytes >= needed )
+        return rocketnet_msgx_staging.data;
+    if ( rocketnet_msgx_staging.data )
+        rocketnet_free( NULL, rocketnet_msgx_staging.data );
+    rocketnet_msgx_staging.data = (uint8_t*) rocketnet_malloc( NULL, needed );
+    rocketnet_msgx_staging.bytes = rocketnet_msgx_staging.data ? needed : 0;
+    return rocketnet_msgx_staging.data;
+}
+
 // ---------------------------------------------------
 
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
@@ -2067,14 +2108,18 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
         const int chunk_base = total;
 
+        uint8_t * staging = rocketnet_msgx_staging_for( want, packet_stride );
+        const size_t slot_bytes = (size_t) packet_stride + 1;
+
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
         struct iovec iov[ROCKETNET_MSGX_BATCH];
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
         memset( msg, 0, sizeof(msg) );
         for ( int i = 0; i < want; i++ )
         {
-            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
-            iov[i].iov_len = (size_t) packet_stride;
+            iov[i].iov_base = staging ? staging + (size_t) i * slot_bytes
+                                      : packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            iov[i].iov_len = staging ? slot_bytes : (size_t) packet_stride;
             msg[i].msg_name = &addresses[i];
             msg[i].msg_namelen = sizeof(addresses[i]);
             msg[i].msg_iov = &iov[i];
@@ -2101,10 +2146,12 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         if ( result == 0 )
             return total;
 
-        // walk the chunk in place. a zero-length datagram or a family the
-        // transport does not speak (the per-packet path delivers neither)
-        // is compacted out: the next kept message's bytes move down to the
-        // gap. rare by nature -- attack chaff -- and bounded by the chunk.
+        // walk the chunk in place. a datagram past the receive ceiling --
+        // reported by the stride+1 staging slot, never by the kernel's own
+        // clamp -- a zero-length datagram or a family the transport does
+        // not speak (the per-packet path delivers neither) is compacted
+        // out: the next kept message's bytes move down to the gap. rare by
+        // nature -- attack chaff -- and bounded by the chunk.
 
         for ( ssize_t i = 0; i < result; i++ )
         {
@@ -2113,7 +2160,8 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
             rocketnet_address_t parsed;
             if ( ( msg[i].msg_flags & MSG_TRUNC ) || datalen > (size_t) packet_stride || bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
-            uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
+            uint8_t * written = staging ? staging + (size_t) i * slot_bytes
+                                        : packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
             if ( target != written )
             {
