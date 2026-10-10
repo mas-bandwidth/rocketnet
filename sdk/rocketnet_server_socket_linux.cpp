@@ -2112,6 +2112,44 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     }        
 }
 
+// The XDP receive loop's descriptor gate. A descriptor is accepted only when
+// its whole body lies inside the receive half of the UMEM and the payload it
+// carries fits the staging slot's receive ceiling; every refusal is counted.
+// `frame_recyclable` reports whether the address is one of OUR receive frames
+// -- a refused descriptor whose address is outside the receive half must never
+// be handed back to the fill ring, because the comment above num_consumed
+// records what returning an unowned umem address does. Exported rather than
+// static for the oversized-descriptor unit test; the receive loop below is the
+// only production caller.
+bool rocketnet_server_socket_xdp_rx_descriptor_bounded( uint64_t addr,
+                                                        uint32_t desc_len,
+                                                        uint64_t receive_begin,
+                                                        uint64_t receive_end,
+                                                        int header_bytes,
+                                                        int receive_ceiling,
+                                                        bool * frame_recyclable,
+                                                        uint64_t * dropped )
+{
+    const bool address_in_region = addr >= receive_begin && addr < receive_end;
+
+    if ( frame_recyclable )
+        *frame_recyclable = address_in_region;
+
+    bool bounded = address_in_region && desc_len <= receive_end - addr;
+
+    if ( bounded && desc_len >= (uint32_t) header_bytes )
+        bounded = ( desc_len - (uint32_t) header_bytes ) <= (uint32_t) receive_ceiling;
+
+    if ( !bounded )
+    {
+        if ( dropped )
+            ( *dropped )++;
+        return false;
+    }
+
+    return true;
+}
+
 static void rocketnet_server_socket_xdp_thread_function( void * data )
 {
     rocketnet_server_xdp_socket_t * socket = (rocketnet_server_xdp_socket_t*) data;
@@ -2143,6 +2181,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             [&](uint32_t count) { xsk_ring_prod__submit(&socket->fill_queue, count); });
     };
     bool reported_frame_pressure = false;
+    uint64_t xdp_rx_descriptor_dropped = 0;
+    bool reported_rx_descriptor_drop = false;
 
     while ( !socket->quit )
     {
@@ -2184,9 +2224,22 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // Descriptors left unconsumed stay in the ring and come back on the
             // next peek, which is the correct AF_XDP behaviour when a consumer
             // cannot keep up.
-            uint32_t num_consumed = 0;
+            //
+            // Two counters, because the audit fix splits them: every descriptor
+            // taken off the ring is released, but a descriptor whose address is
+            // outside our receive half is NOT recycled -- it is not a frame this
+            // process owns, and handing it to the fill ring is the aliasing the
+            // comment above warns about.
+            uint32_t num_consumed = 0;     // descriptors taken off the RX ring (released)
+            uint32_t num_recycled = 0;     // owned frames handed back to the fill ring
 
             uint64_t frame[ROCKETNET_XDP_RECV_QUEUE_SIZE];
+
+            // The receive half of the umem; the send half precedes it.
+            const uint64_t receive_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+            const uint64_t receive_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+
+            const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
 
             for ( uint32_t i = 0; i < num_packets; i++ ) 
             {
@@ -2195,12 +2248,37 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 
-                frame[num_consumed] = desc->addr;
+                // The descriptor leaves the RX ring either way; only a frame
+                // inside our receive half may leave with it.
                 num_consumed++;
 
-                uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
+                bool frame_recyclable = false;
 
-                const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
+                if ( !rocketnet_server_socket_xdp_rx_descriptor_bounded( desc->addr, desc->len,
+                        receive_begin, receive_end, header_bytes, ROCKETNET_RECEIVE_CEILING,
+                        &frame_recyclable, &xdp_rx_descriptor_dropped ) )
+                {
+                    if ( frame_recyclable )
+                    {
+                        frame[num_recycled] = desc->addr;
+                        num_recycled++;
+                    }
+
+                    if ( !reported_rx_descriptor_drop )
+                    {
+                        rocketnet_error( "xdp rx descriptor dropped: addr %llu len %u (total %llu)",
+                                         (unsigned long long) desc->addr, (unsigned) desc->len,
+                                         (unsigned long long) xdp_rx_descriptor_dropped );
+                        reported_rx_descriptor_drop = true;
+                    }
+
+                    continue;
+                }
+
+                frame[num_recycled] = desc->addr;
+                num_recycled++;
+
+                uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
 
                 const int packet_bytes = desc->len;
 
@@ -2233,8 +2311,8 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             xsk_ring_cons__release( &socket->receive_queue, num_consumed );
 
             // The peek was bounded by available pending storage, so every
-            // consumed frame remains owned until a full fill reservation.
-            const bool retained = pending_return.append(frame, num_consumed);
+            // owned consumed frame remains owned until a full fill reservation.
+            const bool retained = pending_return.append(frame, num_recycled);
             rocketnet_assert(retained);
             if (!retained)
             {
