@@ -11,7 +11,8 @@
 #include <sodium.h>
 #include <string.h>
 
-uint8_t * rocketnet_test_private_block_ptr = NULL;
+uint8_t rocketnet_test_private_block_copy[ROCKETNET_PRIVATE_BLOCK_BYTES];
+bool rocketnet_test_private_block_copied = false;
 
 void rocketnet_write_connect_token_private( const struct rocketnet_connect_token_private_t * input, uint8_t * buffer )
 {
@@ -80,7 +81,6 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     private_data.expire_timestamp = signed_fields->expire_timestamp;
 
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
-    rocketnet_test_private_block_ptr = private_block;
     rocketnet_write_connect_token_private( &private_data, private_block );
 
     struct rocketnet_signed_connect_data_t signed_data = *signed_fields;
@@ -103,6 +103,8 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     result = 1;
 
 out:
+    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
+    rocketnet_test_private_block_copied = true;
     sodium_memzero( private_block, sizeof(private_block) );
     sodium_memzero( &private_data, sizeof(private_data) );
     return result;

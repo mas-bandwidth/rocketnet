@@ -8,7 +8,7 @@
 
 #include "rocketnet_platform.h"
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <netinet/in.h>
 #endif
 #include "rocketnet_read_write.h"
@@ -24,7 +24,8 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_keys.h"
 
-extern uint8_t * rocketnet_test_private_block_ptr;
+extern uint8_t rocketnet_test_private_block_copy[];
+extern bool rocketnet_test_private_block_copied;
 
 #include "rocketnet_counters.h"
 #include "rocketnet_token_tables.h"
@@ -1210,12 +1211,12 @@ void rocketnet_test_connect_token_buffers_wiped()
     rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_test_private_block_ptr = NULL;
+    rocketnet_test_private_block_copied = false;
     rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
 
-    rocketnet_check( rocketnet_test_private_block_ptr != NULL );
+    rocketnet_check( rocketnet_test_private_block_copied );
     for ( int i = 0; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
-        rocketnet_check( rocketnet_test_private_block_ptr[i] == 0 );
+        rocketnet_check( rocketnet_test_private_block_copy[i] == 0 );
 }
 
 void rocketnet_test_connect_token_private()
