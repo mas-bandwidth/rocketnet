@@ -38,6 +38,7 @@ extern bool rocketnet_test_private_block_copied;
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_xdp_free_list.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
@@ -202,6 +203,34 @@ void rocketnet_test_time()
     rocketnet_platform_sleep( 0.1 );
     double finish = rocketnet_platform_time();
     rocketnet_check( finish > start );
+}
+
+void rocketnet_test_xdp_free_list_refuses_overflow()
+{
+    static uint64_t send_frames[ROCKETNET_XDP_NUM_FRAMES / 2 + 1];
+    int count = 0;
+    const int capacity = ROCKETNET_XDP_NUM_FRAMES / 2;
+    const uint64_t region_begin = 0;
+    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+
+    for ( int i = 0; i < 32768; i++ )
+    {
+        rocketnet_check( rocketnet_xdp_free_list_push( send_frames, &count, capacity, (uint64_t)i * ROCKETNET_XDP_FRAME_SIZE, region_begin, region_end ) );
+    }
+    rocketnet_check( count == 32768 );
+
+    rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, 0, region_begin, region_end ) );
+    rocketnet_check( count == 32768 );
+
+    count = 0;
+    rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, ROCKETNET_XDP_FRAME_SIZE * 3 + 1, region_begin, region_end ) );
+    rocketnet_check( count == 0 );
+
+    rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE, region_begin, region_end ) );
+    rocketnet_check( count == 0 );
+
+    rocketnet_check( !rocketnet_xdp_free_list_push( send_frames, &count, capacity, UINT64_MAX, region_begin, region_end ) );
+    rocketnet_check( count == 0 );
 }
 
 void rocketnet_test_endian()
@@ -9788,6 +9817,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
+    { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
