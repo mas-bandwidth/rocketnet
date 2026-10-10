@@ -245,7 +245,14 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
     }
 
-    if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) != 0 )
+    int server_key_matches = 0;
+    if ( sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
+        server_key_matches = 1;
+    else if ( server->has_previous_server_key &&
+              sodium_memcmp( signed_connect_data + ROCKETNET_SIGNED_OFFSET_SERVER_KEY, server->previous_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
+        server_key_matches = 1;
+
+    if ( !server_key_matches )
     {
         rocketnet_debug( "server ignored connection request. token is sealed to a different server key" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY]++;
