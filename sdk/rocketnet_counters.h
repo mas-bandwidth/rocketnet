@@ -335,6 +335,16 @@ enum
     // contract.
     ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT,
 
+    // the UNRELIABLE path (docs/CHANNELS.md 5, 6.3, 6.4, 9.3, 11.2): a code-0
+    // record dropped on receive because the per-update unreliable delivery
+    // budget Du was full (section 6.3 step 4), and a code-0 message dropped on
+    // send: because finish_packet refused the packet that carried it (section
+    // 6.4, Failed send), or because it is longer than the record's u16 length
+    // and can never be carried. Unreliable semantics allow all three; each is
+    // counted once per dropped message. appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL,
+    ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED,
+
     ROCKETNET_NUM_COUNTERS
 };
 

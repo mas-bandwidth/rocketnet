@@ -311,6 +311,49 @@ taught the design four things, now in 13.2 and 13.3:
   length, so it checks the shortest block it could be part of, and a base
   below 0 is a span outside the ring.
 
+**As built.** `sdk/rocketnet_unreliable.{h,cpp}` is the UNRELIABLE send and
+receive path of the message layer over this codec and layer 1's region
+(5, 6.3, 6.4, 9.3, 11.2): a bounded FIFO of messages copied into the send
+store (a full store or queue is a counted drop and nothing grows — R1, and a
+message longer than the record's u16 length is dropped and counted at the
+send call, never enqueued), a
+fill that aggregates small messages as code-0 records into one RECORDS
+payload with this layer's writer until the next one does not fit, frees each
+chunk as soon as it is written (9.3 step 3) and plans a block (a message
+longer than one large store chunk, 1152 bytes) alone in its own large payload
+(L2.3), copying the whole chain so the record never reads across a chunk
+boundary, a zero-copy SINGLE helper
+that touches no module state (11.2), and a receive that delivers each code-0
+record as a pointer into the payload into the caller's Du entries, dropping
+and counting the rest when Du is full (6.3 step 4). As this layer it holds
+no window state: an unreliable record takes no number, no received bit, no
+receive descriptor and no ring span, and a packet that carried only
+unreliable records is never entered in the sent-packet map (5, 6.1, 6.4). A
+finish_packet failure drops and counts the packet's unreliable records
+(6.4, Failed send; `MESSAGE_UNRELIABLE_SEND_FAILED`). Two counters were
+appended: `MESSAGE_UNRELIABLE_DELIVERY_FULL` and
+`MESSAGE_UNRELIABLE_SEND_FAILED`. Its tests are in `test_channels.cpp` in
+`./bin/test`:
+`ChannelsUnreliableSmallMessagesShareOneFrame`,
+`ChannelsUnreliableRecordNeverSplitAcrossPackets`,
+`ChannelsUnreliableLargeMessageTravelsAlone`,
+`ChannelsUnreliableSingleZeroCopyAtPayloadRoot`,
+`ChannelsUnreliableStoreFullDropsAndCounts`,
+`ChannelsUnreliableDeliveryBudgetDropsAndCounts`,
+`ChannelsUnreliableFailedSendDropsAndCounts`,
+`ChannelsUnreliableChunkFreedWhenWritten`,
+`ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore`,
+`ChannelsUnreliableMessagePastU16LengthRefused`, and the lossy-wire walk
+`ChannelsUnreliableOverTheLossySimulator` (0, 10 and 50 percent loss with
+reordering; every delivered message is byte-identical to one sent, and at
+each loss level every send attempt is refused, still in the FIFO, delivered,
+dropped for a full delivery budget, or lost on the wire — R8, with attempted
+counted at the send calls, refused cross-checked against the store-full
+counter, delivered on the receive side, and wire loss measured as the gap
+between the code-0 records parsed into the frames the test sent and parsed
+out of the frames it received — while the whole walk runs under the
+no-live-allocation trap — R1).
+
 ## 6. Layer 3: the reliable window
 
 ### 6.1 What it owns
