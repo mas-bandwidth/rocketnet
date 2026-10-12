@@ -177,6 +177,10 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug
           cmake --build build --parallel
 
+      - name: Check the floating-point floor on every compiler invocation
+        if: runner.os == 'Linux'
+        run: bash tools/check_fp_contract.sh
+
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
       # state machines and the in-memory simulator, parallel, 60s warning,
@@ -575,6 +579,7 @@ jobs:
       - name: Build the harness
         run: |
           clang++ -g -O1 -std=c++17 \
+            -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
             -lbpf -lxdp -lpthread \
@@ -761,7 +766,7 @@ jobs:
 
       - name: Build the big-endian wire check
         run: |
-          s390x-linux-gnu-g++ -std=c++11 -Wall -Isdk \
+          s390x-linux-gnu-g++ -std=c++11 -Wall -ffp-contract=off -Isdk \
             tools/bigendian/wire_check.cpp build/librocketnet.a \
             -L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu \
             -lbpf -lxdp -lpthread \
