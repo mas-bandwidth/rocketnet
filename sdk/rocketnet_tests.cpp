@@ -8355,6 +8355,9 @@ void rocketnet_test_fragment_hostile_id_does_not_poison_slot()
     bytes = rocketnet_test_build_fragment( fragment, 0x80000000u, 0, 2, 100, 100, 0x20 );
     rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
     rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 1 );
+    // the refusal left the honest occupant in place: a far-ahead id is not
+    // newer, so it never evicts what it cannot supersede
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
 
     // ...and the honest id just after the occupant is still newer: it is
     // accepted and completes byte-exact
