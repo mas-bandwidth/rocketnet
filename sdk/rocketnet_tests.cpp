@@ -1345,28 +1345,6 @@ void rocketnet_test_prefilter()
             rocketnet_check( rocketnet_prefilter_counter( codes[i] ) != rocketnet_prefilter_counter( codes[j] ) );
 }
 
-void rocketnet_test_receive_drops_oversize_datagram()
-{
-    // Verify that the prefilter correctly rejects datagrams larger than
-    // ROCKETNET_RECEIVE_CEILING. The receive path must drop oversized
-    // datagrams rather than truncating and processing them.
-
-    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    uint8_t packet[ROCKETNET_RECEIVE_CEILING + 16];
-    memset( packet, 0, sizeof(packet) );
-
-    // Write a valid prefilter header
-    uint8_t * p = packet;
-    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
-
-    // Oversize datagrams (larger than the ceiling) must be rejected
-    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
-    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 100, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
-
-    // The ceiling itself must be accepted
-    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
-}
-
 void rocketnet_test_packet_associated_data()
 {
     // the builder reproduces every per-type AD vector from Appendix A exactly
@@ -1981,6 +1959,73 @@ static void rocketnet_test_server_teardown( struct rocketnet_test_server_t * tes
     rocketnet_client_slots_destroy( test->server.client_slots );
     rocketnet_server_acks_destroy( test->server.acks );
     rocketnet_reassembly_set_destroy( test->server.reassembly );
+}
+
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    // The portable receive path hands the kernel exactly
+    // ROCKETNET_RECEIVE_CEILING bytes, so without MSG_TRUNC a datagram one
+    // byte past the ceiling is truncated into a valid-looking packet and
+    // processed instead of dropped. That truncation happens in the kernel, so
+    // this needs a real socket, which is why it is here rather than over the
+    // in-memory simulator.
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &local_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    if ( !socket )
+    {
+        // a sandboxed host that refuses the bind has no datagram to drive; the
+        // assertion runs wherever a socket can be created.
+        return;
+    }
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    local_address.port = bind_address.port;
+
+    // one byte past the fixed receive ceiling, with a valid prefilter header
+    uint8_t send_data[ROCKETNET_RECEIVE_CEILING + 1];
+    memset( send_data, 0, sizeof(send_data) );
+    uint8_t * p = send_data;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+
+    rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizeof(send_data) );
+
+    uint8_t receive_data[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from;
+    int packet_bytes = 0;
+    double start_time = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start_time < 5.0 )
+    {
+        const int num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
+        if ( num_received > 0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // the datagram is reported whole, not truncated to the ceiling
+    rocketnet_check( packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 );
+
+    // the transport's prefilter counts it as too large, before any
+    // sealed-packet or integrity work
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_server_protocol_process_packet( &test.server, &from, receive_data, packet_bytes,
+                                              ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
+                                              payload, &payload_bytes, &payload_client_index );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
+
+    rocketnet_platform_socket_destroy( socket );
+    rocketnet_test_server_teardown( &test );
 }
 
 // builds a valid request around a freshly minted token. the caller mutates

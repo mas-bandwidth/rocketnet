@@ -537,13 +537,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
-        if ( result > max_packet_size )
-        {
-            // oversized datagram: MSG_TRUNC told us the actual size exceeds
-            // our buffer. drop it to prevent truncation attacks.
-            continue;
-        }
-
+        // result may exceed max_packet_size: MSG_TRUNC reports the true
+        // datagram size. deliver it, not the truncated prefix, so the
+        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
         break;
     }
 
@@ -1218,7 +1214,7 @@ bool rocketnet_platform_init()
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
     SCDynamicStoreRef dynamic_store = SCDynamicStoreCreate( kCFAllocatorDefault, CFSTR( "FindCurrentInterfaceIpMac" ), NULL, NULL );
-    CFPropertyListRef global = SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) );
+    CFPropertyListRef global = dynamic_store ? SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) ) : NULL;
     if ( global )
     {
         CFStringRef primary_interface_name = (CFStringRef)( CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) ) );
@@ -1249,7 +1245,8 @@ bool rocketnet_platform_init()
         CFRelease( interfaces );
         CFRelease( global );
     }
-    CFRelease( dynamic_store );
+    if ( dynamic_store )
+        CFRelease( dynamic_store );
 
 #endif // ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
@@ -1737,13 +1734,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
-        if ( result > max_packet_size )
-        {
-            // oversized datagram: MSG_TRUNC told us the actual size exceeds
-            // our buffer. drop it to prevent truncation attacks.
-            continue;
-        }
-
+        // result may exceed max_packet_size: MSG_TRUNC reports the true
+        // datagram size. deliver it, not the truncated prefix, so the
+        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
         break;
     }
 
@@ -2126,16 +2119,19 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         for ( ssize_t i = 0; i < result; i++ )
         {
             int bytes = (int) msg[i].msg_datalen;
-            if ( bytes > packet_stride )
-                continue;
             rocketnet_address_t parsed;
             if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
+            // msg_datalen is the datagram's true size; the kernel wrote only
+            // packet_stride bytes into the slot. copy what was written and
+            // hand the caller the true size, so an oversize datagram reaches
+            // the transport's prefilter and is counted PREFILTER_TOO_LARGE.
+            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             if ( target != written )
             {
-                memmove( target, written, (size_t) bytes );
+                memmove( target, written, (size_t) copy_bytes );
             }
             from[total] = parsed;
             packet_bytes[total] = bytes;
