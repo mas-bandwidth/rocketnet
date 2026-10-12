@@ -11,8 +11,16 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- The smoke exercises the development token-minting path (WriteDevConnectToken),
+       so it builds the binding with ROCKETNET_DEVELOPMENT and loads the
+       development shared library (librocketnet_dev), which carries the symbol the
+       release library must not export. -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);ROCKETNET_DEVELOPMENT</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
-    <ProjectReference Include="../RocketNet.csproj" />
+    <ProjectReference Include="../RocketNet.csproj" AdditionalProperties="RocketNetDevelopment=true" />
   </ItemGroup>
 
 </Project>

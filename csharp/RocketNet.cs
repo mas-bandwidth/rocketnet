@@ -632,6 +632,7 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_default_config", CallingConvention = CallingConvention.Cdecl )]
     public static extern void ClientTransportDefaultConfig( out ClientTransportConfig config );
 
+    #if ROCKETNET_DEVELOPMENT
     /// <summary>Mints a connect token locally against the published development keys.
     /// A production client is handed its token by a backend. The token buffer is
     /// <see cref="ConnectTokenBytes"/>. Returns nonzero on success.</summary>
@@ -652,6 +653,7 @@ public static unsafe partial class RocketNet
 
     [DllImport( Lib, EntryPoint = "rocketnet_write_dev_connect_token", CallingConvention = CallingConvention.Cdecl )]
     private static extern int WriteDevConnectTokenNative( [MarshalAs( UnmanagedType.LPUTF8Str )] string serverAddress, ulong clientId, ulong unixTimestamp, byte* connectToken );
+#endif // #if ROCKETNET_DEVELOPMENT
 
     /// <summary>Creates a client connecting with the token. The token names the server, carries
     /// the keys, and is the credential. time is the game's clock, a double in seconds,
