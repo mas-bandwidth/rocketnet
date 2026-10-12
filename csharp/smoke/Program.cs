@@ -558,6 +558,24 @@ static class Smoke
             Ok( "smoke_csharp_use_after_destroy_throws" );
         }
 
+        // span-after-update: a span taken before Update becomes invalid after update
+        {
+            RocketNet.PacketContext context = default;
+            if (RocketNet.ClientTransportStartPacket(client, 64, ref context) == IntPtr.Zero)
+                Fail("start packet for span-after-update test");
+            Span<byte> span = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
+            if (span.IsEmpty)
+                Fail("span-after-update: span should not be empty");
+            // Update the transport - this invalidates the span
+            RocketNet.ClientTransportUpdate(client, time);
+            // Using the span after update should return empty
+            Span<byte> spanAfter = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
+            if (!spanAfter.IsEmpty)
+                Fail("span-after-update: span remained valid after update (should be invalidated)");
+            RocketNet.ClientTransportAbortPacket(client, ref context);
+            Ok("smoke_csharp_span_after_update_throws");
+        }
+
         // negative control 1: one corrupted byte in the clear signed fields
         // (byte 0 is the version) and the client refuses the token at create
 
