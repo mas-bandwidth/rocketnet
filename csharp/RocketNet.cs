@@ -462,6 +462,8 @@ public static unsafe partial class RocketNet
         public ulong Sequence;
         /// <summary>The destination client index (server side).</summary>
         public int ClientIndex;
+        /// <summary>The epoch when this context was last valid.</summary>
+        internal int updateEpoch;
     }
 
     /// <summary>rocketnet_client_transport_stats_t. Read with <see cref="ClientTransportGetStats"/>. rtt and
@@ -712,8 +714,12 @@ public static unsafe partial class RocketNet
     internal static extern void ClientTransportDestroyNative( IntPtr client );
 
     /// <summary>Advances the client one frame at the given game time.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_update", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportUpdate( ClientTransportHandle client, double time );
+    internal static extern void ClientTransportUpdateNative( ClientTransportHandle client, double time );
+    public static void ClientTransportUpdate( ClientTransportHandle client, double time )
+    {
+        client.updateEpoch++;
+        ClientTransportUpdateNative( client, time );
+    }
 
     /// <summary>The convenience send: copies and flushes inline. Main thread only, never
     /// during an open fill — the simple form, not a fill-phase participant.</summary>
@@ -799,18 +805,32 @@ public static unsafe partial class RocketNet
     /// context's PayloadCapacity reports the frame's real capacity -- the wire capacity or
     /// the configured maximum, never the request itself. Returns the frame, or IntPtr.Zero
     /// when no packet is available (ring or arena full, not connected, request out of range).</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ClientTransportStartPacket( ClientTransportHandle client, int requestBytes, ref PacketContext context );
+    internal static extern IntPtr ClientTransportStartPacketNative( ClientTransportHandle client, int requestBytes, ref PacketContext context );
+    public static IntPtr ClientTransportStartPacket( ClientTransportHandle client, int requestBytes, ref PacketContext context )
+    {
+        IntPtr result = ClientTransportStartPacketNative( client, requestBytes, ref context );
+        if ( result != IntPtr.Zero )
+            context.updateEpoch = client.updateEpoch;
+        return result;
+    }
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
+    internal static extern int ClientTransportFinishPacketNative( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
+    public static int ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes )
+    {
+        context.updateEpoch = -1;
+        return ClientTransportFinishPacketNative( client, ref context, payloadBytes );
+    }
 
     /// <summary>Releases an acquired packet without sending it.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportAbortPacket( ClientTransportHandle client, ref PacketContext context );
+    internal static extern void ClientTransportAbortPacketNative( ClientTransportHandle client, ref PacketContext context );
+    public static void ClientTransportAbortPacket( ClientTransportHandle client, ref PacketContext context )
+    {
+        context.updateEpoch = -1;
+        ClientTransportAbortPacketNative( client, ref context );
+    }
 
     /// <summary>Flushes everything staged. Required once per frame, after update; see the
     /// send family contract on <see cref="ServerTransportStartPacket"/>.</summary>
@@ -929,8 +949,12 @@ public static unsafe partial class RocketNet
     public static extern ushort ServerTransportPort( ServerTransportHandle server );
 
     /// <summary>Advances the server one frame at the given game time.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportUpdate( ServerTransportHandle server, double time );
+    internal static extern void ServerTransportUpdateNative( ServerTransportHandle server, double time );
+    public static void ServerTransportUpdate( ServerTransportHandle server, double time )
+    {
+        server.updateEpoch++;
+        ServerTransportUpdateNative( server, time );
+    }
 
     /// <summary>Number of payloads delivered by the last update. Valid until the next update.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_num_payloads", CallingConvention = CallingConvention.Cdecl )]
@@ -981,18 +1005,32 @@ public static unsafe partial class RocketNet
     /// acknowledged, and its PayloadCapacity reports the frame's real capacity (the wire
     /// capacity or the configured maximum), never the request itself. Returns the frame, or
     /// IntPtr.Zero when no packet is available.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr ServerTransportStartPacket( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context );
+    internal static extern IntPtr ServerTransportStartPacketNative( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context );
+    public static IntPtr ServerTransportStartPacket( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context )
+    {
+        IntPtr result = ServerTransportStartPacketNative( server, clientIndex, requestBytes, ref context );
+        if ( result != IntPtr.Zero )
+            context.updateEpoch = server.updateEpoch;
+        return result;
+    }
 
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern int ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
+    internal static extern int ServerTransportFinishPacketNative( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
+    public static int ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes )
+    {
+        context.updateEpoch = -1;
+        return ServerTransportFinishPacketNative( server, ref context, payloadBytes );
+    }
 
     /// <summary>Releases an acquired packet without sending it.</summary>
-    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportAbortPacket( ServerTransportHandle server, ref PacketContext context );
+    internal static extern void ServerTransportAbortPacketNative( ServerTransportHandle server, ref PacketContext context );
+    public static void ServerTransportAbortPacket( ServerTransportHandle server, ref PacketContext context )
+    {
+        context.updateEpoch = -1;
+        ServerTransportAbortPacketNative( server, ref context );
+    }
 
     /// <summary>Flushes everything staged. Required once per frame, after update; see the
     /// send family contract above.</summary>
@@ -1104,6 +1142,8 @@ public static unsafe partial class RocketNet
     /// callers must not retain it across those operations or race them.</summary>
     public static Span<byte> ClientTransportPacketPayloadSpan( ClientTransportHandle client, in PacketContext context )
     {
+        if ( client.updateEpoch != context.updateEpoch )
+            return Span<byte>.Empty;
         byte* payload = ClientPacketPayloadNative(client, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
@@ -1112,6 +1152,8 @@ public static unsafe partial class RocketNet
     /// with the same lease validation and lifetime.</summary>
     public static Span<byte> ServerTransportPacketPayloadSpan( ServerTransportHandle server, in PacketContext context )
     {
+        if ( server.updateEpoch != context.updateEpoch )
+            return Span<byte>.Empty;
         byte* payload = ServerPacketPayloadNative(server, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
@@ -1248,6 +1290,8 @@ public sealed class ClientTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
     /// receive the native pointer <see cref="RocketNet.ClientTransportCreate(IntPtr,byte[],ref RocketNet.ClientTransportConfig,double)"/> returns.</summary>
     public ClientTransportHandle() : base( true ) { }
 
+    internal int updateEpoch;
+
     /// <inheritdoc/>
     protected override bool ReleaseHandle()
     {
@@ -1267,6 +1311,8 @@ public sealed class ServerTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
     /// <summary>Constructs the handle with ownership. The P/Invoke marshaller uses it to
     /// receive the native pointer <see cref="RocketNet.ServerTransportCreate"/> returns.</summary>
     public ServerTransportHandle() : base( true ) { }
+
+    internal int updateEpoch;
 
     /// <inheritdoc/>
     protected override bool ReleaseHandle()
