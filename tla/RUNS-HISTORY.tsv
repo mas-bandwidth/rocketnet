@@ -1,3 +1,4 @@
+# Pre-tlacheck RUNS.tsv records (the seven-column layout), moved here whole by the tlacheck conversion. Each row became a case in tla/CASES.tsv, named in README-Link.md (link group) and README-ClientConnection.md (clientconnection group).
 module	config	states	distinct	result	bench	date
 MCLink	MCLink.cfg (Pattern "arbitrary", Spec, ResentIsDelivered)	18543	2146	pass	vision	2026-10-06
 MCLink	MCLink.cfg with Pattern "none", Spec, ResentIsDelivered	10424	1763	pass	vision	2026-10-06

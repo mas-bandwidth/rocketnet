@@ -5,8 +5,10 @@ by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instan
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
 the server sends. The server is modelled as the environment the client talks to, only
 as far as it drives the client. `tla/MCClientConnection.tla` and
-`tla/MCClientConnection.cfg` are the small instance; every TLC run is a row in
-`tla/RUNS.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
+`tla/MCClientConnection.cfg` are the small instance; every run is a case in
+`tla/CASES.tsv` and a measured record in `tla/RUNS.tsv`, in the tlacheck
+layout. `tla/README.md` says how to run, check and refresh the records. The
+inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
 
 ## What the model covers
 
@@ -229,6 +231,20 @@ below changed; the TSV has one row per run.
 | `F4-ephemeral` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | EphemeralErasedOutsideHandshake | 124 | fail as expected (F4) |
 | `F8-terminal` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | TerminalAbsorbing | 252 | fail as expected (F8) |
 | `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 17569 | fail as expected (observation) |
+
+Each run is committed as its own case file, named from the run above:
+`MCClientConnection.cfg` (the committed run, `L-firstkind`),
+`MCClientConnectionLNone.cfg`, `MCClientConnectionLFirst.cfg`,
+`MCClientConnectionLAlternate.cfg`, `MCClientConnectionLBurst.cfg`,
+`MCClientConnectionLArbitrary.cfg` (debt), `MCClientConnectionWOnceFirstkind.cfg`,
+`MCClientConnectionWOnceAlternate.cfg`, `MCClientConnectionWAnysend.cfg`,
+`MCClientConnectionLSilent.cfg`, `MCClientConnectionLCrash.cfg`,
+`MCClientConnectionSNone.cfg` (debt), `MCClientConnectionSFirst.cfg`,
+`MCClientConnectionSAlternate.cfg`, `MCClientConnectionSBurst.cfg`,
+`MCClientConnectionSArbitrary.cfg` (debt), `MCClientConnectionSFirstkind.cfg`,
+`MCClientConnectionSDelay.cfg`, `MCClientConnectionF4Ephemeral.cfg`,
+`MCClientConnectionF8Terminal.cfg` and `MCClientConnectionObsKeys.cfg`.
+`tla/CASES.tsv` declares each.
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
 `DisconnectCopies = 2`, `Capacity = 2`, `BurstStart = 1`, `BurstLen = 2`. Liveness runs

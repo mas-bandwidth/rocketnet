@@ -1,0 +1,52 @@
+# tlc.yml: the model-record gate.
+#
+# rocketnet's tla/ model records are in tlacheck's nineteen-column layout
+# (tla/README.md). The runner, tlacheck, lives in mas-bandwidth/nova-tools
+# (public; no credential needed) under tools/tlacheck. This job builds it from
+# a pinned nova-tools commit -- the one the records in tla/RUNS.tsv were
+# measured with, because a record's fingerprint covers the runner's result
+# files -- and fails when `tlacheck groups --stale` prints anything but [].
+#
+# A model edit must refresh the records it stales in the same change
+# (tla/README.md, "Refreshing the records after a model edit"); this job is
+# what turns a forgotten refresh red at the gate.
+
+name: TLC
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tlc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stale:
+    name: tlacheck groups --stale
+    runs-on: [self-hosted, Linux, X64, rocketnet]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      # Build tlacheck from the pinned nova-tools commit that measured the
+      # records: a binary from another commit would compute different
+      # fingerprints and call every record stale.
+      - name: Build tlacheck
+        run: |
+          git clone --filter=blob:none https://github.com/mas-bandwidth/nova-tools "$RUNNER_TEMP/nova-tools"
+          git -C "$RUNNER_TEMP/nova-tools" checkout 0aedf1bdfbe4d200cd4b6cec51710a7d28598058
+          cd "$RUNNER_TEMP/nova-tools"
+          go build -o "$RUNNER_TEMP/tlacheck" ./tools/tlacheck
+
+      - name: Check the records are current
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/tlacheck" groups --root . --stale > stale.json
+          echo "stale groups: $(cat stale.json)"
+          test "$(cat stale.json)" = '[]'
