@@ -14,6 +14,95 @@
 #include <sodium.h>
 #include <string.h>
 
+// the failed-signature-verify budget: see rocketnet_server.h. the window
+// rolls over when the clock passes it, clearing the global count and every
+// per-source count together, so a source that exhausted the budget is refused
+// for the rest of the window and no longer.
+
+static void rocketnet_signature_verify_budget_decay( struct rocketnet_signature_verify_budget_t * budget,
+                                                     uint64_t current_timestamp )
+{
+    if ( current_timestamp >= budget->window_start + (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS )
+    {
+        budget->window_start = current_timestamp;
+        budget->failure_count = 0;
+        memset( budget->sources, 0, sizeof( budget->sources ) );
+    }
+}
+
+int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_budget_t * budget,
+                                             const struct rocketnet_address_t * source,
+                                             uint64_t current_timestamp )
+{
+    rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+
+    // the global budget is not spent: everyone verifies.
+    if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
+        return 1;
+
+    // the budget is spent: skip a source that has already failed this window,
+    // never a first-time or previously-good source.
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
+    {
+        if ( budget->sources[i].fail_count > 0 &&
+             rocketnet_address_equal( &budget->sources[i].address, source ) )
+            return 0;
+    }
+    return 1;
+}
+
+void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signature_verify_budget_t * budget,
+                                                       const struct rocketnet_address_t * source,
+                                                       uint64_t current_timestamp )
+{
+    rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+
+    int found = -1;
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
+    {
+        if ( budget->sources[i].fail_count > 0 &&
+             rocketnet_address_equal( &budget->sources[i].address, source ) )
+        {
+            found = i;
+            break;
+        }
+    }
+
+    if ( found == -1 )
+    {
+        // an empty slot, else the least-failed source is displaced. a source's
+        // count is only ever reset by the window rolling over or by being
+        // displaced after the table filled with more distinct sources than it
+        // holds, never by the same source cycling through one slot.
+        int slot = -1;
+        for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
+        {
+            if ( budget->sources[i].fail_count == 0 )
+            {
+                slot = i;
+                break;
+            }
+        }
+        if ( slot == -1 )
+        {
+            slot = 0;
+            for ( int i = 1; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
+            {
+                if ( budget->sources[i].fail_count < budget->sources[slot].fail_count )
+                    slot = i;
+            }
+        }
+        budget->sources[slot].address = *source;
+        budget->sources[slot].fail_count = 1;
+    }
+    else
+    {
+        budget->sources[found].fail_count++;
+    }
+
+    budget->failure_count++;
+}
+
 // the address fields of the signed connect data, encoded as the token
 // encodes them, for comparison against this server's advertised addresses
 
@@ -300,10 +389,20 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the authenticity check: the signature, and only the signature
+    // the authenticity check: the signature, and only the signature. the
+    // per-source failed-verify budget gates it, so one valid cookie cannot
+    // buy unlimited Ed25519 verifies from one address.
+
+    if ( !rocketnet_signature_verify_budget_allow( &server->signature_verify_budget, from, current_timestamp ) )
+    {
+        rocketnet_debug( "server ignored connection request. too many signature failures from this source" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
 
     if ( !rocketnet_verify_signed_connect_data( signed_connect_data, signature, server->backend_public_key ) )
     {
+        rocketnet_signature_verify_budget_record_failure( &server->signature_verify_budget, from, current_timestamp );
         rocketnet_debug( "server ignored connection request. signature did not verify" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;

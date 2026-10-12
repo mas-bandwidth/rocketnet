@@ -214,6 +214,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL:                        return "MESSAGE_SEND_STORE_FULL";
         case ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL:                        return "MESSAGE_SEND_QUEUE_FULL";
         case ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED:   return "CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED";
+        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT:      return "CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT";
         default:
             rocketnet_assert( 0 );
             return "???";

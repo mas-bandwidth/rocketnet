@@ -2000,6 +2000,18 @@ static int rocketnet_test_process( struct rocketnet_test_server_t * test, const 
                                                         response, response_bytes );
 }
 
+// the same, at an explicit timestamp: the decay sub-case advances the clock
+// past the budget's window without re-minting a token, whose expiry is far out
+
+static int rocketnet_test_process_at( struct rocketnet_test_server_t * test, const uint8_t * request, int request_bytes,
+                                      uint64_t current_timestamp, uint8_t * response, int * response_bytes )
+{
+    return rocketnet_server_protocol_process_connection_request( &test->server, &test->client_address,
+                                                        request, request_bytes,
+                                                        current_timestamp, 100.0,
+                                                        response, response_bytes );
+}
+
 // a request that fails a check must count exactly: the arrival, and the one
 // reason. everything else in the counter set stays untouched.
 
@@ -2293,6 +2305,195 @@ void rocketnet_test_request_path_cookie_gate()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] + 1 );
 
     rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_cookie_bounds_signature_verifies()
+{
+    // one valid cookie proves a source can receive at its address, but must
+    // not then buy unlimited Ed25519 signature verifies from that address.
+    // the bound and window below match the server protocol's own constants.
+
+    const int budget = ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET;
+    const int window_seconds = ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS;
+
+    const int signature_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                 ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES +
+                                 ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
+
+    // one source, one cookie, a hundred mutated signatures: at most the
+    // budget's worth of verifies run; the rest are refused before the verify.
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
+        rocketnet_test_pass_cookie_gate( &test, request );
+
+        struct rocketnet_counters_t before = test.counters;
+        for ( int i = 0; i < 100; i++ )
+        {
+            uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+            memcpy( mutated, request, sizeof(mutated) );
+            mutated[signature_offset] ^= 1;
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+        }
+        uint64_t failures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+        uint64_t refused = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT];
+        rocketnet_check( failures == (uint64_t) budget );
+        rocketnet_check( refused == (uint64_t) ( 100 - budget ) );
+
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // one source's failures never refuse a validly signed request from
+    // another source: an attacker exhausts its budget and a clean client
+    // still connects.
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        uint8_t bad_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( bad_request, 0x1111222233334444ULL, rocketnet_test_salt );
+        rocketnet_test_pass_cookie_gate( &test, bad_request );
+
+        for ( int i = 0; i < budget; i++ )
+        {
+            uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+            memcpy( mutated, bad_request, sizeof(mutated) );
+            mutated[signature_offset] ^= 1;
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+        }
+
+        // the attacker's own budget is spent: its next bad signature is
+        // refused before the verify.
+        {
+            uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+            memcpy( mutated, bad_request, sizeof(mutated) );
+            mutated[signature_offset] ^= 1;
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            int result = rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+            rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        }
+
+        // a different, clean source still connects.
+        rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.99:56789" ) );
+        uint8_t good_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( good_request, 0x2222333344445555ULL, rocketnet_test_salt );
+        rocketnet_test_pass_cookie_gate( &test, good_request );
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        int result = rocketnet_test_process( &test, good_request, sizeof(good_request), response, &response_bytes );
+        rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // nine cookie-valid sources taking turns cannot reset one another's
+    // counts: the total verifies across all of them stays within the budget.
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        const int num_sources = 9;
+        const int rounds = 50;
+        uint8_t requests[num_sources][ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        struct rocketnet_address_t addresses[num_sources];
+
+        for ( int i = 0; i < num_sources; i++ )
+        {
+            char address_string[64];
+            snprintf( address_string, sizeof(address_string), "198.51.100.%d:56789", 100 + i );
+            rocketnet_check( rocketnet_address_parse( &test.client_address, address_string ) );
+            addresses[i] = test.client_address;
+            rocketnet_test_build_request( requests[i], 0x5555666677778888ULL + (uint64_t) i, rocketnet_test_salt );
+            rocketnet_test_pass_cookie_gate( &test, requests[i] );
+        }
+
+        struct rocketnet_counters_t before = test.counters;
+        for ( int round = 0; round < rounds; round++ )
+        {
+            for ( int i = 0; i < num_sources; i++ )
+            {
+                uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+                memcpy( mutated, requests[i], sizeof(mutated) );
+                mutated[signature_offset] ^= 1;
+                uint8_t response[ROCKETNET_RECEIVE_CEILING];
+                int response_bytes = 0;
+                test.client_address = addresses[i];
+                rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+            }
+        }
+        uint64_t failures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+        uint64_t refused = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT];
+        rocketnet_check( failures == (uint64_t) budget );
+        rocketnet_check( refused == (uint64_t) ( num_sources * rounds - budget ) );
+
+        rocketnet_test_server_teardown( &test );
+    }
+
+    // the budget decays: past the window a source that exhausted it is
+    // allowed again, so the refusal is not forever.
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( request, 0x777788889999AAAAULL, rocketnet_test_salt );
+        rocketnet_test_pass_cookie_gate( &test, request );
+
+        for ( int i = 0; i < budget; i++ )
+        {
+            uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+            memcpy( mutated, request, sizeof(mutated) );
+            mutated[signature_offset] ^= 1;
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+        }
+
+        // still inside the window: one more is refused before the verify, and
+        // the count of verifies actually run does not move.
+        uint64_t failures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+        {
+            uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+            memcpy( mutated, request, sizeof(mutated) );
+            mutated[signature_offset] ^= 1;
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+        }
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == failures );
+
+        // past the window the verify runs again: a fresh cookie at a later
+        // timestamp, then a mutated signature that verifies and fails again.
+        uint64_t later = ROCKETNET_TEST_CREATE_TS + (uint64_t) window_seconds + 1;
+
+        uint8_t request2[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_test_build_request( request2, 0x88889999AAAABBBBULL, rocketnet_test_salt );
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        int result = rocketnet_test_process_at( &test, request2, sizeof(request2), later, response, &response_bytes );
+        rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+        memcpy( request2 + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+
+        failures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+        request2[signature_offset] ^= 1;
+        result = rocketnet_test_process_at( &test, request2, sizeof(request2), later, response, &response_bytes );
+        rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == failures + 1 );
+
+        rocketnet_test_server_teardown( &test );
+    }
 }
 
 void rocketnet_test_request_path_crypto_refusals()
@@ -9710,6 +9911,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_happy", rocketnet_test_request_path_happy },
     { "test_request_path_refusals", rocketnet_test_request_path_refusals },
     { "test_request_path_cookie_gate", rocketnet_test_request_path_cookie_gate },
+    { "test_cookie_bounds_signature_verifies", rocketnet_test_cookie_bounds_signature_verifies },
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },

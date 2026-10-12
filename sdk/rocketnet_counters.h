@@ -328,6 +328,13 @@ enum
     // contract.
     ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED,
 
+    // a connection request whose cookie verified but whose source had already
+    // spent the failed-signature-verify budget for this window: refused before
+    // the Ed25519 verify ran. distinct from SIGNATURE_DID_NOT_VERIFY, which
+    // counts verifies that actually ran and failed. appended: indices are the
+    // contract.
+    ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT,
+
     ROCKETNET_NUM_COUNTERS
 };
 
