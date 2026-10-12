@@ -9,6 +9,7 @@
 */
 
 #include "harness.inc"
+#include "rocketnet_server_protocol.h"
 
 void rocketnet_test_server_refuses_keyless_config()
 {
@@ -1099,6 +1100,68 @@ void rocketnet_test_platform_socket()
     }
 
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
+}
+
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    // The portable receive path hands the kernel exactly
+    // ROCKETNET_RECEIVE_CEILING bytes, so without MSG_TRUNC a datagram one
+    // byte past the ceiling is truncated into a valid-looking packet and
+    // processed instead of dropped. That truncation happens in the kernel, so
+    // this needs a real socket, which is why it lives here rather than over
+    // the unit suite's in-memory simulator.
+
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &local_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
+    rocketnet_check( socket != NULL );
+
+    local_address.port = bind_address.port;
+
+    // one byte past the fixed receive ceiling, with a valid prefilter header
+    uint8_t send_data[ROCKETNET_RECEIVE_CEILING + 1];
+    memset( send_data, 0, sizeof(send_data) );
+    send_data[0] = ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET;
+
+    rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizeof(send_data) );
+
+    uint8_t receive_data[ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from;
+    int packet_bytes = 0;
+    double start_time = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start_time < 5.0 )
+    {
+        const int num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
+        if ( num_received > 0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // the datagram is reported whole, not truncated to the ceiling
+    rocketnet_check( packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 );
+
+    // the transport's prefilter counts it as too large, before any
+    // sealed-packet or integrity work
+    struct rocketnet_server_protocol_t server;
+    memset( &server, 0, sizeof(server) );
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    server.counters = &counters;
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_server_protocol_process_packet( &server, &from, receive_data, packet_bytes,
+                                              0, 0.0, response, &response_bytes,
+                                              payload, &payload_bytes, &payload_client_index );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == 1 );
+    rocketnet_check( counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
+
+    rocketnet_platform_socket_destroy( socket );
 }
 
 // the batch pump seam (#100): every platform serves it -- portable loops
@@ -3187,6 +3250,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_stats", rocketnet_test_transport_stats },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
+    { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded },
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

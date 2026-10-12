@@ -9,7 +9,6 @@
 */
 
 #include "rocketnet.h"
-#include "rocketnet_wire.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_config.h"
