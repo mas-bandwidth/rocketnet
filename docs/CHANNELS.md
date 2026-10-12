@@ -314,11 +314,15 @@ taught the design four things, now in 13.2 and 13.3:
 **As built.** `sdk/rocketnet_unreliable.{h,cpp}` is the UNRELIABLE send and
 receive path of the message layer over this codec and layer 1's region
 (5, 6.3, 6.4, 9.3, 11.2): a bounded FIFO of messages copied into the send
-store (a full store or queue is a counted drop and nothing grows — R1), a
+store (a full store or queue is a counted drop and nothing grows — R1, and a
+message longer than the record's u16 length is dropped and counted at the
+send call, never enqueued), a
 fill that aggregates small messages as code-0 records into one RECORDS
 payload with this layer's writer until the next one does not fit, frees each
-chunk as soon as it is written (9.3 step 3) and plans a message longer than
-one packet alone in its own large payload (L2.3), a zero-copy SINGLE helper
+chunk as soon as it is written (9.3 step 3) and plans a block (a message
+longer than one large store chunk, 1152 bytes) alone in its own large payload
+(L2.3), copying the whole chain so the record never reads across a chunk
+boundary, a zero-copy SINGLE helper
 that touches no module state (11.2), and a receive that delivers each code-0
 record as a pointer into the payload into the caller's Du entries, dropping
 and counting the rest when Du is full (6.3 step 4). As this layer it holds
@@ -337,7 +341,9 @@ appended: `MESSAGE_UNRELIABLE_DELIVERY_FULL` and
 `ChannelsUnreliableStoreFullDropsAndCounts`,
 `ChannelsUnreliableDeliveryBudgetDropsAndCounts`,
 `ChannelsUnreliableFailedSendDropsAndCounts`,
-`ChannelsUnreliableChunkFreedWhenWritten`, and the lossy-wire walk
+`ChannelsUnreliableChunkFreedWhenWritten`,
+`ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore`,
+`ChannelsUnreliableMessagePastU16LengthRefused`, and the lossy-wire walk
 `ChannelsUnreliableOverTheLossySimulator` (0, 10 and 50 percent loss with
 reordering; every delivered message is byte-identical to one sent, and at
 each loss level every send attempt is refused, still in the FIFO, delivered,

@@ -42,6 +42,20 @@ static void rn_unreliable_chunk_read( const rn_send_store_t * store, uint32_t ch
     }
 }
 
+// A message longer than one large chunk (RN_STORE_LARGE_BYTES) is a block,
+// whose chunks are not necessarily adjacent once the class free list has been
+// fragmented by earlier frees. A block travels alone in its own large payload
+// (L2.3), copied whole with rn_unreliable_chunk_read, so the writer never
+// reads across a chunk boundary; aggregation only ever handles a single-chunk
+// message. This one threshold also carries every message at or past a packet
+// (1189 bytes and up is a block too), so it is the sole "travels alone" test,
+// shared by next_packet_bytes, fill and the aggregation loop (9.3).
+
+static int rn_unreliable_travels_alone( int bytes )
+{
+    return bytes > RN_STORE_LARGE_BYTES;
+}
+
 // copies src into a freshly allocated chunk chain (the one copy of R5)
 
 static void rn_unreliable_chunk_write( const rn_send_store_t * store, uint32_t chunk, const uint8_t * src, int bytes )
@@ -77,6 +91,17 @@ int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, in
 
     if ( bytes < 1 || (uint32_t) bytes > region->max_message_bytes || channel < 0 || (uint32_t) channel >= region->num_channels )
         return 0;
+
+    // a record's length is a u16, so a longer message can never be carried by
+    // an unreliable record. It is dropped and counted now, not enqueued, so
+    // the FIFO never holds a message that can never be sent (R1: unreliable
+    // data is dropped and counted, never stuck).
+
+    if ( (uint32_t) bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES )
+    {
+        rn_unreliable_count( region->counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        return 0;
+    }
 
     // the FIFO is bounded: a full queue is a counted drop, as a full store is
     // (R1: unreliable data is dropped and counted, never grown)
@@ -124,11 +149,12 @@ int rn_unreliable_next_packet_bytes( const rn_unreliable_t * u )
         return 0;
     const rn_unreliable_message_t * head = &u->queue[u->head];
 
-    // a record plus its trailing form byte must fit a packet to aggregate (9.3);
-    // at or beyond that the message travels alone in its own large payload (L2.3)
+    // a block (or any message at or past a packet) travels alone in its own
+    // large payload (L2.3): the packet carries that one record whole, header,
+    // data and the trailing form byte (11.2)
 
-    if ( (int) head->bytes + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES >= ROCKETNET_MAX_PAYLOAD_BYTES )
-        return (int) head->bytes + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1;   // the trailing form byte (11.2)
+    if ( rn_unreliable_travels_alone( (int) head->bytes ) )
+        return (int) head->bytes + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1;
     return ROCKETNET_MAX_PAYLOAD_BYTES;
 }
 
@@ -141,14 +167,12 @@ int rn_unreliable_fill( rn_unreliable_t * u, uint8_t * payload, int capacity )
 
     const rn_unreliable_message_t * head = &u->queue[u->head];
 
-    // a message that does not fit a packet with its record and trailing form
-    // byte is planned alone in its own large payload (L2.3), capped by the
-    // record's u16 length
+    // a block (or any message at or past a packet) is planned alone in its own
+    // large payload (L2.3), the whole chain copied with rn_unreliable_chunk_read
+    // so the record never reads across a chunk boundary; its length is a u16
 
-    if ( (int) head->bytes + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES >= ROCKETNET_MAX_PAYLOAD_BYTES )
+    if ( rn_unreliable_travels_alone( (int) head->bytes ) )
     {
-        if ( head->bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES )
-            return 0;
         const int body = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + (int) head->bytes;
         if ( body + 1 > capacity )
             return 0;
@@ -172,8 +196,8 @@ int rn_unreliable_fill( rn_unreliable_t * u, uint8_t * payload, int capacity )
     while ( u->count > 0 )
     {
         const rn_unreliable_message_t * message = &u->queue[u->head];
-        if ( (int) message->bytes + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES >= ROCKETNET_MAX_PAYLOAD_BYTES )
-            break;                              // the next is a large one: end this packet
+        if ( rn_unreliable_travels_alone( (int) message->bytes ) )
+            break;                              // the next is a block: end this packet, it travels alone
 
         struct rocketnet_message_record_t record;
         memset( &record, 0, sizeof( record ) );

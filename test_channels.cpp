@@ -2505,6 +2505,95 @@ static void test_channels_unreliable_chunk_freed_when_written()
     channels_unreliable_teardown( &rig );
 }
 
+static void test_channels_unreliable_block_not_corrupted_across_fragmented_store()
+{
+    // a block (longer than one large chunk) travels alone, its record copied
+    // chunk-chain by chunk-chain (L2.3), never contiguously across a chunk
+    // boundary. Filling one block frees chunks 0 and 1, threading the class
+    // free list as 1 -> 0, so the next block lands on non-adjacent chunks;
+    // both blocks must come out byte-identical to what was sent.
+
+    channels_unreliable_rig_t rig;
+    channels_unreliable_setup( &rig, 16 );
+
+    uint8_t big1[1188], big2[1188];
+    channels_unreliable_fill_pattern( big1, sizeof(big1), 16 );
+    channels_unreliable_fill_pattern( big2, sizeof(big2), 17 );
+
+    rn_trap_armed = 1;
+    rn_trap_phase = "unreliable-send";
+    check( rn_unreliable_send( &rig.unreliable, big1, sizeof(big1), 0, 0 ) == 1 );
+
+    alignas( 16 ) static uint8_t frame1[ROCKETNET_MAX_PAYLOAD_BYTES];
+    const int len1 = rn_unreliable_fill( &rig.unreliable, frame1, ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( len1 == ROCKETNET_MAX_PAYLOAD_BYTES );
+    const uint8_t * expect1[1] = { big1 };
+    int expect1_bytes[1] = { (int)sizeof(big1) };
+    check( channels_unreliable_parse( frame1, len1, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect1, expect1_bytes, 1, NULL ) == 1 );
+
+    // the second block now sits on chunks 1 then 0 (the free list reversed)
+
+    check( rn_unreliable_send( &rig.unreliable, big2, sizeof(big2), 0, 0 ) == 1 );
+    alignas( 16 ) static uint8_t frame2[ROCKETNET_MAX_PAYLOAD_BYTES];
+    const int len2 = rn_unreliable_fill( &rig.unreliable, frame2, ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( len2 == ROCKETNET_MAX_PAYLOAD_BYTES );
+    const uint8_t * expect2[1] = { big2 };
+    int expect2_bytes[1] = { (int)sizeof(big2) };
+    check( channels_unreliable_parse( frame2, len2, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect2, expect2_bytes, 1, NULL ) == 1 );
+
+    check( rig.unreliable.count == 0 );
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+
+    channels_unreliable_teardown( &rig );
+}
+
+static void test_channels_unreliable_message_past_u16_length_refused()
+{
+    // a message longer than the record's u16 length can never be carried by an
+    // unreliable record: the send refuses and counts it (SEND_FAILED) instead of
+    // enqueuing it, so the FIFO never wedges on a message it can never send
+    // (R1: unreliable data is dropped and counted, never stuck)
+
+    channels_unreliable_rig_t rig;
+    channels_unreliable_setup( &rig, 16 );
+    rig.config.max_message_bytes = 65536;       // allowed by the config, past the u16 cap
+    rig.config.send_buffer_bytes = 1 << 20;     // the store's large class must hold that whole block (14)
+    rn_arena_destroy( rig.arena );
+    rig.arena = rn_arena_create( NULL, &rig.config, 1, &rig.counters );
+    check( rig.arena );
+    rig.region = rn_arena_region( rig.arena, 0 );
+    rn_region_carve( rig.region );
+    rn_unreliable_init( &rig.unreliable, rig.region, rig.queue, 16 );
+
+    static uint8_t too_large[65536];
+    channels_unreliable_fill_pattern( too_large, sizeof(too_large), 18 );
+    uint8_t small[50];
+    channels_unreliable_fill_pattern( small, sizeof(small), 19 );
+
+    rn_trap_armed = 1;
+    rn_trap_phase = "unreliable-send";
+    check( rn_unreliable_send( &rig.unreliable, too_large, (int) sizeof(too_large), 0, 0 ) == 0 );
+    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 1 );
+    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
+    check( rig.unreliable.count == 0 );
+
+    // the FIFO is not wedged: a valid message behind it still sends and delivers
+
+    check( rn_unreliable_send( &rig.unreliable, small, sizeof(small), 0, 0 ) == 1 );
+    alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+    const int length = rn_unreliable_fill( &rig.unreliable, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( length > 0 );
+    const uint8_t * expect[1] = { small };
+    int expect_bytes[1] = { (int)sizeof(small) };
+    check( channels_unreliable_parse( frame, length, ROCKETNET_MESSAGE_CODE_UNRELIABLE, expect, expect_bytes, 1, NULL ) == 1 );
+    check( rig.unreliable.count == 0 );
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+
+    channels_unreliable_teardown( &rig );
+}
+
 // the lossy-simulator walk: a sender pushes small, packet-sized (zero-copy)
 // and larger-than-a-packet unreliable messages through
 // rocketnet_network_simulator at a loss and jitter, and the receiver parses
@@ -2840,6 +2929,8 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_unreliable_delivery_budget_drops_and_counts", "ChannelsUnreliableDeliveryBudgetDropsAndCounts", test_channels_unreliable_delivery_budget_drops_and_counts },
     { "test_channels_unreliable_failed_send_drops_and_counts", "ChannelsUnreliableFailedSendDropsAndCounts", test_channels_unreliable_failed_send_drops_and_counts },
     { "test_channels_unreliable_chunk_freed_when_written", "ChannelsUnreliableChunkFreedWhenWritten", test_channels_unreliable_chunk_freed_when_written },
+    { "test_channels_unreliable_block_not_corrupted_across_fragmented_store", "ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore", test_channels_unreliable_block_not_corrupted_across_fragmented_store },
+    { "test_channels_unreliable_message_past_u16_length_refused", "ChannelsUnreliableMessagePastU16LengthRefused", test_channels_unreliable_message_past_u16_length_refused },
     { "test_channels_unreliable_over_the_lossy_simulator", "ChannelsUnreliableOverTheLossySimulator", test_channels_unreliable_over_the_lossy_simulator_entry },
 };
 

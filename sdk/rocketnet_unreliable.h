@@ -24,13 +24,17 @@
 // Send (9.3): a bounded FIFO of unreliable messages copied into the
 // connection's send store. A message is dropped and counted
 // (ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL) when the store is full, exactly
-// as R1 says for unreliable data. rn_unreliable_fill aggregates the queued
-// messages as code-0 records into one RECORDS payload with the layer 2 writer
-// until the next one does not fit -- a record is never split across packets --
-// frees each message's chunk the moment it is written (9.3 step 3), and plans
-// a message longer than one packet alone in its own large payload (L2.3). A
-// packet that fails finish_packet drops the unreliable records it carried and
-// counts them (6.4, Failed send).
+// as R1 says for unreliable data, and a message longer than the record's u16
+// length is dropped and counted (ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED)
+// at the send call, so the FIFO never holds a message it can never send.
+// rn_unreliable_fill aggregates the queued messages as code-0 records into one
+// RECORDS payload with the layer 2 writer until the next one does not fit -- a
+// record is never split across packets -- frees each message's chunk the moment
+// it is written (9.3 step 3), and plans a block (a message longer than one
+// large store chunk) alone in its own large payload (L2.3), copying the whole
+// chain so the record never reads across a chunk boundary. A packet that fails
+// finish_packet drops the unreliable records it carried and counts them (6.4,
+// Failed send).
 //
 // The zero-copy form (11.2) touches no module state: the caller asks for a
 // frame of capacity request_bytes + 1, rn_unreliable_single_begin hands back
@@ -86,26 +90,29 @@ void rn_unreliable_init( rn_unreliable_t * u, rn_region_t * region, rn_unreliabl
 // Copies one message into the region's send store and appends it to the FIFO.
 // Returns 1, or 0 when the store had no chunk of the class it needs (or the
 // FIFO is full), in which case nothing changes and
-// ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL is counted once. R4/R1: no
-// allocation outside the region.
+// ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL is counted once. A message longer
+// than ROCKETNET_MESSAGE_MAX_RECORD_BYTES is refused and counted once as
+// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED, so the FIFO never wedges.
+// R4/R1: no allocation outside the region.
 
 int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, int channel, int priority );
 
 // Writes one payload into the caller's buffer. Payload capacity counts every
 // byte the payload may take, including the trailing form byte. When the head
-// message fits one packet it aggregates as many queued messages as fit as
-// code-0 records into one RECORDS payload, freeing each message's chunk as
+// message is a single store chunk it aggregates as many queued messages as fit
+// as code-0 records into one RECORDS payload, freeing each message's chunk as
 // soon as it is written (9.3 step 3, rule R5); a record is never split. When
-// the head message is longer than one packet it is planned alone in its own
-// large payload (L2.3). Returns the payload length L, or 0 when nothing was
-// written. On return u->count and the FIFO reflect what was written.
+// the head message is a block (longer than one large store chunk) it is
+// planned alone in its own large payload (L2.3), its chain copied whole.
+// Returns the payload length L, or 0 when nothing was written. On return
+// u->count and the FIFO reflect what was written.
 
 int rn_unreliable_fill( rn_unreliable_t * u, uint8_t * payload, int capacity );
 
 // The payload capacity a packet needs to carry the head message: the packet
-// size for a small one, or the whole large payload (header, data and the
-// trailing form byte) for one longer than a packet (L2.3). This is what layer
-// 6 asks before it calls start_packet, and it is the capacity to hand
+// size for a single-chunk message, or the whole large payload (header, data
+// and the trailing form byte) for a block (L2.3). This is what layer 6 asks
+// before it calls start_packet, and it is the capacity to hand
 // rn_unreliable_fill. Zero when nothing is queued.
 
 int rn_unreliable_next_packet_bytes( const rn_unreliable_t * u );
