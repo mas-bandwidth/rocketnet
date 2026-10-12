@@ -1345,6 +1345,28 @@ void rocketnet_test_prefilter()
             rocketnet_check( rocketnet_prefilter_counter( codes[i] ) != rocketnet_prefilter_counter( codes[j] ) );
 }
 
+void rocketnet_test_receive_drops_oversize_datagram()
+{
+    // Verify that the prefilter correctly rejects datagrams larger than
+    // ROCKETNET_RECEIVE_CEILING. The receive path must drop oversized
+    // datagrams rather than truncating and processing them.
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING + 16];
+    memset( packet, 0, sizeof(packet) );
+
+    // Write a valid prefilter header
+    uint8_t * p = packet;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag );
+
+    // Oversize datagrams (larger than the ceiling) must be rejected
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 1, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING + 100, tag ) == ROCKETNET_PREFILTER_TOO_LARGE );
+
+    // The ceiling itself must be accepted
+    rocketnet_check( rocketnet_prefilter_check( packet, ROCKETNET_RECEIVE_CEILING, tag ) == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
+}
+
 void rocketnet_test_packet_associated_data()
 {
     // the builder reproduces every per-type AD vector from Appendix A exactly
@@ -9318,6 +9340,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
 };
 
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;

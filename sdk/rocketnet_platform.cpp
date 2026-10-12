@@ -513,7 +513,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        int flags = socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0;
+        flags |= MSG_TRUNC;
+
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -531,6 +534,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
             // both pumps share this semantic.
+            continue;
+        }
+
+        if ( result > max_packet_size )
+        {
+            // oversized datagram: MSG_TRUNC told us the actual size exceeds
+            // our buffer. drop it to prevent truncation attacks.
             continue;
         }
 
@@ -1706,7 +1716,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1724,6 +1734,13 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             // "socket drained", letting byte-less chaff cap an entire
             // drain at one packet (#100's review). skip it, keep reading:
             // both pumps share this semantic.
+            continue;
+        }
+
+        if ( result > max_packet_size )
+        {
+            // oversized datagram: MSG_TRUNC told us the actual size exceeds
+            // our buffer. drop it to prevent truncation attacks.
             continue;
         }
 
@@ -2082,7 +2099,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, MSG_TRUNC );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -2109,6 +2126,8 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         for ( ssize_t i = 0; i < result; i++ )
         {
             int bytes = (int) msg[i].msg_datalen;
+            if ( bytes > packet_stride )
+                continue;
             rocketnet_address_t parsed;
             if ( bytes <= 0 || !rocketnet_msgx_read_sockaddr( socket, &addresses[i], &parsed ) )
                 continue;
