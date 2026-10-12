@@ -8326,6 +8326,51 @@ void rocketnet_test_fragment_payload_id_wrap()
     rocketnet_reassembly_set_destroy( set );
 }
 
+void rocketnet_test_fragment_hostile_id_does_not_poison_slot()
+{
+    // One slot forces the hostile id to alias the honest payload's
+    // incomplete reassembly. An id almost a half-space ahead of the occupant
+    // is accepted as "newer" under plain serial arithmetic, so it evicts the
+    // occupant and every honest id behind it then reads as stale -- the slot
+    // is poisoned for the connection's life. Only a short run ahead of the
+    // occupant is newer; a far-ahead id refuses and leaves the slot intact.
+
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+    const struct rocketnet_reassembly_counters_t * table = &rocketnet_test_fragment_counters;
+
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create( NULL, 1, 1, 8192, 4 );
+    rocketnet_check( set );
+    rocketnet_reassembly_set_begin_update( set );
+
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
+
+    // an honest payload id occupies the slot, incomplete
+    int bytes = rocketnet_test_build_fragment( fragment, 1, 0, 2, 100, 100, 0x10 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+
+    // NEGATIVE: the hostile id 2^31 ahead of the occupant must refuse stale
+    // rather than evict the honest payload
+    bytes = rocketnet_test_build_fragment( fragment, 0x80000000u, 0, 2, 100, 100, 0x20 );
+    rocketnet_check( !rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 1 );
+    // the refusal left the honest occupant in place: a far-ahead id is not
+    // newer, so it never evicts what it cannot supersede
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    // ...and the honest id just after the occupant is still newer: it is
+    // accepted and completes byte-exact
+    bytes = rocketnet_test_build_fragment( fragment, 2, 0, 2, 100, 100, 0x30 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    bytes = rocketnet_test_build_fragment( fragment, 2, 1, 2, 60, 100, 0x30 );
+    rocketnet_check( rocketnet_reassembly_process_fragment( set, 0, fragment, bytes, counters, table ) );
+    rocketnet_check( set->completed_bytes == 160 );
+    rocketnet_test_check_reassembled( set->completed_payload, 160, 0x30 );
+
+    rocketnet_reassembly_set_destroy( set );
+}
+
 void rocketnet_test_fragment_too_large_clauses()
 {
     // the two spec clauses of the too-large arithmetic, each with the test
@@ -9260,6 +9305,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_receive_refusals", rocketnet_test_fragment_receive_refusals },
     { "test_fragment_punched_loss", rocketnet_test_fragment_punched_loss },
     { "test_fragment_payload_id_wrap", rocketnet_test_fragment_payload_id_wrap },
+    { "test_fragment_hostile_id_does_not_poison_slot", rocketnet_test_fragment_hostile_id_does_not_poison_slot },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },

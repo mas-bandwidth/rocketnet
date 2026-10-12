@@ -242,15 +242,19 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 
     // a payload id older than the slot's occupant was already superseded;
     // accepting its bytes into the newer payload is the aliasing this
-    // check exists to prevent. older is serial-number arithmetic on the
-    // 32-bit values, computed in unsigned arithmetic alone -- no
-    // implementation-defined narrowing -- so a plain compare's failure
-    // mode cannot happen: one defective near-maximum id would poison its
-    // slot for the connection's life, where under wrap every later id is
-    // newer, the occupant is displaced (counted abandoned) and the slot
-    // recovers.
+    // check exists to prevent. A slot holds only a short run of live ids:
+    // the sender's id counter advances by one per fragmented payload, and
+    // this slot recurs every num_slots ids, so the next honest id for the
+    // slot is at most ROCKETNET_MAX_FRAGMENTS ahead of its occupant -- which
+    // also covers the rollover past 0xFFFFFFFF. An id behind the occupant,
+    // or far ahead of it, is stale. The far-ahead case is the one a plain
+    // half-space serial comparison misses: an id just under 2^31 ahead
+    // reads as "newer", so one hostile id evicts the occupant and every
+    // honest id behind it then reads as old -- the slot poisoned for the
+    // connection's life. Unsigned subtraction keeps the comparison defined.
 
-    if ( slot->payload_id != 0 && payload_id - slot->payload_id > 0x80000000u )
+    if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
+         payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS )
     {
         rocketnet_spam( "reassembly refused fragment. stale payload id" );
         counters[table->stale]++;
