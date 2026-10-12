@@ -513,7 +513,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        int flags = socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0;
+        flags |= MSG_TRUNC;
+
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, flags, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -534,6 +537,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
+        // result may exceed max_packet_size: MSG_TRUNC reports the true
+        // datagram size. deliver it, not the truncated prefix, so the
+        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
         break;
     }
 
@@ -1706,7 +1712,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     {
         from_length = sizeof( sockaddr_from );
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
 
         if ( result < 0 )
         {
@@ -1727,6 +1733,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
+        // result may exceed max_packet_size: MSG_TRUNC reports the true
+        // datagram size. deliver it, not the truncated prefix, so the
+        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
         break;
     }
 
@@ -2082,7 +2091,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
+        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, MSG_TRUNC );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -2114,9 +2123,14 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
                 continue;
             uint8_t * written = packet_data + (size_t) ( chunk_base + (int) i ) * (size_t) packet_stride;
             uint8_t * target = packet_data + (size_t) total * (size_t) packet_stride;
+            // msg_datalen is the datagram's true size; the kernel wrote only
+            // packet_stride bytes into the slot. copy what was written and
+            // hand the caller the true size, so an oversize datagram reaches
+            // the transport's prefilter and is counted PREFILTER_TOO_LARGE.
+            const int copy_bytes = bytes < packet_stride ? bytes : packet_stride;
             if ( target != written )
             {
-                memmove( target, written, (size_t) bytes );
+                memmove( target, written, (size_t) copy_bytes );
             }
             from[total] = parsed;
             packet_bytes[total] = bytes;
