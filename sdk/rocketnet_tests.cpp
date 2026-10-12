@@ -1948,6 +1948,11 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
 
+    // reset the per-update handshake budget for this fresh server, exactly as
+    // the transport does at the top of every update (the sweep over the empty
+    // map is a no-op)
+    rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
+
     rocketnet_check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
 }
 
@@ -2734,6 +2739,92 @@ void rocketnet_test_request_path_config_branches()
     rocketnet_check( memcmp( response + 8, first_challenge + 8, ROCKETNET_SESSION_NONCE_BYTES ) != 0 );
     rocketnet_check( memcmp( response, first_challenge, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) != 0 );
 
+    rocketnet_test_server_teardown( &test );
+}
+
+// the handshake work budget, mirrored from rocketnet_server_protocol.cpp where
+// the limit is enforced; the test asserts the same number it drives
+#define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE      1024
+#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
+
+void rocketnet_test_handshake_work_budget_per_update()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    const int num_requests = 16000;
+    const int expected_budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+
+    uint8_t * requests = (uint8_t*) rocketnet_malloc( NULL, (size_t) num_requests * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_check( requests != NULL );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+
+    // 16000 cookie-valid requests, each minted with its own token (unique
+    // create timestamp, so the token identifier is unique) and its own source
+    // address, so every one reaches the cookie gate and then the handshake
+    // budget rather than an earlier "challenge resent" rung
+    for ( int i = 0; i < num_requests; i++ )
+    {
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS - 1 - (uint64_t) i;
+        private_fields.client_id = (uint64_t) i;
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+
+        char addr_str[64];
+        snprintf( addr_str, sizeof(addr_str), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
+        struct rocketnet_address_t addr;
+        rocketnet_check( rocketnet_address_parse( &addr, addr_str ) );
+
+        uint8_t * request = requests + (size_t) i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                                   rocketnet_test_client_eph_public,
+                                                   token.signed_connect_data, token.signature );
+
+        // a valid return cookie for this request's own address: expire first,
+        // then the 16-byte mac, per the cookie field layout
+        uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+        rocketnet_check( rocketnet_generate_cookie_mac( cookie_mac, &addr, rocketnet_test_salt, cookie_expire, test.server.cookie_key ) );
+        uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+        rocketnet_write_uint64( &cookie, cookie_expire );
+        memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+    }
+
+    // process all 16000 requests in one update: the budget caps how many get
+    // past the cookie gate, and every request beyond it is dropped
+    int verified = 0;
+    int dropped = 0;
+    for ( int i = 0; i < num_requests; i++ )
+    {
+        char addr_str[64];
+        snprintf( addr_str, sizeof(addr_str), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
+        struct rocketnet_address_t addr;
+        rocketnet_check( rocketnet_address_parse( &addr, addr_str ) );
+
+        int result = rocketnet_server_protocol_process_connection_request( &test.server, &addr,
+                                                    requests + (size_t) i * ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                    ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                    ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes );
+        if ( result == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED )
+            dropped++;
+        else
+            verified++;
+    }
+
+    // exactly the budgeted number ran, and the rest were dropped -- the drop
+    // count is exact, not merely "at most"
+    rocketnet_check( verified == expected_budget );
+    rocketnet_check( dropped == num_requests - expected_budget );
+
+    rocketnet_free( NULL, requests );
     rocketnet_test_server_teardown( &test );
 }
 
@@ -9297,6 +9388,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
+    { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },
