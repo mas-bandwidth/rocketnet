@@ -71,14 +71,17 @@ for f in Makefile bench/Makefile; do
     [ -f "$f" ] || continue
     while IFS= read -r line; do
         stript="${line#"${line%%[![:space:]]*}"}"
-        case "$stript" in
-            CFLAGS=*|CFLAGS?=*|CXXFLAGS=*|CXXFLAGS?=*|override\ CFLAGS=*|override\ CXXFLAGS=*)
-                if ! has_floor "$line"; then
-                    echo "$f: CFLAGS/CXXFLAGS missing -ffp-contract=off or /fp:precise: $line"
-                    bad=1
-                fi
-                ;;
-        esac
+        # a variable definition is NAME followed by optional whitespace then one
+        # of =, ?=, +=. GNU make allows whitespace before the operator
+        # (`CFLAGS  ?= ...`), so match it explicitly; the old case patterns only
+        # matched the operator flush against the name and let the spaced form
+        # through unexamined.
+        if [[ "$stript" =~ ^(override[[:space:]]+)?(CFLAGS|CXXFLAGS)[[:space:]]*(\?=|\+=|=) ]]; then
+            if ! has_floor "$line"; then
+                echo "$f: CFLAGS/CXXFLAGS missing -ffp-contract=off or /fp:precise: $line"
+                bad=1
+            fi
+        fi
     done < "$f"
 done
 
