@@ -1214,7 +1214,7 @@ bool rocketnet_platform_init()
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
     SCDynamicStoreRef dynamic_store = SCDynamicStoreCreate( kCFAllocatorDefault, CFSTR( "FindCurrentInterfaceIpMac" ), NULL, NULL );
-    CFPropertyListRef global = dynamic_store ? SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) ) : NULL;
+    CFPropertyListRef global = SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) );
     if ( global )
     {
         CFStringRef primary_interface_name = (CFStringRef)( CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) ) );
@@ -1245,8 +1245,7 @@ bool rocketnet_platform_init()
         CFRelease( interfaces );
         CFRelease( global );
     }
-    if ( dynamic_store )
-        CFRelease( dynamic_store );
+    CFRelease( dynamic_store );
 
 #endif // ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
