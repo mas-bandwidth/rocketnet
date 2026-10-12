@@ -9411,11 +9411,19 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // to a packet this end opened in update j, this end opens the reply in
     // update j+1 or later. A fixed receive batch per update is what makes
     // the claim: update j's batch is closed before any packet that update
-    // builds can leave. The client opens one request per update; the server
-    // answers it; the update the client first opens the answer in must be
-    // strictly later than the update that opened the request. Mutation
-    // that must bite: open a reply in the update that elicited it; the
-    // strictly-later check below goes red.
+    // builds can leave. This loop mirrors the transport's phase order: the
+    // client drains the batch fixed at the top of the update, then the update
+    // opens its request, then the server drains and answers. The update the
+    // client first opens the answer in must be strictly later than the update
+    // that opened the request.
+    //
+    // The single mutation that must bite (applied to the bench copy, never
+    // committed): move the client's batch-drain loop below (the
+    // rocketnet_network_simulator_receive loop against test.client_address)
+    // to after the server's answer loop. The batch is then fixed after the
+    // request left, the zero-latency answer lands in the same pass, reply_seen
+    // equals request_opened, and the strictly-later check at the bottom goes
+    // red.
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -9454,10 +9462,13 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     {
         time += dt;
 
-        // the client's receive batch for this update, fixed before any packet
-        // this update builds. the client records the update each reply is
-        // first opened in.
         int bytes;
+
+        // the client's receive batch for this update, fixed before this update
+        // builds anything. the client records the update each reply is first
+        // opened in. THIS BLOCK is the phase-P6 boundary: it must stay before
+        // the request-open block below (the mutation moves it after the server
+        // answer block).
         while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
         {
             if ( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, &payload_bytes ) && payload_bytes == 8 )
@@ -9472,7 +9483,28 @@ void rocketnet_test_transport_reply_opens_a_later_update()
             }
         }
 
-        // the server's receive batch for this update, then its reply
+        // now this update's send: the client opens the next request, in this
+        // update. the server can only answer it in the server phase below, and
+        // that answer cannot reach this update's batch (already drained above).
+        if ( sent_requests < ROUNDS )
+        {
+            uint64_t sequence = 0;
+            if ( rocketnet_client_protocol_start_payload( &client, &sequence ) )
+            {
+                const uint64_t r = (uint64_t)( sent_requests + 1 );
+                uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+                memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
+                const int wire = rocketnet_client_protocol_seal_payload_frame( &client, sequence, r, frame, 8, time );
+                rocketnet_check( wire > 0 );
+                request_opened[r] = (uint64_t) update;
+                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, frame, wire, time );
+                sent_requests++;
+            }
+        }
+
+        // the server's receive batch for this update, then its reply. the
+        // request above arrived at the same instant (zero latency), so the
+        // server answers it here; the batched client above cannot see it.
         while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
         {
             if ( rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
@@ -9494,23 +9526,6 @@ void rocketnet_test_transport_reply_opens_a_later_update()
             }
             if ( response_bytes > 0 )
                 rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
-        }
-
-        // now this update's sends: the client opens the next request
-        if ( sent_requests < ROUNDS )
-        {
-            uint64_t sequence = 0;
-            if ( rocketnet_client_protocol_start_payload( &client, &sequence ) )
-            {
-                const uint64_t r = (uint64_t)( sent_requests + 1 );
-                uint8_t frame[ROCKETNET_RECEIVE_CEILING];
-                memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
-                const int wire = rocketnet_client_protocol_seal_payload_frame( &client, sequence, r, frame, 8, time );
-                rocketnet_check( wire > 0 );
-                request_opened[r] = (uint64_t) update;
-                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, frame, wire, time );
-                sent_requests++;
-            }
         }
 
         {
