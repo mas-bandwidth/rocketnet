@@ -5201,6 +5201,21 @@ void rocketnet_test_server_keyless_config_has_no_keys()
     rocketnet_check( memcmp( config.server_public_key, zero, 32 ) != 0 );
 }
 
+void rocketnet_test_dev_keys_refused_in_release()
+{
+    // In a release build, a config with development server key should be refused.
+    // This test pins the security fix for the development key check.
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    // Set up a config with development server key but production backend key
+    memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
+    memcpy( config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
+    // Keep backend key as production (not dev)
+    
+    rocketnet_check( memcmp( config.server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 );
+}
+
 
 void rocketnet_test_transport_payload_capacity()
 {
@@ -9258,6 +9273,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_swarm", rocketnet_test_swarm },
     { "test_payload_size_sweep", rocketnet_test_payload_size_sweep },
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
+    { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },

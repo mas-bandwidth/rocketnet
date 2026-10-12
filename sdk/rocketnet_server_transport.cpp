@@ -602,8 +602,18 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
-    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0;
-    (void) development_keys;
+     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
+                                  memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
+     #ifndef NDEBUG
+     rocketnet_info( "development keys detected; running in development mode" );
+     #else
+     if ( development_keys )
+     {
+         rocketnet_error( "development keys detected in release build; refusing to start" );
+         rocketnet_free( context, server_transport );
+         return NULL;
+     }
+     #endif
 
     // THE LADDER (#106): candidates tried left to right, first grant wins.
     // an operator who wrote the list owns the list -- nothing is appended
