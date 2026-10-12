@@ -10,6 +10,10 @@
 
 #include "harness.inc"
 
+#include "rocketnet_wire.h"
+
+#include <unordered_map>
+
 void rocketnet_test_server_refuses_keyless_config()
 {
     // the no-default-keys gate: a config with no keys is refused, never
@@ -3167,6 +3171,331 @@ void rocketnet_test_server_gso_send_overflow()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
+void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
+{
+    // P2 (docs/CHANNELS.md section 2) over real loopback: for an
+    // unfragmented payload (type 5), an acked packet id means the payload
+    // was in exactly one delivered batch at the peer. Both directions, ten
+    // thousand payloads each way. The payload body carries its sender
+    // sequence, the acked id is joined back to that sequence, and every
+    // acked id's payload must have been delivered exactly once -- with an id
+    // whose payload never arrived never acked. Mutation that must bite:
+    // ack a payload id without it entering the batch (or enter it twice);
+    // the acked-implies-delivered-exactly-once check below goes red.
+
+    const int total = 10000;
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xA2A2ULL, (uint64_t) time( NULL ), token ) );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_client_transport_send_packets( client );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    const int client_index = rocketnet_client_transport_client_index( client );
+
+    uint8_t * client_delivered = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * client_acked = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * server_delivered = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * server_acked = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    rocketnet_check( client_delivered && client_acked && server_delivered && server_acked );
+    memset( client_delivered, 0, (size_t)( total + 1 ) );
+    memset( client_acked, 0, (size_t)( total + 1 ) );
+    memset( server_delivered, 0, (size_t)( total + 1 ) );
+    memset( server_acked, 0, (size_t)( total + 1 ) );
+
+    std::unordered_map<uint64_t, int> client_id_to_sequence;
+    std::unordered_map<uint64_t, int> server_id_to_sequence;
+    client_id_to_sequence.reserve( total * 2 );
+    server_id_to_sequence.reserve( total * 2 );
+
+    int sent_client = 0, sent_server = 0, acked_client = 0, acked_server = 0;
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 90.0 && ( sent_client < total || sent_server < total ) )
+    {
+        if ( sent_client < total )
+        {
+            struct rocketnet_packet_context_t ctx;
+            uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
+            if ( frame )
+            {
+                const int sequence = sent_client + 1;
+                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
+                {
+                    client_id_to_sequence[ctx.packet_id] = sequence;
+                    sent_client++;
+                }
+            }
+        }
+        if ( sent_server < total )
+        {
+            struct rocketnet_packet_context_t ctx;
+            uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
+            if ( frame )
+            {
+                const int sequence = sent_server + 1;
+                memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
+                if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
+                {
+                    server_id_to_sequence[ctx.packet_id] = sequence;
+                    sent_server++;
+                }
+            }
+        }
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_client_transport_send_packets( client );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        for ( int i = 0; i < rocketnet_client_transport_num_payloads( client ); i++ )
+        {
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
+            if ( payload && payload_bytes == (int) sizeof(int) )
+            {
+                int sequence = 0;
+                memcpy( &sequence, payload, sizeof(sequence) );
+                if ( sequence >= 1 && sequence <= total )
+                    server_delivered[sequence]++;
+            }
+        }
+
+        for ( int i = 0; i < rocketnet_server_transport_num_payloads( server ); i++ )
+        {
+            int payload_client_index = -1;
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            if ( payload && payload_bytes == (int) sizeof(int) && payload_client_index == client_index )
+            {
+                int sequence = 0;
+                memcpy( &sequence, payload, sizeof(sequence) );
+                if ( sequence >= 1 && sequence <= total )
+                    client_delivered[sequence]++;
+            }
+        }
+
+        {
+            const uint64_t * ids = NULL;
+            const int num_acked = rocketnet_client_transport_acked_packets( client, &ids );
+            for ( int i = 0; i < num_acked; i++ )
+            {
+                std::unordered_map<uint64_t, int>::const_iterator it = client_id_to_sequence.find( ids[i] );
+                if ( it != client_id_to_sequence.end() && !client_acked[it->second] )
+                {
+                    client_acked[it->second] = 1;
+                    acked_client++;
+                }
+            }
+        }
+
+        {
+            const int * client_indices = NULL;
+            const uint64_t * ids = NULL;
+            const int num_acked = rocketnet_server_transport_acked_packets( server, &client_indices, &ids );
+            for ( int i = 0; i < num_acked; i++ )
+            {
+                if ( client_indices[i] != client_index )
+                    continue;
+                std::unordered_map<uint64_t, int>::const_iterator it = server_id_to_sequence.find( ids[i] );
+                if ( it != server_id_to_sequence.end() && !server_acked[it->second] )
+                {
+                    server_acked[it->second] = 1;
+                    acked_server++;
+                }
+            }
+        }
+
+        rocketnet_platform_sleep( 0.0005 );
+    }
+
+    for ( int sequence = 1; sequence <= total; sequence++ )
+    {
+        if ( client_acked[sequence] )
+            rocketnet_check( client_delivered[sequence] == 1 );
+        if ( server_acked[sequence] )
+            rocketnet_check( server_delivered[sequence] == 1 );
+        if ( client_delivered[sequence] == 0 )
+            rocketnet_check( !client_acked[sequence] );
+        if ( server_delivered[sequence] == 0 )
+            rocketnet_check( !server_acked[sequence] );
+    }
+    rocketnet_check( acked_client > 0 );
+    rocketnet_check( acked_server > 0 );
+
+    rocketnet_free( NULL, client_delivered );
+    rocketnet_free( NULL, client_acked );
+    rocketnet_free( NULL, server_delivered );
+    rocketnet_free( NULL, server_acked );
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+    }
+    rocketnet_server_transport_destroy( server );
+}
+
+void rocketnet_test_transport_reply_opens_a_later_update()
+{
+    // P6 (docs/CHANNELS.md section 2) over real loopback: a reply to a packet
+    // this end opened in update j is first opened by this end in update j+1
+    // or later. Each loop pass is one update. The client opens one request
+    // carrying its pass number; the server answers it; the client records the
+    // pass in which it first opens the answer, which must be strictly later.
+    // Mutation that must bite: open a reply in the update that elicited it;
+    // the strictly-later check below goes red.
+
+    const int rounds = 200;
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0xB6B6ULL, (uint64_t) time( NULL ), token ) );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_client_transport_send_packets( client );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    const int client_index = rocketnet_client_transport_client_index( client );
+
+    std::unordered_map<int, int> request_opened_update;
+    std::unordered_map<int, int> reply_seen_update;
+
+    int sent = 0;
+    int observed = 0;
+
+    for ( int update = 1; update <= rounds * 60 && observed < rounds; update++ )
+    {
+        // the client's receive batch for this update, before any packet this
+        // update builds leaves
+        for ( int i = 0; i < rocketnet_client_transport_num_payloads( client ); i++ )
+        {
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
+            if ( payload && payload_bytes == (int) sizeof(int) )
+            {
+                int request = 0;
+                memcpy( &request, payload, sizeof(request) );
+                if ( request >= 1 && request <= rounds && reply_seen_update.find( request ) == reply_seen_update.end() )
+                {
+                    reply_seen_update[request] = update;
+                    observed++;
+                }
+            }
+        }
+
+        // the server's receive batch for this update, then its reply
+        for ( int i = 0; i < rocketnet_server_transport_num_payloads( server ); i++ )
+        {
+            int payload_client_index = -1;
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            if ( payload && payload_bytes == (int) sizeof(int) && payload_client_index == client_index )
+            {
+                int request = 0;
+                memcpy( &request, payload, sizeof(request) );
+                if ( request >= 1 && request <= rounds )
+                {
+                    struct rocketnet_packet_context_t ctx;
+                    uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
+                    if ( frame )
+                    {
+                        memcpy( frame + ctx.payload_index, &request, sizeof(request) );
+                        if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(request) ) > 0 )
+                            rocketnet_server_transport_send_packets( server );
+                    }
+                }
+            }
+        }
+
+        // now this update's sends: the client opens the next request
+        if ( sent < rounds )
+        {
+            struct rocketnet_packet_context_t ctx;
+            uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
+            if ( frame )
+            {
+                const int request = sent + 1;
+                memcpy( frame + ctx.payload_index, &request, sizeof(request) );
+                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(request) ) > 0 )
+                {
+                    request_opened_update[request] = update;
+                    sent++;
+                    rocketnet_client_transport_send_packets( client );
+                }
+            }
+        }
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_client_transport_send_packets( client );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_platform_sleep( 0.0002 );
+    }
+
+    for ( int request = 1; request <= rounds; request++ )
+    {
+        rocketnet_check( reply_seen_update.find( request ) != reply_seen_update.end() );
+        rocketnet_check( reply_seen_update[request] > request_opened_update[request] );
+    }
+
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+    }
+    rocketnet_server_transport_destroy( server );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 struct rocketnet_functional_test_t
@@ -3194,6 +3523,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
+    { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
+    { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
