@@ -32,10 +32,14 @@ over `ClientConnection.tla`). The module documents are
 
 The records are produced and checked by `tlacheck`, the runner and record tool
 in `mas-bandwidth/nova-tools` (`tools/tlacheck`, over `internal/tlc`). Build it
-from a nova-tools checkout and run it on a Linux bench that has java and a
-`tla2tools.jar` (`--jar`), never on a working machine:
+from a nova-tools checkout at commit `0aedf1bdfbe4d200cd4b6cec51710a7d28598058`
+(the pin `.github/workflows/tlc.yml` builds from; a record's fingerprint covers
+the runner's result files, so the binary that measures and the binary that
+checks must be built from the same commit), and run it on a Linux bench that
+has java and a `tla2tools.jar` (`--jar`), never on a working machine:
 
 ```sh
+git -C nova-tools checkout 0aedf1bdfbe4d200cd4b6cec51710a7d28598058
 go build -o /tmp/tlacheck ./tools/tlacheck
 /tmp/tlacheck groups --root .            # the required groups, as JSON
 /tmp/tlacheck groups --root . --stale    # the groups whose records are missing or stale
