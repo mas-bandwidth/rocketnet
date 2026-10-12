@@ -274,6 +274,19 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         }
     }
 
+    // the handshake budget check: after the cookie validates, count and cap
+    // post-cookie handshakes per update, per server. requests beyond the
+    // budget are dropped before any asymmetric work runs and counted, so a
+    // flood of staged attempts cannot spend the whole update on signature
+    // verification.
+    if ( server->counters->handshakes_processed_this_update >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+    {
+        rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
+        return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
+    }
+    server->counters->handshakes_processed_this_update++;
+
     // everything below the cookie is expensive; nothing below runs for an
     // address that has not answered
 
@@ -1027,6 +1040,9 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_assert( server->encryption_map );
     rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
+
+    // reset this server's per-update handshake budget for the next update
+    server->counters->handshakes_processed_this_update = 0;
 
     uint64_t * counters = server->counters->values;
 

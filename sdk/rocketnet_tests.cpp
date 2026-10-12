@@ -1948,6 +1948,11 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
     rocketnet_check( server->encryption_map && server->used_token_history && server->admitted_token_set && server->client_slots && server->acks && server->reassembly );
     rocketnet_reassembly_set_begin_update( server->reassembly );
 
+    // reset the per-update handshake budget for this fresh server, exactly as
+    // the transport does at the top of every update (the sweep over the empty
+    // map is a no-op)
+    rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
+
     rocketnet_check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
 }
 
@@ -2734,6 +2739,100 @@ void rocketnet_test_request_path_config_branches()
     rocketnet_check( memcmp( response + 8, first_challenge + 8, ROCKETNET_SESSION_NONCE_BYTES ) != 0 );
     rocketnet_check( memcmp( response, first_challenge, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES ) != 0 );
 
+    rocketnet_test_server_teardown( &test );
+}
+
+// one cookie-valid connection request, minted with its own token (a unique
+// create timestamp, so the token identifier is unique) and its own source
+// address, so it reaches the cookie gate and then the handshake budget rather
+// than an earlier "challenge resent" rung. out_address is the address the
+// request was built for, and the caller passes it to the process call.
+
+static void rocketnet_test_build_budget_request( uint8_t * request, int index,
+                                                 const uint8_t * cookie_key,
+                                                 struct rocketnet_address_t * out_address )
+{
+    char addr_str[64];
+    snprintf( addr_str, sizeof(addr_str), "10.1.%d.%d:56789", ( index / 255 ) + 1, ( index % 255 ) + 1 );
+    rocketnet_check( rocketnet_address_parse( out_address, addr_str ) );
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS - 1 - (uint64_t) index;
+    private_fields.client_id = (uint64_t) index;
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+
+    // a valid return cookie for this request's own address: expire first, then
+    // the 16-byte mac, per the cookie field layout
+    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+    uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    rocketnet_check( rocketnet_generate_cookie_mac( cookie_mac, out_address, rocketnet_test_salt, cookie_expire, cookie_key ) );
+    uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_write_uint64( &cookie, cookie_expire );
+    memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+}
+
+void rocketnet_test_handshake_work_budget_per_update()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // a second server, alive beside the first, so the per-server budget is
+    // observable: after the first spends its whole budget, the second's first
+    // request must still be processed.
+    struct rocketnet_test_server_t other;
+    rocketnet_test_server_setup( &other );
+
+    const int num_requests = 16000;
+    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    // 16000 cookie-valid requests in one update: the budget caps how many get
+    // past the cookie gate, and every request beyond it is dropped -- the
+    // drop count is exact, not merely "at most", and it is counted, not just
+    // returned as a code.
+    int verified = 0;
+    for ( int i = 0; i < num_requests; i++ )
+    {
+        struct rocketnet_address_t addr;
+        rocketnet_test_build_budget_request( request, i, test.server.cookie_key, &addr );
+
+        int result = rocketnet_server_protocol_process_connection_request( &test.server, &addr,
+                                                    request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                    ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes );
+        if ( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED )
+            verified++;
+    }
+
+    rocketnet_check( verified == budget );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == (uint64_t) ( num_requests - budget ) );
+
+    // the budget is per server: the second server's first request is processed
+    // even after the first spent its whole budget, and its own drop counter
+    // stays untouched.
+    {
+        struct rocketnet_address_t addr;
+        rocketnet_test_build_budget_request( request, 0, other.server.cookie_key, &addr );
+        int result = rocketnet_server_protocol_process_connection_request( &other.server, &addr,
+                                                    request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                    ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes );
+        rocketnet_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+        rocketnet_check( other.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    }
+
+    rocketnet_test_server_teardown( &other );
     rocketnet_test_server_teardown( &test );
 }
 
@@ -9297,6 +9396,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
+    { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },

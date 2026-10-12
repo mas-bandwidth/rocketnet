@@ -213,6 +213,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE:                       return "CLIENT_COOKIE_WRONG_SIZE";
         case ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL:                        return "MESSAGE_SEND_STORE_FULL";
         case ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL:                        return "MESSAGE_SEND_QUEUE_FULL";
+        case ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED:   return "CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED";
         default:
             rocketnet_assert( 0 );
             return "???";
