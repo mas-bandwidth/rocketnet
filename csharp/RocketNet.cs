@@ -676,7 +676,6 @@ public static unsafe partial class RocketNet
     public static ClientTransportHandle ClientTransportCreate( IntPtr context, byte[] connectToken, IntPtr nullConfig, double time )
     {
         ArgumentNullException.ThrowIfNull( connectToken );
-        ArgumentNullException.ThrowIfNull( nullConfig );
         if ( nullConfig != IntPtr.Zero ) throw new ArgumentNullException( "nullConfig" );
         return ClientTransportCreate( context, (ReadOnlySpan<byte>) connectToken, nullConfig, time );
     }

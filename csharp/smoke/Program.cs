@@ -95,7 +95,6 @@ static class Smoke
 
     static void CheckNonNullConfig()
     {
-        RocketNet.ClientTransportConfig config = default;
         try
         {
             RocketNet.ClientTransportCreate( IntPtr.Zero, new byte[RocketNet.ConnectTokenBytes], (IntPtr)1, time );
@@ -108,7 +107,7 @@ static class Smoke
             Fail( "non-zero nullConfig (span) did not throw" );
         }
         catch ( ArgumentNullException ) { }
-        Ok( "non-zero nullConfig throws" );
+        Ok( "smoke_csharp_nonzero_config_throws" );
     }
 
     static int Main( string[] args )
