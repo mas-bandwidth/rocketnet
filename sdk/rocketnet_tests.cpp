@@ -9319,6 +9319,344 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
+{
+    // P2 (docs/CHANNELS.md section 2): for an unfragmented payload (type 5),
+    // an acked packet id means the payload was in exactly one delivered
+    // batch at the peer. Both directions over the in-memory network
+    // simulator with loss, duplication and reordering, ten thousand packets
+    // each way. Every acked id's payload must have been delivered exactly
+    // once, and an id whose payload never arrived must never be acked. The
+    // payload body carries its own packet id, so delivery is observed at the
+    // ordinary receive batch and the id that rides the ack block is checked
+    // against it. Mutation that must bite: ack a payload id without it
+    // entering the batch (or enter it twice); the acked-implies-delivered-
+    // exactly-once check below goes red.
+
+    const int total = 10000;
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x0B2B2ULL );
+
+    struct rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 8192, 0x0B2B2B2B2ULL );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.004, 0.002, 3.0f, 2.0f );
+
+    uint8_t * client_delivered = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * client_acked = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * server_delivered = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    uint8_t * server_acked = (uint8_t*) rocketnet_malloc( NULL, (size_t)( total + 1 ) );
+    rocketnet_check( client_delivered && client_acked && server_delivered && server_acked );
+    memset( client_delivered, 0, (size_t)( total + 1 ) );
+    memset( client_acked, 0, (size_t)( total + 1 ) );
+    memset( server_delivered, 0, (size_t)( total + 1 ) );
+    memset( server_acked, 0, (size_t)( total + 1 ) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    struct rocketnet_address_t from;
+
+    client.num_acked = 0;
+    test.server.acks->num_acked = 0;
+
+    double time = 101.0;
+    int sent = 0;
+
+    while ( sent < total )
+    {
+        time += 0.0005;
+
+        // client to server: one unfragmented payload carrying its own id
+        {
+            uint64_t sequence = 0;
+            rocketnet_check( rocketnet_client_protocol_start_payload( &client, &sequence ) );
+            uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+            const uint64_t id = (uint64_t)( sent + 1 );
+            memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &id, 8 );
+            const int wire = rocketnet_client_protocol_seal_payload_frame( &client, sequence, id, frame, 8, time );
+            rocketnet_check( wire > 0 );
+            rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, frame, wire, time );
+            sent++;
+        }
+
+        // server to client: one unfragmented payload carrying its own id
+        {
+            struct rocketnet_address_t to;
+            uint64_t sequence = 0;
+            if ( rocketnet_server_protocol_start_payload( &test.server, 0, &to, &sequence ) )
+            {
+                uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+                const uint64_t id = (uint64_t)( 100000 + sent );
+                memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &id, 8 );
+                const int wire = rocketnet_server_protocol_seal_payload_frame( &test.server, 0, sequence, id, frame, 8, time );
+                rocketnet_check( wire > 0 );
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, frame, wire, time );
+            }
+        }
+
+        // the server's receive batch, then its due traffic
+        int bytes;
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        {
+            if ( rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
+                     ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED && payload_bytes == 8 )
+            {
+                uint64_t id = 0;
+                memcpy( &id, payload, 8 );
+                if ( id >= 1 && id <= (uint64_t) total )
+                    client_delivered[id]++;
+            }
+            if ( response_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+        }
+        rocketnet_server_protocol_update( &test.server, time );
+        {
+            uint8_t ack[ROCKETNET_RECEIVE_CEILING];
+            const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, ack );
+            if ( ack_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, ack_bytes, time );
+            const int keep_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, ack );
+            if ( keep_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, keep_bytes, time );
+        }
+
+        // the server's acked batch is the acks of the server's sent packets
+        for ( int i = 0; i < test.server.acks->num_acked; i++ )
+        {
+            const uint64_t id = test.server.acks->acked_packet_ids[i];
+            if ( id >= 100001 && id <= (uint64_t)( 100000 + total ) )
+                server_acked[id - 100000] = 1;
+        }
+        test.server.acks->num_acked = 0;
+
+        // the client's receive batch and due traffic
+        {
+            int client_keep = 0;
+            uint8_t client_out[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_client_protocol_update( &client, time, client_out, &client_keep );
+            if ( client_keep > 0 )
+                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, client_out, client_keep, time );
+        }
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
+        {
+            if ( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, &payload_bytes ) && payload_bytes == 8 )
+            {
+                uint64_t id = 0;
+                memcpy( &id, payload, 8 );
+                if ( id >= 100001 && id <= (uint64_t)( 100000 + total ) )
+                    server_delivered[id - 100000]++;
+            }
+        }
+
+        // the client's acked batch is the acks of the client's sent packets
+        for ( int i = 0; i < client.num_acked; i++ )
+        {
+            const uint64_t id = client.acked_packet_ids[i];
+            if ( id >= 1 && id <= (uint64_t) total )
+                client_acked[id] = 1;
+        }
+        client.num_acked = 0;
+    }
+
+    int client_acked_count = 0;
+    int server_acked_count = 0;
+    for ( int id = 1; id <= total; id++ )
+    {
+        if ( client_acked[id] )
+        {
+            client_acked_count++;
+            rocketnet_check( client_delivered[id] == 1 );
+        }
+        if ( server_acked[id] )
+        {
+            server_acked_count++;
+            rocketnet_check( server_delivered[id] == 1 );
+        }
+        if ( client_delivered[id] == 0 )
+            rocketnet_check( !client_acked[id] );
+        if ( server_delivered[id] == 0 )
+            rocketnet_check( !server_acked[id] );
+    }
+
+    // with loss on the wire some payloads never arrive and are never acked;
+    // the invariant above is the point. what must hold is that the ack path
+    // is exercised in both directions.
+    rocketnet_check( client_acked_count > 0 );
+    rocketnet_check( server_acked_count > 0 );
+
+    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_free( NULL, client_delivered );
+    rocketnet_free( NULL, client_acked );
+    rocketnet_free( NULL, server_delivered );
+    rocketnet_free( NULL, server_acked );
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_transport_reply_opens_a_later_update()
+{
+    // P6 (docs/CHANNELS.md section 2): if the peer sends anything in reply
+    // to a packet this end opened in update j, this end opens the reply in
+    // update j+1 or later. A fixed receive batch per update is what makes
+    // the claim: update j's batch is closed before any packet that update
+    // builds can leave. This loop mirrors the transport's phase order: the
+    // client drains the batch fixed at the top of the update, then the update
+    // opens its request, then the server drains and answers. The update the
+    // client first opens the answer in must be strictly later than the update
+    // that opened the request.
+    //
+    // The single mutation that must bite (applied to the bench copy, never
+    // committed): move the client's batch-drain loop below (the
+    // rocketnet_network_simulator_receive loop against test.client_address)
+    // to after the server's answer loop. The batch is then fixed after the
+    // request left, the zero-latency answer lands in the same pass, reply_seen
+    // equals request_opened, and the strictly-later check at the bottom goes
+    // red.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x0B6B6ULL );
+
+    struct rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, 0x0B6B6B6B6ULL );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    struct rocketnet_address_t from;
+
+    enum { ROUNDS = 200 };
+    static uint64_t request_opened[ROUNDS + 1];
+    static uint64_t reply_seen[ROUNDS + 1];
+    memset( request_opened, 0, sizeof(request_opened) );
+    memset( reply_seen, 0, sizeof(reply_seen) );
+
+    double time = 101.0;
+    const double dt = 0.001;
+    int sent_requests = 0;
+    int observed = 0;
+
+    for ( int update = 1; update <= ROUNDS * 60 && observed < ROUNDS; update++ )
+    {
+        time += dt;
+
+        int bytes;
+
+        // the client's receive batch for this update, fixed before this update
+        // builds anything. the client records the update each reply is first
+        // opened in. THIS BLOCK is the phase-P6 boundary: it must stay before
+        // the request-open block below (the mutation moves it after the server
+        // answer block).
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
+        {
+            if ( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, &payload_bytes ) && payload_bytes == 8 )
+            {
+                uint64_t r = 0;
+                memcpy( &r, payload, 8 );
+                if ( r >= 1 && r <= ROUNDS && reply_seen[r] == 0 )
+                {
+                    reply_seen[r] = (uint64_t) update;
+                    observed++;
+                }
+            }
+        }
+
+        // now this update's send: the client opens the next request, in this
+        // update. the server can only answer it in the server phase below, and
+        // that answer cannot reach this update's batch (already drained above).
+        if ( sent_requests < ROUNDS )
+        {
+            uint64_t sequence = 0;
+            if ( rocketnet_client_protocol_start_payload( &client, &sequence ) )
+            {
+                const uint64_t r = (uint64_t)( sent_requests + 1 );
+                uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+                memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
+                const int wire = rocketnet_client_protocol_seal_payload_frame( &client, sequence, r, frame, 8, time );
+                rocketnet_check( wire > 0 );
+                request_opened[r] = (uint64_t) update;
+                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, frame, wire, time );
+                sent_requests++;
+            }
+        }
+
+        // the server's receive batch for this update, then its reply. the
+        // request above arrived at the same instant (zero latency), so the
+        // server answers it here; the batched client above cannot see it.
+        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+        {
+            if ( rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
+                     ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                     payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED && payload_bytes == 8 )
+            {
+                uint64_t r = 0;
+                memcpy( &r, payload, 8 );
+                struct rocketnet_address_t to;
+                uint64_t sequence = 0;
+                if ( r >= 1 && r <= ROUNDS && rocketnet_server_protocol_start_payload( &test.server, 0, &to, &sequence ) )
+                {
+                    uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+                    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
+                    const int wire = rocketnet_server_protocol_seal_payload_frame( &test.server, 0, sequence, (uint64_t)( 1000000 + r ), frame, 8, time );
+                    rocketnet_check( wire > 0 );
+                    rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, frame, wire, time );
+                }
+            }
+            if ( response_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
+        }
+
+        {
+            int client_keep = 0;
+            uint8_t client_out[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_client_protocol_update( &client, time, client_out, &client_keep );
+            if ( client_keep > 0 )
+                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, client_out, client_keep, time );
+        }
+
+        rocketnet_server_protocol_update( &test.server, time );
+        {
+            uint8_t ack[ROCKETNET_RECEIVE_CEILING];
+            const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, ack );
+            if ( ack_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, ack_bytes, time );
+            const int keep_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, ack );
+            if ( keep_bytes > 0 )
+                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, keep_bytes, time );
+        }
+    }
+
+    for ( int r = 1; r <= ROUNDS; r++ )
+    {
+        rocketnet_check( reply_seen[r] != 0 );
+        rocketnet_check( reply_seen[r] > request_opened[r] );
+    }
+
+    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_test_server_teardown( &test );
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -9426,6 +9764,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
     { "test_ack_bad_block_refusals", rocketnet_test_ack_bad_block_refusals },
     { "test_ack_asymmetric_rate", rocketnet_test_ack_asymmetric_rate },
+    { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
+    { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_ack_rtt_freshness", rocketnet_test_ack_rtt_freshness },
     { "test_ack_payload_seal_with_ranges", rocketnet_test_ack_payload_seal_with_ranges },
     { "test_fragment_header_codec", rocketnet_test_fragment_header_codec },
