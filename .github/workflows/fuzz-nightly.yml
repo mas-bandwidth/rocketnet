@@ -92,6 +92,7 @@ jobs:
           set -euo pipefail
           mkdir -p bin
           clang++ -g -O1 -std=c++17 \
+            -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet.a \
             -lbpf -lxdp -lpthread \

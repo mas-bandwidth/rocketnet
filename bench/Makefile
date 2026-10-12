@@ -22,7 +22,7 @@
 # bench_portable builds on both and is the shared negative control.
 
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra
+CFLAGS  ?= -O2 -Wall -Wextra -ffp-contract=off
 
 LIBURING ?=
 

@@ -389,7 +389,10 @@ for correct wire bytes today. The strict build is the family floor: contraction 
 architecture-dependent (FMA is in the aarch64 baseline and absent from the x86-64 one), so
 float arithmetic near a wire diverges bit-wise between architectures without it. If you
 compile rocketnet's sources into your own build rather than linking the library, carry the same
-flag.
+flag. The canary `test_fp_contract_off` in `test.cpp` asserts the floor holds on every platform
+(one rounding of `a*b+c` would change `0x00000000` to `0x33800000` / `0x3C90000000000000`),
+and `tools/check_fp_contract.sh` (run in CI) fails any compiler invocation outside CMake that
+omits `-ffp-contract=off` or `/fp:precise`.
 
 ### XDP transmit staging pressure
 
