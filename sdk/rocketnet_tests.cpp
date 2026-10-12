@@ -5203,17 +5203,36 @@ void rocketnet_test_server_keyless_config_has_no_keys()
 
 void rocketnet_test_dev_keys_refused_in_release()
 {
-    // In a release build, a config with development server key should be refused.
-    // This test pins the security fix for the development key check.
-    struct rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    // In a release build a server whose config carries either published
+    // development key is refused at create: a token forged with the published
+    // development backend key is otherwise a full authentication bypass.
 
-    // Set up a config with development server key but production backend key
-    memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
-    memcpy( config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
-    // Keep backend key as production (not dev)
-    
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+
+    // keep the development backend key, replace only the server pair with a
+    // fresh production pair -- the backend check must still refuse it
+    uint8_t server_public[32];
+    uint8_t server_secret[32];
+    rocketnet_check( crypto_box_keypair( server_public, server_secret ) == 0 );
+    rocketnet_check( memcmp( server_public, rocketnet_dev_server_public_key, 32 ) != 0 );
+    memcpy( config.server_public_key, server_public, 32 );
+    memcpy( config.server_secret_key, server_secret, 32 );
+    rocketnet_check( memcmp( config.backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0 );
+
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config, 0.0 ) == NULL );
+
+    // the mirror image: a production backend key with the published
+    // development server pair is refused too
+    rocketnet_server_transport_dev_config( &config );
+    uint8_t backend_public[32];
+    uint8_t backend_secret[64];
+    rocketnet_check( crypto_sign_keypair( backend_public, backend_secret ) == 0 );
+    rocketnet_check( memcmp( backend_public, rocketnet_dev_backend_public_key, 32 ) != 0 );
+    memcpy( config.backend_public_key, backend_public, 32 );
     rocketnet_check( memcmp( config.server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 );
+
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config, 0.0 ) == NULL );
 }
 
 
