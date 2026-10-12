@@ -14,21 +14,6 @@
 #include <sodium.h>
 #include <string.h>
 
-// The handshake work budget: the most post-cookie handshakes (connection
-// requests whose cookie validated) one update will process. A request that
-// arrives past the budget is dropped before any asymmetric work, so a flood
-// of staged attempts cannot spend the whole update on signature
-// verification. Reset by rocketnet_server_protocol_update, once per update.
-#define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE      1024
-
-// Returned by rocketnet_server_protocol_process_connection_request when the
-// handshake budget is exhausted. The next value after
-// ROCKETNET_SERVER_PROCESS_ACCEPTED, kept local to this translation unit so
-// the fix stays inside the server transport/protocol sources.
-#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
-
-static int rocketnet_server_handshake_budget_processed = 0;
-
 // the address fields of the signed connect data, encoded as the token
 // encodes them, for comparison against this server's advertised addresses
 
@@ -290,15 +275,17 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     // the handshake budget check: after the cookie validates, count and cap
-    // post-cookie handshakes. requests beyond the budget are dropped before
-    // any asymmetric work runs, so a flood of staged attempts cannot spend
-    // the whole update on signature verification.
-    if ( rocketnet_server_handshake_budget_processed >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+    // post-cookie handshakes per update, per server. requests beyond the
+    // budget are dropped before any asymmetric work runs and counted, so a
+    // flood of staged attempts cannot spend the whole update on signature
+    // verification.
+    if ( server->counters->handshakes_processed_this_update >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
     {
         rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
+        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
         return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
     }
-    rocketnet_server_handshake_budget_processed++;
+    server->counters->handshakes_processed_this_update++;
 
     // everything below the cookie is expensive; nothing below runs for an
     // address that has not answered
@@ -1054,8 +1041,8 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
 
-    // Reset handshake budget counters for this update
-    rocketnet_server_handshake_budget_processed = 0;
+    // reset this server's per-update handshake budget for the next update
+    server->counters->handshakes_processed_this_update = 0;
 
     uint64_t * counters = server->counters->values;
 
