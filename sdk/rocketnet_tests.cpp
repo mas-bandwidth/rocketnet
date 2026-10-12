@@ -1975,12 +1975,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
     rocketnet_address_parse( &bind_address, "0.0.0.0" );
     rocketnet_address_parse( &local_address, "127.0.0.1" );
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024 );
-    if ( !socket )
-    {
-        // a sandboxed host that refuses the bind has no datagram to drive; the
-        // assertion runs wherever a socket can be created.
-        return;
-    }
+    rocketnet_check( socket != NULL );
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
