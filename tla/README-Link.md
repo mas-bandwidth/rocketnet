@@ -9,7 +9,9 @@ transport itself never resends and a lost fragment loses its payload (USAGE.md,
 to it.
 
 `tla/MCLink.tla` and `tla/MCLink.cfg` are the small instance that proves the module
-itself. Every TLC run is a row in `tla/RUNS.tsv`.
+itself. Every run is a case in `tla/CASES.tsv` and a measured record in
+`tla/RUNS.tsv`, in the tlacheck layout; `tla/README.md` says how to run, check
+and refresh the records.
 
 ## What the module covers
 
@@ -167,6 +169,14 @@ The other ten runs in `RUNS.tsv` are the same file with up to three lines change
 | wf-none / first / alternate / burst | `SpecWireFair` | that pattern | `LinkDelivers` | passes |
 | wf-arbitrary-witness | `SpecWireFair` | `"arbitrary"` | `LinkDelivers` | **fails**: the reversed witness |
 | wf-alternate-resent | `SpecWireFair` | `"alternate"` | `ResentIsDelivered` | **fails**: see below |
+
+Each run is committed as its own case file: `MCLink.cfg` (committed),
+`MCLinkSpecNone.cfg`, `MCLinkSpecFirst.cfg`, `MCLinkSpecAlternate.cfg`,
+`MCLinkSpecBurst.cfg`, `MCLinkWireFairNone.cfg`, `MCLinkWireFairFirst.cfg`,
+`MCLinkWireFairAlternate.cfg`, `MCLinkWireFairBurst.cfg`,
+`MCLinkWireFairArbitraryWitness.cfg` (the reversed witness, fails `LinkDelivers`)
+and `MCLinkWireFairAlternateResent.cfg` (the reorder starvation, fails
+`ResentIsDelivered`). `tla/CASES.tsv` declares each.
 
 For example:
 
