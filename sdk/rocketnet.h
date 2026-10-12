@@ -654,6 +654,22 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocke
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
 
 struct rocketnet_server_transport_t;
+struct rocketnet_address_t;
+
+// The admission gate: a callback the application installs on a server
+// transport, consulted for every received packet whose source has no
+// encryption mapping -- traffic that has not cleared the connect handshake --
+// before it reaches the protocol's process step. Return
+// ROCKETNET_SERVER_ADMISSION_ADMIT to process the packet, or
+// ROCKETNET_SERVER_ADMISSION_DROP to drop it before any crypto work runs.
+// A mapped source (an in-flight handshake or an established connection)
+// bypasses the gate: it has already cleared the connect ladder, and this gate
+// is about admission, not session policing. The callback runs on the receive
+// thread and must be fast and thread-safe.
+
+#define ROCKETNET_SERVER_ADMISSION_ADMIT 0
+#define ROCKETNET_SERVER_ADMISSION_DROP  1
+typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
 // the shape with no keys -- create refuses it until keys are supplied
@@ -781,6 +797,12 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct roc
 ROCKETNET_EXPORT_FUNC void rocketnet_forbid_xdp_commit( void );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+
+// The admission gate, set per transport (see the callback type above). NULL
+// callback -- the default -- admits every source: the connect ladder alone
+// decides. May be set or cleared at any time between updates.
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
 // The payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
