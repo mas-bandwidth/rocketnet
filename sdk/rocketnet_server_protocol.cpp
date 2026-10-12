@@ -41,13 +41,23 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
         return 1;
 
     // the budget is spent: skip a source that has already failed this window,
-    // never a first-time or previously-good source.
+    // and note whether a free slot remains for a source that has not.
+    int empty_slot = -1;
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
-        if ( budget->sources[i].fail_count > 0 &&
-             rocketnet_address_equal( &budget->sources[i].address, source ) )
+        if ( budget->sources[i].fail_count == 0 )
+            empty_slot = i;
+        else if ( rocketnet_address_equal( &budget->sources[i].address, source ) )
             return 0;
     }
+
+    // a first-time source is verified while a free slot can remember it. when
+    // the table is full, verifying one would fail and be forgotten, letting
+    // one cookie re-verify forever by churning fresh addresses, so refuse it
+    // instead.
+    if ( empty_slot == -1 )
+        return 0;
+
     return 1;
 }
 
@@ -57,50 +67,32 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
 
-    int found = -1;
+    budget->failure_count++;
+
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
              rocketnet_address_equal( &budget->sources[i].address, source ) )
         {
-            found = i;
-            break;
+            budget->sources[i].fail_count++;
+            return;
         }
     }
 
-    if ( found == -1 )
+    // a source's count is durable for the window: it is only ever reset by
+    // the window rolling over, never displaced. when the table is full the
+    // failure is already counted in the global total above but the source is
+    // not tracked, and the gate has refused a first-time source it cannot
+    // remember, so a counted source cannot be re-verified by churn.
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
-        // an empty slot, else the least-failed source is displaced. a source's
-        // count is only ever reset by the window rolling over or by being
-        // displaced after the table filled with more distinct sources than it
-        // holds, never by the same source cycling through one slot.
-        int slot = -1;
-        for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
+        if ( budget->sources[i].fail_count == 0 )
         {
-            if ( budget->sources[i].fail_count == 0 )
-            {
-                slot = i;
-                break;
-            }
+            budget->sources[i].address = *source;
+            budget->sources[i].fail_count = 1;
+            return;
         }
-        if ( slot == -1 )
-        {
-            slot = 0;
-            for ( int i = 1; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
-            {
-                if ( budget->sources[i].fail_count < budget->sources[slot].fail_count )
-                    slot = i;
-            }
-        }
-        budget->sources[slot].address = *source;
-        budget->sources[slot].fail_count = 1;
     }
-    else
-    {
-        budget->sources[found].fail_count++;
-    }
-
-    budget->failure_count++;
 }
 
 // the address fields of the signed connect data, encoded as the token

@@ -2441,6 +2441,54 @@ void rocketnet_test_cookie_bounds_signature_verifies()
         rocketnet_test_server_teardown( &test );
     }
 
+    // more distinct sources than the table holds cannot churn their way out
+    // of a spent count: a source that failed and was displaced by churn would
+    // be re-verified, so the bound must hold even when the table overflows.
+    // one host reaches this with source ports alone, since the address
+    // carries the port.
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        const int num_sources = ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS + 32;
+        const int rounds = 10;
+        uint8_t requests[num_sources][ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        struct rocketnet_address_t addresses[num_sources];
+
+        for ( int i = 0; i < num_sources; i++ )
+        {
+            char address_string[64];
+            snprintf( address_string, sizeof(address_string), "198.51.100.%d:56789", 100 + i );
+            rocketnet_check( rocketnet_address_parse( &test.client_address, address_string ) );
+            addresses[i] = test.client_address;
+            rocketnet_test_build_request( requests[i], 0x3333444455556666ULL + (uint64_t) i, rocketnet_test_salt );
+            rocketnet_test_pass_cookie_gate( &test, requests[i] );
+        }
+
+        struct rocketnet_counters_t before = test.counters;
+        for ( int round = 0; round < rounds; round++ )
+        {
+            for ( int i = 0; i < num_sources; i++ )
+            {
+                uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+                memcpy( mutated, requests[i], sizeof(mutated) );
+                mutated[signature_offset] ^= 1;
+                uint8_t response[ROCKETNET_RECEIVE_CEILING];
+                int response_bytes = 0;
+                test.client_address = addresses[i];
+                rocketnet_test_process( &test, mutated, sizeof(mutated), response, &response_bytes );
+            }
+        }
+        uint64_t failures = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+        uint64_t refused = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT]
+                            - before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT];
+        rocketnet_check( failures == (uint64_t) budget );
+        rocketnet_check( refused == (uint64_t) ( num_sources * rounds - budget ) );
+
+        rocketnet_test_server_teardown( &test );
+    }
+
     // the budget decays: past the window a source that exhausted it is
     // allowed again, so the refusal is not forever.
     {

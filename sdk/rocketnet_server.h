@@ -19,13 +19,17 @@
 //
 // It is a windowed global cap on failed verifies plus a per-source table that
 // remembers which sources have already failed this window. Once the global cap
-// is spent, a request is refused before the verify only if its source has
-// already failed this window; a source with no failures -- a first-time or a
-// previously-good source -- is still verified, so one source's failures never
-// refuse a validly signed request from another source. The whole budget decays
-// when the window rolls over, so a source that exhausted it is not refused
-// forever, and because the table is a fixed part of the server struct (not
-// file-scope), two servers in one process each have their own budget.
+// is spent, a request is refused before the verify if its source has already
+// failed this window, or if the table is full and the source is one it could
+// not remember; a first-time source with no failures is still verified while
+// a free table slot can remember it, so one source's failures never refuse a
+// validly signed request from another source. A source's count is durable for
+// the window: when the table is full no counted source is displaced to make
+// room, so a source cannot be reset and re-verified by churning fresh
+// addresses. The whole budget decays when the window rolls over, so a source
+// that exhausted it is not refused forever, and because the table is a fixed
+// part of the server struct (not file-scope), two servers in one process each
+// have their own budget.
 
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET        90
 #define ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS 10
