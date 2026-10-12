@@ -7,7 +7,7 @@ set(ROCKETNET_DRIVER_REGISTRY_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/registry.inc" 
 set(ROCKETNET_DRIVER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/backend.cpp" CACHE STRING "" FORCE)
 add_subdirectory("${ROCKETNET_SOURCE_PATH}" rocketnet)
 add_executable(driver_extension main.cpp)
-target_link_libraries(driver_extension PRIVATE RocketNet::rocketnet)
+target_link_libraries(driver_extension PRIVATE rocketnet_dev)
 enable_testing()
 add_test(NAME external_driver_transport_exchange COMMAND driver_extension)
 set_tests_properties(external_driver_transport_exchange PROPERTIES TIMEOUT 30 ENVIRONMENT "ROCKETNET_DRIVER=external_test")

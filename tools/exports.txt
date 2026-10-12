@@ -135,7 +135,6 @@ rocketnet_term
 rocketnet_time
 rocketnet_user_id_string
 rocketnet_warn
-rocketnet_write_dev_connect_token
 rocketnet_abi_version
 rocketnet_abi_type_size
 rocketnet_abi_field_count

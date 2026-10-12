@@ -85,7 +85,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel
 
       - name: Build ${{ matrix.target }}
         run: |
@@ -93,8 +93,9 @@ jobs:
           mkdir -p bin
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
+            -DROCKETNET_DEVELOPMENT=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet.a \
+            -Isodium -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -lpthread \
             -o "bin/${{ matrix.target }}"
 

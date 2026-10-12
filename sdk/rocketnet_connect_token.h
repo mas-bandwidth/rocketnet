@@ -134,7 +134,9 @@ void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * s
 // the same handshake, sealing and replay protection that ships.
 
 extern const uint8_t rocketnet_dev_backend_public_key[32];
+#if ROCKETNET_DEVELOPMENT
 extern const uint8_t rocketnet_dev_backend_secret_key[64];
+#endif // #if ROCKETNET_DEVELOPMENT
 extern const uint8_t rocketnet_dev_server_public_key[32];
 extern const uint8_t rocketnet_dev_server_secret_key[32];
 
@@ -153,9 +155,11 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 // clang merge the two silently, which is how this shipped unnoticed until the
 // first windows build.
 
+#if ROCKETNET_DEVELOPMENT
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string,
                                                              uint64_t client_id,
                                                              uint64_t current_timestamp,
                                                              uint8_t * connect_token );
+#endif // #if ROCKETNET_DEVELOPMENT
 
 #endif // #ifndef ROCKETNET_CONNECT_TOKEN_H

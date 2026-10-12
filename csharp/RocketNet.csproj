@@ -11,6 +11,14 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- ROCKETNET_DEVELOPMENT is opt-in, set by the smoke project through the
+       RocketNetDevelopment property so its loopback connect can mint a token
+       against the development shared library. The production binding never
+       defines it, so the development minting stays out of the shipped surface. -->
+  <PropertyGroup>
+    <DefineConstants Condition="'$(RocketNetDevelopment)' == 'true'">$(DefineConstants);ROCKETNET_DEVELOPMENT</DefineConstants>
+  </PropertyGroup>
+
   <!-- the smoke test is its own project in smoke/; keep it out of the
        classlib's default source glob -->
   <ItemGroup>

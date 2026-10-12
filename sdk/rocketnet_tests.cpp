@@ -40,6 +40,12 @@
 
 #include <sodium.h>
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -746,7 +752,9 @@ void rocketnet_test_crypto_test_keys()
     // byte for byte -- two copies of the standard's values that must never
     // drift apart
     rocketnet_check( memcmp( rocketnet_dev_backend_public_key, rocketnet_test_backend_public_key, 32 ) == 0 );
+#if ROCKETNET_DEVELOPMENT
     rocketnet_check( memcmp( rocketnet_dev_backend_secret_key, rocketnet_test_backend_secret_key, 64 ) == 0 );
+#endif // #if ROCKETNET_DEVELOPMENT
     rocketnet_check( memcmp( rocketnet_dev_server_public_key, rocketnet_test_server_public_key, 32 ) == 0 );
     rocketnet_check( memcmp( rocketnet_dev_server_secret_key, rocketnet_test_server_secret_key, 32 ) == 0 );
 
@@ -9912,6 +9920,8 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
+void rocketnet_test_dev_token_minting_absent_in_release();
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_suite_environment", rocketnet_test_suite_environment },
@@ -10022,6 +10032,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_plan", rocketnet_test_fragment_plan },
     { "test_fragment_reassembly", rocketnet_test_fragment_reassembly },
     { "test_fragment_reassembly_refusals", rocketnet_test_fragment_reassembly_refusals },
+    { "test_dev_token_minting_absent_in_release", rocketnet_test_dev_token_minting_absent_in_release },
     { "test_fragment_delivery_batch", rocketnet_test_fragment_delivery_batch },
     { "test_fragment_vector", rocketnet_test_fragment_vector },
     { "test_fragment_packet_id_aggregation", rocketnet_test_fragment_packet_id_aggregation },
@@ -10094,4 +10105,50 @@ void rocketnet_run_tests()
     rocketnet_unit_prepare();
     for ( int i = 0; i < rocketnet_unit_test_count(); i++ )
         rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
+}
+
+// Verify that rocketnet_write_dev_connect_token is absent from the release
+// surface. In a release build (ROCKETNET_DEVELOPMENT=0) the development token
+// minting helper and its backend secret key are compiled out, so the shipped
+// shared library must not carry the symbol. The suite links the static
+// archive, whose own symbols cannot prove the shared ABI is clean, so probe
+// the shared library directly (the `test` target depends on it, so it is
+// always present beside ./bin/test). In a development build the helper must
+// remain callable -- the functional suite mints its tokens with it -- so that
+// configuration asserts the call succeeds instead.
+void rocketnet_test_dev_token_minting_absent_in_release()
+{
+#if ROCKETNET_DEVELOPMENT
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( "127.0.0.1:40000", 1, 0, token ) != 0 );
+#else
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    HMODULE library = LoadLibraryA( "rocketnet.dll" );
+    rocketnet_check( library != NULL );
+    if ( library != NULL )
+    {
+        rocketnet_check( GetProcAddress( library, "rocketnet_write_dev_connect_token" ) == NULL );
+        FreeLibrary( library );
+    }
+#else
+    // ./bin/test runs from the repository root, so the shared library sits
+    // under bin/; a checkout that runs the binary in place (./test) resolves
+    // the bare name instead. Try the rooted name first, then the bare name.
+    const char * library_name = "bin/librocketnet.so";
+    const char * library_bare_name = "librocketnet.so";
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    library_name = "bin/librocketnet.dylib";
+    library_bare_name = "librocketnet.dylib";
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC ...
+    void * library = dlopen( library_name, RTLD_NOW | RTLD_LOCAL );
+    if ( library == NULL )
+        library = dlopen( library_bare_name, RTLD_NOW | RTLD_LOCAL );
+    rocketnet_check( library != NULL );
+    if ( library != NULL )
+    {
+        rocketnet_check( dlsym( library, "rocketnet_write_dev_connect_token" ) == NULL );
+        dlclose( library );
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#endif
 }

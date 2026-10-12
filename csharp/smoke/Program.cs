@@ -77,14 +77,18 @@ static class Smoke
     static void CheckTokenBoundaries()
     {
         RocketNet.ClientTransportConfig config = default;
+#if ROCKETNET_DEVELOPMENT
         RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, (byte[]) null! ), true );
+#endif
         RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, IntPtr.Zero, time ), true );
         RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (byte[]) null!, ref config, time ), true );
         foreach ( int length in new[] { 0, 1, RocketNet.ConnectTokenBytes - 1, RocketNet.ConnectTokenBytes + 1 } )
         {
             byte[] token = new byte[length];
+#if ROCKETNET_DEVELOPMENT
             RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token ) );
             RejectToken( () => RocketNet.WriteDevConnectToken( "127.0.0.1:40000", 1, 1, token.AsSpan() ) );
+#endif
             RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, IntPtr.Zero, time ) );
             RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, token, ref config, time ) );
             RejectToken( () => RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) token, IntPtr.Zero, time ) );
@@ -206,9 +210,10 @@ static class Smoke
 
         ulong clientId = RocketNet.RandomUint64();
         byte[] token = new byte[RocketNet.ConnectTokenBytes];
-        ulong unixNow = (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if ( RocketNet.WriteDevConnectToken( address, clientId, unixNow, token.AsSpan() ) == 0 )
+#if ROCKETNET_DEVELOPMENT
+        if ( RocketNet.WriteDevConnectToken( address, clientId, (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds(), token.AsSpan() ) == 0 )
             Fail( "write dev connect token" );
+#endif
 
         RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig clientConfig );
         if ( clientConfig.GetDriver() != "auto" )
@@ -580,8 +585,10 @@ static class Smoke
         // (byte 0 is the version) and the client refuses the token at create
 
         byte[] badToken = new byte[RocketNet.ConnectTokenBytes];
-        if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), unixNow, badToken ) == 0 )
+#if ROCKETNET_DEVELOPMENT
+        if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds(), badToken ) == 0 )
             Fail( "write dev connect token (negative 1)" );
+#endif
         badToken[0] ^= 0xFF;
         RocketNet.Quiet( true );        // the refusal logs an error by design; keep the receipt clean
         ClientTransportHandle badClient = RocketNet.ClientTransportCreate( IntPtr.Zero, badToken, IntPtr.Zero, time );
@@ -596,8 +603,10 @@ static class Smoke
         // must never reach connected
 
         byte[] sealedBad = new byte[RocketNet.ConnectTokenBytes];
-        if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), unixNow, sealedBad ) == 0 )
+#if ROCKETNET_DEVELOPMENT
+        if ( RocketNet.WriteDevConnectToken( address, RocketNet.RandomUint64(), (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds(), sealedBad ) == 0 )
             Fail( "write dev connect token (negative 2)" );
+#endif
         sealedBad[100] ^= 0xFF;         // inside the sealed private block, under the signature
         ClientTransportHandle sealedClient = RocketNet.ClientTransportCreate( IntPtr.Zero, sealedBad, IntPtr.Zero, time );
         if ( sealedClient.IsInvalid )
