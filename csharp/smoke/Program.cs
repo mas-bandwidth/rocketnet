@@ -93,9 +93,27 @@ static class Smoke
         Ok( "token boundary: null, empty, short and long arrays/spans refused before native calls" );
     }
 
+    static void CheckNonNullConfig()
+    {
+        try
+        {
+            RocketNet.ClientTransportCreate( IntPtr.Zero, new byte[RocketNet.ConnectTokenBytes], (IntPtr)1, time );
+            Fail( "non-zero nullConfig did not throw" );
+        }
+        catch ( ArgumentNullException ) { }
+        try
+        {
+            RocketNet.ClientTransportCreate( IntPtr.Zero, new byte[RocketNet.ConnectTokenBytes].AsSpan(), (IntPtr)1, time );
+            Fail( "non-zero nullConfig (span) did not throw" );
+        }
+        catch ( ArgumentNullException ) { }
+        Ok( "smoke_csharp_nonzero_config_throws" );
+    }
+
     static int Main( string[] args )
     {
         CheckTokenBoundaries();
+        CheckNonNullConfig();
         if ( args.Length == 1 && args[0] == "--token-boundaries" )
             return 0;
 
