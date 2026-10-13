@@ -1483,6 +1483,18 @@ In this exact order:
   (handshake or session), the associated data above, and the sequence-derived
   nonce, ignore the packet.
 
+* **On the server, for those same five types: if the packet's mapping has no
+  assigned slot, ignore the packet here, before the replay window is touched.**
+  Session traffic before a slot exists is a lost-response race or an injection
+  (_Processing session packets at the server_), and a sequence marked for a
+  packet that is then ignored would be reported in this end's next ack block
+  as received although it was never processed. The replay window of a mapping
+  without a slot therefore never moves: this is the `NoAdvanceBeforeConnect`
+  invariant of the replay window model (`tla/ReplayWindow.tla`,
+  `GateBeforeAdvance = TRUE`), and the model's reversed witness shows the
+  other order breaking it. The client has no such gate: it processes session
+  types only once connected, per its state gate above.
+
 * For those same five types, **mark this sequence as received in the replay
   window and then advance the most-recent sequence number.** Both steps are
   required: advancing the high-water mark without setting the window entry
@@ -2834,10 +2846,13 @@ only data already verified.
 
 ### Processing session packets at the server
 
-These arrive under the session keys through _Reading packets_. If the packet's
-mapping has no assigned slot, ignore it — session traffic before a slot exists
-is a lost-response race or an injection, and the retransmitted response repairs
-the former. **Every opened session packet's ack block is applied per _Acks_,
+These arrive under the session keys through _Reading packets_, which has already
+ignored any session packet whose mapping has no assigned slot, after the open
+and before the replay-window mark — session traffic before a slot exists is a
+lost-response race or an injection, the retransmitted response repairs the
+former, and the window of a mapping without a slot never moves
+(`tla/ReplayWindow.tla`, `NoAdvanceBeforeConnect`). Every packet that reaches
+this section belongs to a slot. **Every opened session packet's ack block is applied per _Acks_,
 against that client's slot, and refreshes the slot's last-received time.**
 
 * A keep-alive refreshes the slot's last-received time, and confirms the client
