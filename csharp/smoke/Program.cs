@@ -563,22 +563,42 @@ static class Smoke
             Ok( "smoke_csharp_use_after_destroy_throws" );
         }
 
-        // span-after-update: a span taken before Update becomes invalid after update
+        // span-after-update: a span taken before Update becomes invalid after update.
+        // The primary client was destroyed above, so this minted its own fresh client
+        // to prove the invalidation against a live transport.
         {
-            RocketNet.PacketContext context = default;
-            if (RocketNet.ClientTransportStartPacket(client, 64, ref context) == IntPtr.Zero)
+            ulong spanClientId = RocketNet.RandomUint64();
+            byte[] spanToken = new byte[RocketNet.ConnectTokenBytes];
+#if ROCKETNET_DEVELOPMENT
+            if ( RocketNet.WriteDevConnectToken( address, spanClientId, (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds(), spanToken.AsSpan() ) == 0 )
+                Fail( "write dev connect token (span-after-update)" );
+#endif
+            ClientTransportHandle spanClient = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) spanToken, ref clientConfig, time );
+            if ( spanClient.IsInvalid )
+                Fail( "client create (span-after-update)" );
+            int spanIterations = 0;
+            while ( RocketNet.ClientTransportState( spanClient ) != RocketNet.ClientTransportStateConnected && spanIterations < 2000 )
+            {
+                Pump( spanClient, server );
+                spanIterations++;
+            }
+            if ( RocketNet.ClientTransportState( spanClient ) != RocketNet.ClientTransportStateConnected )
+                Fail( "span-after-update client did not connect" );
+            RocketNet.PacketContext spanContext = default;
+            if (RocketNet.ClientTransportStartPacket(spanClient, 64, ref spanContext) == IntPtr.Zero)
                 Fail("start packet for span-after-update test");
-            Span<byte> span = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
+            Span<byte> span = RocketNet.ClientTransportPacketPayloadSpan(spanClient, in spanContext);
             if (span.IsEmpty)
                 Fail("span-after-update: span should not be empty");
             // Update the transport - this invalidates the span
-            RocketNet.ClientTransportUpdate(client, time);
+            RocketNet.ClientTransportUpdate(spanClient, time);
             // Using the span after update should return empty
-            Span<byte> spanAfter = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
+            Span<byte> spanAfter = RocketNet.ClientTransportPacketPayloadSpan(spanClient, in spanContext);
             if (!spanAfter.IsEmpty)
                 Fail("span-after-update: span remained valid after update (should be invalidated)");
-            RocketNet.ClientTransportAbortPacket(client, ref context);
-            Ok("smoke_csharp_span_after_update_throws");
+            RocketNet.ClientTransportAbortPacket(spanClient, ref spanContext);
+            RocketNet.ClientTransportDestroy( spanClient );
+            Ok("smoke_csharp_span_after_update_invalidated");
         }
 
         // negative control 1: one corrupted byte in the clear signed fields
