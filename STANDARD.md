@@ -1484,7 +1484,7 @@ In this exact order:
   nonce, ignore the packet.
 
 * **On the server, for those same five types: if the packet's mapping has no
-  assigned slot, ignore the packet here, before the replay window is touched.**
+  assigned slot, ignore the packet here, before the replay-window mark.**
   Session traffic before a slot exists is a lost-response race or an injection
   (_Processing session packets at the server_), and a sequence marked for a
   packet that is then ignored would be reported in this end's next ack block
@@ -1540,7 +1540,10 @@ Discard anything older than the most recent sequence minus the replay buffer
 size; within the window accept a sequence only once; on a successful open mark
 it received and advance the most recent. Applied to the five session types —
 _connection keep-alive_, _connection payload_, _connection disconnect_,
-_connection ack_ and _connection payload fragment_ — on both ends.
+_connection ack_ and _connection payload fragment_ — on both ends, with one
+exception on the server: a session packet whose mapping has no assigned slot is
+ignored after the open and before the mark (_Reading packets_), so the window
+of a mapping without a slot never moves.
 
 ### The AEAD integrity limit
 
