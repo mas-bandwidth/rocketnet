@@ -143,3 +143,10 @@ MCClientConnectionSDelay.cfg	MCClientConnection.tla	3d964104a0b397d969f314471a88
 ```
 
 </details>
+
+Final refresh: the six changed debt declarations were remeasured without
+changing their models or configurations. The runner joined those fresh rows
+with the 41 unchanged measurements (`MERGE OK runs=6 records=47`). All nine
+budget debts remain actual `FAIL`/exit 124 records. The final freshness check
+returned `[]`; adding a comment to `RNSendStore.tla` in a scratch copy returned
+`["rnsendstore"]`. The pinned CI outcome check also passed on this ledger.
