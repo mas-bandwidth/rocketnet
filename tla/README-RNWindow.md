@@ -23,9 +23,16 @@ design, written before the code as the standing practice asks: the card
 `the-window-code-replays-every-rnwindow-and-rnring-witness` replays the traces below
 against that code. Every "the code does" below reads "the design says".
 
-`tla/MCRNWindow.tla` and `tla/MCRNWindow.cfg` are the committed instance. The five reversed
-witnesses are `tla/MCRNWindowBroken*.cfg`, each the committed cfg with one constant flipped
-(`diff` shows one line).
+`tla/MCRNWindow.tla` holds the instance, and there are seven committed cases, each one
+inside tlacheck's 110 s budget:
+- `tla/MCRNWindow.cfg`: `W = 2`, numbers 0..4 wrapping at `NumMod = 4`, Link capacity 2,
+  the `"alternate"` loss pattern both ways, every invariant and the liveness property.
+- `tla/MCRNWindowSafety.cfg`: numbers 0..5, `"arbitrary"` loss, safety only.
+- The five reversed witnesses, `tla/MCRNWindowBroken*.cfg`, each `MCRNWindow.cfg` with one
+  constant flipped (`diff` shows one line).
+
+The `"arbitrary"` loss run with liveness takes 14 minutes. It is a bench run, listed under
+"Every run", and not a committed case.
 
 ## What the module covers
 
@@ -159,70 +166,72 @@ On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from 
 java -Xmx6g -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCRNWindow.cfg MCRNWindow
 ```
 
-The witnesses are the same command with each `MCRNWindowBroken*.cfg`. The other runs
-below are `MCRNWindow.cfg` with the lines named in the table changed.
+The other committed cases are the same command with `MCRNWindowSafety.cfg` and each
+`MCRNWindowBroken*.cfg`. The bench runs below are `MCRNWindow.cfg` with the lines named in
+the table changed. Every run uses `MaxDelay = 0`. A run with `MaxDelay > 0` also needs
+weak fairness on `Fwd!Age` and `Rev!Age` (Link's `WireFair`), which `Fairness` does not
+include. Without it a copy that is not yet due never becomes due.
 
 ### Every run
 
-TLC 2.19 on hetzner2, 2026-10-13, `-workers 4 -Xmx6g`. "Cap 2" is `MCRNWindow.cfg` with
-`Capacity = 2`.
+TLC 2.19 on hetzner2, 2026-10-13, `-workers 4 -Xmx6g`. The `tla/RUNS.tsv` records are not
+written by hand. They are owed to `tlacheck run --group rnwindow`.
 
-| Config | Spec | Checks | States | Distinct | Depth | Time | Result |
-|---|---|---|---|---|---|---|---|
-| `MCRNWindow.cfg` (W 2, numbers 0..4, NumMod 4, cap 1, "arbitrary") | SpecTyped | every invariant, `EveryReliableAckedAndDelivered` | 1,221,332 | 388,260 | 52 | 13 min 59 s | pass |
-| cap 2 | SpecTyped | same | 2,124,794 | 596,772 | 52 | 25 min cap | safety complete, no violation; liveness check stopped at the cap |
-| cap 1, numbers 0..3, `Ordered = {0, 1, 2}` (no wrap) | SpecTyped | same | 586,962 | 191,866 | 48 | 5 min 29 s | pass |
-| cap 2, `Pattern = "alternate"` both ways | Spec | same | 130,597 | 51,850 | 91 | 33 s | pass |
-| cap 2, `"first"` both ways | Spec | same | 128,381 | 46,844 | 50 | 33 s | pass |
-| cap 2, `"none"` both ways | Spec | same | 190,215 | 66,175 | 44 | 45 s | pass |
-| cap 2, `"burst"` both ways | Spec | same | 124,469 | 45,294 | 56 | 26 s | pass |
-| cap 2, numbers 0..5 (two numbers wrap) | Spec | every invariant | 3,267,640 | 912,812 | 59 | 15 s | pass |
-| cap 2, `W = 3`, `NumMod = 6` | Spec | every invariant | 16,276,205 | 4,371,974 | 52 | 48 s | pass |
-| cap 2, `MaxPerPacket = 2` | Spec | every invariant | 4,523,801 | 1,198,503 | 52 | 25 s | pass |
-| cap 2, `Duplication`, `Reordering`, `NumMod = 10` | Spec | every invariant | 326,352,691 | 48,089,524 | 71 | 14 min 31 s | pass |
-| cap 2, `Duplication`, `Reordering` (`NumMod = 4`) | Spec | every invariant | 342,400 | 101,591 | 17 | 3 s | fail: `WireNumberReconstructs`; the transport's replay window, below |
-| `MCRNWindowBrokenBlockUPrime.cfg` | SpecTyped | every invariant | 26,107 | 12,362 | 18 | 1 s | fail as expected: `NoSlotCollision` |
-| `MCRNWindowBrokenSameUpdateReply.cfg` | SpecTyped | every invariant | 1,075 | 588 | 10 | 0 s | fail as expected: `NoSlotCollision` |
-| `MCRNWindowBrokenHalfRange.cfg` | SpecTyped | every invariant | 69 | 51 | 7 | 0 s | fail as expected: `WireNumberReconstructs` |
-| `MCRNWindowBrokenHoldOrdered.cfg` | SpecTyped | every invariant | 1,760 | 977 | 11 | 0 s | fail as expected: `OrderedDeliveredInOrder` |
-| `MCRNWindowBrokenDropDuplicates.cfg` | SpecTyped | every invariant | 64 | 48 | 6 | 0 s | fail as expected: `DeliveredOnce` |
+Committed cases:
 
-The committed run is above the ten-minute mark the other models keep; the cap 1, numbers
-0..3 run is the quick liveness check under `"arbitrary"` (5 minutes), but it does not wrap.
-`tla/RUNS.tsv` is not edited here (several models land in parallel); its rows are:
+| Case | Checks | States | Distinct | Depth | Time | Result |
+|---|---|---|---|---|---|---|
+| `MCRNWindow.cfg` (W 2, numbers 0..4 wrapping at NumMod 4, cap 2, `"alternate"` both ways, `Spec`) | every invariant, `EveryReliableAckedAndDelivered` | 130,597 | 51,850 | 91 | 32 s | pass |
+| `MCRNWindowSafety.cfg` (numbers 0..5, `"arbitrary"`, `Spec`) | every invariant | 3,267,640 | 912,812 | 59 | 11 s | pass |
+| `MCRNWindowBrokenBlockUPrime.cfg` | every invariant | 19,705 | 8,692 | 33 | 1 s | fail as expected: `NoSlotCollision` |
+| `MCRNWindowBrokenSameUpdateReply.cfg` | every invariant | 1,386 | 678 | 16 | 0 s | fail as expected: `NoSlotCollision` |
+| `MCRNWindowBrokenHalfRange.cfg` | every invariant | 176 | 107 | 8 | 1 s | fail as expected: `WireNumberReconstructs` |
+| `MCRNWindowBrokenHoldOrdered.cfg` | every invariant | 1,431 | 741 | 19 | 2 s | fail as expected: `OrderedDeliveredInOrder` |
+| `MCRNWindowBrokenDropDuplicates.cfg` | every invariant | 173 | 105 | 8 | 1 s | fail as expected: `DeliveredOnce` |
 
-```
-MCRNWindow	MCRNWindow.cfg (W 2, numbers 0..4 wrapping at NumMod 4, Capacity 1, "arbitrary", SpecTyped); every invariant, EveryReliableAckedAndDelivered	1221332	388260	pass	hetzner2	2026-10-13
-MCRNWindow	MCRNWindowBrokenBlockUPrime.cfg (reversed witness)	26107	12362	fail as expected: Invariant NoSlotCollision is violated	hetzner2	2026-10-13
-MCRNWindow	MCRNWindowBrokenSameUpdateReply.cfg (reversed witness)	1075	588	fail as expected: Invariant NoSlotCollision is violated	hetzner2	2026-10-13
-MCRNWindow	MCRNWindowBrokenHalfRange.cfg (reversed witness)	69	51	fail as expected: Invariant WireNumberReconstructs is violated	hetzner2	2026-10-13
-MCRNWindow	MCRNWindowBrokenHoldOrdered.cfg (reversed witness)	1760	977	fail as expected: Invariant OrderedDeliveredInOrder is violated	hetzner2	2026-10-13
-MCRNWindow	MCRNWindowBrokenDropDuplicates.cfg (reversed witness)	64	48	fail as expected: Invariant DeliveredOnce is violated	hetzner2	2026-10-13
-```
+Bench runs (each is `MCRNWindow.cfg` with the changes named):
+
+| Changes | Checks | States | Distinct | Depth | Time | Result |
+|---|---|---|---|---|---|---|
+| `"arbitrary"` both ways, cap 1, `SpecTyped` | every invariant, liveness | 1,221,332 | 388,260 | 52 | 13 min 59 s | pass |
+| `"arbitrary"`, cap 2, `SpecTyped` | same | 2,124,794 | 596,772 | 52 | 25 min cap | safety complete, no violation; liveness stopped at the cap |
+| `"arbitrary"`, cap 1, numbers 0..3, `Ordered = {0, 1, 2}` (no wrap), `SpecTyped` | same | 586,962 | 191,866 | 48 | 5 min 29 s | pass |
+| `"first"` both ways | same | 128,381 | 46,844 | 50 | 33 s | pass |
+| `"none"` both ways | same | 190,215 | 66,175 | 44 | 45 s | pass |
+| `"burst"` both ways | same | 124,469 | 45,294 | 56 | 26 s | pass |
+| `"arbitrary"`, `W = 3`, `NumMod = 6`, no liveness | every invariant | 16,276,205 | 4,371,974 | 52 | 48 s | pass |
+| `"arbitrary"`, `MaxPerPacket = 2`, no liveness | every invariant | 4,523,801 | 1,198,503 | 52 | 25 s | pass |
+| `"arbitrary"`, `Duplication`, `Reordering`, `NumMod = 10`, no liveness | every invariant | 326,352,691 | 48,089,524 | 71 | 14 min 31 s | pass |
+| `"arbitrary"`, `Duplication`, `Reordering`, no liveness | every invariant | 342,400 | 101,591 | 17 | 3 s | fail: `WireNumberReconstructs`; the transport's replay window, below |
 
 ## What TLC found
 
 Every counterexample was replayed by hand through the module's actions and through the
 argument of CHANNELS.md 6.3 and 13.5. The window code does not exist yet, so none of
-them is a defect in code. The traces are written `id{numbers}` for a packet; the
-committed instance is `W = 2`, Link capacity 1, `NumMod = 4`, numbers `0..4`, the block `{1, 2}`,
-`Ordered = {0, 1, 2, 4}`.
+them is a defect in code. The traces are written `id{numbers}` for a packet. The
+committed instance is `W = 2`, Link capacity 2, `"alternate"` loss both ways (the 1st,
+3rd, 5th ... send on each link is lost), `NumMod = 4`, numbers `0..4`, the block
+`{1, 2}`, `Ordered = {0, 1, 2, 4}`. The state counts are TLC's trace lengths, the
+initial state included. A write the pattern loses still takes an id and a map entry
+(and may evict the oldest), but it never reaches the wire.
 
 ### Witness 1: `U'` ignoring partial blocks (`MCRNWindowBrokenBlockUPrime.cfg`)
 
-TLC: `Invariant NoSlotCollision is violated`, 18 states.
+TLC: `Invariant NoSlotCollision is violated`, 33 states.
 
-1. `0` is numbered, written `0{0}`, opened: `R = 1`, `0` delivered, `desc[0]` live. The
-   batch is fixed, the ack `{0}` lands: `acked = {0}`, `U = U' = 1`.
-2. The block takes `1` and `2` at one moment (`2 < U' + W = 3`). `0{1}` is written; the
-   update ends; `0{1}` is opened: `R = 2`, but `2` is missing, so `1` is **held**,
-   `desc[1] = [1, live]`.
-3. The ack `{0}` lands: `acked = {0, 1}`, `U = 2`. `2` is inside a block whose first
-   fragment is acked and whose second is not, so the design's `U'` is `1`; the witness
-   sets `U' = U = 2`.
-4. `3` is numbered: `3 < 2 + 2`. Under the design's `U' = 1` the check is `3 < 3`, false.
-5. `0{3}` is written and opened in the next update: `3 < R + W = 4` is inside the window,
-   but `3 % 2 = 1` and `desc[1]` is live with the held `1`. The receiver's slot check fires.
+1. `0` is numbered. Its first write is lost; `1{0}` gets through and is opened: `R = 1`,
+   `0` delivered. More writes of `0` follow, every other one lost, and so does the first
+   ack. `0{0}` arrives in the next update as a duplicate, and its ack `{0}` lands:
+   `acked = {0}`, `U = U' = 1`.
+2. The block takes `1` and `2` at one moment (`2 < U' + W = 3`). `0{1}` and `1{1}` get
+   through. In the next update `0{1}` is opened: `R = 2`, but `2` is missing, so `1` is
+   **held**, `desc[1] = [1, live]`. That ack is lost. `1{1}` arrives later as a
+   duplicate and its ack `{1}` lands: `acked = {0, 1}`, `U = 2`.
+3. `2` is inside a block whose first fragment is acked and whose second is not, so the
+   design's `U'` is `1`. The witness sets `U' = U = 2`, and `3` is numbered:
+   `3 < 2 + 2`. Under the design the check is `3 < 1 + 2`, false.
+4. `1{3}` is opened in the next update: `3 < R + W = 4` is inside the window, but
+   `3 % 2 = 1` and `desc[1]` is live with the held `1`. The receiver's slot check fires.
 
 Through 6.3 step 2: `m = 3 = n + W` with `n = 1`. The argument needs every block
 containing a number at or below `n` fully acked when `m` was numbered, and the witness is
@@ -230,15 +239,16 @@ the sender numbering `m` without that.
 
 ### Witness 2: dropping P6 (`MCRNWindowBrokenSameUpdateReply.cfg`)
 
-TLC: `Invariant NoSlotCollision is violated`, 10 states.
+TLC: `Invariant NoSlotCollision is violated`, 16 states.
 
-1. `0{0}` is opened: `0` delivered, `desc[0]` live. The batch is fixed, the ack `{0}`
-   leaves and lands: `acked = {0}`, `U' = 1`.
-2. The block takes `1` and `2` (`2 < 1 + 2`), correctly: `0` is acked, so by P2 it was
-   opened. `0{2}` is written (id `0` is free again: no copy of it remains).
-3. `0{2}` is opened **in the same update**, `phase = "process"`, which the witness allows.
-   `2 % 2 = 0`, and `desc[0]` is still live with `0`, whose delivered list has not yet
-   expired. The slot check fires.
+1. The receiver fixes its batch first (`phase = "process"`) and never ends the update
+   in this trace. `0`'s first write is lost, and `1{0}` is opened **after** the batch
+   was fixed, which the witness allows: `0` delivered, `desc[0]` live.
+2. The first ack is lost. A resend `0{0}` is opened as a duplicate, and the ack `{0}`
+   lands: `acked = {0}`, `U' = 1`.
+3. The block takes `1` and `2`, correctly: `0` is acked, so by P2 it was opened. `0{2}`
+   gets through and is opened in the same update. `2 % 2 = 0`, and `desc[0]` is still
+   live with `0`, whose delivered list has not yet expired. The slot check fires.
 
 Through 6.3 step 2: "By P6, `m` arrives in a later update, after that update's delivered
 list expired." Remove P6 and `m = 2` arrives while `n = 0` is still delivered in the
@@ -246,11 +256,12 @@ update whose ack elicited it.
 
 ### Witness 3: unsigned reconstruction (`MCRNWindowBrokenHalfRange.cfg`)
 
-TLC: `Invariant WireNumberReconstructs is violated`, 6 states.
+TLC: `Invariant WireNumberReconstructs is violated`, 8 states.
 
-1. `0` is numbered and written twice, `0{0}` then `1{0}` (the RTO resends it).
-2. `0{0}` is opened: `R = 1`.
-3. `1{0}` is opened. Its wire value is `0`; unsigned, `R + ((0 - 1) % 4) = 1 + 3 = 4`.
+1. `0` is numbered and written four times. The 1st and 3rd writes are lost, so `1{0}`
+   and `0{0}` are on the wire (write, write, then open, open).
+2. `1{0}` is opened: `R = 1`, `0` delivered.
+3. `0{0}` is opened. Its wire value is `0`; unsigned, `R + ((0 - 1) % 4) = 1 + 3 = 4`.
    The signed half range gives `d = 3 >= 2`, so `1 + 3 - 4 = 0`, a duplicate, dropped.
 
 A duplicate after a resend is the normal case (6.5), so an unsigned reading misreads one
@@ -260,23 +271,24 @@ disconnected for `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
 
 ### Witness 4: ordered numbers delivered on arrival (`MCRNWindowBrokenHoldOrdered.cfg`)
 
-TLC: `Invariant OrderedDeliveredInOrder is violated`, 11 states.
+TLC: `Invariant OrderedDeliveredInOrder is violated`, 19 states.
 
-1. `0{0}` is opened and acked; the block takes `1` and `2`.
-2. `0{1}` is opened in the next update. The witness delivers `1` at once although `2`,
-   the rest of its block, has not arrived: `everDelivered = {0, 1}`, and
-   `OrderedPred(1) = {0, 2}` is not inside it.
+1. `0` is delivered and acked, after the lost writes and the lost first ack the pattern
+   forces. The block takes `1` and `2`.
+2. `0{2}` gets through and is opened in the next update. The witness delivers `2` at
+   once, although `1` (an ordered predecessor, and the rest of its block) has not
+   arrived: `everDelivered = {0, 2}`, and `OrderedPred(2) = {0, 1}` is not inside it.
 
-With the hold (7.2) `1` is held until `2` arrives, then both are released together in
+With the hold (7.2), `2` is held until `1` arrives, then both are released together in
 number order.
 
 ### Witness 5: duplicates taken as fresh (`MCRNWindowBrokenDropDuplicates.cfg`)
 
-TLC: `Invariant DeliveredOnce is violated`, 6 states.
+TLC: `Invariant DeliveredOnce is violated`, 8 states.
 
-1. `0{0}` is opened: `0` delivered, `R = 1`.
-2. `0` is resent as `1{0}`, which is opened: `0 < R`, a duplicate under 6.5, but the
-   witness takes it as fresh and delivers it again: `dup = TRUE`.
+1. `0`'s first write is lost; `1{0}` is opened: `0` delivered, `R = 1`.
+2. The next write is lost; `0{0}` gets through and is opened: `0 < R`, a duplicate under
+   6.5, but the witness takes it as fresh and delivers it again: `dup = TRUE`.
 
 ### Wraparound under reordering: the half range rests on the transport's replay window
 
@@ -299,17 +311,22 @@ any code: the half range reads a value correctly only while it lies within `2^23
 numbers but not a stale resend still in flight. On a FIFO path a stale copy is at most `W`
 behind `R` (any packet opened before it was written before it, so `R <= n + W`), and the
 committed runs prove `NumMod = 2W` enough there. Under reordering the age of a copy is
-bounded only by the transport, which refuses a packet more than
-`ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS = 4096` sequences behind the
-highest opened (`sdk/rocketnet_replay.cpp:35-37`, `sdk/rocketnet_replay.h:14`,
-`sdk/rocketnet_history.h:8`) and any packet seen before. A 1192-byte payload carries at
-most 170 numbered records (a code 2 record is at least a 6-byte header and 1 data byte,
-13.2), so a copy that survives the
-replay window is at most about `W + 4095 * 170`, under `1.75 * 2^20`, behind `R`: well
-inside `2^23`. The safety margin is real, but it comes from the transport's replay window
-and the payload size, and 13.5 should say so. With `NumMod = 10` (no aliasing possible at
-these sizes) the same duplication and reordering run passes every other invariant
-(48,089,524 distinct states).
+bounded only by the transport. Its replay window refuses any packet
+`ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS` sequences or more behind the
+highest it has opened, and any packet it has seen before
+(`sdk/rocketnet_replay.cpp:32-39`, `sdk/rocketnet_replay.h:26`). That constant is 4096 by
+default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1192-byte payload carries
+at most 170 numbered records (a code 2 record is at least a 6-byte header and 1 data
+byte, 13.2), and a block numbers up to 911 fragments at once. So in the worst case a copy
+that survives the replay window is
+`W + 32767 × 170 + 911 <= 6,619,877 ≈ 6.3 × 2^20` behind `R`, under `2^23`.
+This rests on transport sequences rising in packet write order. A sequence is taken at
+`start_packet` by an atomic increment (`sdk/rocketnet_client_protocol.cpp:1068`,
+`sdk/rocketnet_server_protocol.cpp:1524`), so this layer must fill a connection's
+packets in the order it started them, as `write_packets` (9.3) does. The safety margin is
+real, but it comes from the transport's replay window and the payload size. 13.5 now says
+so. With `NumMod = 10` (no aliasing possible at these sizes) the same duplication and
+reordering run passes every other invariant (48,089,524 distinct states).
 
 ### Two fairness gaps in the first draft (model errors, fixed)
 
@@ -341,7 +358,7 @@ This is the model's RTO outpacing the ack path, which the real RTO (above the RT
 6298 with back-off) does not do. `AcksLand` excludes it. The design note for the code
 card: `P` must exceed the packets a connection writes in one RTT, resends included, or a
 sender under back-off can evict its own acks and stall until `reliable_timeout`; section
-14's sizing of `P` does not say so.
+14 now says so (sizing `P`).
 
 ### A model error the DeliveredOnce witness found
 

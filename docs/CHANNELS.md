@@ -1276,7 +1276,50 @@ Number, sequencing and ordering are 24-bit counters that wrap. Each end keeps
 half range (2^23). For numbers the reference is `R`. For ordering it is the
 channel's `ordered_read`. For sequencing it is the channel's
 `sequenced_watermark`. Every live value lies within `W` (at most 2^20) of its
-reference, so the half range never aliases.
+reference.
+
+That covers live values, not every value that arrives. A resend of `n` can
+still be in flight after `n` was received, acked and passed: the receiver
+drops it as a duplicate only if it reads it as `n`, and the half range reads
+it as `n` only while `R - n < 2^23`. Above, nothing in this layer bounds how
+long a stale copy travels; the bound comes from the transport. Its replay
+window refuses any packet `ROCKETNET_REPLAY_WINDOW_BITS` =
+`ROCKETNET_HISTORY_PACKETS` or more sequences behind the highest it has
+opened, and any packet it opened before (`sdk/rocketnet_replay.cpp:32-39`,
+`sdk/rocketnet_replay.h:26`). `ROCKETNET_HISTORY_PACKETS` is 4096 by default
+and at most 32768 (`sdk/rocketnet_history.h:8,13`). So when a stale copy of
+`n` is opened, at most 32767 packets written after it have been opened. When
+the copy was written, `n >= U'` and so `next <= n + W`. Each later packet
+first-writes at most 170 numbered records (a payload is at most 1192 bytes,
+and a code 2 record is at least a 6-byte header and 1 data byte, 13.2). A
+block numbers all its fragments at once, up to `ceil(2^20 / 1152) = 911` of
+them (`max_message_bytes` is at most 2^20, `sdk/rocketnet.h:1173`), which can
+run ahead of the packets that carry them by at most 911 numbers. In the worst
+case:
+
+```
+R - n <= W + 32767 × 170 + 911 <= 2^20 + 5,570,390 + 911 = 6,619,877 ≈ 6.3 × 2^20 < 2^23
+```
+
+So the half range never aliases, on two assumptions. First, the replay window
+keeps its depth: F1 (section 2) is about what the window holds, not how deep
+it reaches, and `rocketnet_replay_already_received` refuses by depth
+independently of the bits. Second, **transport sequences rise in packet write
+order**. In the code a sequence is taken when the packet is started, by an
+atomic increment (`rocketnet_client_protocol_start_payload`,
+`sdk/rocketnet_client_protocol.cpp:1068`; the server's mapping,
+`sdk/rocketnet_server_protocol.cpp:1524`; stored in the context at
+`sdk/rocketnet_client_transport.cpp:697`). So sequences rise in
+`start_packet` order. They rise in write order only if this layer fills each
+connection's packets in the order it started them. `write_packets` (9.3) does
+that: it runs per connection and fills one packet at a time. A design that
+fills one connection's packets from several threads at once (P7 allows
+`start_packet` on any thread) must keep a connection's fills in start order,
+or redo this bound. `RNWindow` checks the reading itself
+(`WireNumberReconstructs`). On a FIFO path TLC proves `2^24 >= 2W` enough
+(a stale copy is at most `W` behind `R`). With reordering and no age bound
+TLC finds the alias (`tla/README-RNWindow.md`), which is why the replay
+window's depth is part of this argument.
 
 ### 13.6 Known-answer vectors
 
@@ -1375,6 +1418,20 @@ memory (`rocketnet_server_transport_required_memory`).
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No
   other term moves, and nothing scales as channels × window. That is what
   makes the 10k stress run a one-number change (I15).
+- **Sizing `P`, the sent-packet ring.** `P` must be larger than the number of
+  packets a connection writes in one RTT, resends included. An ack is
+  matched through the ring (6.4). If the sender writes `P` more packets
+  between writing a packet and receiving its ack, that packet's entry has
+  been evicted when the ack lands, and the ack is ignored. Its numbers stay
+  unacked and are resent, and the resends can evict their own entries the
+  same way. A sender under RTO back-off with a small `P` can do this until
+  `reliable_timeout`. Correctness does not depend on `P` (eviction costs
+  bandwidth only), but liveness does. `RNWindow` needs this as an assumption
+  (`AcksLand`): without it TLC finds a lasso in which every ack names an
+  evicted id (`tla/README-RNWindow.md`). At the defaults, 256 packets per RTT
+  is `max_packets_per_update` times the updates in one RTT. Card C3 checks
+  the default against that, and counts evictions
+  (`MESSAGE_SENT_MAP_EVICTED`) so a shortfall shows.
 - **Validation at create** refuses any of these:
   - `max_message_bytes > B`;
   - `ceil(max_message_bytes / F) > W`;
@@ -1398,7 +1455,7 @@ code by hand before it is written down.
 
 | Module | Models | Invariants and properties | Reversed witness (rule removed, expected failure) |
 |---|---|---|---|
-| `RNWindow` | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors; update boundaries with P6 | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, LIVE `EveryReliableEventuallyAcked` (weak fairness on Deliver) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision |
+| `RNWindow` (exists, `tla/RNWindow.tla`, commit `b70f73c`, run on a bench) | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors, holds on one ordered channel; update boundaries with P6; the 24-bit number reconstructed against `R` (13.5) | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, `DeliveredOnce`, `OrderedDeliveredInOrder`, `WireNumberReconstructs`, LIVE `EveryReliableAckedAndDelivered` (strong fairness on the oldest write and the ack send, plus `AcksLand`, 14) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision. Unsigned reconstruction: misread. Ordered delivered on arrival: out of order. Duplicates taken as fresh: delivered twice |
 | `RNRing` | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap. No padding at the boundary: span outside the ring |
 | `RNChannel` | the four counters and coupling, holds, the drain, newest-sequenced | `OrderedExactlyOnceInOrder`, `SequencedNeverBackwards`, `NoSequencedDuplicate` (study items 18, 19), `OrderedTraceUnchangedBySequenced` (I5) | the heap-drain path without the watermark reset: item 19's stale drop |
 | `RNBlocks` | split, consecutive numbering, the contiguous span, receive by index | `DeliveredEqualsSent`, `NoPartialDelivery`, `OneOrderingSlotPerBlock` | placement by arrival instead of index: the study's §8.2 corruption |
@@ -1410,6 +1467,17 @@ code by hand before it is written down.
 The instances are small: 2 to 3 channels, `W = 4`, `B = 64` (4 units), 3 to 4
 messages, and Link capacity 3. `RNEndpoint` is the largest, and it runs on a
 bench machine, never on the working machine.
+
+`RNWindow` is the exception. A slot collision needs two live numbers `W`
+apart, `n` and `n + W`, so with `W = 4` and only 3 or 4 messages (numbers
+0..3) no two numbers ever share a slot. The two reversed witnesses above
+could never fail there, and the green run would prove nothing about slots.
+Its instance is `W = 2` with numbers 0..4 (a block of two at 1..2, and
+`NumMod = 4`, so 4 is sent as 0 and the numbers wrap), on Link capacity 2
+under the `"alternate"` loss pattern. That reaches every witness in 8 to 33
+states and checks liveness in under a minute. The `"arbitrary"` loss run
+with liveness takes 14 minutes at capacity 1 and is a bench run, not a
+committed case (`tla/README-RNWindow.md`).
 
 ### 15.1 `RNSlots`, drafted and run
 
@@ -1699,6 +1767,14 @@ requires.
 - Layers 1 and 2 are in the tree (sections 4 and 5). The modules in section 15
   are the plan, and `RNSlots` exists only as
   the draft in 15.1, run on a bench.
+- `RNWindow` exists (`tla/RNWindow.tla`, commit `b70f73c`, rocketnet PR
+  #209) and was run with TLC on a bench (hetzner2, 2026-10-13). Its committed
+  cases, `MCRNWindow.cfg`, `MCRNWindowSafety.cfg` and the five
+  `MCRNWindowBroken*.cfg`, pass or fail as declared, and
+  `tla/README-RNWindow.md` replays every trace. The window code (card C3)
+  does not exist yet, so the traces are checked against this design and not
+  against code. Its `tla/RUNS.tsv` records are owed to `tlacheck run --group
+  rnwindow`.
 - The per-entry sizes in section 14 are pinned by layer 1's static asserts.
 - P2 and P6 are kept by
   `test_transport_acked_unfragmented_was_in_exactly_one_batch` and
