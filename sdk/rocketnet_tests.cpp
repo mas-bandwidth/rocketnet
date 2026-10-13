@@ -9920,7 +9920,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
         const struct rocketnet_config_field_t * field = &fields[i];
 
         char env_name[128];
-        rocketnet_check( rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) );
+        rocketnet_check( rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) );
 
         struct rocketnet_test_env_guard_t guard;
         rocketnet_test_env_save( &guard, env_name );
@@ -10036,10 +10036,12 @@ void rocketnet_test_config_env_round_trip()
     // the derivation is mechanical: field name uppercased under the prefix
 
     char derived[128];
-    rocketnet_check( rocketnet_config_env_var_name( "driver", derived, sizeof(derived) ) );
-    rocketnet_check( strcmp( derived, "ROCKETNET_DRIVER" ) == 0 );
-    rocketnet_check( rocketnet_config_env_var_name( "num_xdp_queues", derived, sizeof(derived) ) );
-    rocketnet_check( strcmp( derived, "ROCKETNET_NUM_XDP_QUEUES" ) == 0 );
+    rocketnet_check( rocketnet_config_env_var_name_for( "server", "driver", derived, sizeof(derived) ) );
+    rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_DRIVER" ) == 0 );
+    rocketnet_check( rocketnet_config_env_var_name_for( "client", "driver", derived, sizeof(derived) ) );
+    rocketnet_check( strcmp( derived, "ROCKETNET_CLIENT_DRIVER" ) == 0 );
+    rocketnet_check( rocketnet_config_env_var_name_for( "server", "num_xdp_queues", derived, sizeof(derived) ) );
+    rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) == 0 );
 
     int num_client_fields = 0;
     const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
@@ -10208,22 +10210,22 @@ void rocketnet_test_config_validation()
 
     struct rocketnet_test_env_guard_t guard;
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_MAX_CLIENTS" );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     rocketnet_server_transport_default_config( &config );
-    setenv( "ROCKETNET_MAX_CLIENTS", "abc", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "abc", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_MAX_CLIENTS", "12x", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "12x", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     // strtoll's lenient spellings are refused before it ever runs: no
     // leading whitespace, no '+', digits only
 
-    setenv( "ROCKETNET_MAX_CLIENTS", "+5", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "+5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_MAX_CLIENTS", " 5", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", " 5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_MAX_CLIENTS", "99999999999999999999", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "99999999999999999999", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
 
     // the empty value is ignored as unset, with a log line, leaving the
@@ -10240,7 +10242,7 @@ void rocketnet_test_config_validation()
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-    setenv( "ROCKETNET_MAX_CLIENTS", "", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "", 1 );
     rocketnet_server_transport_default_config( &config );
 
     rocketnet_test_captured_log[0] = '\0';
@@ -10254,7 +10256,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_function( rocketnet_test_suite_log_function );
 
     rocketnet_check( config.max_clients == 64 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_MAX_CLIENTS" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
@@ -10264,19 +10266,19 @@ void rocketnet_test_config_validation()
 
     rocketnet_test_env_restore( &guard );
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_PROTOCOL_ID" );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_PROTOCOL_ID" );
     rocketnet_server_transport_default_config( &config );
-    setenv( "ROCKETNET_PROTOCOL_ID", "-5", 1 );
+    setenv( "ROCKETNET_SERVER_PROTOCOL_ID", "-5", 1 );
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     rocketnet_test_env_restore( &guard );
 
     // byte fields demand base64 of exactly the field's length
 
-    rocketnet_test_env_save( &guard, "ROCKETNET_FILTER_VALUE" );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_FILTER_VALUE" );
     rocketnet_server_transport_default_config( &config );
-    setenv( "ROCKETNET_FILTER_VALUE", "zzzz", 1 );                  // decodes to 3 bytes, not 4
+    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "zzzz", 1 );                  // decodes to 3 bytes, not 4
     rocketnet_check( !rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
-    setenv( "ROCKETNET_FILTER_VALUE", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
+    setenv( "ROCKETNET_SERVER_FILTER_VALUE", "AAECAw==", 1 );              // 4 bytes: 00 01 02 03
     rocketnet_server_transport_default_config( &config );
     rocketnet_check( rocketnet_config_apply_env( "server", &config, fields, num_fields ) );
     const uint8_t expected_filter[4] = { 0x00, 0x01, 0x02, 0x03 };
@@ -10503,7 +10505,7 @@ static void rocketnet_test_config_bytes_exact_fields( const char * name, void * 
             continue;
         rocketnet_check( field->size >= 1 && field->size <= 256 );
         char env_name[256];
-        rocketnet_check( rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) );
+        rocketnet_check( rocketnet_config_env_var_name_for( name, field->name, env_name, sizeof(env_name) ) );
         rocketnet_test_env_guard_t guard;
         rocketnet_test_env_save( &guard, env_name );
         for ( int delta = field->size == 1 ? 0 : -1; delta <= 1; ++delta )
@@ -10544,10 +10546,10 @@ void rocketnet_test_config_bytes_exact()
 void rocketnet_test_config_override_logging()
 {
     struct rocketnet_test_env_guard_t clients_guard;
-    rocketnet_test_env_save( &clients_guard, "ROCKETNET_MAX_CLIENTS" );
+    rocketnet_test_env_save( &clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     struct rocketnet_test_env_guard_t secret_guard;
-    rocketnet_test_env_save( &secret_guard, "ROCKETNET_SERVER_SECRET_KEY" );
+    rocketnet_test_env_save( &secret_guard, "ROCKETNET_SERVER_SERVER_SECRET_KEY" );
 
     uint8_t secret_bytes[32];
     for ( int i = 0; i < 32; i++ )
@@ -10555,8 +10557,8 @@ void rocketnet_test_config_override_logging()
     char secret_base64[64];
     rocketnet_check( rocketnet_base64_encode_data( secret_bytes, 32, secret_base64, sizeof(secret_base64) ) > 0 );
 
-    setenv( "ROCKETNET_MAX_CLIENTS", "77", 1 );
-    setenv( "ROCKETNET_SERVER_SECRET_KEY", secret_base64, 1 );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "77", 1 );
+    setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", secret_base64, 1 );
 
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
@@ -10581,15 +10583,15 @@ void rocketnet_test_config_override_logging()
     // displaced; the secret override logs redacted on both sides and the
     // secret's encoding appears nowhere in the log
 
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_MAX_CLIENTS=77" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 64)" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SECRET_KEY=(redacted)" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY=(redacted)" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
 
     // the failure path redacts too: a mistyped secret is still a secret
 
-    setenv( "ROCKETNET_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
+    setenv( "ROCKETNET_SERVER_SERVER_SECRET_KEY", "not!valid!base64!secret!material!!", 1 );
     rocketnet_server_transport_default_config( &config );
     rocketnet_test_captured_log[0] = '\0';
     rocketnet_log_function( rocketnet_test_capture_log );
@@ -10629,6 +10631,8 @@ class rocketnet_test_environment_t
     void clear(const char * name)
     {
         if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_SERVER_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_CLIENT_DRIVER") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
         const char * value = getenv(name);
         entries.push_back({name, value ? value : "", value != NULL});
@@ -10645,14 +10649,15 @@ public:
             for (int i = 0; i < count; ++i)
             {
                 char name[128];
-                rocketnet_check(rocketnet_config_env_var_name(fields[i].name, name, sizeof(name)));
+                rocketnet_check(rocketnet_config_env_var_name_for(side ? "server" : "client", fields[i].name, name, sizeof(name)));
                 clear(name);
             }
         }
-        clear("ROCKETNET_PUBLIC_ADDRESS");
         clear("ROCKETNET_SERVER_PUBLIC_ADDRESS");
+        clear("ROCKETNET_PUBLIC_ADDRESS");
         clear("ROCKETNET_SERVER_NUM_QUEUES");
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
+        clear("ROCKETNET_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
         clear("ROCKETNET_PUMP");
     }
@@ -10668,24 +10673,24 @@ void rocketnet_test_suite_environment()
 {
     const std::string original_driver = getenv("ROCKETNET_DRIVER") ? getenv("ROCKETNET_DRIVER") : "";
     const bool driver_present = getenv("ROCKETNET_DRIVER") != NULL;
-    rocketnet_check(unsetenv("ROCKETNET_PUBLIC_ADDRESS") == 0);
+    rocketnet_check(unsetenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == 0);
     const std::string long_value(4096, 'x');
-    rocketnet_check(setenv("ROCKETNET_MAX_CLIENTS", long_value.c_str(), 1) == 0);
+    rocketnet_check(setenv("ROCKETNET_SERVER_MAX_CLIENTS", long_value.c_str(), 1) == 0);
     rocketnet_check(setenv("ROCKETNET_PUMP", "portable", 1) == 0);
     {
         rocketnet_test_environment_t isolated;
-        rocketnet_check(getenv("ROCKETNET_MAX_CLIENTS") == NULL);
+        rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") == NULL);
         rocketnet_check(getenv("ROCKETNET_PUMP") == NULL);
-        rocketnet_check(setenv("ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
+        rocketnet_check(setenv("ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:1234", 1) == 0);
         rocketnet_check((getenv("ROCKETNET_DRIVER") != NULL) == driver_present);
         if (driver_present) rocketnet_check(original_driver == getenv("ROCKETNET_DRIVER"));
     }
-    rocketnet_check(getenv("ROCKETNET_PUBLIC_ADDRESS") == NULL);
-    rocketnet_check(getenv("ROCKETNET_MAX_CLIENTS") != NULL);
+    rocketnet_check(getenv("ROCKETNET_SERVER_PUBLIC_ADDRESS") == NULL);
+    rocketnet_check(getenv("ROCKETNET_SERVER_MAX_CLIENTS") != NULL);
     rocketnet_check(getenv("ROCKETNET_PUMP") != NULL);
-    rocketnet_check(long_value == getenv("ROCKETNET_MAX_CLIENTS"));
+    rocketnet_check(long_value == getenv("ROCKETNET_SERVER_MAX_CLIENTS"));
     rocketnet_check(strcmp(getenv("ROCKETNET_PUMP"), "portable") == 0);
-    unsetenv("ROCKETNET_MAX_CLIENTS");
+    unsetenv("ROCKETNET_SERVER_MAX_CLIENTS");
     unsetenv("ROCKETNET_PUMP");
 }
 

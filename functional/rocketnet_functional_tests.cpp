@@ -2289,7 +2289,7 @@ void rocketnet_test_config_precedence()
     // public query: max_payload_bytes
 
     struct rocketnet_test_env_guard_t payload_guard;
-    rocketnet_test_env_clear( &payload_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_clear( &payload_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -2311,7 +2311,7 @@ void rocketnet_test_config_precedence()
 
     // env displaces struct
 
-    setenv( "ROCKETNET_MAX_PAYLOAD_BYTES", "20000", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
@@ -2771,14 +2771,14 @@ void rocketnet_test_config_env_aliases()
     rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
 
     struct rocketnet_test_env_guard_t successor_guard;
-    rocketnet_test_env_save( &successor_guard, "ROCKETNET_NUM_XDP_QUEUES" );
+    rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
 
     // the alias is honored where the successor is unset...
 
-    unsetenv( "ROCKETNET_NUM_XDP_QUEUES" );
+    unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
 
     struct rocketnet_server_transport_config_t config;
@@ -2797,7 +2797,7 @@ void rocketnet_test_config_env_aliases()
     // ...and yields to the successor when both are set
 
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
-    setenv( "ROCKETNET_NUM_XDP_QUEUES", "2", 1 );
+    setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_server_transport_destroy( server );
@@ -2813,8 +2813,8 @@ void rocketnet_test_config_env_aliases()
     // exported variable) is what create reads.
 
     struct rocketnet_test_env_guard_t address_guard;
-    rocketnet_test_env_save( &address_guard, "ROCKETNET_PUBLIC_ADDRESS" );
-    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
+    rocketnet_test_env_save( &address_guard, "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
 
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
