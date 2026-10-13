@@ -1039,10 +1039,18 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 {
     rocketnet_assert( client_transport );
 
+    const int state_before = client_transport->protocol.state;
+
     uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count, &burst_bytes );
+
+    // every state change reaches the callback, from update or from disconnect:
+    // this transition never crosses an update, so it is reported here
+
+    if ( client_transport->protocol.state != state_before && client_transport->config.state_change_callback )
+        client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
 
     const int stats_index = client_transport->current_stats_index;
 

@@ -114,6 +114,93 @@ void rocketnet_test_transport_disconnect_delivery()
     rocketnet_server_transport_destroy( server );
 }
 
+struct rocketnet_test_state_recorder_t
+{
+    int count;
+    int previous_state[16];
+    int current_state[16];
+};
+
+static void rocketnet_test_state_change_callback( void * context, int previous_state, int current_state )
+{
+    struct rocketnet_test_state_recorder_t * recorder = (struct rocketnet_test_state_recorder_t *) context;
+    if ( recorder->count < 16 )
+    {
+        recorder->previous_state[recorder->count] = previous_state;
+        recorder->current_state[recorder->count] = current_state;
+    }
+    recorder->count++;
+}
+
+void rocketnet_test_client_disconnect_reports_state_change()
+{
+    // a client-initiated disconnect moves the protocol to DISCONNECTED
+    // directly, inside the disconnect call, and never crosses an update.
+    // that transition must reach the state-change callback the same way
+    // update reports its crossings, or an application that watches for its
+    // own disconnect never hears it.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_test_state_recorder_t recorder = { 0, {0}, {0} };
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    client_config.state_change_callback = rocketnet_test_state_change_callback;
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( &recorder, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_client_transport_update( client, rocketnet_platform_time() );
+
+    // the recorded pairs must end with exactly one (CONNECTED -> DISCONNECTED),
+    // and that pair must be the last thing the callback heard: the disconnect
+    // call reports it, and the update after it adds nothing
+
+    rocketnet_check( recorder.count >= 1 );
+    rocketnet_check( recorder.count <= 16 );
+
+    int seen = 0;
+    for ( int i = 0; i < recorder.count && i < 16; i++ )
+    {
+        if ( recorder.previous_state[i] == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             recorder.current_state[i] == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            seen++;
+    }
+    rocketnet_check( seen == 1 );
+
+    const int last = recorder.count - 1;
+    rocketnet_check( recorder.previous_state[last] == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( recorder.current_state[last] == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_destroy( server );
+}
+
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
 {
     // IOCP may still own earlier sends. Keep every successful reservation in
@@ -3587,6 +3674,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
+    { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },
     { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion },
     { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill },
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
