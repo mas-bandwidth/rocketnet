@@ -110,7 +110,7 @@ public static unsafe partial class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 199;
+    public const int NumCounters = 200;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -151,6 +151,7 @@ public static unsafe partial class RocketNet
         ConnectionRequestSentChallenge,
         ConnectionRequestInternalError,
         ConnectionResponseReceived,
+        ConnectionResponseWrongSize,
         ConnectionResponseNoMapping,
         ConnectionResponseZeroSequence,
         ConnectionResponseDidNotOpen,
@@ -428,6 +429,10 @@ public static unsafe partial class RocketNet
         /// <summary>Writes the public address override. Throws when the value cannot fit —
         /// mirroring the C surface, which refuses loudly and never truncates.</summary>
         public void SetPublicAddress( string value ) { fixed ( byte * address = PublicAddress ) WriteFixedString( address, AddressStringLength, value, "public address" ); }
+
+        /// <summary>How many seconds without a packet before this server considers a client
+        /// timed out. The native field's default is 60, range 1..3600.</summary>
+        public int MaxTimeoutSeconds;
     }
 
     /// <summary>rocketnet.h ROCKETNET_DRIVER_STRING_LENGTH: the driver field's capacity,
