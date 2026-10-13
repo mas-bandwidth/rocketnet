@@ -177,6 +177,13 @@ void rocketnet_test_client_disconnect_reports_state_change()
     rocketnet_client_transport_disconnect( client );
     rocketnet_client_transport_update( client, rocketnet_platform_time() );
 
+    // the recorded pairs must end with exactly one (CONNECTED -> DISCONNECTED),
+    // and that pair must be the last thing the callback heard: the disconnect
+    // call reports it, and the update after it adds nothing
+
+    rocketnet_check( recorder.count >= 1 );
+    rocketnet_check( recorder.count <= 16 );
+
     int seen = 0;
     for ( int i = 0; i < recorder.count && i < 16; i++ )
     {
@@ -185,6 +192,10 @@ void rocketnet_test_client_disconnect_reports_state_change()
             seen++;
     }
     rocketnet_check( seen == 1 );
+
+    const int last = recorder.count - 1;
+    rocketnet_check( recorder.previous_state[last] == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( recorder.current_state[last] == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 
     rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_destroy( server );
