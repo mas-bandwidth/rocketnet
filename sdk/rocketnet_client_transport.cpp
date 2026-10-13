@@ -411,7 +411,9 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     int payload_bytes = 0;
 
     rocketnet_client_protocol_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
-                                              payload ? payload : overflow, &payload_bytes );
+                                              payload ? payload : overflow,
+                                              payload ? ROCKETNET_FRAME_SIZE : ROCKETNET_RECEIVE_CEILING,
+                                              &payload_bytes );
 
     // an accepted session packet feeds the quality trackers: loss from gaps
     // in the session sequence, jitter from the receive thread's per-packet
