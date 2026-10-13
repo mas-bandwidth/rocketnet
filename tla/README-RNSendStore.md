@@ -5,6 +5,13 @@ implemented by `rn_send_store_alloc` and `rn_send_store_free_checked` in
 `sdk/rocketnet_allocator.cpp`. The three classes share no state, so one class is
 the whole model.
 
+The module was written with layer 1 on its attempt branch (`a7758f3`) and is here
+unchanged. The code it is checked against below is main at `3ad4179`:
+`rn_send_store_alloc` (`sdk/rocketnet_allocator.cpp:211-248`, the all-or-none test
+at line 222) and `rn_send_store_free_checked` (lines 250-280, the `IN_USE | HEAD`
+test at line 265), and the unit test `test_channels_allocator_send_store`
+(`test_channels.cpp:1195-1332`).
+
 - **The free list** is a stack threaded through the chunks' links. Alloc pops from
   the head, and free pushes each chunk of a chain back onto the head.
 - **A send** takes a chain of 1 to `MaxBlock` chunks, all or none.
@@ -73,21 +80,44 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
         `free_count` becomes 5 of 4.
      3. The next two allocations both get chunk 1.
    - **With the guard:** the second free finds `IN_USE | HEAD` clear and returns
-     false, changing nothing. `test_channels_allocator_send_store` pins this, and
-     the same probe on the bench fails that case at its double-free check.
+     false, changing nothing (`sdk/rocketnet_allocator.cpp:265-266`). On main,
+     `test_channels_allocator_send_store` pins exactly this: it allocates one
+     chunk, frees it, then checks that `rn_send_store_free_checked` on the same
+     handle returns false and leaves the class's free count unchanged
+     (`test_channels.cpp:1321-1329`, "a refused double free changes nothing").
 2. **`AllOrNone = FALSE`**: `Invariant NoLeak is violated`, at depth 4.
    - **The trace:**
      1. s1 holds chunk 1, and s2 holds chunk 2.
      2. s3 asks for 3 chunks with 2 free.
      3. s3 takes those 2 chunks, then reports the refusal.
      4. Chunks 3 and 4 are now in use and in no chain.
-   - **Against the code, by hand:** suppose `free_count < needed` is not tested
-     first, and the pop stops at the end of the list. The chunks popped before
-     the refusal are marked `IN_USE` and returned to no one. That is the
-     accounting `rn_soak_check_accounting` asserts in `test_channels.cpp` (free
-     plus used equals total, for each class).
-   - **The bench probe:** the same rule removed (take what is there) fails
-     `test_channels_allocator_send_store`. The check that fails is the one where a
-     block bigger than what is left must take nothing.
+   - **Against the code, by hand:** suppose `free_count < needed`
+     (`sdk/rocketnet_allocator.cpp:222`) is not tested first, and the pop stops at
+     the end of the list. The chunks popped before the refusal are marked
+     `IN_USE` and returned to no one. That is the accounting
+     `rn_soak_check_accounting` asserts on main (`test_channels.cpp:1589-1607`:
+     free plus used equals total, for each class and for the descriptor pool),
+     run inside `test_channels_allocator_no_live_allocation`.
+   - **On main the rule is pinned** by `test_channels_allocator_send_store`
+     (`test_channels.cpp:1298-1306`, "a block bigger than what is left takes
+     nothing"): a request one chunk larger than the free count returns
+     `RN_CHUNK_NONE` and the free count is unchanged. The rule-removed probe that
+     fails that check was run on the attempt branch, not on main.
 
-`RUNS.tsv` holds the three rows.
+## Runs
+
+The three rows are not in `tla/RUNS.tsv` on main (it holds only the
+`MCClientConnection` and `MCLink` rows); they are owed, and they are these, from
+the rerun on `hetzner2` (TLC 2.19, `-workers 4` for the committed run, 1 for each
+witness, 2026-10-13):
+
+```
+MCRNSendStore	MCRNSendStore.cfg (GuardDoubleFree, AllOrNone TRUE; TypeOK, NoDoubleAllocate, NoLeak, RefuseOnlyWhenFull, ChainsBounded)	47407249	4941552	pass	hetzner2	2026-10-13
+MCRNSendStore	MCRNSendStore.cfg with GuardDoubleFree = FALSE (reversed witness)	113	101	fail as expected: NoDoubleAllocate violated at depth 4, chunk 1 twice on the free list	hetzner2	2026-10-13
+MCRNSendStore	MCRNSendStore.cfg with AllOrNone = FALSE (reversed witness)	36	36	fail as expected: NoLeak violated at depth 4, a refused block took the last two chunks	hetzner2	2026-10-13
+```
+
+The committed run took 20 s at depth 28, the same counts as the run on `vision`
+recorded with `a7758f3` (47,407,249 states, 4,941,552 distinct). The witness
+counts differ from that record (149/136 and 34/34 there: how many states were on
+the queue when TLC stopped), with the same violations at the same depth.
