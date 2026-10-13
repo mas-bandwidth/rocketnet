@@ -96,6 +96,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
         return RN_WINDOW_SEND_UNRELIABLE;
     rocketnet_assert( code >= ROCKETNET_MESSAGE_CODE_RELIABLE && code <= ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
     rocketnet_assert( bytes > 0 && bytes <= ROCKETNET_MESSAGE_SINGLE_BYTES );
+    rocketnet_assert( bytes <= send->region->max_message_bytes );
     const int holdable = code != ROCKETNET_MESSAGE_CODE_RELIABLE;
     const uint64_t span = holdable ? rn_window_send_round16( bytes ) : 0;
     uint64_t p;
@@ -177,8 +178,8 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     return 1;
 }
 
-// CHANNELS 6.2 I13/I3; RNWindow WriteUnreliable. Reliable stalls never
-// prevent a caller from writing an unreliable record with no number.
+// CHANNELS 6.2 I13/I3; RNWindow NumberRecord models only reliable records.
+// A reliable stall never prevents writing an unreliable record with no number.
 int rn_window_send_can_write_unreliable( const rn_window_send_t * send )
 {
     rocketnet_assert( send && send->region );
