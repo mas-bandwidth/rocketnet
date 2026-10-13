@@ -5,8 +5,8 @@ by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instan
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
 the server sends. The server is modelled as the environment the client talks to, only
 as far as it drives the client. `tla/MCClientConnection.tla` and
-`tla/MCClientConnection.cfg` are the small instance; every TLC run is a row in
-`tla/RUNS.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
+`tla/MCClientConnection.cfg` are the small instance; current measured cases are in
+`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
 
 ## What the model covers
 
@@ -386,14 +386,14 @@ original parameters and is not a completed proof.
 | 19 | `MCClientConnectionWOnceAlternate.cfg` | temporal / Connects |
 | 20 | `MCClientConnectionWAnysend.cfg` | temporal / Connects |
 | 21 | `MCClientConnectionLSilent.cfg` | pass |
-| 22 | `MCClientConnectionLCrash.cfg` | pass |
+| 22 | `MCClientConnectionLCrash.cfg` | pass; debt: crash-timeout-liveness-over-budget |
 | 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget |
-| 24 | `MCClientConnectionSFirst.cfg` | pass |
-| 25 | `MCClientConnectionSAlternate.cfg` | pass |
-| 26 | `MCClientConnectionSBurst.cfg` | pass |
+| 24 | `MCClientConnectionSFirst.cfg` | pass; debt: first-loss-full-environment-safety-over-budget |
+| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget |
+| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget |
 | 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget |
-| 28 | `MCClientConnectionSFirstkind.cfg` | pass |
-| 29 | `MCClientConnectionSDelay.cfg` | pass |
+| 28 | `MCClientConnectionSFirstkind.cfg` | pass; debt: first-kind-latency-safety-over-budget |
+| 29 | `MCClientConnectionSDelay.cfg` | pass; debt: delayed-first-loss-safety-over-budget |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | invariant / EphemeralErasedOutsideHandshake |
 | 31 | `MCClientConnectionF8Terminal.cfg` | action / TerminalAbsorbing |
 | 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |

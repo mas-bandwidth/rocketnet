@@ -86,14 +86,15 @@ Use fresh output directories for every attempt and preserve earlier evidence.
 CI builds the same pinned runner on the existing self-hosted Linux runner
 labels and refuses a nonempty stale list. It checks records without running
 TLC or downloading the JAR. A missing, mismatched or incomplete case plan is
-also a failure.
+also a failure. CI also checks the pinned JAR and bounded mode, and rejects
+failed records unless they are explicit `bench` debt with actual exit 124.
 
 ## Case inventory
 
 | Group | Cases | Scope |
 |---|---:|---|
 | `link` | 11 | All historical Link configurations |
-| `clientconnection` | 21 | All historical connection configurations, including three debt cases |
+| `clientconnection` | 21 | All historical connection configurations, including nine debt cases |
 | `replaywindow` | 2 | Existing control and long-skip `WindowIsTruth` witness |
 | `rnsendstore` | 1 | Existing committed control |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
@@ -102,3 +103,43 @@ also a failure.
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
 measurements for uncommitted variants or change their model semantics.
+
+## Initial migration measurements
+
+All 47 cases were measured on Linux with the pinned runner and JAR above,
+using two workers for controls, one for witnesses, and 110 seconds per case.
+Thirty-eight matched their declared outcomes; nine exhausted the budget.
+The three historically unfinished cases remain debt. Six formerly required
+cases also timed out and are now explicit debt under the same budget rule.
+Their original historical PASS rows remain unchanged in `RUNS-HISTORY.tsv`;
+a timeout here does not refute those older completed runs or complete a new
+proof. Model constants and checked properties were not reduced.
+
+| Case | Historical outcome | Initial current outcome | Disposition |
+|---|---|---|---|
+| `MCClientConnectionLCrash.cfg` | PASS | exit 124 after 110.127 s | Explicit timeout debt; not a completed proof |
+| `MCClientConnectionSFirst.cfg` | PASS | exit 124 after 110.206 s | Explicit timeout debt; not a completed proof |
+| `MCClientConnectionSAlternate.cfg` | PASS | exit 124 after 110.237 s | Explicit timeout debt; not a completed proof |
+| `MCClientConnectionSBurst.cfg` | PASS | exit 124 after 110.235 s | Explicit timeout debt; not a completed proof |
+| `MCClientConnectionSFirstkind.cfg` | PASS | exit 124 after 110.288 s | Explicit timeout debt; not a completed proof |
+| `MCClientConnectionSDelay.cfg` | PASS | exit 124 after 110.253 s | Explicit timeout debt; not a completed proof |
+
+The following original required-case failure receipts are preserved verbatim.
+Changing a debt declaration changes that case's fingerprint; `RUNS.tsv` uses
+fresh runner measurements for the changed declarations, not edited hashes.
+Unknown final state counts remain `-`; progress counters are not substituted.
+
+<details>
+<summary>Original required-case timeout receipts before debt declarations</summary>
+
+```tsv
+config	module	input_sha256	input_files	jar_sha256	java_version	host	cpus	started_utc	workers	generated	distinct	seconds	exit	result	expected	property	budget	mode
+MCClientConnectionLCrash.cfg	MCClientConnection.tla	3f73910b8f2e61e4dc509ee3747d64f6036b0d5fa03a2aa6011794dfcf1a6d3c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:28:53.193269+00:00	2	-	-	110.127	124	FAIL	pass	-	110	bounded
+MCClientConnectionSFirst.cfg	MCClientConnection.tla	b99e6002be76aa61951153a8df1ed31258ca5e692b94f0e5675537e7dddea44b	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:33:40.281831+00:00	2	-	-	110.206	124	FAIL	pass	-	110	bounded
+MCClientConnectionSAlternate.cfg	MCClientConnection.tla	fca5e159ed92563adeb7f448a6798f62949aa120861c726a1090077ea0eb8b51	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:35:59.966910+00:00	2	-	-	110.237	124	FAIL	pass	-	110	bounded
+MCClientConnectionSBurst.cfg	MCClientConnection.tla	3105f3824721bca5c3eab18c341a7962560ece8b9016b6fc48a44828c3119b93	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:37:50.283718+00:00	2	-	-	110.235	124	FAIL	pass	-	110	bounded
+MCClientConnectionSFirstkind.cfg	MCClientConnection.tla	ba54ef9a3896e661e05c812a7a2f05813182acefe2bb1edddada8c3b77e5e260	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:41:30.904207+00:00	2	-	-	110.288	124	FAIL	pass	-	110	bounded
+MCClientConnectionSDelay.cfg	MCClientConnection.tla	3d964104a0b397d969f314471a8866101a2ced7fbe19be39e0462b47fe330c2c	9	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	16	2026-10-13T21:43:21.275232+00:00	2	-	-	110.253	124	FAIL	pass	-	110	bounded
+```
+
+</details>

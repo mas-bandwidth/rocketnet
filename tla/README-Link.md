@@ -9,7 +9,8 @@ transport itself never resends and a lost fragment loses its payload (USAGE.md,
 to it.
 
 `tla/MCLink.tla` and `tla/MCLink.cfg` are the small instance that proves the module
-itself. Every TLC run is a row in `tla/RUNS.tsv`.
+itself. Current measured cases are in `tla/RUNS.tsv`; earlier records are
+preserved in `tla/RUNS-HISTORY.tsv`. See [the record guide](README.md).
 
 ## What the module covers
 
