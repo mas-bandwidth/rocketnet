@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet.h"
-#include "test/suite_runner.h"
+#include "shared/suite_runner.h"
 
 #include <stdint.h>
 #include <stdio.h>

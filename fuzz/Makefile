@@ -16,7 +16,7 @@
 # invocation is unaffected.
 CXX      := clang++
 SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
-FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../test
+FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../sodium -I../sdk -I../tests/shared
 LIB       = ../build/librocketnet_dev.a
 LINKS     = -lbpf -lxdp -lpthread
 

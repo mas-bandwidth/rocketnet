@@ -95,7 +95,7 @@ registration is compiled into the SDK; this is not a dynamic plugin ABI.
 Backend symbols are not public C exports. Per-driver settings and resource
 validation belong in the factory; the public transport configuration is unchanged.
 
-`test/driver_extension` is an executable example: an external row and backend
+`tests/driver_extension` is an executable example: an external row and backend
 serve both ends of an encrypted handshake and payload exchange through only
 the public transport API. `tools/check_driver_extension.py build` builds and
 runs it independently. `test_driver` checks registry ordering, factory refusal,

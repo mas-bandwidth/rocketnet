@@ -10,7 +10,7 @@ unchanged. The code it is checked against below is main at `3ad4179`:
 `rn_send_store_alloc` (`sdk/rocketnet_allocator.cpp:211-248`, the all-or-none test
 at line 222) and `rn_send_store_free_checked` (lines 250-280, the `IN_USE | HEAD`
 test at line 265), and the unit test `test_channels_allocator_send_store`
-(`test_channels.cpp:1195-1332`).
+(`tests/test_channels.cpp:1195-1332`).
 
 - **The free list** is a stack threaded through the chunks' links. Alloc pops from
   the head, and free pushes each chunk of a chain back onto the head.
@@ -84,7 +84,7 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
      `test_channels_allocator_send_store` pins exactly this: it allocates one
      chunk, frees it, then checks that `rn_send_store_free_checked` on the same
      handle returns false and leaves the class's free count unchanged
-     (`test_channels.cpp:1321-1329`, "a refused double free changes nothing").
+     (`tests/test_channels.cpp:1321-1329`, "a refused double free changes nothing").
 2. **`AllOrNone = FALSE`**: `Invariant NoLeak is violated`, at depth 4.
    - **The trace:**
      1. s1 holds chunk 1, and s2 holds chunk 2.
@@ -95,11 +95,11 @@ sed -e 's/AllOrNone       = TRUE/AllOrNone       = FALSE/' MCRNSendStore.cfg > /
      (`sdk/rocketnet_allocator.cpp:222`) is not tested first, and the pop stops at
      the end of the list. The chunks popped before the refusal are marked
      `IN_USE` and returned to no one. That is the accounting
-     `rn_soak_check_accounting` asserts on main (`test_channels.cpp:1589-1607`:
+     `rn_soak_check_accounting` asserts on main (`tests/test_channels.cpp:1589-1607`:
      free plus used equals total, for each class and for the descriptor pool),
      run inside `test_channels_allocator_no_live_allocation`.
    - **On main the rule is pinned** by `test_channels_allocator_send_store`
-     (`test_channels.cpp:1298-1306`, "a block bigger than what is left takes
+     (`tests/test_channels.cpp:1298-1306`, "a block bigger than what is left takes
      nothing"): a request one chunk larger than the free count returns
      `RN_CHUNK_NONE` and the free count is unchanged. The rule-removed probe that
      fails that check was run on the attempt branch, not on main.

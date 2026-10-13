@@ -4,8 +4,8 @@ Low-level client/server UDP transport library.
 
 ## Building
 
-See [BUILDING.md](BUILDING.md). Binaries land in `bin/`; run the test suite
-with `./bin/test`.
+See [BUILDING.md](BUILDING.md). Binaries land in `bin/`; the test sources live
+in [tests/](tests/README.md), and the test suite runs with `./bin/test`.
 
 ## Documentation
 

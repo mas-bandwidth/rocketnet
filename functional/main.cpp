@@ -8,7 +8,7 @@
 */
 
 #include "rocketnet.h"
-#include "../test/suite_runner.h"
+#include "../tests/shared/suite_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -217,7 +217,7 @@ the design these points:
   - `rocketnet_message_print_connection_sizing` logs the same lines at info
     level.
 - **The gate:** `test_channels_allocator_no_live_allocation`, in
-  `test_channels.cpp`, run by `./bin/test`.
+  `tests/test_channels.cpp`, run by `./bin/test`.
   - **What it traps.** It fails at the first call, while armed, to any of the
     rocketnet allocator hooks, the global operator new or delete, or, on glibc
     without a sanitizer, `malloc`, `free`, `calloc`, `realloc` or the aligned
@@ -291,7 +291,7 @@ input must hit exactly one violation counter and never read past `L-1`.
 writer that builds a RECORDS payload in place in a frame, the SINGLE finish,
 and a reader that runs checks 1 to 9 of 13.3 over the whole payload before it
 hands out any record, plus the CONFIG body codec (check 12). The layer holds no
-state, so no TLA+ module covers it. Its tests are `test_channels.cpp` in
+state, so no TLA+ module covers it. Its tests are `tests/test_channels.cpp` in
 `./bin/test`: the 13.6 vectors both ways, one input per violation, SINGLE in
 place at a 16-aligned payload root, and a pack/parse property test over every
 prefix and one-byte mutation of 4,000 generated payloads
@@ -332,7 +332,7 @@ unreliable records is never entered in the sent-packet map (5, 6.1, 6.4). A
 finish_packet failure drops and counts the packet's unreliable records
 (6.4, Failed send; `MESSAGE_UNRELIABLE_SEND_FAILED`). Two counters were
 appended: `MESSAGE_UNRELIABLE_DELIVERY_FULL` and
-`MESSAGE_UNRELIABLE_SEND_FAILED`. Its tests are in `test_channels.cpp` in
+`MESSAGE_UNRELIABLE_SEND_FAILED`. Its tests are in `tests/test_channels.cpp` in
 `./bin/test`:
 `ChannelsUnreliableSmallMessagesShareOneFrame`,
 `ChannelsUnreliableRecordNeverSplitAcrossPackets`,

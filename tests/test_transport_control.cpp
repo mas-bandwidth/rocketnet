@@ -1,7 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Compile the actual transport here to seed protocol state and substitute a
 // deterministic driver. No test hook or additional export enters the SDK.
-#include "sdk/rocketnet_server_protocol.h"
+#include "../sdk/rocketnet_server_protocol.h"
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
@@ -9,7 +9,7 @@ static int arena_pattern;
 static int controlled_seal(rocketnet_server_protocol_t * server, int client_index, uint64_t sequence,
     uint64_t packet_id, uint8_t * wire, int bytes, double time);
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
-#include "sdk/rocketnet_server_transport.cpp"
+#include "../sdk/rocketnet_server_transport.cpp"
 #undef rocketnet_server_protocol_seal_payload_frame
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
