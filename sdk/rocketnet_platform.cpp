@@ -973,6 +973,11 @@ bool rocketnet_platform_read_route_table(
                 }
             }
         }
+        else
+        {
+            // len is 0 or -1: no data read; the dump cannot be completed.
+            return false;
+        }
     }
     // the loop exited on NLMSG_DONE: the route table was read in full.
     return true;
