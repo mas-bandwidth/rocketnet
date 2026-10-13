@@ -8,6 +8,8 @@
 
 #include "rocketnet_platform.h"
 
+#include <limits.h>
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <netinet/in.h>
 #endif
@@ -5500,6 +5502,22 @@ void rocketnet_test_network_simulator()
     rocketnet_network_simulator_destroy( simulator );
 }
 
+void rocketnet_test_network_simulator_refuses_overflowing_capacity()
+{
+    // The shard count rounds up to a power of two held in an int. A capacity
+    // whose rounded count would not fit an int must be refused before any
+    // allocation: rounding it in an int overflows the doubling, corrupting the
+    // mask and hanging create in an unbounded loop. These two are the first
+    // capacities past the bound; the third is still held.
+
+    rocketnet_check( rocketnet_network_simulator_create( NULL, INT_MAX, 12345 ) == NULL );
+    rocketnet_check( rocketnet_network_simulator_create( NULL, ( 1 << 30 ) + 1, 12345 ) == NULL );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, 12345 );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_destroy( simulator );
+}
+
 void rocketnet_test_client_server_harsh_wire()
 {
     // the harsh version, bounded and seeded: heavy loss, latency, jitter and
@@ -10865,6 +10883,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_cookie_injection", rocketnet_test_client_cookie_injection },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
+    { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
     { "test_client_server_harsh_wire", rocketnet_test_client_server_harsh_wire },
     { "test_client_server_lossy_wire", rocketnet_test_client_server_lossy_wire },
     { "test_swarm", rocketnet_test_swarm },
