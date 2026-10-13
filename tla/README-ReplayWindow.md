@@ -80,7 +80,7 @@ is no liveness property here; the connection models above it carry those.
 | `ReceivedIsRefused` | STANDARD.md _Replay Protection_: "within the window accept a sequence only once" | everything that opened is refused thereafter |
 | `BelowFloorIsRefused` | STANDARD.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
 | `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp:94` | the high-water mark is itself marked |
-| `NoAdvanceBeforeConnect` | OV-34 as the card states it | the session window of a mapping without a slot never moves |
+| `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
 | `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
 
 `GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
@@ -193,7 +193,7 @@ written in terms of `ROCKETNET_REPLAY_WINDOW_BITS` that reaches past word 3.
 Fix: `memset( replay->window, 0, sizeof( replay->window ) )` in the long-skip branch,
 which is `ClearedWords = Words` in the model. The committed run is that rule and passes.
 
-### 2. OV-34: the server advances the session window before the slot check (real as the card reads it; the order is STANDARD's)
+### 2. OV-34: the server advances the session window before the slot check (real, `sdk/rocketnet_server_protocol.cpp:962` before `:967`)
 
 `w-gate`, `GateBeforeAdvance = FALSE`. TLC's trace is two states: from `Init`
 (`connected = FALSE`), `Receive(1)` advances the window to `highest = 1`,
@@ -206,18 +206,21 @@ empty), opens at `:914` (it carries the session keys), reaches
 `highest_opened` to 1, and only then hits `if ( mapping->client_index == -1 )` at `:967`
 and is ignored. The window moved before connect, exactly as the card says.
 
-What the model does not decide: whether this order is a defect. The code's comment at
-`:957-960` says it follows the reading order, and STANDARD.md agrees with the code:
-_Reading packets_ marks every opened session packet in the window ("no malformed or
-mis-sized packet has any effect beyond its replay-window mark"), and _Processing session
-packets at the server_ then says "if the packet's mapping has no assigned slot, ignore
-it". The card's rule, `NoAdvanceBeforeConnect`, is therefore a change to STANDARD before
-it is a change to the code (as the sprint pre-read noted when it held the
-card back). The consequence the rule guards against, in this model's terms, is visible
-in the trace: a sequence marked on a pending mapping is reported by the next ack block as
-received although it was never processed. With `GateBeforeAdvance = TRUE` the committed
-run passes; with the current order every other invariant still holds (the window stays
-truthful about what opened), so the question is only which the standard wants.
+Why the order matters, in this model's terms: a sequence marked on a pending mapping is
+reported by this end's next ack block as received although the packet was never
+processed. With the current order every other invariant still holds (the window stays
+truthful about what opened), so the defect is not in the window but in what the window
+is then made to say.
+
+The rule is the standard's. The code's comment at `:957-960` follows the reading order
+STANDARD.md gave before this model: _Reading packets_ marked every opened session packet
+and _Processing session packets at the server_ then ignored the slotless one. The owner
+ruled that the standard changes first when correctness requires it, and it does here:
+STANDARD.md _Reading packets_ now ignores a session packet whose mapping has no slot
+after the open and before the replay-window mark, citing `NoAdvanceBeforeConnect`, and
+_Processing session packets at the server_ agrees (the STANDARD.md change is PR #207;
+the code fix is the card `rnfix-replay-advanced-after-connect-check-r2`, which needs that
+PR merged first). `GateBeforeAdvance = TRUE`, the committed run, is that rule.
 
 ## RUNS.tsv
 
