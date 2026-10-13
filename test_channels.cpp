@@ -2697,6 +2697,9 @@ static void test_channels_unreliable_over_the_lossy_simulator( float loss_percen
     wire.wire = rocketnet_network_simulator_create( NULL, 8192, 0xC0FFEE + (uint64_t)( loss_percent * 10.0f ) );
     check( wire.wire );
     wire.time = 0.0;
+    // a real address: an unset (NONE) address never equals another, itself
+    // included (rocketnet_address_equal), so the simulator would match nothing
+    check( rocketnet_address_parse( &wire.address, "127.0.0.1:40000" ) );
     rocketnet_network_simulator_config( wire.wire, 0.02, 0.02, loss_percent, 0.0f );
 
     rn_trap_armed = 1;

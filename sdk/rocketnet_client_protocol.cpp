@@ -467,7 +467,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
     uint8_t nonce_out[ROCKETNET_SESSION_NONCE_BYTES];
-    int opened_bytes = rocketnet_open_sealed_packet( server_ephemeral_public_key, nonce_out,
+    int opened_bytes = rocketnet_open_sealed_packet( server_ephemeral_public_key, nonce_out, ROCKETNET_KEY_BYTES,
                                                      packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_CHALLENGE_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
@@ -580,7 +580,8 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
 
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
-        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, packet_data, packet_bytes,
+        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
+                                                     packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
                                                      NULL, client->keys.handshake_server_to_client );
@@ -594,7 +595,8 @@ static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t *
                                          client->token.client_to_server_key,
                                          client->token.server_to_client_key,
                                          client->connection_salt, carried_nonce );
-        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, packet_data, packet_bytes,
+        opened_bytes = rocketnet_open_sealed_packet( opened, nonce_out, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
+                                                     packet_data, packet_bytes,
                                                      ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
                                                      client->signed_fields.protocol_id, client->connection_salt,
                                                      NULL, temporary_keys.handshake_server_to_client );
@@ -691,7 +693,7 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
         return -1;
     }
 
-    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_data, packet_bytes, packet_type,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet_bytes, packet_data, packet_bytes, packet_type,
                                                      sequence, client->signed_fields.protocol_id,
                                                      client->connection_salt, NULL,
                                                      client->keys.session_server_to_client );
@@ -793,6 +795,13 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
     const uint8_t * p = opened + type_data_offset;
     int client_index = (int) rocketnet_read_uint32( &p );
     int max_clients = (int) rocketnet_read_uint32( &p );
+
+    if ( client_index < 0 || client_index >= max_clients || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_spam( "client rejected keep-alive. invalid index" );
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE]++;
+        return 0;
+    }
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED]++;
     rocketnet_spam( "client received keep alive" );
@@ -1333,5 +1342,6 @@ void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * 
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
 
     sodium_memzero( &client->keys, sizeof(client->keys) );
+    sodium_memzero( &client->token, sizeof(client->token) );
     sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
 }

@@ -556,6 +556,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
+    // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+    if ( config->protocol_id == 0 )
+    {
+        rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        return NULL;
+    }
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
@@ -806,8 +813,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     protocol->cookie_lifetime_seconds = 3;
+    protocol->max_token_lifetime_seconds = 0;
     protocol->handshake_deadline_seconds = 5.0;
-    protocol->max_timeout_seconds = 0;
+    protocol->max_timeout_seconds = config->max_timeout_seconds;
     protocol->allow_negative_timeout = 0;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * 2 );
