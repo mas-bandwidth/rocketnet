@@ -90,6 +90,16 @@ void rocketnet_log_level( int level )
     log_level = level;
 }
 
+// the ROCKETNET_LOG_LEVEL override's parse-and-apply step, factored out of
+// rocketnet_init so the suite can drive it with a string directly. it is
+// internal to the sdk, not part of the exported C surface.
+
+void rocketnet_log_level_override_apply( const char * value )
+{
+    log_level = atoi( value );
+    rocketnet_info( "log level overridden to %d", log_level );
+}
+
 int rocketnet_get_log_level( void )
 {
     return log_level;
@@ -476,10 +486,7 @@ bool rocketnet_init( void * context )
 
     const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
     if ( log_level_override )
-    {
-        log_level = atoi( log_level_override );
-        rocketnet_info( "log level overridden to %d", log_level );
-    }
+        rocketnet_log_level_override_apply( log_level_override );
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         rocketnet_initialized = true;

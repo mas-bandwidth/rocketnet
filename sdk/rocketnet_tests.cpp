@@ -10045,6 +10045,70 @@ void rocketnet_test_config_override_logging()
     rocketnet_test_env_restore( &secret_guard );
 }
 
+// the ROCKETNET_LOG_LEVEL override's parse-and-apply step, defined in
+// rocketnet.cpp and called by rocketnet_init. internal to the sdk, so it has
+// no public header declaration; the suite drives the same function rather
+// than a copy of its logic.
+
+void rocketnet_log_level_override_apply( const char * value );
+
+void rocketnet_test_log_level_refuses_out_of_range()
+{
+    // the level this test found, restored at the end: moving the level must
+    // not leak into the next test
+
+    const int saved_level = rocketnet_get_log_level();
+
+    // the setter takes only a defined level, NONE (0) through SPAM (5). a
+    // value outside that range leaves the level in force rather than
+    // storing it, so a caller cannot silence the library by accident
+
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( -1 );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level( 6 );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+
+    // every defined level round-trips
+
+    for ( int level = ROCKETNET_LOG_LEVEL_NONE; level <= ROCKETNET_LOG_LEVEL_SPAM; level++ )
+    {
+        rocketnet_log_level( level );
+        rocketnet_check( rocketnet_get_log_level() == level );
+    }
+
+    // the override path parses strictly and applies only an in-range value:
+    // a word, an out-of-range number, a negative and the empty string are
+    // all refused, and the level stays where it was
+
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+    rocketnet_log_level_override_apply( "abc" );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level_override_apply( "9" );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level_override_apply( "-1" );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_level_override_apply( "" );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_INFO );
+
+    // a valid override behaves exactly as before
+
+    rocketnet_log_level_override_apply( "4" );
+    rocketnet_check( rocketnet_get_log_level() == ROCKETNET_LOG_LEVEL_DEBUG );
+
+    // a refused value is named in the warning, so a mistyped environment
+    // variable tells the operator instead of silencing the library
+
+    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level_override_apply( "abc" );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "abc" ) != NULL );
+
+    rocketnet_log_level( saved_level );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 // Verify XDP umem config frame_size matches the expected constant
 void rocketnet_test_umem_config_frame_size_explicit()
@@ -10835,6 +10899,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_log_level_refuses_out_of_range", rocketnet_test_log_level_refuses_out_of_range },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
 #endif
