@@ -7227,9 +7227,9 @@ void rocketnet_test_ack_apply_skips_acked_range()
 
 void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
 {
-    // Security audit finding: a run whose named records are all already acked
-    // and which hides a hole was returned from before the walk, so the hole
-    // was never counted on the unknown_sequence side counter.
+    // A run whose named records are all already acked and which hides a hole
+    // is walked to its end, and the hole is counted on the unknown_sequence
+    // side counter.
 
     struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
         rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
