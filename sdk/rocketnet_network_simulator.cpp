@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <float.h>
+#include <limits.h>
 
 /*
     THE SELECTION RULE, WHICH IS THE WIRE'S BEHAVIOUR AND DOES NOT CHANGE
@@ -206,6 +207,24 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     if ( capacity <= 0 )
         return NULL;
 
+    // one shard per slot, rounded up to a power of two and floored at 64:
+    // occupancy can never exceed capacity, so the lists stay short, and the
+    // whole shard table is a few tens of kilobytes at soak_sim's 4096.
+    //
+    // The rounding runs in 64 bits and the result must fit the int the fields
+    // hold: a capacity above 2^30 rounds to a shard count past INT_MAX and is
+    // refused here before any allocation. Rounding in an int would overflow
+    // the doubling into a corrupt mask or an unbounded loop.
+
+    uint64_t shard_count_rounded = 64;
+    while ( shard_count_rounded < (uint64_t) capacity )
+        shard_count_rounded *= 2;
+
+    if ( shard_count_rounded > (uint64_t) INT_MAX )
+        return NULL;
+
+    const int shard_count = (int) shard_count_rounded;
+
     struct rocketnet_network_simulator_t * simulator = (struct rocketnet_network_simulator_t*) rocketnet_malloc( context, sizeof(struct rocketnet_network_simulator_t) );
     if ( !simulator )
         return NULL;
@@ -215,14 +234,6 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     simulator->capacity = capacity;
     simulator->rng_state = seed ? seed : 1;
     simulator->free_hint = 0;
-
-    // one shard per slot, rounded up to a power of two and floored at 64:
-    // occupancy can never exceed capacity, so the lists stay short, and the
-    // whole shard table is a few tens of kilobytes at soak_sim's 4096.
-
-    int shard_count = 64;
-    while ( shard_count < capacity )
-        shard_count *= 2;
     simulator->shard_count = shard_count;
     simulator->shard_mask = shard_count - 1;
 
