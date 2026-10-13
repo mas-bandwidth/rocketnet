@@ -10066,6 +10066,100 @@ void rocketnet_test_config_env_round_trip()
     rocketnet_check( server_has_driver );
 }
 
+// ruling 11: each config field has ONE env name per endpoint. the server
+// table reads ROCKETNET_SERVER_<FIELD>, the client table reads
+// ROCKETNET_CLIENT_<FIELD>, and an old process-wide ROCKETNET_<FIELD> that
+// is set is refused aloud -- naming its per-endpoint replacement -- and no
+// longer applied, so a server and a client in one process never share a
+// variable. apply_env runs on structs; no socket is opened.
+
+void rocketnet_test_config_env_names_are_per_endpoint()
+{
+    struct rocketnet_test_env_guard_t legacy_guard;
+    rocketnet_test_env_save( &legacy_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
+
+    struct rocketnet_test_env_guard_t server_guard;
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+
+    struct rocketnet_test_env_guard_t client_guard;
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+
+    unsetenv( "ROCKETNET_MAX_PAYLOAD_BYTES" );
+    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+
+    int num_server_fields = 0;
+    const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
+    int num_client_fields = 0;
+    const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
+
+    struct rocketnet_server_transport_config_t server_config;
+    struct rocketnet_client_transport_config_t client_config;
+
+    // the server name moves only the server config
+
+    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_client_transport_default_config( &client_config );
+    setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "19000", 1 );
+    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+    rocketnet_check( server_config.max_payload_bytes == 19000 );
+    rocketnet_check( client_config.max_payload_bytes == 0 );
+    unsetenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
+
+    // the client name moves only the client config
+
+    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_client_transport_default_config( &client_config );
+    setenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES", "17000", 1 );
+    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+    rocketnet_check( client_config.max_payload_bytes == 17000 );
+    rocketnet_check( server_config.max_payload_bytes == 0 );
+    unsetenv( "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" );
+
+    // the old process-wide name moves neither, and says so aloud, naming
+    // the per-endpoint replacement a caller must use instead
+
+    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_client_transport_default_config( &client_config );
+    setenv( "ROCKETNET_MAX_PAYLOAD_BYTES", "15000", 1 );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_fields, num_server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_fields, num_client_fields ) );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    rocketnet_check( server_config.max_payload_bytes == 0 );
+    rocketnet_check( client_config.max_payload_bytes == 0 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_MAX_PAYLOAD_BYTES" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES" ) != NULL );
+
+    // a hand-built config gets no state-change callback it did not set: the
+    // default-config function zeroes the struct and the table carries no
+    // callback field, so the callback is NULL unless the caller set it
+
+    struct rocketnet_client_transport_config_t hand_built;
+    memset( &hand_built, 0, sizeof(hand_built) );
+    rocketnet_check( hand_built.state_change_callback == NULL );
+
+    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_check( client_config.state_change_callback == NULL );
+
+    unsetenv( "ROCKETNET_MAX_PAYLOAD_BYTES" );
+
+    rocketnet_test_env_restore( &legacy_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &client_guard );
+}
+
 void rocketnet_test_config_validation()
 {
     int num_fields = 0;
@@ -11331,6 +11425,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_send_arena", rocketnet_test_send_arena },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
+    { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
