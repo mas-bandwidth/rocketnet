@@ -7177,9 +7177,9 @@ void rocketnet_test_ack_block_build()
 
 void rocketnet_test_ack_apply_skips_acked_range()
 {
-    // Test for security audit finding: applying the same full-window ack block
-    // twice should visit 0 records on the second apply when all are already acked.
-    // Without the fix, all records are visited even if already acked.
+    // Re-applying a full-window ack block whose records are all already acked
+    // is idempotent: nothing is newly acked, no packet id is appended, no
+    // unknown sequence is counted, and every record in range is visited once.
 
     struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
         rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
@@ -7212,14 +7212,84 @@ void rocketnet_test_ack_apply_skips_acked_range()
     unknown = 0;
     batch_full = 0;
 
-    // Second apply: should visit 0 records since all are already acked
-    // BUG: without fix, this visits all 11 records again
+    // Second apply: every record in range is already acked, so nothing is
+    // newly acked, no packet id is appended, no unknown sequence is counted,
+    // and the walk still visits each record in the range once
     g_ack_visit_count = 0;
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
     rocketnet_check( acked_count == 0 );
-    // After fix: g_ack_visit_count should be 0 here (no records visited)
-    // Without fix: g_ack_visit_count will be 11 (all records visited)
-    rocketnet_check( g_ack_visit_count == 0 );
+    rocketnet_check( unknown == 0 );
+    rocketnet_check( batch_full == 0 );
+    rocketnet_check( g_ack_visit_count == 11 );
+
+    rocketnet_free( NULL, endpoint );
+}
+
+void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
+{
+    // Security audit finding: a run whose named records are all already acked
+    // and which hides a hole was returned from before the walk, so the hole
+    // was never counted on the unknown_sequence side counter.
+
+    struct rocketnet_ack_endpoint_t * endpoint = (struct rocketnet_ack_endpoint_t*)
+        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    rocketnet_check( endpoint );
+    rocketnet_ack_endpoint_reset( endpoint );
+
+    uint64_t acked[64];
+    int acked_count = 0;
+    uint64_t unknown = 0;
+    uint64_t batch_full = 0;
+
+    // sequences 100 and 102 sent, 101 named by a later block but never recorded
+    rocketnet_ack_endpoint_record_sent( endpoint, 100, 100, 199, 1, 0, 10.0 );
+    rocketnet_ack_endpoint_record_sent( endpoint, 102, 100, 201, 1, 0, 12.0 );
+
+    // a block naming 100 and 102 -- not 101 -- acks both recorded packets
+    struct rocketnet_ack_block_t sparse;
+    memset( &sparse, 0, sizeof(sparse) );
+    sparse.largest = 102;
+    sparse.first_range_length = 1;              // 102
+    sparse.num_ranges = 1;
+    sparse.range_gap[0] = 1;                    // skip 101
+    sparse.range_length[0] = 1;                 // 100
+
+    acked_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &sparse, 30.0, acked, 64, &acked_count, &unknown, &batch_full ) == 2 );
+    rocketnet_check( acked_count == 2 );
+    rocketnet_check( unknown == 0 );
+
+    // a single run naming 100 through 102 visits the hole at 101 exactly once:
+    // nothing new is acked, no packet id is appended, the return is 0, and the
+    // unknown counter rises by one
+    struct rocketnet_ack_block_t full;
+    memset( &full, 0, sizeof(full) );
+    full.largest = 102;
+    full.first_range_length = 3;                // 100, 101, 102
+    full.num_ranges = 0;
+
+    uint64_t unknown_before = unknown;
+    acked_count = 0;
+    batch_full = 0;
+    g_ack_visit_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &full, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
+    rocketnet_check( acked_count == 0 );
+    rocketnet_check( unknown == unknown_before + 1 );
+    rocketnet_check( batch_full == 0 );
+    rocketnet_check( g_ack_visit_count == 3 );
+
+    // a run naming only the already-acked 100 does not move the counter
+    struct rocketnet_ack_block_t one;
+    memset( &one, 0, sizeof(one) );
+    one.largest = 100;
+    one.first_range_length = 1;
+    one.num_ranges = 0;
+
+    unknown_before = unknown;
+    acked_count = 0;
+    rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &one, 32.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
+    rocketnet_check( acked_count == 0 );
+    rocketnet_check( unknown == unknown_before );
 
     rocketnet_free( NULL, endpoint );
 }
@@ -10904,6 +10974,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_block_build", rocketnet_test_ack_block_build },
     { "test_ack_endpoint_processing", rocketnet_test_ack_endpoint_processing },
     { "test_ack_apply_skips_acked_range", rocketnet_test_ack_apply_skips_acked_range },
+    { "test_ack_apply_counts_unknown_in_acked_run", rocketnet_test_ack_apply_counts_unknown_in_acked_run },
     { "test_ack_debt", rocketnet_test_ack_debt },
     { "test_ack_non_elicitation", rocketnet_test_ack_non_elicitation },
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
