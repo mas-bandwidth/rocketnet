@@ -3733,6 +3733,60 @@ void rocketnet_test_client_slots()
     rocketnet_client_slots_destroy( slots );
 }
 
+void rocketnet_test_client_slots_free_list()
+{
+    // STANDARD.md's free-list rule (1598-1615): every lookup a server
+    // performs per connection is constant time in the number of client
+    // slots, and "a free slot is found from a free list, not a search --
+    // a stack of unused indices, popped on connect and pushed on
+    // disconnect." A fresh table hands its slots out in order, a release
+    // pushes, and the next assign pops the most recently released index
+    // back first -- never a scan for the lowest free slot.
+
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 8 );
+    rocketnet_check( slots );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xCD, sizeof(user_data) );
+
+    // a fresh table pops 0, 1, 2 and so on in order
+    for ( int i = 0; i < 8; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( slots, 0x9000000000000000ULL + (uint64_t) i, i, user_data ) == i );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
+
+    // a full table pops nothing and returns -1
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x9000000000000008ULL, 8, user_data ) == -1 );
+
+    // release 2, then 5: the next assign pops 5 (the most recently
+    // released) and the one after pops 2 -- a stack, not the lowest free
+    rocketnet_client_slots_release( slots, 2 );
+    rocketnet_client_slots_release( slots, 5 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 2 );
+    rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000002ULL ) == -1 );
+    rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000005ULL ) == -1 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000AULL, 10, user_data ) == 5 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000BULL, 11, user_data ) == 2 );
+
+    // no index is handed out twice while held: 2 and 5 are held again,
+    // every index is connected exactly once, and the refilled table is
+    // full for the next arrival
+    rocketnet_check( rocketnet_client_slots_num_connected( slots ) == 8 );
+    rocketnet_check( rocketnet_client_slots_num_free( slots ) == 0 );
+    rocketnet_check( rocketnet_client_slots_assign( slots, 0x900000000000000CULL, 12, user_data ) == -1 );
+    for ( int i = 0; i < 8; i++ )
+    {
+        rocketnet_check( rocketnet_client_slots_connected( slots, i ) );
+        if ( i == 2 )
+            rocketnet_check( rocketnet_client_slots_find( slots, 0x900000000000000BULL ) == 2 );
+        else if ( i == 5 )
+            rocketnet_check( rocketnet_client_slots_find( slots, 0x900000000000000AULL ) == 5 );
+        else
+            rocketnet_check( rocketnet_client_slots_find( slots, 0x9000000000000000ULL + (uint64_t) i ) == i );
+    }
+
+    rocketnet_client_slots_destroy( slots );
+}
+
 void rocketnet_test_table_creates_refuse_overflowing_capacity()
 {
     // each create sizes a bucket array at twice its capacity in a signed int.
@@ -11277,6 +11331,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },
+    { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
