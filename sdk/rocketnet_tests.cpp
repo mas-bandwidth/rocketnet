@@ -64,6 +64,7 @@ extern bool rocketnet_test_private_block_copied;
 #include <string.h>
 #include <time.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 // the request path's cookie mac generations, on this thread since it
@@ -1380,6 +1381,92 @@ void rocketnet_test_connect_token_mint()
     rocketnet_connect_token_identifier( id_1, token_data );
     rocketnet_connect_token_identifier( id_2, token_data_2 );
     rocketnet_check( memcmp( id_1, id_2, 16 ) != 0 );
+}
+
+struct rocketnet_mint_thread_result_t
+{
+    bool ok;
+    int mints;
+};
+
+// one thread's independent run: mint into its own buffer, then verify and open
+// every token against the test keys and its own private fields
+static void rocketnet_test_connect_token_mint_thread( struct rocketnet_signed_connect_data_t signed_fields,
+                                                      struct rocketnet_connect_token_private_t private_fields,
+                                                      uint64_t base_client_id,
+                                                      int iterations,
+                                                      struct rocketnet_mint_thread_result_t * result )
+{
+    result->ok = true;
+    result->mints = 0;
+
+    for ( int i = 0; i < iterations; i++ )
+    {
+        struct rocketnet_connect_token_private_t fields = private_fields;
+        fields.client_id = base_client_id + (uint64_t) i;
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        if ( !rocketnet_write_connect_token( &signed_fields, &fields, rocketnet_test_backend_secret_key, token_data ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        struct rocketnet_connect_token_t token;
+        rocketnet_read_connect_token( &token, token_data );
+        if ( !rocketnet_verify_signed_connect_data( token.signed_connect_data, token.signature, rocketnet_test_backend_public_key ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        struct rocketnet_connect_token_private_t opened;
+        if ( !rocketnet_open_connect_token_private( &opened, token.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) )
+        {
+            result->ok = false;
+            return;
+        }
+
+        if ( opened.client_id != fields.client_id )
+        {
+            result->ok = false;
+            return;
+        }
+
+        if ( memcmp( opened.client_to_server_key, fields.client_to_server_key, ROCKETNET_KEY_BYTES ) != 0 ||
+             memcmp( opened.server_to_client_key, fields.server_to_client_key, ROCKETNET_KEY_BYTES ) != 0 )
+        {
+            result->ok = false;
+            return;
+        }
+
+        result->mints++;
+    }
+}
+
+void rocketnet_test_connect_token_mint_concurrent()
+{
+    // two threads mint independent tokens at once, each with its own client
+    // ids and output buffer, and each opens only its own tokens: minting must
+    // touch no state outside its own call
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+
+    const int iterations = 300;
+    struct rocketnet_mint_thread_result_t results[2];
+
+    std::thread thread_a( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
+                          ROCKETNET_TEST_CLIENT_ID + 1, iterations, &results[0] );
+    std::thread thread_b( rocketnet_test_connect_token_mint_thread, signed_fields, private_fields,
+                          ROCKETNET_TEST_CLIENT_ID + 0x100000, iterations, &results[1] );
+    thread_a.join();
+    thread_b.join();
+
+    rocketnet_check( results[0].ok );
+    rocketnet_check( results[1].ok );
+    rocketnet_check( results[0].mints == iterations );
+    rocketnet_check( results[1].mints == iterations );
 }
 
 void rocketnet_test_connect_token_refusals()
@@ -10716,6 +10803,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_signed_connect_data", rocketnet_test_signed_connect_data },
     { "test_connect_token_frozen", rocketnet_test_connect_token_frozen },
     { "test_connect_token_mint", rocketnet_test_connect_token_mint },
+    { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent },
     { "test_connect_token_refusals", rocketnet_test_connect_token_refusals },
     { "test_prefilter", rocketnet_test_prefilter },
     { "test_packet_associated_data", rocketnet_test_packet_associated_data },
