@@ -10,14 +10,17 @@ other six later changes neither the wire nor the per-channel state.
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
-and layer 2 is built (`sdk/rocketnet_message.h`, section 5); nothing above
-layer 2 is yet. `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
+is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4),
+layer 2 is built (`sdk/rocketnet_message.h`, section 5), and the receiving half
+of layer 3 is built (`sdk/rocketnet_window_receive.h`, section 6); the sender's
+half of layer 3 and nothing above it is yet. `ROCKETNET_MAX_CHANNELS` is in
+`sdk/rocketnet.h`. Names that
 are not yet in the tree (`rocketnet_server_t`, the public object surface) are
 introduced here.
 
-**Status: layers 1 and 2 are built. The layer list (section 3) is still for
-Glenn's correction before layer 3 starts.**
+**Status: layers 1 and 2, and the receive window, are built. The layer list
+(section 3) is still for Glenn's correction before the rest of layer 3
+starts.**
 
 ---
 
@@ -506,6 +509,59 @@ with δ the signed 24-bit difference. Then:
 Congestion control is not in this design (section 18.2, choice G3). The
 sender's numbering is bounded by `W` and `B`, and each update by
 `max_packets_per_update`.
+
+**As built** (`sdk/rocketnet_window_receive.h` and `.cpp`, the receiving half of
+card C3). The code taught the design these points:
+
+- **The module is one struct.** `rn_window_receive_t` is a pointer to the
+  connection's region (`received_bits`, `receive_descriptors`, `window`,
+  `counters`), plus `R` (u64) and an `error` field. `init` binds it to a
+  carved region and starts `R` at 0; it writes no bytes, because the carve has
+  already zeroed the bitset and descriptors.
+- **`apply` is one event, three answers.** `rn_window_receive_apply` takes the
+  record layer 2's reader handed out and returns `ACCEPT` (with the slot),
+  `DUPLICATE`, or `VIOLATION` (with the named violation). `release(number)`
+  clears the descriptor at `number % W` only when it is live and still names
+  `number`, exactly the "delivered and its update ended, or a hold released"
+  moment of 6.3.
+- **The slot and the bit are the same mask.** `W` is a power of two (validated
+  at create, section 14), so `n % W` is `n & (W-1)`, and the received bitset's
+  word and bit are `slot >> 6` and `slot & 63`. The advance loop is
+  `while bit at R: clear; R++`, which runs once per bit it clears and never
+  scans the window: each bit is cleared exactly once, ever (R7).
+- **The descriptor carries layer 4's fields.** On accept the module fills
+  `number`, `code`, `channel`, `ordering`, `sequencing`, `ring` and `bytes`
+  from the record and sets `live`. The block fields (`block_have`,
+  `block_count`) are left to layer 5, which owns them.
+- **A violation is not a counter here.** The two layer-3 violations extend
+  `ROCKETNET_MESSAGE_VIOLATION_*` and `rocketnet_message_violation_name` in
+  `sdk/rocketnet_message.h` (indices 11 and 12, appended; they are check 10 of
+  13.3). The module records the first violation in `error` and every later
+  `apply` returns it (R6); the endpoint maps it to its per-violation counter.
+  `MESSAGE_DUPLICATE` is the one counter the module counts itself, appended to
+  `sdk/rocketnet_counters.h` and mirrored in `csharp/RocketNet.cs`, added
+  atomically on the region's owner counters, as `rn_region_send_alloc` counts
+  its refusals.
+- **The half range is exact at these sizes.** `rn_window_receive_reconstruct`
+  reads a wire value against `R` by signed 24-bit half range (13.5,
+  `RNWindow`'s `Recon`): `n = R + d` where `d` is the signed difference of the
+  wire value from `R`'s own wire value in `-2^23 .. 2^23-1`.
+
+Its tests are in `test_channels.cpp` in `./bin/test`:
+`ChannelsWindowReceiveAcceptsInOrder`,
+`ChannelsWindowReceiveDuplicateIsCountedNotViolation`,
+`ChannelsWindowReceiveOutsideWindowIsViolation`,
+`ChannelsWindowReceiveSlotCollisionIsViolation`,
+`ChannelsWindowReceiveReconstructsAcrossThe24BitWrap` (R within W of 2^24 and
+of 3×2^24),
+`ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses`, and the lossy-wire walk
+`ChannelsWindowReceiveOverTheLossySimulator` (a scripted sender numbering
+inside R + W and never reusing a live slot writes RECORDS payloads with layer
+2's writer and sends them through `sdk/rocketnet_network_simulator.cpp` at 0,
+10 and 50 percent loss with duplication and reordering, resending what it has
+not seen accepted; every number is accepted exactly once, nothing violates,
+duplicates equal what arrived twice, and received records equal accepted plus
+duplicates — R8 — all under the no-live-allocation trap — R1).
 
 ## 7. Layer 4: channels and per-send reliability
 

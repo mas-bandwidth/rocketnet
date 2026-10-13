@@ -346,6 +346,14 @@ enum
     ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL,
     ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED,
 
+    // the receive window (docs/CHANNELS.md 6.5): a reliable record whose
+    // reconstructed number n < R, or whose received bit is already set, is a
+    // duplicate after a resend, dropped and counted -- not a violation. The
+    // two window violations (MESSAGE_NUMBER_OUTSIDE_WINDOW,
+    // MESSAGE_SLOT_COLLISION) are named in sdk/rocketnet_message.h. appended:
+    // indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_DUPLICATE,
+
     ROCKETNET_NUM_COUNTERS
 };
 

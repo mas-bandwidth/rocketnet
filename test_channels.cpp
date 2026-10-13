@@ -32,6 +32,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_unreliable.h"
+#include "rocketnet_window_receive.h"
 #include "rocketnet_network_simulator.h"
 
 #include <stdarg.h>
@@ -2901,6 +2902,411 @@ static void test_channels_unreliable_over_the_lossy_simulator_entry()
     test_channels_unreliable_over_the_lossy_simulator( 50.0f );
 }
 
+// ----------------------------------------------------------------
+//            the receive window (docs/CHANNELS.md 6.1, 6.3, 6.5,
+//           13.5; tla/RNWindow.tla, case MCRNWindow.cfg): the
+//          receiving half of layer 3, a pure module over layer 1's
+//                                region
+// ----------------------------------------------------------------
+
+struct channels_window_rig_t
+{
+    rocketnet_message_config_t config;
+    rocketnet_counters_t counters;
+    rn_arena_t * arena;
+    rn_region_t * region;
+    rn_window_receive_t window;
+};
+
+static void channels_window_setup( channels_window_rig_t * rig )
+{
+    memset( &rig->counters, 0, sizeof(rig->counters) );
+    rocketnet_message_default_config( &rig->config );
+    rig->arena = rn_arena_create( NULL, &rig->config, 1, &rig->counters );
+    check( rig->arena );
+    rig->region = rn_arena_region( rig->arena, 0 );
+    rn_region_carve( rig->region );
+    rn_window_receive_init( &rig->window, rig->region );
+}
+
+static void channels_window_teardown( channels_window_rig_t * rig )
+{
+    rn_arena_destroy( rig->arena );
+}
+
+static struct rocketnet_message_record_t channels_window_record( uint32_t wire_number, const uint8_t * data, int bytes )
+{
+    struct rocketnet_message_record_t record;
+    memset( &record, 0, sizeof(record) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.number = wire_number;
+    record.data = data;
+    record.bytes = bytes;
+    return record;
+}
+
+// 13.5, RNWindow Recon: the signed 24-bit half range, exactly as the module reads it
+static uint64_t channels_window_reconstruct( uint64_t R, uint32_t wire )
+{
+    const uint64_t mod  = (uint64_t) ROCKETNET_MESSAGE_U24_MASK + 1u;
+    const uint64_t half = mod / 2;
+    const uint64_t r    = R & ROCKETNET_MESSAGE_U24_MASK;
+    const uint64_t d    = ( (uint64_t) wire + mod - r ) % mod;
+    return d >= half ? R + d - mod : R + d;
+}
+
+static int channels_window_bit_get( const rn_window_receive_t * w, uint64_t n )
+{
+    const uint32_t s = (uint32_t) ( n & ( w->region->window - 1 ) );
+    return (int) ( ( w->region->received_bits[s >> 6] >> ( s & 63 ) ) & 1 );
+}
+
+static void test_channels_window_receive_accepts_in_order()
+{
+    // numbers arrive in order; each is accepted once, into its slot n % W, and
+    // R advances one per number (6.5, RNWindow Accept)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    uint8_t data[8];
+    for ( uint32_t i = 0; i < 16; i++ )
+    {
+        struct rocketnet_message_record_t record = channels_window_record( i, data, (int) sizeof(data) );
+        int violation;
+        uint32_t slot;
+        check( rn_window_receive_apply( &rig.window, &record, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+        check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        check( slot == i % rig.region->window );
+        check( rig.region->receive_descriptors[slot].number == (uint64_t) i );
+        check( rig.region->receive_descriptors[slot].live == 1 );
+        check( rig.window.R == (uint64_t) ( i + 1 ) );
+    }
+    check( rig.window.error == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == 0 );
+    channels_window_teardown( &rig );
+}
+
+static void test_channels_window_receive_duplicate_is_counted_not_violation()
+{
+    // a resend of a number below R, and of a number whose bit is still set, is
+    // a duplicate: dropped and counted MESSAGE_DUPLICATE, never a violation
+    // (6.5, RNWindow Accept under DropDuplicates)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    uint8_t data[4];
+
+    struct rocketnet_message_record_t r0 = channels_window_record( 0, data, (int) sizeof(data) );
+    struct rocketnet_message_record_t r2 = channels_window_record( 2, data, (int) sizeof(data) );
+    int violation;
+    uint32_t slot;
+
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.window.R == 1 );
+
+    // n = 0 is below R now: a duplicate after the resend
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_DUPLICATE );
+
+    // 2 arrives with a gap at 1, so R stays 1 and bit 2 stays set
+    check( rn_window_receive_apply( &rig.window, &r2, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.window.R == 1 );
+
+    // its resend reads as n = 2 again, bit already set: a duplicate
+    check( rn_window_receive_apply( &rig.window, &r2, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_DUPLICATE );
+
+    check( rig.window.error == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_counter( &rig.counters, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == 2 );
+    channels_window_teardown( &rig );
+}
+
+static void test_channels_window_receive_outside_window_is_violation()
+{
+    // n >= R + W is MESSAGE_NUMBER_OUTSIDE_WINDOW, which stops processing and
+    // leaves the module in its error state (6.5, R6)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    const uint64_t W = rig.region->window;
+    uint8_t data[4];
+
+    struct rocketnet_message_record_t rW = channels_window_record( (uint32_t) W, data, (int) sizeof(data) );
+    int violation;
+    uint32_t slot;
+    check( rn_window_receive_apply( &rig.window, &rW, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_VIOLATION );
+    check( violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
+    check( rig.window.error == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
+
+    // every later apply returns the same violation (R6)
+    struct rocketnet_message_record_t r0 = channels_window_record( 0, data, (int) sizeof(data) );
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_VIOLATION );
+    check( violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
+    channels_window_teardown( &rig );
+}
+
+static void test_channels_window_receive_slot_collision_is_violation()
+{
+    // a live descriptor at n % W naming a different number is
+    // MESSAGE_SLOT_COLLISION (6.5; RNWindow's NoSlotCollision witness 1)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    const uint64_t W = rig.region->window;
+    uint8_t data[4];
+
+    struct rocketnet_message_record_t r0 = channels_window_record( 0, data, (int) sizeof(data) );
+    int violation;
+    uint32_t slot;
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+
+    // n = W shares slot 0 with the still-live 0 (never released)
+    struct rocketnet_message_record_t rW = channels_window_record( (uint32_t) W, data, (int) sizeof(data) );
+    check( rn_window_receive_apply( &rig.window, &rW, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_VIOLATION );
+    check( violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION );
+    check( rig.window.error == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION );
+    channels_window_teardown( &rig );
+}
+
+static void test_channels_window_receive_reconstructs_across_the_24_bit_wrap()
+{
+    // the half range reads a wire value across the 24-bit wrap: with R within W
+    // of 2^24 the value 0 reads as 2^24, and with R within W of 3 * 2^24 the
+    // value 0 reads as 3 * 2^24 (13.5, RNWindow WireNumberReconstructs)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    const uint64_t mod = (uint64_t) ROCKETNET_MESSAGE_U24_MASK + 1u;
+    uint8_t data[4];
+
+    rig.window.R = mod - 16;
+    struct rocketnet_message_record_t r0 = channels_window_record( 0, data, (int) sizeof(data) );
+    int violation;
+    uint32_t slot;
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.region->receive_descriptors[slot].number == mod );
+
+    rn_region_carve( rig.region );
+    rn_window_receive_init( &rig.window, rig.region );
+    rig.window.R = 3 * mod - 16;
+    check( rn_window_receive_apply( &rig.window, &r0, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.region->receive_descriptors[slot].number == 3 * mod );
+
+    channels_window_teardown( &rig );
+}
+
+static void test_channels_window_receive_advance_clears_only_what_it_passes()
+{
+    // R advances only across the consecutive run of set bits from R, clearing
+    // exactly those bits: a gap stops it, and it is never a window scan (6.5,
+    // R7, RNWindow Advance)
+
+    channels_window_rig_t rig;
+    channels_window_setup( &rig );
+    uint8_t data[4];
+
+    for ( uint32_t n = 0; n < 3; n++ )
+    {
+        struct rocketnet_message_record_t record = channels_window_record( n, data, (int) sizeof(data) );
+        int violation;
+        uint32_t slot;
+        check( rn_window_receive_apply( &rig.window, &record, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    }
+    check( rig.window.R == 3 );
+    for ( uint64_t n = 0; n < 3; n++ )
+        check( channels_window_bit_get( &rig.window, n ) == 0 );
+
+    // 5 arrives past the gap at 3 and 4: bit 5 is set, R stays at 3
+    struct rocketnet_message_record_t r5 = channels_window_record( 5, data, (int) sizeof(data) );
+    int violation;
+    uint32_t slot;
+    check( rn_window_receive_apply( &rig.window, &r5, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.window.R == 3 );
+    check( channels_window_bit_get( &rig.window, 3 ) == 0 );
+    check( channels_window_bit_get( &rig.window, 4 ) == 0 );
+    check( channels_window_bit_get( &rig.window, 5 ) == 1 );
+
+    // 3 then 4 fill the gap: R advances 3 -> 6, clearing 3, 4 and 5
+    struct rocketnet_message_record_t r3 = channels_window_record( 3, data, (int) sizeof(data) );
+    struct rocketnet_message_record_t r4 = channels_window_record( 4, data, (int) sizeof(data) );
+    check( rn_window_receive_apply( &rig.window, &r3, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rn_window_receive_apply( &rig.window, &r4, &slot, &violation ) == ROCKETNET_WINDOW_RECEIVE_ACCEPT );
+    check( rig.window.R == 6 );
+    for ( uint64_t n = 0; n < 6; n++ )
+        check( channels_window_bit_get( &rig.window, n ) == 0 );
+
+    channels_window_teardown( &rig );
+}
+
+// The lossy-simulator walk (R1, R8): a scripted sender numbers records inside
+// R + W and never reuses a live slot (6.2), writes RECORDS payloads with layer
+// 2's writer, and sends them through the simulator at a loss with duplication
+// and reordering, resending every number it has not seen accepted. The receiver
+// parses with layer 2's reader and applies each record. Every number is
+// accepted exactly once, nothing violates, duplicates equal what arrived twice,
+// and received records equal accepted plus duplicates (R8), all under the
+// no-live-allocation trap.
+
+struct channels_window_wire_t
+{
+    rocketnet_network_simulator_t * wire;
+    rocketnet_address_t address;
+    struct rocketnet_message_limits_t limits;
+    rn_window_receive_t window;
+    uint64_t next;
+    int total;
+    int accepted;
+    int duplicates;
+    int violations;
+    int received_records;
+    uint8_t * seen;
+    uint32_t * arrivals;
+};
+
+static void channels_window_wire_step( channels_window_wire_t * w, double time )
+{
+    // number new records under the count bound (6.2: next < R + W)
+    while ( w->next < (uint64_t) w->total && w->next < w->window.R + w->window.region->window )
+        w->next++;
+
+    // resend every number not yet accepted: all of [R, next)
+    for ( uint64_t n = w->window.R; n < w->next; )
+    {
+        alignas( 16 ) static uint8_t frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+        struct rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, frame, ROCKETNET_MAX_PAYLOAD_BYTES );
+        while ( n < w->next )
+        {
+            uint8_t payload[4];
+            payload[0] = (uint8_t) ( n & 0xFF );
+            payload[1] = (uint8_t) ( ( n >> 8 ) & 0xFF );
+            payload[2] = (uint8_t) ( ( n >> 16 ) & 0xFF );
+            payload[3] = (uint8_t) ( ( n >> 24 ) & 0xFF );
+            struct rocketnet_message_record_t record = channels_window_record( (uint32_t) ( n & ROCKETNET_MESSAGE_U24_MASK ), payload, 4 );
+            if ( !rocketnet_message_writer_add( &writer, &record ) )
+                break;
+            n++;
+        }
+        const int length = rocketnet_message_writer_finish( &writer );
+        check( length > 0 );
+        rocketnet_network_simulator_send( w->wire, &w->address, &w->address, frame, length, time );
+    }
+
+    alignas( 16 ) static uint8_t rx_frame[ROCKETNET_MAX_PAYLOAD_BYTES];
+    rocketnet_address_t from;
+    int got;
+    while ( ( got = rocketnet_network_simulator_receive( w->wire, &w->address, time, &from, rx_frame ) ) > 0 )
+    {
+        struct rocketnet_message_reader_t reader;
+        check( rocketnet_message_reader_begin( &reader, rx_frame, got, &w->limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        struct rocketnet_message_record_t record;
+        while ( rocketnet_message_reader_next( &reader, &record ) )
+        {
+            w->received_records++;
+            const uint64_t n = channels_window_reconstruct( w->window.R, record.number );
+            check( n < (uint64_t) w->total );
+            w->arrivals[n]++;
+            int violation;
+            uint32_t slot;
+            const int result = rn_window_receive_apply( &w->window, &record, &slot, &violation );
+            if ( result == ROCKETNET_WINDOW_RECEIVE_ACCEPT )
+            {
+                check( w->window.region->receive_descriptors[slot].number == n );
+                check( !w->seen[n] );
+                w->seen[n] = 1;
+                w->accepted++;
+                // delivered on arrival (code 2), then its update ended (6.3)
+                rn_window_receive_release( &w->window, n );
+            }
+            else if ( result == ROCKETNET_WINDOW_RECEIVE_DUPLICATE )
+                w->duplicates++;
+            else
+            {
+                w->violations++;
+                check( violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW
+                    || violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION );
+            }
+        }
+    }
+}
+
+static void test_channels_window_receive_over_the_lossy_simulator( float loss_percent )
+{
+    const int total = 2048;
+    static uint8_t seen[2048];
+    static uint32_t arrivals[2048];
+    memset( seen, 0, sizeof(seen) );
+    memset( arrivals, 0, sizeof(arrivals) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    rocketnet_counters_t recv_counters;
+    memset( &recv_counters, 0, sizeof(recv_counters) );
+    rn_arena_t * receiver_arena = rn_arena_create( NULL, &config, 1, &recv_counters );
+    check( receiver_arena );
+    rn_region_t * receiver_region = rn_arena_region( receiver_arena, 0 );
+    rn_region_carve( receiver_region );
+
+    channels_window_wire_t w;
+    memset( &w, 0, sizeof(w) );
+    w.wire = rocketnet_network_simulator_create( NULL, 8192, 0x5EED + (uint64_t) ( loss_percent * 10.0f ) );
+    check( w.wire );
+    check( rocketnet_address_parse( &w.address, "127.0.0.1:40000" ) );
+    // latency and jitter give reordering; a nonzero duplicate percent makes the
+    // wire itself hand the receiver two copies of a packet
+    rocketnet_network_simulator_config( w.wire, 0.02, 0.02, loss_percent, 10.0f );
+    w.limits = channels_limits( 32, rocketnet_message_enabled_codes( 1 << ROCKETNET_RELIABLE ) );
+    rn_window_receive_init( &w.window, receiver_region );
+    w.total = total;
+    w.seen = seen;
+    w.arrivals = arrivals;
+
+    rn_trap_armed = 1;
+    rn_trap_phase = "window-receive-wire";
+    double time = 0.0;
+    for ( int tick = 1; tick <= 120; tick++ )
+    {
+        time += 1.0 / 60.0;
+        channels_window_wire_step( &w, time );
+    }
+    for ( int pass = 0; pass < 4000 && w.window.R < (uint64_t) total; pass++ )
+    {
+        time += 1.0 / 60.0;
+        channels_window_wire_step( &w, time );
+    }
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+
+    check( w.window.R == (uint64_t) total );
+    check( w.violations == 0 );
+    check( w.accepted == total );
+    check( w.duplicates == w.received_records - total );
+
+    // "duplicates equal what arrived twice", measured independently per number
+    uint64_t arrived_twice = 0;
+    for ( int n = 0; n < total; n++ )
+    {
+        check( arrivals[n] >= 1 );
+        arrived_twice += (uint64_t) ( arrivals[n] - 1 );
+    }
+    check( (uint64_t) w.duplicates == arrived_twice );
+
+    // R8: received records equal accepted plus duplicates
+    check( (uint64_t) w.received_records == (uint64_t) w.accepted + (uint64_t) w.duplicates );
+    check( rn_counter( &recv_counters, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) == (uint64_t) w.duplicates );
+
+    rocketnet_network_simulator_destroy( w.wire );
+    rn_arena_destroy( receiver_arena );
+}
+
+static void test_channels_window_receive_over_the_lossy_simulator_entry()
+{
+    // 0, 10 and 50 percent loss with duplication and reordering; allocation is
+    // trapped inside each leg (R1, docs/CHANNELS.md 1)
+
+    test_channels_window_receive_over_the_lossy_simulator( 0.0f );
+    test_channels_window_receive_over_the_lossy_simulator( 10.0f );
+    test_channels_window_receive_over_the_lossy_simulator( 50.0f );
+}
+
 // -----------------------------------------
 
 struct channels_test_t
@@ -2935,6 +3341,13 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_unreliable_block_not_corrupted_across_fragmented_store", "ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore", test_channels_unreliable_block_not_corrupted_across_fragmented_store },
     { "test_channels_unreliable_message_past_u16_length_refused", "ChannelsUnreliableMessagePastU16LengthRefused", test_channels_unreliable_message_past_u16_length_refused },
     { "test_channels_unreliable_over_the_lossy_simulator", "ChannelsUnreliableOverTheLossySimulator", test_channels_unreliable_over_the_lossy_simulator_entry },
+    { "test_channels_window_receive_accepts_in_order", "ChannelsWindowReceiveAcceptsInOrder", test_channels_window_receive_accepts_in_order },
+    { "test_channels_window_receive_duplicate_is_counted_not_violation", "ChannelsWindowReceiveDuplicateIsCountedNotViolation", test_channels_window_receive_duplicate_is_counted_not_violation },
+    { "test_channels_window_receive_outside_window_is_violation", "ChannelsWindowReceiveOutsideWindowIsViolation", test_channels_window_receive_outside_window_is_violation },
+    { "test_channels_window_receive_slot_collision_is_violation", "ChannelsWindowReceiveSlotCollisionIsViolation", test_channels_window_receive_slot_collision_is_violation },
+    { "test_channels_window_receive_reconstructs_across_the_24_bit_wrap", "ChannelsWindowReceiveReconstructsAcrossThe24BitWrap", test_channels_window_receive_reconstructs_across_the_24_bit_wrap },
+    { "test_channels_window_receive_advance_clears_only_what_it_passes", "ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses", test_channels_window_receive_advance_clears_only_what_it_passes },
+    { "test_channels_window_receive_over_the_lossy_simulator", "ChannelsWindowReceiveOverTheLossySimulator", test_channels_window_receive_over_the_lossy_simulator_entry },
 };
 
 int rocketnet_channels_test_count()

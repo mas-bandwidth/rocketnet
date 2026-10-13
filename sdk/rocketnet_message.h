@@ -77,10 +77,10 @@
 
 // The receiver's violations, one per check of STANDARD.md _Messages_, in the
 // standard's order. A parse names exactly one, or none. The window
-// (MESSAGE_NUMBER_OUTSIDE_WINDOW, MESSAGE_SLOT_COLLISION) and ordering
-// (MESSAGE_ORDERING_BEHIND) checks belong to layers 3 and 4, and the
-// block-descriptor agreement of check 7 to layer 5: they need state this
-// layer does not own.
+// (MESSAGE_NUMBER_OUTSIDE_WINDOW, MESSAGE_SLOT_COLLISION) checks are layer 3's
+// (sdk/rocketnet_window_receive.h), the ordering (MESSAGE_ORDERING_BEHIND)
+// check is layer 4's, and the block-descriptor agreement of check 7 is layer
+// 5's: they need state this layer does not own.
 
 #define ROCKETNET_MESSAGE_VIOLATION_NONE                    0
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_FORM                1   // check 1
@@ -93,7 +93,9 @@
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_RING                8   // check 8
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE                9   // check 9
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL             10  // check 12
-#define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    11
+#define ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW   11  // check 10, layer 3 (6.5)
+#define ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION          12  // check 10, layer 3 (6.5)
+#define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    13
 
 const char * rocketnet_message_violation_name( int violation );
 
