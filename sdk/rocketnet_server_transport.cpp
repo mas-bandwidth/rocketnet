@@ -1905,6 +1905,14 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     if ( client_index < 0 || client_index >= acks->max_clients )
         return;
 
+    // An empty slot reads as zeros, exactly as an index out of range does:
+    // a slot keeps its ack endpoint after its client leaves, so without this
+    // a departed client's numbers would outlive its slot. The endpoint is
+    // reset when a new client is assigned, and that stays as it is.
+
+    if ( !rocketnet_client_slots_connected( server_transport->protocol.client_slots, client_index ) )
+        return;
+
     const struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[client_index];
 
     stats->rtt = endpoint->rtt;
