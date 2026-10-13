@@ -166,11 +166,14 @@ SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
                             return XDP_DROP;
                         }
 
-                        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
-
                         const __u32 queue_id = ctx->rx_queue_index;
-                        bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
-                        return XDP_REDIRECT;
+                        const int ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
+                        if ( ret == 0 )
+                        {
+                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+                            return XDP_REDIRECT;
+                        }
+                        return XDP_DROP;
                     }
                 }
             }

@@ -11,6 +11,9 @@
 #include <sodium.h>
 #include <string.h>
 
+uint8_t rocketnet_test_private_block_copy[ROCKETNET_PRIVATE_BLOCK_BYTES];
+bool rocketnet_test_private_block_copied = false;
+
 void rocketnet_write_connect_token_private( const struct rocketnet_connect_token_private_t * input, uint8_t * buffer )
 {
     uint8_t * p = buffer;
@@ -70,6 +73,8 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
                                    const uint8_t * backend_secret_key,
                                    uint8_t * token )
 {
+    int result = 0;
+    uint8_t * p = NULL;
     // the inner protocol id and expire are the signed ones, by construction
     struct rocketnet_connect_token_private_t private_data = *private_fields;
     private_data.protocol_id = signed_fields->protocol_id;
@@ -80,22 +85,29 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
 
     struct rocketnet_signed_connect_data_t signed_data = *signed_fields;
     if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
-        return 0;
+        goto out;
 
-    uint8_t * p = token;
+    p = token;
     rocketnet_write_signed_connect_data( &signed_data, p );
     p += ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
 
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     if ( crypto_sign_detached( signature, NULL, token, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_secret_key ) != 0 )
-        return 0;
+        goto out;
 
     rocketnet_write_bytes( &p, signature, ROCKETNET_SIGNATURE_BYTES );
     rocketnet_write_bytes( &p, private_data.client_to_server_key, ROCKETNET_KEY_BYTES );
     rocketnet_write_bytes( &p, private_data.server_to_client_key, ROCKETNET_KEY_BYTES );
     rocketnet_write_zero_bytes( &p, ROCKETNET_CONNECT_TOKEN_BYTES - (int) ( p - token ) );
 
-    return 1;
+    result = 1;
+
+out:
+    sodium_memzero( private_block, sizeof(private_block) );
+    sodium_memzero( &private_data, sizeof(private_data) );
+    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
+    rocketnet_test_private_block_copied = true;
+    return result;
 }
 
 void rocketnet_read_connect_token( struct rocketnet_connect_token_t * output, const uint8_t * token )

@@ -42,11 +42,15 @@
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_xdp_free_list.h"
 
 #include <memory.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <atomic>
+
+// XDP umem frame size must match libxdp expectation
+static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
 
 struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
@@ -372,9 +376,12 @@ static uint64_t alloc_send_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_send_frames < ROCKETNET_XDP_NUM_FRAMES );
-    socket->send_frames[socket->num_free_send_frames] = frame;
-    socket->num_free_send_frames++;
+    const uint64_t region_begin = 0;
+    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+    if ( !rocketnet_xdp_free_list_push( socket->send_frames, &socket->num_free_send_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
+    {
+        rocketnet_error( "xdp send frame dropped: %llu", (unsigned long long)frame );
+    }
 }
 
 static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
@@ -391,9 +398,12 @@ static uint64_t alloc_receive_frame( rocketnet_server_xdp_socket_t * socket )
 
 static void free_receive_frame( rocketnet_server_xdp_socket_t * socket, uint64_t frame )
 {
-    rocketnet_assert( socket->num_free_receive_frames < ROCKETNET_XDP_NUM_FRAMES );
-    socket->receive_frames[socket->num_free_receive_frames] = frame;
-    socket->num_free_receive_frames++;
+    const uint64_t region_begin = (uint64_t)ROCKETNET_XDP_NUM_FRAMES / 2 * ROCKETNET_XDP_FRAME_SIZE;
+    const uint64_t region_end = (uint64_t)ROCKETNET_XDP_NUM_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+    if ( !rocketnet_xdp_free_list_push( socket->receive_frames, &socket->num_free_receive_frames, ROCKETNET_XDP_NUM_FRAMES / 2, frame, region_begin, region_end ) )
+    {
+        rocketnet_error( "xdp receive frame dropped: %llu", (unsigned long long)frame );
+    }
 }
 
 static void rocketnet_server_socket_xdp_thread_function( void * data );
@@ -1432,7 +1442,13 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, NULL );
+        // create umem with explicit config
+        struct xsk_umem_config umem_config;
+        memset( &umem_config, 0, sizeof(umem_config) );
+        umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
+        umem_config.frame_headroom = 0;
+
+        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
         if ( result ) 
         {
             rocketnet_error( "server could not create umem" );

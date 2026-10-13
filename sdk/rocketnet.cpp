@@ -394,9 +394,8 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
-    rocketnet_assert( dest );
-    rocketnet_assert( source );
-    rocketnet_assert( dest_size >= 1 );
+    if ( !dest || !source || dest_size == 0 )
+        return 0;
     memset( dest, 0, dest_size );
     size_t i = 0;
     for ( ; i < dest_size - 1; i++ )

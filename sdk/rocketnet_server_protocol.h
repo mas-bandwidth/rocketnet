@@ -50,6 +50,7 @@ struct rocketnet_server_protocol_t
     uint8_t previous_cookie_key[ROCKETNET_COOKIE_KEY_BYTES];
     int has_previous_cookie_key;
     int cookie_lifetime_seconds;                            // default 3
+    int max_token_lifetime_seconds;                         // 0 means no limit
 
     double handshake_deadline_seconds;                      // default 5
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
