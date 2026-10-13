@@ -5052,6 +5052,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
 
         rocketnet_check( client.state == expected_state );
         rocketnet_check( rocketnet_test_token_keys_are_zero( &client.token ) );
+        rocketnet_check( rocketnet_test_bytes_are_zero( (const uint8_t *) &client.token, sizeof(client.token) ) );
         rocketnet_check( rocketnet_test_bytes_are_zero( (const uint8_t *) &client.keys, sizeof(client.keys) ) );
         rocketnet_check( rocketnet_test_bytes_are_zero( client.client_ephemeral_secret_key, sizeof(client.client_ephemeral_secret_key) ) );
 
