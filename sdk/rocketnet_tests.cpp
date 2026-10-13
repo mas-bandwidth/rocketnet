@@ -57,6 +57,7 @@ extern bool rocketnet_test_private_block_copied;
 #include <dlfcn.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -364,6 +365,45 @@ void rocketnet_test_read_write()
     uint8_t * pp = port_bytes;
     rocketnet_write_uint16( &pp, 56789 );
     rocketnet_check( port_bytes[0] == 0xd5 && port_bytes[1] == 0xdd );
+}
+
+void rocketnet_test_read_bytes_bounded_refuses_negative()
+{
+    // a count below zero must be refused before it can move the end check
+    // backwards or reach memcpy as a huge size_t. the destination keeps its
+    // pattern and the pointer does not move.
+    uint8_t buffer[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    const uint8_t * end = buffer + sizeof(buffer);
+
+    uint8_t out[8];
+    const uint8_t * r = buffer + 4;
+    const uint8_t * before = r;
+    memset( out, 0xA5, sizeof(out) );
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, -1 ) == 0 );
+    rocketnet_check( r == before );
+    for ( size_t i = 0; i < sizeof(out); ++i )
+        rocketnet_check( out[i] == 0xA5 );
+
+    r = buffer + 4;
+    before = r;
+    memset( out, 0xA5, sizeof(out) );
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, INT_MIN ) == 0 );
+    rocketnet_check( r == before );
+    for ( size_t i = 0; i < sizeof(out); ++i )
+        rocketnet_check( out[i] == 0xA5 );
+
+    // a count of exactly the room left succeeds and advances by that count
+    r = buffer + 4;
+    memset( out, 0xA5, sizeof(out) );
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 4 ) == 1 );
+    rocketnet_check( r == buffer + 8 );
+    rocketnet_check( memcmp( out, buffer + 4, 4 ) == 0 );
+
+    // one past the room left is refused and leaves the pointer unchanged
+    r = buffer + 4;
+    before = r;
+    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 5 ) == 0 );
+    rocketnet_check( r == before );
 }
 
 void rocketnet_test_bounded_reader_refuses_past_end()
@@ -10691,6 +10731,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #endif
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
+    { "test_read_bytes_bounded_refuses_negative", rocketnet_test_read_bytes_bounded_refuses_negative },
     { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
