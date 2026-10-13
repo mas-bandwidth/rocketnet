@@ -288,11 +288,13 @@ BurnOne ==
     /\ UNCHANGED <<nextGen, sent, highestSent, aggs, numAggs, batch, outbox>>
     /\ UNCHANGED <<receiverVars, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
 
-\* A fragmented finish that fails after the block is reserved: the whole
-\* reservation withdraws, the payload id and the aggregate are consumed
-\* (both are drawn before the seal loop), nothing is sent.  Fragments sealed
-\* before the failure have records and never reach the wire, which is what
-\* the link's loss already models.
+\* A seal refusal inside the fragment loop: the whole reservation withdraws,
+\* the payload id and the aggregate are consumed (both are drawn before the
+\* seal loop), nothing is sent.  Fragments sealed before the refusal have
+\* records and never reach the wire, which is what the link's loss already
+\* models.  A full ring or a failed start_fragments returns before the draw
+\* (sdk/rocketnet_client_transport.cpp:805-826) and burns only the sequence
+\* start_packet spent: that is BurnOne.
 BurnFragmented(cnt) ==
     /\ Burns
     /\ nextSeq + cnt - 1 <= MaxSeq
@@ -566,9 +568,13 @@ Next ==
 (* often sends infinitely often (Capacity is a model-size knob, never a    *)
 (* reason a sender is shut out forever: README-Link.md).  Per link, a link *)
 (* sent on without bound delivers without bound (Link's EventualDelivery   *)
-(* folded over the link's packets).  Link!Fairness itself quantifies       *)
-(* strong fairness over every packet value, and with the ack link carrying *)
-(* SUBSET Seqs (256 values) TLC 2.19 reports every temporal property a     *)
+(* folded over the link's packets; for the ack link the copy delivered    *)
+(* must carry the block the receiver currently holds, or stale duplicates  *)
+(* of an old block satisfy it while every current block is dropped, which  *)
+(* a cold read of this model proved with TLC).  Link!Fairness itself       *)
+(* quantifies strong fairness over every packet value, and with the ack    *)
+(* link carrying SUBSET Seqs (256 values) TLC 2.19 reports every temporal  *)
+(* property a                                                              *)
 (* tautology ("satisfiability problem has 0 branches") instead of checking *)
 (* it; README-FragmentsAndAcks.md records the bisection.  The per-link     *)
 (* form is enough here because B's state is monotone: once the sender      *)
@@ -587,7 +593,7 @@ Fairness ==
     /\ SF_vars(RecvData)
     /\ WF_d2rVars(D2R!Age) /\ WF_r2dVars(R2D!Age)
     /\ ([]<> <<Flush>>_vars)   => ([]<> <<RecvData>>_vars)
-    /\ ([]<> <<SendAck>>_vars) => ([]<> <<RecvAck>>_vars)
+    /\ ([]<> <<SendAck>>_vars) => ([]<> <<RecvAck /\ Head(r2dWire).pkt = Block>>_vars)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
