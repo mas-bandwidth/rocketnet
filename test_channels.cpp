@@ -3381,7 +3381,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
     uint8_t live[B] = {};
     uint8_t reserved[B] = {};
     alignas( 16 ) uint8_t packet[ROCKETNET_MAX_PAYLOAD_BYTES];
-    alignas( 16 ) uint8_t received[ROCKETNET_RECEIVE_CEILING];
+    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
     uint64_t send_cursor = 0;
     int next_message = 0, accepted_total = 0, drained = 0;
     double now = 0.0;
