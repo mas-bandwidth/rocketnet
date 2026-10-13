@@ -111,8 +111,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 
@@ -1301,8 +1304,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 
@@ -2537,8 +2543,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 

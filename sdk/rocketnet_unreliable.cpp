@@ -24,7 +24,12 @@ static void rn_unreliable_count( rocketnet_counters_t * counters, int counter )
 
 static uint32_t rn_unreliable_chunk_bytes( const rn_send_store_t * store, uint32_t chunk )
 {
-    return store->classes[rn_send_store_chunk_class( chunk )].chunk_bytes;
+    // the same rule as rn_send_store_free_checked: no class for a handle the
+    // store did not issue, so no chunk bytes for it
+    const int c = rn_send_store_chunk_class( chunk );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return 0;
+    return store->classes[c].chunk_bytes;
 }
 
 // copies a whole chunk chain's bytes into out (at least bytes available)
@@ -34,9 +39,13 @@ static void rn_unreliable_chunk_read( const rn_send_store_t * store, uint32_t ch
     int offset = 0;
     while ( chunk != RN_CHUNK_NONE && offset < bytes )
     {
-        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < rn_unreliable_chunk_bytes( store, chunk )
-            ? (uint32_t) bytes - (uint32_t) offset : rn_unreliable_chunk_bytes( store, chunk );
-        memcpy( out + offset, rn_send_store_chunk_data( store, chunk ), take );
+        const uint8_t * data = rn_send_store_chunk_data( store, chunk );
+        if ( !data )
+            break;                              // a handle the store did not issue: stop the walk
+        const uint32_t chunk_bytes = rn_unreliable_chunk_bytes( store, chunk );
+        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < chunk_bytes
+            ? (uint32_t) bytes - (uint32_t) offset : chunk_bytes;
+        memcpy( out + offset, data, take );
         offset += (int) take;
         chunk = rn_send_store_chunk_next( store, chunk );
     }
@@ -63,9 +72,13 @@ static void rn_unreliable_chunk_write( const rn_send_store_t * store, uint32_t c
     int offset = 0;
     while ( chunk != RN_CHUNK_NONE && offset < bytes )
     {
-        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < rn_unreliable_chunk_bytes( store, chunk )
-            ? (uint32_t) bytes - (uint32_t) offset : rn_unreliable_chunk_bytes( store, chunk );
-        memcpy( rn_send_store_chunk_data( store, chunk ), src + offset, take );
+        uint8_t * data = rn_send_store_chunk_data( store, chunk );
+        if ( !data )
+            break;                              // a handle the store did not issue: stop the walk
+        const uint32_t chunk_bytes = rn_unreliable_chunk_bytes( store, chunk );
+        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < chunk_bytes
+            ? (uint32_t) bytes - (uint32_t) offset : chunk_bytes;
+        memcpy( data, src + offset, take );
         offset += (int) take;
         chunk = rn_send_store_chunk_next( store, chunk );
     }

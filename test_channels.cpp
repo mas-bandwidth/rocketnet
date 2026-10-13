@@ -1331,6 +1331,65 @@ static void test_channels_allocator_send_store()
     rocketnet_free( NULL, memory );
 }
 
+// The store's accessors answer the checked free's rule
+// (rocketnet_allocator.cpp, rn_send_store_free_checked): a handle the store did
+// not issue -- a class at or past RN_STORE_NUM_CLASSES, or an index at or past
+// the class's chunk count -- reads nothing. A handle the store did issue still
+// answers its data and its next exactly as before.
+
+static void test_channels_send_store_refuses_bad_handle()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    rn_region_layout_t layout;
+    check( rn_region_layout( &config, &layout ) );
+
+    uint8_t * memory = (uint8_t*) rocketnet_malloc( NULL, (size_t) layout.bytes[RN_PART_SEND_STORE] );
+    check( memory );
+    rn_send_store_t store;
+    rn_send_store_init( &store, memory, layout.bytes[RN_PART_SEND_STORE] );
+
+    // a valid allocated handle still returns its data and its next as before
+
+    const uint32_t valid = rn_send_store_alloc( &store, 100 );
+    check( valid != RN_CHUNK_NONE );
+    uint8_t * valid_data = rn_send_store_chunk_data( &store, valid );
+    check( valid_data != NULL );
+    check( valid_data >= memory && valid_data + 100 <= memory + layout.bytes[RN_PART_SEND_STORE] );
+    memset( valid_data, 0xA5, 100 );
+    check( valid_data[0] == 0xA5 && valid_data[99] == 0xA5 );
+    check( rn_send_store_chunk_next( &store, valid ) == RN_CHUNK_NONE );
+
+    // a real chain still walks whole
+
+    const uint32_t block = rn_send_store_alloc( &store, 32768 );
+    check( block != RN_CHUNK_NONE );
+    int links = 0;
+    for ( uint32_t chunk = block; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &store, chunk ) )
+        links++;
+    check( links == (int) rn_send_store_chunks_needed( 32768 ) );
+
+    // a valid class with an index one past its chunk count reads nothing
+
+    const uint32_t bad[] =
+    {
+        ( (uint32_t) RN_STORE_SMALL << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_SMALL ),
+        ( (uint32_t) RN_STORE_MEDIUM << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_MEDIUM ),
+        ( (uint32_t) RN_STORE_LARGE << 30 ) | rn_send_store_total_chunks( &store, RN_STORE_LARGE ),
+        RN_CHUNK_NONE,
+        0xC0000000u,
+    };
+    for ( int k = 0; k < (int) ( sizeof(bad) / sizeof(bad[0]) ); k++ )
+    {
+        check( rn_send_store_chunk_data( &store, bad[k] ) == NULL );
+        check( rn_send_store_chunk_next( &store, bad[k] ) == RN_CHUNK_NONE );
+    }
+
+    rn_send_store_free( &store, block );
+    rn_send_store_free( &store, valid );
+    rocketnet_free( NULL, memory );
+}
+
 static void test_channels_allocator_descriptor_pool()
 {
     rocketnet_message_config_t config;
@@ -2919,6 +2978,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_allocator_layout", "ChannelsAllocatorLayout", test_channels_allocator_layout },
     { "test_channels_allocator_validation", "ChannelsAllocatorValidation", test_channels_allocator_validation },
     { "test_channels_allocator_send_store", "ChannelsAllocatorSendStore", test_channels_allocator_send_store },
+    { "test_channels_send_store_refuses_bad_handle", "ChannelsSendStoreRefusesBadHandle", test_channels_send_store_refuses_bad_handle },
     { "test_channels_allocator_descriptor_pool", "ChannelsAllocatorDescriptorPool", test_channels_allocator_descriptor_pool },
     { "test_channels_allocator_arena", "ChannelsAllocatorArena", test_channels_allocator_arena },
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
