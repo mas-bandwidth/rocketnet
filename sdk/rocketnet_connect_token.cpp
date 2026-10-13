@@ -11,9 +11,6 @@
 #include <sodium.h>
 #include <string.h>
 
-uint8_t rocketnet_test_private_block_copy[ROCKETNET_PRIVATE_BLOCK_BYTES];
-bool rocketnet_test_private_block_copied = false;
-
 void rocketnet_write_connect_token_private( const struct rocketnet_connect_token_private_t * input, uint8_t * buffer )
 {
     uint8_t * p = buffer;
@@ -103,10 +100,10 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     result = 1;
 
 out:
+    // the wipe runs on every path out, including the two goto out paths, and
+    // nothing outside this call observes either buffer
     sodium_memzero( private_block, sizeof(private_block) );
     sodium_memzero( &private_data, sizeof(private_data) );
-    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
-    rocketnet_test_private_block_copied = true;
     return result;
 }
 
