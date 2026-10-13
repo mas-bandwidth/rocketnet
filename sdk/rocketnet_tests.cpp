@@ -4526,6 +4526,96 @@ void rocketnet_test_client_keep_alive_suppression()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_client_keep_alive_invalid_index_has_no_effect()
+{
+    // a keep-alive whose own type data the client refuses -- a zero slot
+    // count, or a client index equal to the count -- must change nothing but
+    // its replay-window mark, per the reading order: the index and the count
+    // are checked before the timeout refresh, the tracker feed and the ack
+    // debt. A client in sending connection response therefore still times out
+    // on its original schedule although such keep-alives keep arriving.
+
+    for ( int variant = 0; variant < 2; variant++ )
+    {
+        const int client_index = variant == 0 ? 0 : 4;
+        const int max_clients = variant == 0 ? 0 : 4;   // case 0: zero count; case 1: index at the count
+
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        struct rocketnet_counters_t client_counters;
+        memset( &client_counters, 0, sizeof(client_counters) );
+        struct rocketnet_client_protocol_t client;
+        rocketnet_client_protocol_init( &client, &client_counters );
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_test_mint_token( token_data, 0x4A9E00ULL + (uint64_t) variant,
+                                   ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+        rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+        // drive to sending connection response through a real handshake: the
+        // client holds the session keys, and the first keep-alive (the one
+        // that would carry its index) has not arrived
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes = 0;
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+
+        for ( double time = 100.0; time < 102.0 && client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE; time += 0.05 )
+        {
+            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+            if ( packet_bytes == 0 )
+                continue;
+            rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &client, response, response_bytes, time, payload, &payload_bytes );
+        }
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+        // seal a keep-alive to the client under the session server-to-client
+        // key it holds, at its next session sequence, with the refusing
+        // index/count pair in the eight type bytes
+
+        uint8_t keep_alive_data[8];
+        uint8_t * kp = keep_alive_data;
+        rocketnet_write_uint32( &kp, (uint32_t) client_index );
+        rocketnet_write_uint32( &kp, (uint32_t) max_clients );
+        int keep_alive_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1,
+                                                                           keep_alive_data, 8, client.connection_salt,
+                                                                           client.keys.session_server_to_client );
+        rocketnet_check( keep_alive_bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+
+        const double before_receive = client.last_receive_time;
+        const uint64_t before_sequence = client.received_session_sequence;
+        const uint64_t before_debt = client.ack.ack_debt;
+
+        const double rejected_time = before_receive + 1.0;
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, packet, keep_alive_bytes, rejected_time, payload, &payload_bytes ) );
+
+        // the refused keep-alive keeps only its replay-window mark
+
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+        rocketnet_check( client.last_receive_time == before_receive );
+        rocketnet_check( client.received_session_sequence == before_sequence );
+        rocketnet_check( client.ack.ack_debt == before_debt );
+        rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
+
+        // and the idle deadline did not move: the client still times out on
+        // its own schedule, one timeout after the challenge
+
+        rocketnet_client_protocol_update( &client, before_receive + (double) client.timeout_seconds + 0.05, packet, &packet_bytes );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+
+        rocketnet_test_server_teardown( &test );
+    }
+}
+
 void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
 {
     // #90, the stranding case, driven end to end on a punched wire: the
@@ -11013,6 +11103,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_keep_alive_pacing", rocketnet_test_server_keep_alive_pacing },
     { "test_client_payload_before_first_keep_alive", rocketnet_test_client_payload_before_first_keep_alive },
     { "test_client_keep_alive_suppression", rocketnet_test_client_keep_alive_suppression },
+    { "test_client_keep_alive_invalid_index_has_no_effect", rocketnet_test_client_keep_alive_invalid_index_has_no_effect },
     { "test_keep_alive_unestablished_under_payload_traffic", rocketnet_test_keep_alive_unestablished_under_payload_traffic },
     { "test_keep_alive_pacing_survives_early_ack", rocketnet_test_keep_alive_pacing_survives_early_ack },
     { "test_request_path_happy", rocketnet_test_request_path_happy },
