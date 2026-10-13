@@ -811,6 +811,42 @@ void rocketnet_test_address()
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
+// A failed ipv4 parse leaves the caller's out value untouched. The helper
+// zeroes its sockaddr and writes the out parameter only on success, so a
+// malformed string never hands back uninitialised stack bytes.
+static void rocketnet_test_platform_poison_stack()
+{
+    // Spread a known pattern over a stack buffer just before each parse so the
+    // bytes the old helper would have read back are not the poison value.
+    volatile uint8_t poison[1024];
+    for ( size_t i = 0; i < sizeof(poison); ++i )
+        poison[i] = (uint8_t)( ( 0xA5A5A5A5u >> ( ( i & 3 ) * 8 ) ) ^ (uint8_t)i );
+    volatile uint8_t sink = 0;
+    for ( size_t i = 0; i < sizeof(poison); ++i )
+        sink = (uint8_t)( sink + poison[i] );
+    (void)sink;
+}
+
+void rocketnet_test_platform_inet_pton4_failure_writes_nothing()
+{
+    const char * invalid[] = { "999.1.1.1", "1.2.3", "" };
+    for ( size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i )
+    {
+        uint32_t address_out = 0xA5A5A5A5;
+        rocketnet_test_platform_poison_stack();
+        bool success = rocketnet_platform_inet_pton4( invalid[i], &address_out );
+        rocketnet_check( !success );
+        rocketnet_check( address_out == 0xA5A5A5A5 );
+    }
+
+    uint32_t address_out = 0;
+    rocketnet_check( rocketnet_platform_inet_pton4( "127.0.0.1", &address_out ) );
+    uint8_t expected[4] = { 127, 0, 0, 1 };
+    uint32_t expected_value;
+    memcpy( &expected_value, expected, sizeof(expected_value) );
+    rocketnet_check( address_out == expected_value );
+}
+
 void rocketnet_test_address_equal_none_is_false()
 {
     rocketnet_address_t a;
@@ -10766,6 +10802,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
      { "test_copy_string", rocketnet_test_copy_string },
      { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
      { "test_address", rocketnet_test_address },
+     { "test_platform_inet_pton4_failure_writes_nothing", rocketnet_test_platform_inet_pton4_failure_writes_nothing },
     { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
     { "test_v4_mapped_source_canonicalised_on_dual_stack", rocketnet_test_v4_mapped_source_canonicalised_on_dual_stack },
     { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
