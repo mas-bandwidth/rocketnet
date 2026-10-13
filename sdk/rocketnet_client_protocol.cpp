@@ -41,6 +41,22 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
         return;
     rocketnet_info( "client changed state from '%s' to '%s'", rocketnet_client_transport_state_name( client->state ), rocketnet_client_transport_state_name( state ) );
     client->state = state;
+
+    // A terminal state ends the attempt: the derived session keys, the
+    // token's keys and the ephemeral secret are no longer needed and MUST be
+    // zeroed. STANDARD.md: both sides MUST zero their own ephemeral secret
+    // once it is no longer needed for a handshake in progress (1095-1098),
+    // and on a denied, "release all connection state" (2425-2426);
+    // tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
+    // state <= 0. Every automatic terminal transition passes through here,
+    // after the state is stored, so the reason, the state-change report and
+    // any packets already written keep their order.
+    if ( state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
+        sodium_memzero( &client->keys, sizeof(client->keys) );
+        sodium_memzero( &client->token, sizeof(client->token) );
+        sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    }
 }
 
 // The AEAD integrity limit, per the standard's _Replay Protection_: one

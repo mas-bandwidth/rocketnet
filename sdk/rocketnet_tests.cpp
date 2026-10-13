@@ -4962,6 +4962,103 @@ void rocketnet_test_client_denied_when_server_full()
     rocketnet_test_server_teardown( &test );
 }
 
+static int rocketnet_test_bytes_are_zero( const uint8_t * p, size_t n )
+{
+    for ( size_t i = 0; i < n; i++ )
+    {
+        if ( p[i] != 0 )
+            return 0;
+    }
+    return 1;
+}
+
+void rocketnet_test_client_terminal_states_wipe_secrets()
+{
+    // Every automatic terminal transition -- connect token expired, a timed
+    // out waiting state, connection denied, and the server's disconnect --
+    // must release the attempt's secrets: the derived session keys, the
+    // token's keys and the ephemeral secret. STANDARD.md requires both sides
+    // to zero their own ephemeral secret once it is no longer needed for a
+    // handshake in progress (1095-1098) and, on a denied, to "release all
+    // connection state" (2425-2426); tla/ClientConnection.tla holds the
+    // states and their terminal transitions, whose invariant
+    // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0.
+
+    for ( int scenario = 0; scenario < 4; scenario++ )
+    {
+        struct rocketnet_test_server_t test;
+        rocketnet_test_server_setup( &test );
+
+        struct rocketnet_counters_t client_counters;
+        memset( &client_counters, 0, sizeof(client_counters) );
+        struct rocketnet_client_protocol_t client;
+        rocketnet_client_protocol_init( &client, &client_counters );
+
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes = 0;
+        int expected_state = 0;
+
+        switch ( scenario )
+        {
+            case 0:
+                // (a) the total connect deadline passes mid-handshake
+                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, -1 );
+                rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+                for ( double time = 100.0; time < 107.0; time += 0.05 )
+                    rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+                expected_state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED;
+                break;
+
+            case 1:
+                // (b) a waiting state times out: requesting cookie -> cookie request timed out
+                rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+                rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+                for ( double time = 100.0; time < 112.0; time += 0.05 )
+                    rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+                expected_state = ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT;
+                break;
+
+            case 2:
+                // (c) the server is full and denies
+                {
+                    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
+                    memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+                    for ( int i = 0; i < 4; i++ )
+                        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1, dummy_user_data ) == i );
+                    rocketnet_test_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+                    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+                    expected_state = rocketnet_test_pump( &test, &client, -1, 5.0 );
+                }
+                break;
+
+            case 3:
+                // (d) the connected client receives the server's disconnect
+                rocketnet_test_mint_token( token_data, 0xD15C0ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+                rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+                rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+                {
+                    uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+                    int burst_count = 0;
+                    int burst_bytes = 0;
+                    rocketnet_server_protocol_disconnect_client( &test.server, 0, burst, &burst_count, &burst_bytes );
+                    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+                    int payload_bytes = 0;
+                    rocketnet_check( rocketnet_client_protocol_process_packet( &client, burst, burst_bytes, 200.0, payload, &payload_bytes ) );
+                    expected_state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+                }
+                break;
+        }
+
+        rocketnet_check( client.state == expected_state );
+        rocketnet_check( rocketnet_test_token_keys_are_zero( &client.token ) );
+        rocketnet_check( rocketnet_test_bytes_are_zero( (const uint8_t *) &client.keys, sizeof(client.keys) ) );
+        rocketnet_check( rocketnet_test_bytes_are_zero( client.client_ephemeral_secret_key, sizeof(client.client_ephemeral_secret_key) ) );
+
+        rocketnet_test_server_teardown( &test );
+    }
+}
+
 void rocketnet_test_client_timeout_paths()
 {
     struct rocketnet_counters_t counters;
@@ -10861,6 +10958,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_token_keys_wiped_on_disconnect", rocketnet_test_client_token_keys_wiped_on_disconnect },
     { "test_client_server_loss_walk", rocketnet_test_client_server_loss_walk },
     { "test_client_denied_when_server_full", rocketnet_test_client_denied_when_server_full },
+    { "test_client_terminal_states_wipe_secrets", rocketnet_test_client_terminal_states_wipe_secrets },
     { "test_client_timeout_paths", rocketnet_test_client_timeout_paths },
     { "test_client_cookie_injection", rocketnet_test_client_cookie_injection },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
