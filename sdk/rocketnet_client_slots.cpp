@@ -9,6 +9,7 @@
 
 #include <sodium.h>
 #include <string.h>
+#include <limits.h>
 
 struct rocketnet_client_slots_t
 {
@@ -42,6 +43,13 @@ uint64_t rocketnet_client_slots_allocation_bytes(int clients)
 struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context, int max_clients )
 {
     rocketnet_assert( max_clients > 0 );
+
+    // num_buckets is max_clients * 2 in a signed int, so a max_clients above
+    // INT_MAX / 2 wraps the bucket count and the bucket array is sized from
+    // the wrapped value while the other arrays use the capacity. refuse it
+    // before any allocation.
+    if ( max_clients < 1 || max_clients > INT_MAX / 2 )
+        return NULL;
 
     struct rocketnet_client_slots_t * slots = (struct rocketnet_client_slots_t*) rocketnet_malloc( context, sizeof(struct rocketnet_client_slots_t) );
     if ( !slots )
