@@ -11,13 +11,13 @@ Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
 is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
-and layer 2 is built (`sdk/rocketnet_message.h`, section 5); nothing above
-layer 2 is yet. `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
+and layer 2 is built (`sdk/rocketnet_message.h`, section 5); layer 3's receive
+window is built (`sdk/rocketnet_window_receive.h`, section 6). `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
 are not yet in the tree (`rocketnet_server_t`, the public object surface) are
 introduced here.
 
-**Status: layers 1 and 2 are built. The layer list (section 3) is still for
-Glenn's correction before layer 3 starts.**
+**Status: layers 1 and 2 and layer 3's receive window are built. The rest of
+layer 3 and the layers above it remain in the layer list (section 3).**
 
 ---
 
@@ -502,6 +502,36 @@ with δ the signed 24-bit difference. Then:
 - Otherwise the bit is set. While the bit at `R` is set, the receiver clears
   it and increments `R`. Clearing frees the bit for the number `W` above.
   The cost is O(advance).
+
+**As built** (`sdk/rocketnet_window_receive.h` and `.cpp`, receive-window
+card). The implementation made these boundaries explicit:
+
+- The state holds `R`, its terminal violation, and a pointer to the region's
+  fixed bitset and descriptor table. The caller passes each layer-2 record
+  in wire order and stops that payload if the answer is `VIOLATION`. A later
+  call on the same state cannot accept another record. No clock, socket or
+  allocation is inside the transition.
+- The descriptor is live when a number is accepted, even after advancing
+  `R` clears its received bit. Layer 4 calls `release(number)` only when
+  delivery's update lifetime ends or a hold is released. It frees only a
+  descriptor naming that exact number, so a future use of the slot cannot
+  be released by an old event. Layer 5 owns block bookkeeping fields; they
+  start empty here.
+- Signed half-range reconstruction is against the current `R` for each
+  record. A negative difference is a counted duplicate, including when
+  `R` is zero; a positive difference at least `W` is the outside-window
+  violation. The bit and descriptor index are `number % W`. Advancing `R`
+  touches only the consecutive set bits it passes.
+- `ChannelsWindowReceiveAcceptsInOrder`,
+  `ChannelsWindowReceiveDuplicateIsCountedNotViolation`,
+  `ChannelsWindowReceiveOutsideWindowIsViolation`,
+  `ChannelsWindowReceiveSlotCollisionIsViolation`,
+  `ChannelsWindowReceiveReconstructsAcrossThe24BitWrap` (at the first and
+  third 24-bit wraps), and `ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses`
+  pin the checks. `ChannelsWindowReceiveOverTheLossySimulator` runs layer-2
+  RECORDS through loss, duplication and reordering at 0, 10 and 50 percent
+  loss, with a resending scripted sender; its allocation trap and record
+  accounting pin R1 and R8.
 
 Congestion control is not in this design (section 18.2, choice G3). The
 sender's numbering is bounded by `W` and `B`, and each update by
