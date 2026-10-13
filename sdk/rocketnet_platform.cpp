@@ -724,6 +724,146 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 extern void * rocketnet_global_context;
 
+template <typename T> struct rocketnet_vector_t
+{
+    T * data;
+    int length;
+    int reserved;
+
+    inline rocketnet_vector_t( int reserve_count = 0 )
+    {
+        rocketnet_assert( reserve_count >= 0 );
+        data = 0;
+        length = 0;
+        reserved = 0;
+        if ( reserve_count > 0 )
+        {
+            reserve( reserve_count );
+        }
+    }
+
+    inline ~rocketnet_vector_t()
+    {
+        clear();
+    }
+
+    inline void clear()
+    {
+        if ( data )
+        {
+            rocketnet_free( rocketnet_global_context, data );
+        }
+        data = NULL;
+        length = 0;
+        reserved = 0;
+    }
+
+    inline const T & operator [] ( int i ) const
+    {
+        rocketnet_assert( data );
+        rocketnet_assert( i >= 0 && i < length );
+        return *( data + i );
+    }
+
+    inline T & operator [] ( int i )
+    {
+        rocketnet_assert( data );
+        rocketnet_assert( i >= 0 && i < length );
+        return *( data + i );
+    }
+
+    bool reserve( int size )
+    {
+        if ( size < 0 )
+            return false;
+        if ( size <= reserved )
+            return true;
+        int capacity = reserved ? reserved : 1;
+        while ( capacity < size )
+        {
+            const int growth = capacity / 2 + 1;
+            if ( capacity > INT_MAX - growth )
+            {
+                capacity = size;
+                break;
+            }
+            capacity += growth;
+        }
+        if ( (size_t) capacity > SIZE_MAX / sizeof(T) )
+            return false;
+        T * new_data = (T*) rocketnet_malloc( rocketnet_global_context, (size_t) capacity * sizeof(T) );
+        if ( !new_data )
+            return false;
+        if ( data )
+            memcpy( new_data, data, (size_t) length * sizeof(T) );
+        memset( new_data + length, 0, (size_t) ( capacity - length ) * sizeof(T) );
+        rocketnet_free( rocketnet_global_context, data );
+        data = new_data;
+        reserved = capacity;
+        return true;
+    }
+
+    bool resize( int size )
+    {
+        if ( !reserve( size ) )
+            return false;
+        length = size;
+        return true;
+    }
+
+    void remove( int i )
+    {
+        rocketnet_assert( data );
+        rocketnet_assert( i >= 0 && i < length );
+        if ( i != length - 1 )
+        {
+            data[i] = data[length - 1];
+        }
+        length--;
+    }
+
+    void remove_ordered( int i )
+    {
+        rocketnet_assert( data );
+        rocketnet_assert( i >= 0 && i < length );
+        memmove( &data[i], &data[i + 1], sizeof( T ) * ( length - ( i + 1 ) ) );
+        length--;
+    }
+
+    T * insert( int i )
+    {
+        rocketnet_assert( i >= 0 && i <= length );
+        if ( length == INT_MAX || !resize( length + 1 ) )
+            return NULL;
+        memmove( &data[i + 1], &data[i], sizeof( T ) * ( length - 1 - i ) );
+        return &data[i];
+    }
+
+    T * insert( int i, const T & t )
+    {
+        T * p = insert( i );
+        if ( p )
+            *p = t;
+        return p;
+    }
+
+    T * add()
+    {
+        if ( length == INT_MAX || !reserve( length + 1 ) )
+            return NULL;
+        return &data[length++];
+    }
+
+    T * add( const T & t )
+    {
+        T * p = add();
+        if ( p )
+            *p = t;
+        return p;
+    }
+};
+
+
 // ---------------------------------------------------
 
 #if defined(__linux__)
@@ -832,11 +972,6 @@ bool rocketnet_platform_read_route_table(
                     done = true;
                 }
             }
-        }
-        else
-        {
-            // len is 0 or -1: no data read; the dump cannot be completed.
-            return false;
         }
     }
     // the loop exited on NLMSG_DONE: the route table was read in full.
