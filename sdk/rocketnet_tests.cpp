@@ -826,68 +826,60 @@ void rocketnet_test_address_equal_none_is_false()
     rocketnet_check( !rocketnet_address_equal( &a, &b ) );
 }
 
-#if ROCKETNET_PLATFORM_HAS_IPV6
-static bool rocketnet_server_gso_sockaddr_to_address_test( const struct sockaddr_storage * input, bool socket_ipv6, rocketnet_address_t * out )
+// the receive edge's one rule for an ipv4-mapped source (rocketnet_address.h,
+// rocketnet_address_accept_received_source): accepted and canonicalised on a
+// dual stack socket, dropped wherever the real ipv6 header is seen (a raw or
+// xdp ipv6 path, an ipv6-only socket), and every other source untouched.
+
+static void rocketnet_test_mapped_source( struct rocketnet_address_t * address )
 {
-    if ( input->ss_family == AF_INET6 )
-    {
-        const struct sockaddr_in6 * addr = (const struct sockaddr_in6*) input;
-        out->type = ROCKETNET_ADDRESS_IPV6;
-        for ( int i = 0; i < 8; i++ )
-        {
-            out->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t*) &addr->sin6_addr ) [i] );
-        }
-        out->port = rocketnet_platform_ntohs( addr->sin6_port );
+    memset( address, 0, sizeof(*address) );
+    rocketnet_check( rocketnet_address_parse( address, "[::ffff:1.2.3.4]:40000" ) );
+    rocketnet_check( rocketnet_address_is_ipv4_in_ipv6( address ) );
+}
 
-        if ( socket_ipv6 && rocketnet_address_is_ipv4_in_ipv6( out ) )
-        {
-            return false;
-        }
+void rocketnet_test_v4_mapped_source_canonicalised_on_dual_stack()
+{
+    // a dual stack socket delivers an ipv4 client as ::ffff:1.2.3.4: it is
+    // accepted and becomes the same native ipv4 address an ipv4 socket sees,
+    // so the client has one identity whichever socket family received it
+    struct rocketnet_address_t from;
+    rocketnet_test_mapped_source( &from );
+    rocketnet_check( rocketnet_address_accept_received_source( &from, true ) );
+    rocketnet_check( from.type == ROCKETNET_ADDRESS_IPV4 );
 
-        return true;
-    }
-    else if ( input->ss_family == AF_INET )
-    {
-        const struct sockaddr_in * addr = (const struct sockaddr_in*) input;
-        out->type = ROCKETNET_ADDRESS_IPV4;
-        out->data.ipv4[0] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x000000FF ) );
-        out->data.ipv4[1] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
-        out->data.ipv4[2] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
-        out->data.ipv4[3] = (uint8_t) ( ( addr->sin_addr.s_addr & 0xFF000000 ) >> 24 );
-        out->port = rocketnet_platform_ntohs( addr->sin_port );
-        return true;
-    }
-
-    return false;
+    struct rocketnet_address_t native;
+    rocketnet_check( rocketnet_address_parse( &native, "1.2.3.4:40000" ) );
+    rocketnet_check( rocketnet_address_equal( &from, &native ) );
 }
 
 void rocketnet_test_v4_mapped_source_dropped()
 {
-    struct sockaddr_storage input;
-    memset( &input, 0, sizeof(input) );
-    input.ss_family = AF_INET6;
-
-    struct sockaddr_in6 * addr = (struct sockaddr_in6*) &input;
-    addr->sin6_family = AF_INET6;
-    // Set ::ffff:1.2.3.4 - v4-mapped IPv6 address (16 bytes total)
-    unsigned char mapped_addr[16] = {
-        0x00, 0x00, 0x00, 0x00,  // 0-3
-        0x00, 0x00, 0x00, 0x00,  // 4-7
-        0x00, 0x00, 0xFF, 0xFF,  // 8-11
-        0x01, 0x02, 0x03, 0x04   // 12-15
-    };
-    memcpy( addr->sin6_addr.s6_addr, mapped_addr, 16 );
-    addr->sin6_port = 0x9c40;
-
-    rocketnet_address_t out;
-    memset( &out, 0, sizeof(out) );
-
-    // This should refuse the v4-mapped source on an IPv6 socket
-    // The test will fail (red) until the fix is applied
-    bool result = rocketnet_server_gso_sockaddr_to_address_test( &input, true, &out );
-    rocketnet_check( !result );  // Should refuse (return false)
+    // where the real ipv6 header is seen -- a raw or xdp ipv6 path, or an
+    // ipv6-only socket -- a mapped source never occurs legitimately (RFC 4291
+    // 2.5.5.2): it is dropped
+    struct rocketnet_address_t from;
+    rocketnet_test_mapped_source( &from );
+    rocketnet_check( !rocketnet_address_accept_received_source( &from, false ) );
 }
-#endif
+
+void rocketnet_test_received_native_sources_untouched()
+{
+    // native ipv6 and native ipv4 sources pass through unchanged on every path
+    const char * sources[] = { "[2001:db8::1]:40000", "[::1]:40000", "1.2.3.4:40000" };
+    for ( int i = 0; i < (int) ( sizeof(sources) / sizeof(sources[0]) ); i++ )
+    {
+        for ( int dual_stack = 0; dual_stack <= 1; dual_stack++ )
+        {
+            struct rocketnet_address_t from;
+            struct rocketnet_address_t expected;
+            rocketnet_check( rocketnet_address_parse( &from, sources[i] ) );
+            expected = from;
+            rocketnet_check( rocketnet_address_accept_received_source( &from, dual_stack != 0 ) );
+            rocketnet_check( rocketnet_address_equal( &from, &expected ) );
+        }
+    }
+}
 
 void rocketnet_test_random_bytes()
 {
@@ -1757,16 +1749,23 @@ void rocketnet_test_open_sealed_respects_capacity()
                                                       NULL, rocketnet_test_session_c2s_key );
     rocketnet_check( packet_bytes > 0 );
     
-    // Try to open into a 32-byte buffer - should fail because 
-    // header + plaintext + tag exceeds capacity
-    uint8_t small_out[32];
-    int opened = rocketnet_open_sealed_packet( small_out, NULL, 32, packet, packet_bytes,
+    // a capacity one byte short of the 12-byte plaintext is refused before
+    // any AEAD work: nothing is written past the caller's buffer
+    uint8_t small_out[11];
+    int opened = rocketnet_open_sealed_packet( small_out, NULL, (int) sizeof(small_out), packet, packet_bytes,
                                                 ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
                                                 ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                                 NULL, rocketnet_test_session_c2s_key );
-    
-    // Should return -1 when plaintext won't fit in output buffer
     rocketnet_check( opened == -1 );
+
+    // the negative control: a capacity exactly the plaintext's size opens it
+    uint8_t exact_out[12];
+    opened = rocketnet_open_sealed_packet( exact_out, NULL, (int) sizeof(exact_out), packet, packet_bytes,
+                                           ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3,
+                                           ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
+                                           NULL, rocketnet_test_session_c2s_key );
+    rocketnet_check( opened == 12 );
+    rocketnet_check( memcmp( exact_out, payload, 12 ) == 0 );
 }
 
 void rocketnet_test_sequence_reconstruction()
@@ -3339,6 +3338,14 @@ void rocketnet_test_handshake_work_budget_per_update()
     // request must still be processed.
     struct rocketnet_test_server_t other;
     rocketnet_test_server_setup( &other );
+
+    // the budget requests make 16000 distinct tokens by stepping each one's
+    // create timestamp back a second, so their lifetimes run past the test
+    // server's 600-second token-lifetime bound. that bound is pinned by
+    // test_token_lifetime_bounded; here it is lifted so every request reaches
+    // the budget, which is what this test measures.
+    test.server.max_token_lifetime_seconds = 0;
+    other.server.max_token_lifetime_seconds = 0;
 
     const int num_requests = 16000;
     const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
@@ -5076,18 +5083,24 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
         rocketnet_check( mapping->integrity_failures == 1 );
 
-        // the three other classes the ladder files as DID_NOT_OPEN, each
-        // counted the same: a response too short to carry a tag (refused
-        // inside the open before any AEAD work), one that opens under the
-        // right key to the wrong size, and one that opens to non-zero padding
+        // a response of any size but the wire size is WRONG_SIZE before the
+        // mapping lookup, so it never reaches the open and never counts
+        // against the mapping's integrity (STANDARD.md: a connection response
+        // is 50 bytes, and "a packet below its type's floor is WRONG_SIZE,
+        // never a later refusal"; card rnfix-response-wrong-size-counted-r2:
+        // "an exact-size check before the lookup"). two such: one too short
+        // to carry a tag, one that would open to the wrong size. the class
+        // still filed as DID_NOT_OPEN is a response that opens to non-zero
+        // padding.
         uint8_t short_response[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES - 1];
         memset( short_response, 0x5A, sizeof(short_response) );
         uint8_t * sp = short_response;
         rocketnet_write_prefilter_header( &sp, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag );
         rocketnet_check( rocketnet_test_process_packet( &test, short_response, sizeof(short_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
-        rocketnet_check( mapping->integrity_failures == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE] == 1 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
 
         uint8_t odd_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         int odd_bytes = rocketnet_write_sealed_packet( odd_response, ROCKETNET_CONNECTION_RESPONSE_PACKET, tag, 2,
@@ -5098,8 +5111,9 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( odd_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES - 1 );
         rocketnet_check( rocketnet_test_process_packet( &test, odd_response, odd_bytes, response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 3 );
-        rocketnet_check( mapping->integrity_failures == 3 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE] == 2 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 1 );
+        rocketnet_check( mapping->integrity_failures == 1 );
 
         uint8_t dirty_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
         dirty_padding[ROCKETNET_RESPONSE_PADDING_BYTES - 1] = 1;
@@ -5110,8 +5124,8 @@ void rocketnet_test_integrity_limit()
                                                         client_keys.handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
         rocketnet_check( rocketnet_test_process_packet( &test, bad_response, sizeof(bad_response), response, &response_bytes,
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 4 );
-        rocketnet_check( mapping->integrity_failures == 4 );
+        rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 2 );
+        rocketnet_check( mapping->integrity_failures == 2 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
 
         uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
@@ -5120,7 +5134,7 @@ void rocketnet_test_integrity_limit()
                                                         payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
         rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_CONNECTED] == 1 );
         rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
-        rocketnet_check( mapping->integrity_failures == 4 );                    // a packet that opens does not count
+        rocketnet_check( mapping->integrity_failures == 2 );                    // a packet that opens does not count
 
         // seed to two below the limit. the sequences are fresh so the replay
         // window never refuses first: the open is what fails.
@@ -10562,11 +10576,9 @@ void rocketnet_test_token_lifetime_bounded()
                                                rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
 
-    // First pass cookie gate
-    rocketnet_test_pass_cookie_gate( &test, request );
-
-    // Now send the actual request - this should be refused because
-    // the token lifetime (UINT64_MAX - create) exceeds max_token_lifetime_seconds
+    // the lifetime bound is read off the signed fields before the cookie gate,
+    // so first contact is refused outright: the token lifetime (UINT64_MAX -
+    // create) exceeds max_token_lifetime_seconds, and no cookie is ever sent
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     int result = rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
@@ -10583,6 +10595,14 @@ void rocketnet_test_token_timeout_clamped()
 {
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
+
+    // the server takes its clamp from the transport config, whose default is
+    // 60 (rocketnet_server_transport_create copies config->max_timeout_seconds);
+    // the test server is built without create, so it takes the default here
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_check( config.max_timeout_seconds == 60 );
+    test.server.max_timeout_seconds = config.max_timeout_seconds;
 
     // Build a token with maximum timeout (INT32_MAX): should be clamped to 60
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -10672,9 +10692,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
      { "test_copy_string_zero_size_writes_nothing", rocketnet_test_copy_string_zero_size_writes_nothing },
      { "test_address", rocketnet_test_address },
     { "test_address_equal_none_is_false", rocketnet_test_address_equal_none_is_false },
-#if ROCKETNET_PLATFORM_HAS_IPV6
+    { "test_v4_mapped_source_canonicalised_on_dual_stack", rocketnet_test_v4_mapped_source_canonicalised_on_dual_stack },
     { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
-#endif
+    { "test_received_native_sources_untouched", rocketnet_test_received_native_sources_untouched },
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_random_float", rocketnet_test_random_float },
     { "test_crypto_sizes", rocketnet_test_crypto_sizes },

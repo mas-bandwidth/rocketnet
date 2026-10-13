@@ -508,7 +508,18 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     sockaddr_storage sockaddr_from;
     socklen_t from_length;
 
+    // openbsd keeps ipv6 sockets ipv6-only (see socket create), so there a
+    // mapped source is spoofed and dropped; everywhere else the socket is
+    // dual stack and a mapped source is an ipv4 client.
+
+#if defined(__OpenBSD__)
+    const bool dual_stack = false;
+#else
+    const bool dual_stack = socket->ipv6;
+#endif
+
     int result;
+receive_again:
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
@@ -553,10 +564,10 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         }
         from->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
 
-        if ( socket->ipv6 && rocketnet_address_is_ipv4_in_ipv6( from ) )
-        {
-            rocketnet_address_convert_ipv6_to_ipv4( from );
-        }
+        // a dropped source is skipped like a zero-length datagram: keep
+        // reading, so spoofed chaff never reads as "socket drained".
+        if ( !rocketnet_address_accept_received_source( from, dual_stack ) )
+            goto receive_again;
     }
     else if ( sockaddr_from.ss_family == AF_INET )
     {
@@ -573,7 +584,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
         rocketnet_assert( 0 );
         return 0;
     }
-  
+
     rocketnet_assert( result >= 0 );
 
     return result;
