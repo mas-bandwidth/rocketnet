@@ -38,11 +38,11 @@ extern bool rocketnet_test_private_block_copied;
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
-#include "rocketnet_xdp_free_list.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include "rocketnet_xdp_free_list.h"
 #include "rocketnet_server_socket.h"
 #include <xdp/xsk.h>
 #include <xdp/libxdp.h>
