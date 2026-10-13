@@ -72,7 +72,7 @@ Safety, checked under every loss pattern with no fairness:
 | `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
 | `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
-| `NonceFresh` | no two live mappings share keys (S:31-34, no key or nonce outlives one connection; S:2656-2658) |
+| `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the handshake deadline fire when due |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
 | `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
@@ -179,19 +179,8 @@ below changed; the TSV has one row per run.
 | `S-firstkind` | KindLoss "firstkind" | Spec | the same | 6790752 | pass |
 | `S-arbitrary` | C2SPattern "arbitrary", S2CPattern "arbitrary" | Spec | the same | 12837009 | not finished (stopped at the card's time bound, 24 minutes): no violation in the states explored |
 | `S-move-env` | as S-move, Duplication TRUE, Reordering TRUE | Spec | the same | 15380262 | TLC owed: stopped at the bench bound after 12 minutes with 4.4 M states on the queue, no violation |
-| `S-reuse-dup` | Duplication TRUE | Spec | the same | not run | TLC owed: queued behind S-move-env |
+| `S-reuse-dup` | Duplication TRUE | Spec | the same | not run | TLC owed: queued behind S-move-env; narrowed from duplication and reordering to duplication alone because the two-client instance with both on passed 31 M distinct states unfinished, and duplication alone is what the replayed packet needs |
 
-The two owed runs, from `tla/` on a Linux bench with the jar at `$JAR`:
-
-```sh
-sed -e 's/NumClients          = 2/NumClients          = 1/' -e 's/TokenChoice         = "own"/TokenChoice         = "any"/' \
-    -e 's/MaxAttempts         = 1/MaxAttempts         = 2/' -e 's/MaxMoves            = 0/MaxMoves            = 1/' \
-    -e 's/Duplication         = FALSE/Duplication         = TRUE/' -e 's/Reordering          = FALSE/Reordering          = TRUE/' \
-    MCServerConnection.cfg > /tmp/S-move-env.cfg
-java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-move-env.cfg MCServerConnection
-sed -e 's/Duplication         = FALSE/Duplication         = TRUE/' MCServerConnection.cfg > /tmp/S-reuse-dup.cfg
-java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-reuse-dup.cfg MCServerConnection
-```
 | `W-leak` | SweepRemovesMapping FALSE; INVARIANTS SlotMappingBijection | Spec | | 5861 | fail as expected |
 | `W-token` | as S-move, AdmittedHeld FALSE; INVARIANTS OneConnectionPerToken | Spec | | 674687 | fail as expected |
 | `W-clientid` | ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; INVARIANTS OneSlotPerClientId | Spec | | 112643 | fail as expected |
@@ -206,6 +195,18 @@ java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -conf
 | `W-once-alternate` | as L-alternate, RepeatKeepAlive FALSE | Spec | Connects, ServerNotStranded | 1199 | fail as expected |
 | `L-timeout` | NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1 | Spec | TimedOutSlotFreed, AbandonedMappingDies | 4767 | pass |
 | `L-timeout-first` | as L-timeout, C2SPattern "first", S2CPattern "first" | Spec | TimedOutSlotFreed, AbandonedMappingDies | 4592 | pass |
+
+The two owed runs, from `tla/` on a Linux bench with the jar at `$JAR`:
+
+```sh
+sed -e 's/NumClients          = 2/NumClients          = 1/' -e 's/TokenChoice         = "own"/TokenChoice         = "any"/' \
+    -e 's/MaxAttempts         = 1/MaxAttempts         = 2/' -e 's/MaxMoves            = 0/MaxMoves            = 1/' \
+    -e 's/Duplication         = FALSE/Duplication         = TRUE/' -e 's/Reordering          = FALSE/Reordering          = TRUE/' \
+    MCServerConnection.cfg > /tmp/S-move-env.cfg
+java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-move-env.cfg MCServerConnection
+sed -e 's/Duplication         = FALSE/Duplication         = TRUE/' MCServerConnection.cfg > /tmp/S-reuse-dup.cfg
+java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-reuse-dup.cfg MCServerConnection
+```
 
 "The L lines" are `L-firstkind`'s first seven changes with `KindLoss` left at `"none"`.
 Every finished run above took under six minutes on hetzner2 with `-workers 4`; `S-reuse` took
@@ -225,7 +226,7 @@ token, every deadline off unless the property needs it. Every run is on a FIFO l
 without duplication (the fairness section says why for liveness; for safety it is the
 state space: with duplication and reordering on, the two-client instance passed 31
 million distinct states in 50 minutes without finishing and without a violation, and the
-`-env` runs are the same instances with both on, last in the table).
+`-env` runs are the same instances with both on, and are owed: see the table).
 
 ### Loss patterns explored
 
@@ -237,7 +238,7 @@ every kind lost at each sender (`KindLoss = "firstkind"`, applied before the lin
 `-env` runs add duplication and reordering on both links, so an old packet arriving late
 (a duplicated challenge or keep-alive delivered after the client moved, a disconnect copy
 behind a keep-alive) and a replayed packet (the byte-identical response that refreshes an
-established slot, F7) are explored there; the byte-identical retransmitted response is in
+established slot, F7) belong to those runs and are owed with them; the byte-identical retransmitted response is in
 every run, because the client in state 3 re-sends it on its timer.
 
 ## What TLC found
@@ -352,7 +353,7 @@ and fixed on the way.
    `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
    asserts that `add` is idempotent, and a refusal from `add` would be counted under
    `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to STANDARD.md's
-   response ladder at S:2822-2827, between the client-id check and the slot check: "If
+   response ladder, between the client-id bullet (S:2817) and the slot bullet (S:2818): "If
    this token's identifier is in the admitted-token set, ignore it."
 
 ### Model errors, fixed

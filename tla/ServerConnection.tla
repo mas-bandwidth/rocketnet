@@ -692,7 +692,7 @@ PacketsReachOwnSlotOnly ==
                            /\ KeysOf(p) = KeysOf(smap[slot[i].addr])]_vars
 
 \* no receive sends but the ladder's own answer: a session packet never
-\* provokes a send (S:2852-2854; the keep-alive is timer driven)
+\* provokes a send (S:2852-2853; the keep-alive is timer driven)
 SessionNeverAnswered ==
     [][(\E p \in ClientPackets : p.type \in {"keepalive", "disconnect"} /\ C2S!Deliver(p))
          => s2cSent' = s2cSent]_vars
