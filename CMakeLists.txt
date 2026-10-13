@@ -250,9 +250,7 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(test_serialize test_serialize.cpp)
     target_include_directories(test_serialize PRIVATE test)
     target_link_libraries(test_serialize PRIVATE rocketnet_dev)
-    # The transport control test compiles the server transport source into its own
-    # translation unit and drives it on the published development keys, so it needs
-    # the development library's ROCKETNET_DEVELOPMENT=1 view.
+    # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE test)
     target_link_libraries(test_transport_control PRIVATE rocketnet_dev)
