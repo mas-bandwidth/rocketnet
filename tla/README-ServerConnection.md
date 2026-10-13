@@ -66,16 +66,16 @@ Safety, checked under every loss pattern with no fairness:
 
 | Property | The rule |
 |---|---|
-| `OneClientPerSlot` | no two live clients in one slot: at most one client holds the keys a used slot's mapping opens under, and no two used slots share an address |
+| `OneClientPerSlot` | no two live clients in one slot: at most one client holds the keys a used slot's mapping opens under, and no two used slots share an address (S:342-351, the address is the connection identity) |
 | `OneSlotPerClientId` | a client id holds at most one slot (S:2647, S:2817) |
-| `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (S:2642-2648; the leak the audits suspect at the 2x mapping table) |
+| `SlotMappingBijection` | no slot without a live, established mapping behind it naming that slot, and no established mapping without the used slot it names bound to its address (S:3141-3144, slot reset destroys the mapping; S:2852-2853; the leak the audits suspect at the 2x mapping table) |
 | `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
-| `MappingsBounded` | the map stays inside its capacity |
+| `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp:821`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
-| `NonceFresh` | no two live mappings share keys |
+| `NonceFresh` | no two live mappings share keys (S:31-34, no key or nonce outlives one connection; S:2656-2658) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the handshake deadline fire when due |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
-| `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2854); the keep-alive is timer driven |
+| `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -170,17 +170,30 @@ below changed; the TSV has one row per run.
 | `S-reuse` | committed | Spec | PacketsReachOwnSlotOnly, SessionNeverAnswered | 2779489 | pass |
 | `S-move` | NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 | Spec | the same | 2358368 | pass |
 | `S-share-kept` | NumTokens 1, TokenChoice "any" | Spec | the same | 677845 | pass |
-| `S-share-none` | NumTokens 1, TokenChoice "any", History "none" | Spec | the same | 159202 | **fails: OneConnectionPerToken, the finding** |
+| `S-share-none` | NumTokens 1, TokenChoice "any", History "none" | Spec | the same | 148959 | **fails: OneConnectionPerToken, the finding** |
+| `S-share-fix` | as S-share-none, RefuseAdmittedAtResponse TRUE | Spec | the same | 1637413 | pass: the fix |
 | `S-sameid` | SameId TRUE, MaxSlots 2 | Spec | the same | 2088713 | pass |
 | `S-first` | C2SPattern "first", S2CPattern "first" | Spec | the same | 2774906 | pass |
 | `S-alternate` | C2SPattern "alternate", S2CPattern "alternate" | Spec | the same | 4644754 | pass |
 | `S-burst` | C2SPattern "burst", S2CPattern "burst" | Spec | the same | 2774632 | pass |
 | `S-firstkind` | KindLoss "firstkind" | Spec | the same | 6790752 | pass |
 | `S-arbitrary` | C2SPattern "arbitrary", S2CPattern "arbitrary" | Spec | the same | 12837009 | not finished (stopped at the card's time bound, 24 minutes): no violation in the states explored |
-| `S-move-env` | as S-move, Duplication TRUE, Reordering TRUE | Spec | the same | not run | queued behind S-arbitrary; not reached inside the card's time bound |
-| `S-reuse-env` | Duplication TRUE, Reordering TRUE | Spec | the same | not run | the same |
+| `S-move-env` | as S-move, Duplication TRUE, Reordering TRUE | Spec | the same | 15380262 | TLC owed: stopped at the bench bound after 12 minutes with 4.4 M states on the queue, no violation |
+| `S-reuse-dup` | Duplication TRUE | Spec | the same | not run | TLC owed: queued behind S-move-env |
+
+The two owed runs, from `tla/` on a Linux bench with the jar at `$JAR`:
+
+```sh
+sed -e 's/NumClients          = 2/NumClients          = 1/' -e 's/TokenChoice         = "own"/TokenChoice         = "any"/' \
+    -e 's/MaxAttempts         = 1/MaxAttempts         = 2/' -e 's/MaxMoves            = 0/MaxMoves            = 1/' \
+    -e 's/Duplication         = FALSE/Duplication         = TRUE/' -e 's/Reordering          = FALSE/Reordering          = TRUE/' \
+    MCServerConnection.cfg > /tmp/S-move-env.cfg
+java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-move-env.cfg MCServerConnection
+sed -e 's/Duplication         = FALSE/Duplication         = TRUE/' MCServerConnection.cfg > /tmp/S-reuse-dup.cfg
+java -Xmx6g -cp $JAR tlc2.TLC -workers 4 -cleanup -deadlock -lncheck final -config /tmp/S-reuse-dup.cfg MCServerConnection
+```
 | `W-leak` | SweepRemovesMapping FALSE; INVARIANTS SlotMappingBijection | Spec | | 5861 | fail as expected |
-| `W-token` | NumTokens 1, TokenChoice "any", History "none", AdmittedHeld FALSE; INVARIANTS OneConnectionPerToken | Spec | | 152071 | fail as expected |
+| `W-token` | as S-move, AdmittedHeld FALSE; INVARIANTS OneConnectionPerToken | Spec | | 674687 | fail as expected |
 | `W-clientid` | ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; INVARIANTS OneSlotPerClientId | Spec | | 112643 | fail as expected |
 | `W-addr` | as S-move, AddressIsIdentity FALSE; INVARIANTS OneClientPerSlot | Spec | PacketsReachOwnSlotOnly | 21679 | fail as expected |
 | `L-firstkind` | NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind" | Spec | Connects, ServerNotStranded | 1173 | pass |
@@ -279,15 +292,18 @@ and fixed on the way.
    both at `rocketnet_server_protocol_update` (`:1228` releases, `:1229` removes); the
    witness drops `:1229`. With the code's behaviour (`S-*`) the bijection holds in every
    state of every run, and `MappingsBounded` with it.
-5. **`AdmittedHeld = FALSE` with `History = "none"`** (`W-token`, `OneConnectionPerToken`,
-   22 states): two clients present one token; with the history flushed both get a mapping
-   while neither is admitted. The first connects (the token is admitted), the server
-   application disconnects it, and the witness drops the token from the admitted set with
-   the connection; the second client's response then admits the same token again. Replayed:
-   the code's admitted set loses an entry only by expiry (`sdk/rocketnet_token_tables.cpp:130`,
-   `:174`); nothing on the disconnect paths (`sdk/rocketnet_server_protocol.cpp:1112-1113`,
-   `:1228-1229`, `:1852-1853`) touches it. The same instance with the code's behaviour is
-   `S-share-none`, and what it found is item 8 below.
+5. **`AdmittedHeld = FALSE` on the address-change instance** (`W-token`,
+   `OneConnectionPerToken`, 26 states): one client, two attempts, any token.
+   The client connects, disconnects, and connects again with the same token from its bound
+   address, so the history passes it and no client id is connected; only the admitted set
+   stands between it and a second seat. The witness drops the token from the set with the
+   connection, and the second attempt is seated. Replayed: the code's admitted set loses an
+   entry only by expiry (`sdk/rocketnet_token_tables.cpp:130`, `:174`); nothing on the
+   disconnect paths (`sdk/rocketnet_server_protocol.cpp:1112-1113`, `:1228-1229`,
+   `:1852-1853`) touches it, and the request-time check at `:516` refuses the reconnect. The
+   same instance with the code's behaviour is `S-move`, which passes. (A first version of
+   this witness sat on the shared-token, flushed-history instance, where the code's own
+   behaviour already fails the invariant, item 8, so it witnessed nothing.)
 6. **`ClientIdCheck = FALSE` with `SameId = TRUE`** (`W-clientid`, `OneSlotPerClientId`,
    21 states, two slots): two clients present two tokens carrying one client id; both get
    mappings and both responses are seated. Replayed: the code refuses the second at the
@@ -327,8 +343,17 @@ and fixed on the way.
    asked the handshake model to settle whether it is reachable; it is, under the history
    flush, within one handshake deadline of the first connection. The same instance with
    the history binding (`S-share-kept`) passes: the second client never gets a mapping.
-   The fix shape, for a code card: `rocketnet_admitted_token_set_add` returns 0 when the
-   identifier is present, so the response is denied at `:685-690` like a full set.
+   **The fix, model-checked.** `RefuseAdmittedAtResponse = TRUE` adds the missing rung to
+   the response ladder: a response whose token the admitted set already holds is refused
+   (ignored, as the request-time rung at `:516` ignores). `S-share-fix` is `S-share-none`
+   with the knob on: 8,160,820 states, 1,637,413 distinct, depth 43, 151 s, pass. The code's behaviour (`FALSE`) stays the red case. For
+   the fix card, and not for this PR: an explicit
+   `rocketnet_admitted_token_set_contains` check at the response, before the slot check at
+   `:678`, with its own counter (not a change to `add()`: `sdk/rocketnet_tests.cpp:2007-2008`
+   asserts that `add` is idempotent, and a refusal from `add` would be counted under
+   `ADMITTED_SET_FULL` at `:688`, which it is not); and the rung added to STANDARD.md's
+   response ladder at S:2822-2827, between the client-id check and the slot check: "If
+   this token's identifier is in the admitted-token set, ignore it."
 
 ### Model errors, fixed
 
@@ -357,15 +382,17 @@ are these (module, config, states, distinct, result, bench, date):
 MCServerConnection	MCServerConnection.cfg; checks PacketsReachOwnSlotOnly, SessionNeverAnswered	14097280	2779489	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1 (the address change)	10351237	2358368	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any" (one token shared, history kept)	3465812	677845	pass	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none" (one token shared, history flushed)	539306	159202	fail: Invariant OneConnectionPerToken is violated (F9 made concrete, README-ServerConnection.md item 8), 22-state trace	hetzner2	2026-10-13
+MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none" (one token shared, history flushed)	504378	148959	fail: Invariant OneConnectionPerToken is violated (F9 made concrete, README-ServerConnection.md item 8), 22-state trace	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with SameId TRUE, MaxSlots 2	10412272	2088713	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with C2SPattern "first", S2CPattern "first"	14078123	2774906	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with C2SPattern "alternate", S2CPattern "alternate"	24564007	4644754	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with C2SPattern "burst", S2CPattern "burst"	14076977	2774632	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with KindLoss "firstkind"	32588361	6790752	pass	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with C2SPattern "arbitrary", S2CPattern "arbitrary"	86207063	12837009	not finished (stopped at the card's time bound): no violation in the states explored	hetzner2	2026-10-13
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, Duplication TRUE, Reordering TRUE	63888899	15380262	not finished (stopped at the bench bound, TLC owed): no violation in the states explored	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with SweepRemovesMapping FALSE; checks SlotMappingBijection (reversed witness)	16948	5861	fail as expected: Invariant SlotMappingBijection is violated, 14-state trace	hetzner2	2026-10-13
-MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", AdmittedHeld FALSE; checks OneConnectionPerToken (reversed witness)	514310	152071	fail as expected: Invariant OneConnectionPerToken is violated, 22-state trace	hetzner2	2026-10-13
+MCServerConnection	MCServerConnection.cfg with NumTokens 1, TokenChoice "any", History "none", RefuseAdmittedAtResponse TRUE (the fix)	8160820	1637413	pass	hetzner2	2026-10-13
+MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AdmittedHeld FALSE; checks OneConnectionPerToken (reversed witness)	2509746	674687	fail as expected: Invariant OneConnectionPerToken is violated, 26-state trace	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with ClientIdCheck FALSE, SameId TRUE, MaxSlots 2; checks OneSlotPerClientId (reversed witness)	374129	112643	fail as expected: Invariant OneSlotPerClientId is violated, 21-state trace	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with NumClients 1, TokenChoice "any", MaxAttempts 2, MaxMoves 1, AddressIsIdentity FALSE; checks OneClientPerSlot, PacketsReachOwnSlotOnly (reversed witness)	55678	21679	fail as expected: Action property PacketsReachOwnSlotOnly is violated, 16-state trace	hetzner2	2026-10-13
 MCServerConnection	MCServerConnection.cfg with NumClients 1, NumAddrs 1, NumTokens 1, MaxNonces 1, Timeout 0, HandshakeDeadline 0, Disconnects FALSE, KindLoss "firstkind"; checks Connects, ServerNotStranded	3478	1173	pass	hetzner2	2026-10-13

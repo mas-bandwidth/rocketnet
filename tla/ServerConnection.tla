@@ -63,7 +63,10 @@
 (* the connection); ClientIdCheck (TRUE: a connected client id refuses the *)
 (* request and the response; FALSE: skipped); AddressIsIdentity (TRUE: a   *)
 (* sealed packet is looked up by its source address; FALSE: by whichever   *)
-(* live mapping its keys open, migration without validation).              *)
+(* live mapping its keys open, migration without validation).  One knob    *)
+(* runs the other way: RefuseAdmittedAtResponse (FALSE is the code; TRUE   *)
+(* is the fix for the finding, a response whose token the admitted set     *)
+(* already holds is refused).                                              *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -87,6 +90,7 @@ CONSTANTS
     History,           \* "kept" (the history binds) or "none" (flushed)
     KindLoss,          \* "none" or "firstkind"
     RepeatKeepAlive, SweepRemovesMapping, AdmittedHeld, ClientIdCheck, AddressIsIdentity,
+    RefuseAdmittedAtResponse,  \* the fix: a response whose token is already admitted is refused; the code is FALSE
     C2SPattern, S2CPattern,                         \* Link patterns
     Capacity, MaxDelay, Duplication, Reordering,    \* Link parameters
     BurstStart, BurstLen
@@ -102,7 +106,7 @@ ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
        /\ KindLoss \in {"none", "firstkind"}
        /\ RepeatKeepAlive \in BOOLEAN /\ SweepRemovesMapping \in BOOLEAN
        /\ AdmittedHeld \in BOOLEAN /\ ClientIdCheck \in BOOLEAN
-       /\ AddressIsIdentity \in BOOLEAN
+       /\ AddressIsIdentity \in BOOLEAN /\ RefuseAdmittedAtResponse \in BOOLEAN
 
 Clients == 1..NumClients
 Addrs   == 1..NumAddrs
@@ -425,8 +429,11 @@ ServerRecvRequest(p) ==
 
 \* a response that opens under the mapping's handshake keys refreshes the
 \* idle clock (before the ladder, as the code does); already connected ->
-\* ignored; the client id connected elsewhere -> ignored; no slot, or the
-\* admitted set full of other tokens -> denied, mapping kept; else the
+\* ignored; the client id connected elsewhere -> ignored; the token already
+\* admitted -> ignored under the fix (RefuseAdmittedAtResponse; the code
+\* has no such rung, and its add() returns success for a present token, so
+\* the response is seated: README-ServerConnection.md item 8); no slot, or
+\* the admitted set full of other tokens -> denied, mapping kept; else the
 \* token is admitted, the lowest free slot assigned, and the first
 \* keep-alive goes out (rocketnet_server_process_connection_response)
 ServerRecvResponse(p) ==
@@ -437,7 +444,8 @@ ServerRecvResponse(p) ==
            m1 == [m EXCEPT !.sinceRecv = 0]
            setFull == m.tok \notin admitted /\ Cardinality(admitted) = AdmittedCap
        IN IF m.live /\ KeysOf(p) = KeysOf(m)
-            THEN CASE m.slot # 0 \/ IdConnected(m.tok) ->
+            THEN CASE m.slot # 0 \/ IdConnected(m.tok)
+                      \/ (RefuseAdmittedAtResponse /\ m.tok \in admitted) ->
                         /\ smap' = [smap EXCEPT ![a] = m1]
                         /\ ServerSilent /\ UNCHANGED <<slot, admitted, admits>>
                    [] FreeSlots = 0 \/ setFull ->
