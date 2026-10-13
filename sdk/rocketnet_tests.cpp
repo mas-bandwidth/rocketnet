@@ -9030,6 +9030,54 @@ static void rocketnet_test_fragment_pair_teardown( struct rocketnet_test_fragmen
     rocketnet_test_server_teardown( &pair->test );
 }
 
+// The receive takes its buffer's capacity: a capacity below the largest
+// ordinary payload is refused at entry, before the packet is read, counted as
+// RECEIVE_CURSOR_TOO_SMALL, and leaves both the buffer and the protocol state
+// untouched -- so the call can never overrun the caller's buffer.
+
+void rocketnet_test_client_protocol_refuses_a_small_capacity()
+{
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    const uint64_t * counters = pair.client_counters.values;
+
+    uint8_t payload[100];
+    rocketnet_test_generate_payload( payload, (int) sizeof(payload) );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_server_protocol_write_payload( &pair.test.server, 0, payload, (int) sizeof(payload),
+                                                                pair.time, packet );
+    rocketnet_check( packet_bytes > 0 );
+
+    // a 16-byte buffer with a trailing canary is refused before anything is
+    // written: the canary and the payload bytes beside it are untouched
+
+    struct { uint8_t buffer[16]; uint8_t canary[8]; } small;
+    memset( &small, 0xA5, sizeof(small) );
+    int payload_bytes = 12345;
+
+    const uint64_t too_small_before = counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
+    rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
+                                                              small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+    rocketnet_check( payload_bytes == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small_before + 1 );
+    for ( int i = 0; i < (int) sizeof(small); i++ )
+        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+
+    // the same packet, untouched by the refused call, is accepted whole into a
+    // full buffer and lands byte-exact
+
+    uint8_t full[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    payload_bytes = 0;
+    rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
+                                                              full, (int) sizeof(full), &payload_bytes ) );
+    rocketnet_check( payload_bytes == (int) sizeof(payload) );
+    rocketnet_check( memcmp( full, payload, sizeof(payload) ) == 0 );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
 // hands one packet to the server, expecting it through the ladder
 
 static int rocketnet_test_fragment_deliver_to_server( struct rocketnet_test_fragment_pair_t * pair,
@@ -11259,6 +11307,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_client_terminal_states_wipe_secrets", rocketnet_test_client_terminal_states_wipe_secrets },
     { "test_client_timeout_paths", rocketnet_test_client_timeout_paths },
     { "test_client_cookie_injection", rocketnet_test_client_cookie_injection },
+    { "test_client_protocol_refuses_a_small_capacity", rocketnet_test_client_protocol_refuses_a_small_capacity },
     { "test_integrity_limit", rocketnet_test_integrity_limit },
     { "test_network_simulator", rocketnet_test_network_simulator },
     { "test_network_simulator_refuses_overflowing_capacity", rocketnet_test_network_simulator_refuses_overflowing_capacity },
