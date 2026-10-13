@@ -9065,6 +9065,26 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     for ( int i = 0; i < (int) sizeof(small); i++ )
         rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
 
+    // the refusal precedes any read of the packet: a packet that would not
+    // survive the prefilter is refused here instead, only the capacity
+    // counter moves, and no protocol state does
+
+    uint8_t one_byte[1] = { 0 };
+    uint64_t counters_before[ROCKETNET_NUM_COUNTERS];
+    memcpy( counters_before, counters, sizeof( counters_before ) );
+    const int state_before = pair.client.state;
+    const uint64_t received_sequence_before = pair.client.received_session_sequence;
+
+    rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, one_byte, (int) sizeof(one_byte), pair.time,
+                                                               small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+    rocketnet_check( payload_bytes == 0 );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+        rocketnet_check( counters[i] == counters_before[i] + ( i == ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL ? 1 : 0 ) );
+    rocketnet_check( pair.client.state == state_before );
+    rocketnet_check( pair.client.received_session_sequence == received_sequence_before );
+    for ( int i = 0; i < (int) sizeof(small); i++ )
+        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+
     // the same packet, untouched by the refused call, is accepted whole into a
     // full buffer and lands byte-exact
 
