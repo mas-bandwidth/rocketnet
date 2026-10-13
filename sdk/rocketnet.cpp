@@ -8,6 +8,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
+#include "rocketnet_config.h"
 #include "rocketnet_hash.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
@@ -19,6 +20,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>
 #include <math.h>
 #include <float.h>
 #include <string.h>
@@ -87,17 +89,71 @@ static int log_level = ROCKETNET_LOG_LEVEL_INFO;
 
 void rocketnet_log_level( int level )
 {
+    // the defined levels are NONE (0) through SPAM (5): a value outside that
+    // range is refused, leaving the level already in force. a caller that
+    // hands over a typo or a parsed-out-of-range number must not silence the
+    // library by accident.
+    if ( level < ROCKETNET_LOG_LEVEL_NONE || level > ROCKETNET_LOG_LEVEL_SPAM )
+        return;
     log_level = level;
 }
 
+// test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
+// they cannot link rocketnet_config_parse_int_value. the definition here is
+// that function's whole-string integer parse: a leading minus is allowed, and
+// a prefix, a plus and whitespace are refused. the library itself keeps the
+// one definition in rocketnet_config.cpp.
+
+#if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
+
+bool rocketnet_config_parse_int_value( const char * value, int * out )
+{
+    const char * cursor = value;
+    if ( cursor == NULL )
+        return false;
+    if ( *cursor == '-' )
+        cursor++;
+    if ( *cursor == '\0' )
+        return false;
+    for ( ; *cursor != '\0'; cursor++ )
+    {
+        if ( *cursor < '0' || *cursor > '9' )
+            return false;
+    }
+    char * end = NULL;
+    errno = 0;
+    long long parsed = strtoll( value, &end, 10 );
+    if ( end == value || *end != '\0' || errno == ERANGE )
+        return false;
+    if ( parsed < INT32_MIN || parsed > INT32_MAX )
+        return false;
+    *out = (int) parsed;
+    return true;
+}
+
+#endif // #if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
+
 // the ROCKETNET_LOG_LEVEL override's parse-and-apply step, factored out of
 // rocketnet_init so the suite can drive it with a string directly. it is
-// internal to the sdk, not part of the exported C surface.
+// internal to the sdk, not part of the exported C surface. the value parses
+// strictly, with the same whole-string integer parse the transport config
+// overrides use: only a value inside NONE (0) .. SPAM (5) is applied, and
+// anything else -- a word, the empty string, an out-of-range number -- keeps
+// the current level and warns, naming the refused value, rather than letting
+// a mistyped environment variable silence the library.
 
 void rocketnet_log_level_override_apply( const char * value )
 {
-    log_level = atoi( value );
-    rocketnet_info( "log level overridden to %d", log_level );
+    int parsed;
+    if ( rocketnet_config_parse_int_value( value, &parsed ) &&
+         parsed >= ROCKETNET_LOG_LEVEL_NONE && parsed <= ROCKETNET_LOG_LEVEL_SPAM )
+    {
+        log_level = parsed;
+        rocketnet_info( "log level overridden to %d", log_level );
+        return;
+    }
+    rocketnet_warn( "ignoring ROCKETNET_LOG_LEVEL=\"%s\": not a level %d to %d, keeping %d",
+                    value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level );
 }
 
 int rocketnet_get_log_level( void )
