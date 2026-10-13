@@ -3731,6 +3731,41 @@ void rocketnet_test_client_slots()
     rocketnet_client_slots_destroy( slots );
 }
 
+void rocketnet_test_table_creates_refuse_overflowing_capacity()
+{
+    // each create sizes a bucket array at twice its capacity in a signed int.
+    // a capacity above INT_MAX / 2 wraps that arithmetic, so the bucket array
+    // is sized from the wrapped value while the other arrays use the capacity.
+    // the create refuses such a capacity before it allocates anything, and it
+    // still accepts a small one.
+    const int too_large = INT_MAX;
+    const int just_over = INT_MAX / 2 + 1;
+
+    rocketnet_check( rocketnet_encryption_map_create( NULL, too_large ) == NULL );
+    rocketnet_check( rocketnet_encryption_map_create( NULL, just_over ) == NULL );
+    struct rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 4 );
+    rocketnet_check( map );
+    rocketnet_encryption_map_destroy( map );
+
+    rocketnet_check( rocketnet_used_token_history_create( NULL, too_large ) == NULL );
+    rocketnet_check( rocketnet_used_token_history_create( NULL, just_over ) == NULL );
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 4 );
+    rocketnet_check( history );
+    rocketnet_used_token_history_destroy( history );
+
+    rocketnet_check( rocketnet_admitted_token_set_create( NULL, too_large ) == NULL );
+    rocketnet_check( rocketnet_admitted_token_set_create( NULL, just_over ) == NULL );
+    struct rocketnet_admitted_token_set_t * set = rocketnet_admitted_token_set_create( NULL, 4 );
+    rocketnet_check( set );
+    rocketnet_admitted_token_set_destroy( set );
+
+    rocketnet_check( rocketnet_client_slots_create( NULL, too_large ) == NULL );
+    rocketnet_check( rocketnet_client_slots_create( NULL, just_over ) == NULL );
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
+    rocketnet_check( slots );
+    rocketnet_client_slots_destroy( slots );
+}
+
 void rocketnet_test_client_id_out_of_range_returns_zero()
 {
     struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
@@ -10921,6 +10956,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },
+    { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
     { "test_client_id_out_of_range_returns_zero", rocketnet_test_client_id_out_of_range_returns_zero },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost },
     { "test_platform_thread", rocketnet_test_platform_thread },
