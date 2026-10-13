@@ -3379,6 +3379,7 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
 
     channels_window_exchange_record_t records[capacity] = {};
     uint8_t live[B] = {};
+    uint8_t reserved[B] = {};
     alignas( 16 ) uint8_t packet[ROCKETNET_MAX_PAYLOAD_BYTES];
     alignas( 16 ) uint8_t received[ROCKETNET_RECEIVE_CEILING];
     uint64_t send_cursor = 0;
@@ -3443,6 +3444,23 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
         // Rewrites keep their original number and ring offset. Limit each
         // update's packets so the lossy link and receiver both make progress.
         const uint64_t numbered = send.next;
+        // U' pins even an ACKed fragment of a partly ACKed block. Check
+        // every sender reservation, including records the wire has not yet
+        // delivered, against an independent byte shadow (RNRing LiveSpansDisjoint).
+        memset( reserved, 0, sizeof(reserved) );
+        for ( uint64_t n = send.U_prime; n < numbered; n++ )
+        {
+            const rn_send_number_t * entry = &source->send_numbers[n % W];
+            check( entry->number == n );
+            const uint32_t span = (uint32_t) entry->ring_units * 16;
+            const uint32_t start = (uint32_t) ( entry->ring_start % B );
+            check( rn_region_ring_span_valid( source, start, span ) );
+            for ( uint32_t j = start; j < start + span; j++ )
+            {
+                check( reserved[j] == 0 );
+                reserved[j] = (uint8_t) ( n + 1 );
+            }
+        }
         int sent = 0;
         for ( uint64_t scan = 0; scan < numbered && sent < 8; scan++ )
         {

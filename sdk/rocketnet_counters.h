@@ -346,11 +346,11 @@ enum
     ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL,
     ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED,
 
+    // Layer 3 receive window: a reliable number already received (6.5).
+    ROCKETNET_COUNTER_MESSAGE_DUPLICATE,
     // Numbering met either the count or ring bound (CHANNELS 6.2). Count
     // once per stall, even when the scheduler retries the same head.
     ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL,
-    // Layer 3 receive window: a reliable number already received (6.5).
-    ROCKETNET_COUNTER_MESSAGE_DUPLICATE,
 
     ROCKETNET_NUM_COUNTERS
 };

@@ -317,8 +317,8 @@ public static unsafe partial class RocketNet
         ConnectionRequestSignatureVerifyLimit,
         MessageUnreliableDeliveryFull,
         MessageUnreliableSendFailed,
-        MessageWindowStall,
         MessageDuplicate,
+        MessageWindowStall,
     }
 #pragma warning restore 1591
 
