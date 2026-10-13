@@ -1783,6 +1783,10 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
     ring->num_packets = 0;
 
+    // The disconnect_client header promise: buffered control frames leave on
+    // the next flush even when this fill phase sent no payload-ring packet.
+    rocketnet_server_flush_control_buffer( server_transport );
+
     rocketnet_send_arena_reset( server_transport->send_arena );
 }
 
@@ -1827,6 +1831,7 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
     int burst_bytes = 0;
     rocketnet_server_protocol_disconnect_client( &server_transport->protocol, client_index, burst, &burst_count, &burst_bytes );
 
+    int committed = 0;
     for ( int i = 0; i < burst_count; i++ )
     {
         struct rocketnet_server_frame_t frame;
@@ -1835,7 +1840,13 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
             break;
         memcpy( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
         rocketnet_server_commit_send_frame( server_transport, &frame, burst_bytes );
+        committed++;
     }
+
+    // The disconnect_client header promise: committed staged frames leave on
+    // the next send_packets flush even when there is no following update.
+    if ( committed && rocketnet_server_transport_staged( server_transport ) )
+        server_transport->send_staged++;
 }
 
 int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport )
