@@ -364,3 +364,36 @@ If every copy is lost the peer waits for its idle timeout, which S:2918-2924 sta
 the design ("losing all ten costs only a peer that waits for the timeout"). In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
+
+## Reproducible case files
+
+The original seven-column records are preserved unchanged in
+[`RUNS-HISTORY.tsv`](RUNS-HISTORY.tsv). Current measurements use the runner
+and refresh procedure in [`README.md`](README.md). Each historical row now
+has its own committed configuration; no edit to a shared file is needed.
+The table follows the original ledger order. A declared debt retains its
+original parameters and is not a completed proof.
+
+| Historical row | Committed configuration | Declared outcome |
+|---|---|---|
+| 12 | `MCClientConnection.cfg` | pass |
+| 13 | `MCClientConnectionLNone.cfg` | pass |
+| 14 | `MCClientConnectionLFirst.cfg` | pass |
+| 15 | `MCClientConnectionLAlternate.cfg` | pass |
+| 16 | `MCClientConnectionLBurst.cfg` | pass |
+| 17 | `MCClientConnectionLArbitrary.cfg` | pass; debt: arbitrary-loss-liveness-over-budget |
+| 18 | `MCClientConnectionWOnceFirstkind.cfg` | temporal / Connects |
+| 19 | `MCClientConnectionWOnceAlternate.cfg` | temporal / Connects |
+| 20 | `MCClientConnectionWAnysend.cfg` | temporal / Connects |
+| 21 | `MCClientConnectionLSilent.cfg` | pass |
+| 22 | `MCClientConnectionLCrash.cfg` | pass |
+| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget |
+| 24 | `MCClientConnectionSFirst.cfg` | pass |
+| 25 | `MCClientConnectionSAlternate.cfg` | pass |
+| 26 | `MCClientConnectionSBurst.cfg` | pass |
+| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget |
+| 28 | `MCClientConnectionSFirstkind.cfg` | pass |
+| 29 | `MCClientConnectionSDelay.cfg` | pass |
+| 30 | `MCClientConnectionF4Ephemeral.cfg` | invariant / EphemeralErasedOutsideHandshake |
+| 31 | `MCClientConnectionF8Terminal.cfg` | action / TerminalAbsorbing |
+| 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
