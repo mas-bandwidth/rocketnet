@@ -32,6 +32,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_unreliable.h"
+#include "rocketnet_window_send.h"
 #include "rocketnet_network_simulator.h"
 
 #include <stdarg.h>
@@ -2903,6 +2904,135 @@ static void test_channels_unreliable_over_the_lossy_simulator_entry()
 
 // -----------------------------------------
 
+// Layer 3 sender: small region fixtures exercise the real per-number table
+// without an arena allocation. The red-first assertions stay as the rules'
+// regression witnesses (CHANNELS 6.2, RNRing PlaceSingle/PlaceBlock/Ack,
+// RNWindow NumberRecord/ReceiveAck).
+
+struct channels_window_send_rig_t
+{
+    rn_region_t region;
+    rn_send_number_t numbers[8];
+    rocketnet_counters_t counters;
+    rn_window_send_t send;
+};
+
+static void channels_window_send_setup( channels_window_send_rig_t * rig, uint32_t W, uint32_t B )
+{
+    memset( rig, 0, sizeof( *rig ) );
+    rig->region.window = W;
+    rig->region.ring_bytes = B;
+    rig->region.max_message_bytes = B;
+    rig->region.send_numbers = rig->numbers;
+    rig->region.counters = &rig->counters;
+    rn_window_send_init( &rig->send, &rig->region, 0 );
+}
+
+static void test_channels_window_send_numbers_late_never_at_send()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n = UINT64_MAX, p = UINT64_MAX;
+    check( rig.send.next == 0 );                    // send_message only queues
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_UNRELIABLE );
+    check( rig.send.next == 0 );                    // no unreliable number
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( n == 0 && rig.send.next == 1 );          // first packet write takes it
+    check( rig.numbers[0].number == 0 && rig.numbers[0].acked == 0 );
+}
+
+static void test_channels_window_send_count_bound_stalls_at_u_prime_plus_w()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n, p;
+    for ( uint64_t i = 0; i < 4; i++ )
+    {
+        check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+        check( n == i );
+    }
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 1 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( n == 4 );
+}
+
+static void test_channels_window_send_ring_pads_at_the_boundary()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 8, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 0 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 48, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 64 && rig.send.ring_next == 112 ); // [32,80) would cross B
+    check( rn_region_ring_span_valid( &rig.region, p % 64, 48 ) );
+}
+
+static void test_channels_window_send_floor_is_u_prime_not_u()
+{
+    channels_window_send_rig_t rig;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_send_setup( &rig, 8, 2 * F );
+    uint64_t n, p;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 1, 0, &n, &p ) == 2 );
+    check( n == 0 && p == 0 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F - 16, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rig.send.ring_next == 2 * F );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 0 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.send.next == 3 );                    // floor 0 forbids [B,B+16)
+}
+
+static void test_channels_window_send_block_takes_consecutive_numbers_and_one_span()
+{
+    channels_window_send_rig_t rig;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_send_setup( &rig, 8, 4096 );
+    uint64_t n, p;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 17, 5, &n, &p ) == 2 );
+    check( n == 0 && p == 0 && rig.send.next == 2 );
+    check( rig.numbers[0].fragment == 0 && rig.numbers[1].fragment == 1 );
+    check( rig.numbers[0].ring_start == 0 && rig.numbers[1].ring_start == F );
+    check( rig.numbers[0].ring_units == F / 16 && rig.numbers[1].ring_units == 2 );
+    check( rig.send.ring_next == F + 32 );
+    check( rn_window_send_mark_acked( &rig.send, 1 ) == 1 );
+    check( rig.send.U == 0 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 2 && rig.send.U_prime == 2 );
+}
+
+static void test_channels_window_send_stall_lets_unreliable_through()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 1, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.send.stalled && rn_window_send_can_write_unreliable( &rig.send ) );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_UNRELIABLE );
+    check( rig.send.next == 1 && rig.counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+}
+
+static void test_channels_window_send_any_message_fits_when_nothing_is_outstanding()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U_prime == rig.send.next );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 64 && rig.send.ring_next == 128 );
+}
+
+// -----------------------------------------
+
 struct channels_test_t
 {
     const char * name;
@@ -2935,6 +3065,13 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_unreliable_block_not_corrupted_across_fragmented_store", "ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore", test_channels_unreliable_block_not_corrupted_across_fragmented_store },
     { "test_channels_unreliable_message_past_u16_length_refused", "ChannelsUnreliableMessagePastU16LengthRefused", test_channels_unreliable_message_past_u16_length_refused },
     { "test_channels_unreliable_over_the_lossy_simulator", "ChannelsUnreliableOverTheLossySimulator", test_channels_unreliable_over_the_lossy_simulator_entry },
+    { "test_channels_window_send_numbers_late_never_at_send", "ChannelsWindowSendNumbersLateNeverAtSend", test_channels_window_send_numbers_late_never_at_send },
+    { "test_channels_window_send_count_bound_stalls_at_u_prime_plus_w", "ChannelsWindowSendCountBoundStallsAtUPrimePlusW", test_channels_window_send_count_bound_stalls_at_u_prime_plus_w },
+    { "test_channels_window_send_ring_pads_at_the_boundary", "ChannelsWindowSendRingPadsAtTheBoundary", test_channels_window_send_ring_pads_at_the_boundary },
+    { "test_channels_window_send_floor_is_u_prime_not_u", "ChannelsWindowSendFloorIsUPrimeNotU", test_channels_window_send_floor_is_u_prime_not_u },
+    { "test_channels_window_send_block_takes_consecutive_numbers_and_one_span", "ChannelsWindowSendBlockTakesConsecutiveNumbersAndOneSpan", test_channels_window_send_block_takes_consecutive_numbers_and_one_span },
+    { "test_channels_window_send_stall_lets_unreliable_through", "ChannelsWindowSendStallLetsUnreliableThrough", test_channels_window_send_stall_lets_unreliable_through },
+    { "test_channels_window_send_any_message_fits_when_nothing_is_outstanding", "ChannelsWindowSendAnyMessageFitsWhenNothingIsOutstanding", test_channels_window_send_any_message_fits_when_nothing_is_outstanding },
 };
 
 int rocketnet_channels_test_count()

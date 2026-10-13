@@ -218,6 +218,7 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT:      return "CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT";
         case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL:               return "MESSAGE_UNRELIABLE_DELIVERY_FULL";
         case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED:                 return "MESSAGE_UNRELIABLE_SEND_FAILED";
+        case ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL:                           return "MESSAGE_WINDOW_STALL";
         default:
             rocketnet_assert( 0 );
             return "???";
