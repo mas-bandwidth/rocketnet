@@ -224,7 +224,7 @@ The other runs are the committed file with a few lines changed. Three shapes rec
 | committed | none (`SpecSafety` + `CountPinned`) | passes |
 | live | `MCFragmentsAndAcksLive.cfg`: `Spec` + `OpenedSurfacesOrLaps` | not finished |
 | live-small | live with `MaxSeq = 3`, `MaxGen = 1`, duplication and reordering off | passes |
-| live-dup | live with `MaxSeq = 1`, `MaxGen = 1`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off: the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case |
+| live-dup | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case |
 | pat-none / first / alternate / burst | pattern, `SpecSafety` + `CountPinned` | not run |
 | find-stale | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails**: D1 |
 | find-stale-small | find-stale + stale-small | **fails**: D1 |
@@ -248,7 +248,7 @@ The other runs are the committed file with a few lines changed. Three shapes rec
 | committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
 | live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; no row, it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
-| live-dup (`MaxSeq = 1`, `MaxGen = 1`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, no reordering; the lasso instance of the first cold read, re-run by that reader at `e8c1a22` on hetzner1, `scratchpad/r210c-live`) | pass, 2 branches | 24,664 | 5,308 | 29 | 5 s |
+| live-dup (`MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, `OpenedSurfacesOrLaps` only; data link `"none"`, ack link `"arbitrary"` with duplication, no reordering; the lasso instance of the first cold read, re-run by that reader at `e8c1a22` on hetzner1, `scratchpad/r210c-live`) | pass, 2 branches | 24,664 | 5,308 | 29 | 5 s |
 | find-stale (`MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1`) | **StaleOnlyIfOlder violated**, 10 states (D1) | 852,185 | 185,694 | | 4 s |
 | find-stale-small (find-stale, counts `{2}`, no dup, no reorder) | **StaleOnlyIfOlder violated**, 10 states (D1) | 65,364 | 23,258 | | 0 s |
 | find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the standard's rule on the instance the code's rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
@@ -413,13 +413,13 @@ in parallel on that file.
 ```
 FragmentsAndAcks	MCFragmentsAndAcks.cfg (SpecSafety; checks the nine invariants, CountPinned)	317743656	44927746	pass	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcksLive.cfg with MaxSeq 3, MaxGen 1, Duplication FALSE, Reordering FALSE (Spec; checks the nine invariants, CountPinned, OpenedSurfacesOrLaps)	229436	54283	pass	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcksLive.cfg with MaxSeq 1, MaxGen 1, Counts {2}, Burns FALSE, D2RPattern "none", R2DPattern "arbitrary", Duplication TRUE, Reordering FALSE (Spec; checks OpenedSurfacesOrLaps; the old fairness's lasso instance, run by the cold reader at e8c1a22)	24664	5308	pass	hetzner1	2026-10-13
+FragmentsAndAcks	MCFragmentsAndAcksLive.cfg with MaxSeq 1, MaxGen 1, MaxCount 2, Counts {2}, Burns FALSE, D2RPattern "none", R2DPattern "arbitrary", Duplication TRUE, Reordering FALSE (Spec; INVARIANTS and CountPinned removed; checks OpenedSurfacesOrLaps; the old fairness's lasso instance, run by the cold reader at e8c1a22)	24664	5308	pass	hetzner1	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1; checks StaleOnlyIfOlder	852185	185694	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, Counts {2}, Duplication FALSE, Reordering FALSE; checks StaleOnlyIfOlder	65364	23258	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, Counts {2}, Duplication FALSE, Reordering FALSE, StaleRule "serial"; checks StaleOnlyIfOlder	90830297	19697444	pass	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 8, MaxGen 4, MaxDelay 1; checks StaleOnlyIfOlder	8174784	1739380	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 11 states	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, StaleRule "plain", FirstId 6; checks StaleOnlyIfOlder (the standard's witness)	693732	152783	fail as expected: Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, Slots 2, StaleRule "serial", Counts {2}, Pattern "none", Duplication FALSE, Burns FALSE; checks BatchFullNeverFires	527835	190328	fail as expected (D2): Invariant BatchFullNeverFires is violated, 18 states	hetzner2	2026-10-13
+FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, Slots 2, StaleRule "serial", Counts {2}, D2RPattern "none", R2DPattern "none", Duplication FALSE, Burns FALSE; checks BatchFullNeverFires	527835	190328	fail as expected (D2): Invariant BatchFullNeverFires is violated, 18 states	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with DefectIds {0, 1}, MaxCount 2, Counts {2}, MaxGen 1, Capacity 1, Duplication FALSE, Reordering FALSE, Burns FALSE; checks the nine invariants, CountPinned	82754545	17468462	pass	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "firstfrag" (reversed witness)	2042	887	fail as expected: Invariant SurfacedOnlyIfOpened is violated, 6 states	hetzner2	2026-10-13
 FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "dropfull" (reversed witness)	21845	7792	fail as expected: Invariant AckedMeansSurfaced is violated, 9 states	hetzner2	2026-10-13
