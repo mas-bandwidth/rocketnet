@@ -34,8 +34,16 @@
 (*   The code (sdk/rocketnet_server_protocol.cpp:962-972) advances, then   *)
 (*   checks client_index == -1: GateBeforeAdvance = FALSE is that order.   *)
 (*                                                                         *)
-(* The handshake window (replay_handshake) is the same struct with the     *)
-(* same operations; the model is one window and does not distinguish.      *)
+(* This is replay_session only.  The handshake window (replay_handshake)  *)
+(* is the same struct, but handshake packets are exempt from replay        *)
+(* marking and only raise its highest_opened                              *)
+(* (sdk/rocketnet_server_protocol.cpp:883-889 and 949-950;                 *)
+(* sdk/rocketnet_client_protocol.cpp:511-512); advance never runs on it,   *)
+(* and nothing here speaks for it.                                         *)
+(*                                                                         *)
+(* A second ghost, processed, records what a slot actually processed: the  *)
+(* harm the gate guards against is the ack block naming a packet nothing   *)
+(* processed, and AckReportsOnlyProcessed says it never does.              *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -60,9 +68,10 @@ VARIABLES
     highest,    \* highest_opened: the high-water mark, 0 before any open
     window,     \* [0..W-1 -> BOOLEAN]: the ring bit for each sequence mod W
     received,   \* ghost: the sequences that opened and are still in range
+    processed,  \* ghost: those of them a slot processed (not ignored)
     connected   \* the mapping holds a slot (client_index != -1)
 
-vars == <<highest, window, received, connected>>
+vars == <<highest, window, received, processed, connected>>
 
 Seqs == 1..MaxSeq
 
@@ -134,6 +143,7 @@ Init ==
     /\ highest = 0                          \* a new mapping is zeroed:
     /\ window = [b \in 0..W-1 |-> FALSE]    \* sdk/rocketnet_encryption_map.cpp:140
     /\ received = {}
+    /\ processed = {}
     /\ connected = FALSE                    \* client_index is -1 until the response
 
 (***************************************************************************)
@@ -155,6 +165,8 @@ Receive(s) ==
     /\ IF connected \/ ~GateBeforeAdvance
          THEN Advance(s)
          ELSE UNCHANGED <<highest, window, received>>
+    /\ processed' = {t \in (IF connected THEN processed \cup {s} ELSE processed) :
+                        t + W > highest'}
     /\ UNCHANGED connected
 
 \* The connection response opens and the mapping takes a slot
@@ -163,7 +175,7 @@ Receive(s) ==
 Connect ==
     /\ ~connected
     /\ connected' = TRUE
-    /\ UNCHANGED <<highest, window, received>>
+    /\ UNCHANGED <<highest, window, received, processed>>
 
 Next ==
     \/ \E s \in Seqs : Receive(s)
@@ -180,6 +192,7 @@ TypeOK ==
     /\ highest \in 0..MaxSeq
     /\ window \in [0..W-1 -> BOOLEAN]
     /\ received \subseteq Seqs
+    /\ processed \subseteq received
     /\ connected \in BOOLEAN
 
 \* The window is the truth inside the retained range: a bit is set exactly
@@ -217,6 +230,12 @@ HighestIsReceived ==
 \* OV-34: the session window of a mapping with no slot never moves.
 NoAdvanceBeforeConnect ==
     ~connected => highest = 0 /\ received = {}
+
+\* The harm behind OV-34: the ack block names only packets a slot processed.
+\* A sequence marked on a pending mapping and then ignored would be reported
+\* to the peer as received although nothing processed it.
+AckReportsOnlyProcessed ==
+    \A s \in Seqs : AckReports(s) => s \in processed
 
 \* The high-water mark never goes backwards, and a slot is never given up.
 Monotone ==

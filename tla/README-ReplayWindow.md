@@ -27,6 +27,7 @@ zeroed at `sdk/rocketnet_encryption_map.cpp:140` and its slot is `-1` at `:141`)
 | `highest` | `highest_opened` | the high-water mark; 0 before any open |
 | `window` | `window[ROCKETNET_HISTORY_PACKETS / 64]` | the ring, one `BOOLEAN` per bit; sequence `s` lives at bit `s % W`, bit `b` in word `b div WordBits` |
 | `received` | (ghost) | the sequences that opened and are still inside the retained range: the truth the window is meant to encode |
+| `processed` | (ghost) | those of them a slot processed rather than ignored: what the ack block may truthfully speak for |
 | `connected` | `client_index != -1` on the mapping | the mapping holds a slot |
 
 `W == Words * WordBits` is `ROCKETNET_REPLAY_WINDOW_BITS` (`sdk/rocketnet_replay.h:26`,
@@ -54,8 +55,11 @@ builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp:70-72`); the two ag
 
 The client is the same pair on a window that is always connected
 (`sdk/rocketnet_client_protocol.cpp:689` and `:713`); `Receive` with `connected`
-covers it. The handshake window (`replay_handshake`) is the same struct with the same
-operations and is not distinguished.
+covers it. The model is `replay_session` only. The handshake window (`replay_handshake`)
+is the same struct, but handshake packets are exempt from replay marking and only raise
+its `highest_opened` (`sdk/rocketnet_server_protocol.cpp:883-889` and `:949-950`;
+`sdk/rocketnet_client_protocol.cpp:511-512`): `advance` never runs on it, no ack block
+is built from it, and nothing here speaks for it.
 
 **Constants:**
 
@@ -81,6 +85,7 @@ is no liveness property here; the connection models above it carry those.
 | `BelowFloorIsRefused` | STANDARD.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
 | `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp:94` | the high-water mark is itself marked |
 | `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
+| `AckReportsOnlyProcessed` | the harm behind OV-34, named by the STANDARD change | the ack block names only packets a slot processed |
 | `Monotone` (action property) | | the mark never goes backwards; a slot is never given up |
 
 `GenuineIsAccepted` and `AckReportsOnlyReceived` follow from `WindowIsTruth`; they are
@@ -99,7 +104,7 @@ own witness run.
   injection").
 - The ack block's truncation (`max_ranges`, the `0xFFFF` run and gap caps): it loses
   only the oldest information, which the next block restates.
-- The two phases: one window stands for either.
+- The handshake window: see "What the model covers". Only `replay_session` is modelled.
 - Removal of the mapping. A mapping that loses its slot is removed and a new one starts
   from `Init`; the model is one mapping's lifetime.
 
@@ -114,7 +119,7 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWin
 
 `MCReplayWindow.cfg` is the committed run: the rule on both counts (`ClearedWords = 6`,
 `GateBeforeAdvance = TRUE`), checking every invariant above and `Monotone`. It finishes
-in about a second: 958,503 states, 53,249 distinct, depth 16.
+in a few seconds: 958,503 states, 53,249 distinct, depth 16.
 
 The reversed witnesses are the same file with one constant changed to what the code
 does today and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
@@ -122,10 +127,11 @@ does today and `INVARIANTS` cut to the one rule under test, so TLC names that ru
 | Run | Edit | `INVARIANTS` | Expected |
 |---|---|---|---|
 | committed | none | all | passes |
-| w-longskip-window | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the trace below |
-| w-longskip-genuine | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: same shape |
-| w-longskip-ack | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: same shape |
+| w-longskip-window | `ClearedWords = 4` | `WindowIsTruth` | **fails**: the 5-state trace below |
+| w-longskip-genuine | `ClearedWords = 4` | `GenuineIsAccepted` | **fails**: 6 states, same shape |
+| w-longskip-ack | `ClearedWords = 4` | `AckReportsOnlyReceived` | **fails**: 5 states, same shape |
 | w-gate | `GateBeforeAdvance = FALSE` | `NoAdvanceBeforeConnect` | **fails**: 2-state trace below |
+| w-gate-processed | `GateBeforeAdvance = FALSE` | `AckReportsOnlyProcessed` | **fails**: the same 2 states |
 
 For example:
 
@@ -148,8 +154,8 @@ the trace says. Neither is fixed in this PR; each belongs to its fix card.
 ### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
 
 `w-longskip-window`, `ClearedWords = 4` of 6 (`W = 12`). With four workers TLC prints one
-of several equivalent four-to-six-state traces (which small sequences open before the
-jump varies; the jump and the end state do not). The one from the first run:
+of several equivalent short traces (which small sequences open before the jump varies;
+the jump and the end state do not). The recorded run's, five states:
 
 | State | Step | `highest` | bits set | `received` |
 |---|---|---|---|---|
@@ -208,9 +214,11 @@ and is ignored. The window moved before connect, exactly as the card says.
 
 Why the order matters, in this model's terms: a sequence marked on a pending mapping is
 reported by this end's next ack block as received although the packet was never
-processed. With the current order every other invariant still holds (the window stays
-truthful about what opened), so the defect is not in the window but in what the window
-is then made to say.
+processed. `w-gate-processed` checks exactly that harm: the same two states, with
+`received = {1}` and `processed = {}` in state 2, so `AckReports(1)` holds for a packet
+nothing processed and `AckReportsOnlyProcessed` is violated. With the current order every
+other invariant still holds (the window stays truthful about what opened), so the defect
+is not in the window but in what the window is then made to say.
 
 The rule is the standard's. The code's comment at `:957-960` follows the reading order
 STANDARD.md gave before this model: _Reading packets_ marked every opened session packet
@@ -229,8 +237,9 @@ tab-separated, bench hetzner2, 2026-10-13:
 
 ```
 MCReplayWindow	MCReplayWindow.cfg (ClearedWords 6, GateBeforeAdvance TRUE); checks all invariants, Monotone	958503	53249	pass	hetzner2	2026-10-13
-MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks WindowIsTruth (reversed witness, F1)	902	265	fail as expected (F1): Invariant WindowIsTruth is violated, 6-state trace, see README-ReplayWindow.md	hetzner2	2026-10-13
-MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks GenuineIsAccepted (reversed witness, F1)	937	270	fail as expected (F1): Invariant GenuineIsAccepted is violated, 5-state trace	hetzner2	2026-10-13
-MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks AckReportsOnlyReceived (reversed witness, F1)	940	263	fail as expected (F1): Invariant AckReportsOnlyReceived is violated, 4-state trace	hetzner2	2026-10-13
+MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks WindowIsTruth (reversed witness, F1)	737	246	fail as expected (F1): Invariant WindowIsTruth is violated, 5-state trace, see README-ReplayWindow.md	hetzner2	2026-10-13
+MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks GenuineIsAccepted (reversed witness, F1)	798	252	fail as expected (F1): Invariant GenuineIsAccepted is violated, 6-state trace	hetzner2	2026-10-13
+MCReplayWindow	MCReplayWindow.cfg with ClearedWords 4; checks AckReportsOnlyReceived (reversed witness, F1)	937	270	fail as expected (F1): Invariant AckReportsOnlyReceived is violated, 5-state trace	hetzner2	2026-10-13
 MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks NoAdvanceBeforeConnect (reversed witness, OV-34)	2	2	fail as expected (OV-34): Invariant NoAdvanceBeforeConnect is violated, 2-state trace	hetzner2	2026-10-13
+MCReplayWindow	MCReplayWindow.cfg with GateBeforeAdvance FALSE; checks AckReportsOnlyProcessed (reversed witness, OV-34, the harm)	2	2	fail as expected (OV-34): Invariant AckReportsOnlyProcessed is violated, 2-state trace	hetzner2	2026-10-13
 ```
