@@ -164,7 +164,12 @@ inline int rocketnet_read_uint64_bounded( const uint8_t ** p, const uint8_t * en
 
 inline int rocketnet_read_bytes_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * data, int bytes )
 {
-    if ( *p + bytes > end )
+    // the negative count is refused before any pointer is formed, and the room
+    // left is compared as a size, so neither a negative count nor a count past
+    // the end can move *p out of range or reach memcpy as a huge size_t.
+    if ( bytes < 0 || *p > end )
+        return 0;
+    if ( (size_t) ( end - *p ) < (size_t) bytes )
         return 0;
     memcpy( data, *p, (size_t) bytes );
     *p += bytes;
