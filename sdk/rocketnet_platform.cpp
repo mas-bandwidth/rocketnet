@@ -1758,14 +1758,27 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     sockaddr_storage sockaddr_from;
-    socklen_t from_length;
+    // Darwin reports bytes copied, not the original size on truncation.
+    // Scatter the prefix into caller storage and discard the rest locally.
+    // This covers a complete ordinary UDP datagram without shared state.
+    uint8_t overflow[65535];
+    struct iovec iov[2];
+    iov[0].iov_base = packet_data;
+    iov[0].iov_len = (size_t) max_packet_size;
+    iov[1].iov_base = overflow;
+    iov[1].iov_len = sizeof(overflow);
 
     int result;
     for ( ;; )
     {
-        from_length = sizeof( sockaddr_from );
+        struct msghdr msg;
+        memset( &msg, 0, sizeof(msg) );
+        msg.msg_name = &sockaddr_from;
+        msg.msg_namelen = sizeof(sockaddr_from);
+        msg.msg_iov = iov;
+        msg.msg_iovlen = 2;
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvmsg( socket->handle, &msg, 0 ) );
 
         if ( result < 0 )
         {
@@ -1786,9 +1799,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
-        // result may exceed max_packet_size: MSG_TRUNC reports the true
-        // datagram size. deliver it, not the truncated prefix, so the
-        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
+        // The overflow iovec preserves the datagram size even when only
+        // its prefix fits the caller's slot. The transport rejects oversize
+        // packets before inspecting their truncated payload.
         break;
     }
 
@@ -2116,6 +2129,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
+    // Each message keeps its prefix in its own slot. The discarded tails
+    // may overlap: none are read after this synchronous syscall returns.
+    uint8_t overflow[65535];
     int total = 0;
 
     if ( !rocketnet_msgx_active( socket ) )
@@ -2130,21 +2146,23 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         const int chunk_base = total;
 
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
-        struct iovec iov[ROCKETNET_MSGX_BATCH];
+        struct iovec iov[ROCKETNET_MSGX_BATCH][2];
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
         memset( msg, 0, sizeof(msg) );
         for ( int i = 0; i < want; i++ )
         {
-            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
-            iov[i].iov_len = (size_t) packet_stride;
+            iov[i][0].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            iov[i][0].iov_len = (size_t) packet_stride;
+            iov[i][1].iov_base = overflow;
+            iov[i][1].iov_len = sizeof(overflow);
             msg[i].msg_name = &addresses[i];
             msg[i].msg_namelen = sizeof(addresses[i]);
-            msg[i].msg_iov = &iov[i];
-            msg[i].msg_iovlen = 1;
+            msg[i].msg_iov = iov[i];
+            msg[i].msg_iovlen = 2;
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, MSG_TRUNC );
+        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
             if ( errno == EINTR )
