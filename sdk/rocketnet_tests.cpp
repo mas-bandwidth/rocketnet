@@ -36,6 +36,7 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_packet_lease.h"
 #include "rocketnet_config.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
@@ -11624,6 +11625,90 @@ struct rocketnet_unit_test_t
 
 void rocketnet_test_dev_token_minting_absent_in_release();
 
+void rocketnet_test_send_result_names_each_cause()
+{
+    // Owner ruling 2026-10-13: failure returns as an enum. OK is first and
+    // zero, every distinct cause of a packet not being staged has one name,
+    // and the numbering is the ABI the C# binding mirrors value for value --
+    // so the order is pinned here. The causes that need a live transport are
+    // produced in the functional tier (test_transport_send_result_causes);
+    // here each remaining cause is driven through the exact predicate the
+    // transport maps to it, without a socket.
+
+    rocketnet_check( ROCKETNET_SEND_OK == 0 );
+
+    const int values[] = {
+        ROCKETNET_SEND_OK,
+        ROCKETNET_SEND_NOTHING_STAGED,
+        ROCKETNET_SEND_INVALID_PAYLOAD,
+        ROCKETNET_SEND_NOT_RUNNING,
+        ROCKETNET_SEND_CONNECTION_GONE,
+        ROCKETNET_SEND_RING_FULL,
+        ROCKETNET_SEND_ARENA_FULL,
+        ROCKETNET_SEND_LEASE_FULL,
+        ROCKETNET_SEND_SEAL_FAILED,
+        ROCKETNET_SEND_FRAGMENT_PLAN_FAILED,
+        ROCKETNET_SEND_FRAGMENT_RESERVE_FAILED,
+        ROCKETNET_SEND_PARTIAL_COMMIT,
+    };
+    const int count = (int) ( sizeof(values) / sizeof(values[0]) );
+    for ( int i = 0; i < count; ++i )
+    {
+        rocketnet_check( values[i] == i );
+        for ( int j = i + 1; j < count; ++j )
+            rocketnet_check( values[i] != values[j] );
+    }
+
+    // NOTHING_STAGED, produced: the null-safe boundary names the cause
+    // without dereferencing anything, and a failure writes no wire size.
+
+    struct rocketnet_packet_context_t context;
+    memset( &context, 0, sizeof(context) );
+    context.wire_bytes = 12345;
+    rocketnet_check( rocketnet_client_transport_finish_packet( NULL, &context, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( context.wire_bytes == 12345 ); // null transport touches nothing
+    rocketnet_check( rocketnet_server_transport_finish_packet( NULL, &context, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( rocketnet_client_transport_finish_packet( NULL, NULL, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( rocketnet_server_transport_finish_packet( NULL, NULL, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+
+    // LEASE_FULL predicate: the lease table refuses an insert once its used
+    // count reaches half its capacity -- the exact state in which both
+    // start_packet paths name ROCKETNET_SEND_LEASE_FULL and bump the
+    // SEND_LEASE_FULL counter.
+
+    {
+        rocketnet_packet_leases_t<4> leases;
+        uint8_t frame_a[16], frame_b[16], frame_c[16];
+        struct rocketnet_packet_context_t staged;
+        memset( &staged, 0, sizeof(staged) );
+        staged.frame = frame_a;
+        rocketnet_check( leases.insert( staged ) );
+        staged.frame = frame_b;
+        rocketnet_check( leases.insert( staged ) );
+        staged.frame = frame_c;
+        rocketnet_check( !leases.insert( staged ) );
+    }
+
+    // FRAGMENT_PLAN_FAILED predicate: a payload past the fragment cap has no
+    // plan -- the exact state in which both arena finishes name
+    // ROCKETNET_SEND_FRAGMENT_PLAN_FAILED.
+
+    int fragment_count, fragment_stride;
+    rocketnet_check( !rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, &fragment_count, &fragment_stride ) );
+    rocketnet_check( rocketnet_fragment_plan( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, &fragment_count, &fragment_stride ) );
+
+    // FRAGMENT_RESERVE_FAILED predicate: the fragment sequence block is
+    // refused when the client mapping is gone -- the exact state in which
+    // both arena finishes name ROCKETNET_SEND_FRAGMENT_RESERVE_FAILED after
+    // the frames were reserved.
+
+    // PARTIAL_COMMIT: produced only when a fragmented server payload's seal
+    // fails after fragment 0 on a driver whose finish commits immediately
+    // (xdp: ROCKETNET_DRIVER_FINISH_FINAL); the staged drivers withdraw
+    // every frame and name SEAL_FAILED instead. No loopback host produces
+    // it; its value and name are pinned above.
+}
+
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 {
     { "test_protocol_id_zero_refused", rocketnet_test_protocol_id_zero_refused },
@@ -11780,6 +11865,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_fragment_hostile_id_does_not_poison_slot", rocketnet_test_fragment_hostile_id_does_not_poison_slot },
     { "test_fragment_too_large_clauses", rocketnet_test_fragment_too_large_clauses },
     { "test_send_arena", rocketnet_test_send_arena },
+    { "test_send_result_names_each_cause", rocketnet_test_send_result_names_each_cause },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },

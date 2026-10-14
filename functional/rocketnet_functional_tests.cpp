@@ -556,6 +556,147 @@ void rocketnet_test_transport_concurrent_fill()
     rocketnet_server_transport_destroy( server );
 }
 
+void rocketnet_test_transport_send_result_causes()
+{
+    // the causes that need a live transport, each produced once: OK, an
+    // invalid payload size, nothing staged, a gone connection, a full ring,
+    // a full arena, a seal refused after a disconnect, and a server that is
+    // not running. The unit tier pins the enum's numbering and drives the
+    // causes whose predicate needs no socket. The portable driver is pinned:
+    // the ring-full cause walks the transport's own payload ring, and the
+    // staged drivers front it with their own capacity.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+    snprintf( server_config.driver, sizeof(server_config.driver), "portable" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    uint8_t payload[64];
+    memset( payload, 0x5A, sizeof(payload) );
+
+    // CONNECTION_GONE: an empty client slot has no connection to send on
+
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 3, payload, 16 ) == ROCKETNET_SEND_CONNECTION_GONE );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    // CONNECTION_GONE on the client side: it has not connected yet
+
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, 16 ) == ROCKETNET_SEND_CONNECTION_GONE );
+
+    // INVALID_PAYLOAD: past the configured maximum, before anything stages
+
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, rocketnet_client_transport_max_payload_bytes( client ) + 1 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // OK on both ends, and the sealed wire size lives in the context: zero
+    // while staged, set by finish, and send_packet's convenience agrees
+
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, 16 ) == ROCKETNET_SEND_OK );
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, 16 ) == ROCKETNET_SEND_OK );
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    rocketnet_check( context.wire_bytes == 0 );
+    memcpy( frame + context.payload_index, payload, 16 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) == ROCKETNET_SEND_OK );
+    rocketnet_check( context.wire_bytes > 0 );
+
+    // NOTHING_STAGED: the lease was consumed by the finish above
+
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( context.wire_bytes > 0 ); // a refusal writes no wire size... see the zeroed check below
+    struct rocketnet_packet_context_t zeroed;
+    memset( &zeroed, 0, sizeof(zeroed) );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &zeroed, 16 ) == ROCKETNET_SEND_NOTHING_STAGED );
+
+    // INVALID_PAYLOAD at finish: past the lease's capacity, and a zero size
+
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, context.payload_capacity + 1 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+    rocketnet_check( context.wire_bytes == 0 );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, rocketnet_server_transport_max_payload_bytes( server ) + 1 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, 0 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+
+    // RING_FULL on the server: the payload ring takes 256 packets per fill
+    // phase, and the next send names the cause instead of silently dropping
+
+    enum rocketnet_send_result_t result = ROCKETNET_SEND_OK;
+    for ( int i = 0; i < 4096 && result == ROCKETNET_SEND_OK; ++i )
+        result = rocketnet_server_transport_send_packet( server, 0, payload, 16 );
+    rocketnet_check( result == ROCKETNET_SEND_RING_FULL );
+    rocketnet_server_transport_send_packets( server );
+
+    // RING_FULL on the client: the same, with the ring held by staged
+    // starts; send_packet's flush never runs, so the cause surfaces
+
+    for ( int i = 0; i < 1024; ++i )
+    {
+        struct rocketnet_packet_context_t held;
+        if ( !rocketnet_client_transport_start_packet( client, 16, &held ) )
+            break;
+    }
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, 16 ) == ROCKETNET_SEND_RING_FULL );
+    rocketnet_client_transport_send_packets( client );
+
+    // ARENA_FULL: requests above the wire's capacity draw arena slots, and
+    // the arena is reclaimed only by the flush
+
+    uint8_t big[ROCKETNET_MAX_PAYLOAD_BYTES + 1];
+    memset( big, 0x3C, sizeof(big) );
+    struct rocketnet_packet_context_t arena_contexts[ROCKETNET_SEND_ARENA_SLOTS];
+    for ( int i = 0; i < ROCKETNET_SEND_ARENA_SLOTS; ++i )
+        rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES + 1, &arena_contexts[i] ) );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, big, ROCKETNET_MAX_PAYLOAD_BYTES + 1 ) == ROCKETNET_SEND_ARENA_FULL );
+    rocketnet_server_transport_send_packets( server );
+
+    // SEAL_FAILED and CONNECTION_GONE after a disconnect: a staged ordinary
+    // packet's seal is refused (the mapping is gone), and a staged arena
+    // packet names the gone connection before it ever plans fragments
+
+    struct rocketnet_packet_context_t arena_context;
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES + 1, &arena_context );
+    rocketnet_check( frame );
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    memcpy( frame + context.payload_index, payload, 16 );
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 16 ) == ROCKETNET_SEND_SEAL_FAILED );
+    rocketnet_check( context.wire_bytes == 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &arena_context, ROCKETNET_MAX_PAYLOAD_BYTES + 1 ) == ROCKETNET_SEND_CONNECTION_GONE );
+    rocketnet_check( arena_context.wire_bytes == 0 );
+
+    // NOT_RUNNING: a stopped server stages nothing
+
+    rocketnet_server_transport_stop( server );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, 16 ) == ROCKETNET_SEND_NOT_RUNNING );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_transport_start_finish_shape()
 {
     // the acquire/commit surface, proven over loopback: aligned roots, the
@@ -3863,6 +4004,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion },
     { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill },
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
+    { "test_transport_send_result_causes", rocketnet_test_transport_send_result_causes },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape },
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
