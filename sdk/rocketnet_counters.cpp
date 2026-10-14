@@ -10,6 +10,8 @@ int rocketnet_num_counters() { return ROCKETNET_NUM_COUNTERS; }
 
 uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int counter )
 {
+    if ( !rocketnet_api_null_guard( counters ) )
+        return 0;
     return counters && counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ?
         counters->values[counter] : 0;
 }

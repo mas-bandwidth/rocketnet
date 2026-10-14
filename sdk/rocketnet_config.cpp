@@ -31,6 +31,8 @@
 
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_client_transport_config_t) );
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
@@ -38,6 +40,8 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
 
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_server_transport_config_t) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
@@ -45,6 +49,8 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_message_config_t) );
     ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )

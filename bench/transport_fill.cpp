@@ -15,6 +15,7 @@ int main(int argc, char ** argv)
     const int payload_bytes = argc > 2 ? atoi(argv[2]) : 64;
     const int batches = argc > 3 ? atoi(argv[3]) : 4000;
     const bool plant = argc > 4 && strcmp(argv[4], "plant") == 0;
+    const bool drain = argc > 4 && strcmp(argv[4], "drain") == 0;
     CHECK(payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES && batches > 0);
     CHECK(strlen(driver) < sizeof(rocketnet_server_transport_config_t().driver));
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -52,9 +53,10 @@ int main(int argc, char ** argv)
     CHECK(client_index >= 0 && rocketnet_server_transport_is_client_connected(server, client_index));
     const int batch_size = 128;
     uint8_t received[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
-    uint64_t wire_bytes = 0, received_packets = 0;
+    uint64_t wire_bytes = 0, received_packets = 0, drained_packets = 0;
     volatile uint64_t plant_state = 1;
     double elapsed_ns = 0;
+    double drain_ns = 0;
     // Warm-up is discarded. Only acquire/write/commit is timed; the flush,
     // update and receive work below supplies realistic storage turnover.
     for (int batch = -500; batch < batches; ++batch)
@@ -81,17 +83,31 @@ int main(int argc, char ** argv)
         if (batch >= 0) elapsed_ns += std::chrono::duration<double, std::nano>(end - start).count();
         rocketnet_server_transport_send_packets(server);
         int bytes;
+        int drained_here = 0;
+        const auto drain_start = std::chrono::steady_clock::now();
         while ((bytes = rocketnet_client_transport_receive_packet(client, received, sizeof(received))) > 0)
         {
             CHECK(bytes == payload_bytes);
             for (int i = 1; i < bytes; ++i) CHECK(received[i] == received[0]);
             ++received_packets;
+            ++drained_here;
+        }
+        const auto drain_end = std::chrono::steady_clock::now();
+        if (batch >= 0)
+        {
+            drained_packets += drained_here;
+            if (drain)
+                drain_ns += std::chrono::duration<double, std::nano>(drain_end - drain_start).count();
         }
     }
     CHECK(received_packets > 0 && wire_bytes > 0);
     printf("driver=%s bytes=%d packets=%llu fill_ns=%.3f wire_bytes=%llu received=%llu plant=%d plant_state=%llu\n",
         driver, payload_bytes, (unsigned long long)batches * batch_size, elapsed_ns / (batches * batch_size),
         (unsigned long long)wire_bytes, (unsigned long long)received_packets, plant, (unsigned long long)plant_state);
+    if (drain)
+        printf("drain driver=%s bytes=%d drained=%llu drain_ns=%.3f\n",
+            driver, payload_bytes, (unsigned long long)drained_packets,
+            drained_packets ? drain_ns / (double)drained_packets : 0.0);
     rocketnet_client_transport_destroy(client);
     rocketnet_server_transport_destroy(server);
     rocketnet_term();

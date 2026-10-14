@@ -14,6 +14,15 @@ allocations, or with either callback NULL) returns false; an accepted
 replacement returns true. Every refused call logs one line and increments
 `rocketnet_api_misuse_count`, the process-wide count of refused API misuse.
 
+The public API is also NULL safe at the boundary. Every entry point checks each
+pointer argument it would dereference once, at the top of the call: a NULL is a
+no-op that returns the function's documented value (`0`, `NULL` or `false`; a
+void function returns nothing), increments `rocketnet_api_misuse_count`, and in
+a debug build fires `rocketnet_assert`. A NULL handle is refused before any
+I/O, so no socket opens. The check is one predictable branch at the top, never
+inside a loop and never on an internal call, so the send and receive hot paths
+pay nothing when their pointers are valid.
+
 Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
 digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.
 Bare IPv6 and `[address]` have port zero. A zero server bind port requests an

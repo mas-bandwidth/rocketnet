@@ -330,6 +330,8 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
 void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
     rocketnet_assert( frame_sync );
 
     if ( frame_sync->first_wait_done )
@@ -346,6 +348,8 @@ void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
 
 void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
     rocketnet_assert( frame_sync );
 
     const uint64_t entry_ns = rocketnet_frame_sync_now_ns();
@@ -396,6 +400,10 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 
 void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
+    if ( !rocketnet_api_null_guard( stats ) )
+        return;
     rocketnet_assert( frame_sync );
     rocketnet_assert( stats );
     stats->frame = frame_sync->frame;
