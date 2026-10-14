@@ -1035,6 +1035,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      int packet_bytes,
                                      double current_time,
                                      uint8_t * out_payload,
+                                     int out_payload_capacity,
                                      int * out_payload_bytes )
 {
     rocketnet_assert( client );
@@ -1045,6 +1046,18 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
     uint64_t * counters = client->counters->values;
 
     *out_payload_bytes = 0;
+
+    // the caller's buffer must hold the largest ordinary payload: a smaller
+    // one is refused here, once per call and before the packet is read, so an
+    // overrun cannot happen and the protocol state is left untouched. the
+    // transport reports the same condition from its own cursor.
+
+    if ( out_payload_capacity < ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    {
+        rocketnet_spam( "client dropped packet. output capacity too small" );
+        counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
+        return 0;
+    }
 
     client->received_session_sequence = 0;
 
