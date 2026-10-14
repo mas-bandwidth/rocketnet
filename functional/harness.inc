@@ -167,6 +167,8 @@ class rocketnet_test_environment_t
     void clear(const char * name)
     {
         if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_SERVER_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_CLIENT_DRIVER") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
         const char * value = getenv(name);
         entries.push_back({name, value ? value : "", value != NULL});
@@ -183,7 +185,7 @@ public:
             for (int i = 0; i < count; ++i)
             {
                 char name[128];
-                rocketnet_check(rocketnet_config_env_var_name(fields[i].name, name, sizeof(name)));
+                rocketnet_check(rocketnet_config_env_var_name_for(side ? "server" : "client", fields[i].name, name, sizeof(name)));
                 clear(name);
             }
         }
@@ -208,8 +210,8 @@ public:
 void rocketnet_test_config_out_of_range_refuses_create()
 {
     struct rocketnet_test_env_guard_t guard;
-    rocketnet_test_env_save( &guard, "ROCKETNET_MAX_CLIENTS" );
-    setenv( "ROCKETNET_MAX_CLIENTS", "0", 1 );
+    rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "0", 1 );
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );

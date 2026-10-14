@@ -9,6 +9,7 @@
 
 #include <sodium.h>
 #include <string.h>
+#include <limits.h>
 
 // Both tables share one structure, laid out data-oriented: parallel fixed
 // arrays allocated once at create, chained hashing with index links and a
@@ -50,6 +51,13 @@ uint64_t rocketnet_token_table_allocation_bytes(int capacity)
 static struct rocketnet_token_table_t * rocketnet_token_table_create( void * context, int capacity )
 {
     rocketnet_assert( capacity > 0 );
+
+    // num_buckets is capacity * 2 in a signed int, so a capacity above
+    // INT_MAX / 2 wraps the bucket count and the bucket array is sized from
+    // the wrapped value while the other arrays use the capacity. refuse it
+    // before any allocation.
+    if ( capacity < 1 || capacity > INT_MAX / 2 )
+        return NULL;
 
     struct rocketnet_token_table_t * table = (struct rocketnet_token_table_t*) rocketnet_malloc( context, sizeof(struct rocketnet_token_table_t) );
     if ( !table )

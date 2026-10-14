@@ -41,6 +41,22 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
         return;
     rocketnet_info( "client changed state from '%s' to '%s'", rocketnet_client_transport_state_name( client->state ), rocketnet_client_transport_state_name( state ) );
     client->state = state;
+
+    // A terminal state ends the attempt: the derived session keys, the
+    // token's keys and the ephemeral secret are no longer needed and MUST be
+    // zeroed. STANDARD.md: both sides MUST zero their own ephemeral secret
+    // once it is no longer needed for a handshake in progress (1095-1098),
+    // and on a denied, "release all connection state" (2425-2426);
+    // tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
+    // state <= 0. Every automatic terminal transition passes through here,
+    // after the state is stored, so the reason, the state-change report and
+    // any packets already written keep their order.
+    if ( state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
+        sodium_memzero( &client->keys, sizeof(client->keys) );
+        sodium_memzero( &client->token, sizeof(client->token) );
+        sodium_memzero( client->client_ephemeral_secret_key, sizeof(client->client_ephemeral_secret_key) );
+    }
 }
 
 // The AEAD integrity limit, per the standard's _Replay Protection_: one
@@ -633,11 +649,22 @@ struct rocketnet_client_session_counters_t
     int wrong_opened_size;
 };
 
+// A type's own check on its type data, run after the shared ack-block and
+// size checks and before any commit, per the reading order: a packet the
+// type refuses here keeps only its replay-window mark. The type data has
+// already been sized. Returns 1 to accept, 0 to refuse (the validator
+// counts its own reason). NULL when the size check is the whole check.
+
+typedef int ( * rocketnet_client_type_data_validator_t )( struct rocketnet_client_protocol_t * client,
+                                                          const uint8_t * type_data,
+                                                          int type_data_bytes );
+
 // Opens one session packet through the reading order and consumes the ack
 // block at the front of the sealed data. expected_type_data_bytes is the
 // exact size the type data must be when non-negative; a negative value
 // names a minimum instead -- -1 for the payload's 1-and-up range, -7 for
-// the fragment's header-plus-a-byte floor. On success the type data's
+// the fragment's header-plus-a-byte floor. The optional type_data_validator
+// runs on the sized type data before the commit. On success the type data's
 // offset into opened lands in out_type_data_offset and its length is
 // returned; -1 means refused, the reason counted.
 
@@ -650,7 +677,8 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
                                                  int packet_bytes,
                                                  double current_time,
                                                  uint8_t * opened,
-                                                 int * out_type_data_offset )
+                                                 int * out_type_data_offset,
+                                                 rocketnet_client_type_data_validator_t type_data_validator )
 {
     uint64_t * counters = client->counters->values;
 
@@ -736,6 +764,16 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
         return -1;
     }
 
+    // the type's own check on its now-sized type data runs here, before the
+    // commit below, per the reading order: no malformed or mis-sized packet
+    // has any effect beyond its replay-window mark, so a type that refuses
+    // its own data leaves the timeout refresh, the tracker feed, the
+    // handshake rtt sample and the ack debt untouched. only the keep-alive
+    // carries such a check today; every other type passes NULL.
+
+    if ( type_data_validator && !type_data_validator( client, opened + block_bytes, type_data_bytes ) )
+        return -1;
+
     // both checks passed: only now does the packet keep the connection
     // alive and feed the quality trackers, the block's authenticated
     // delivery information applies, and eliciting types add to the ack
@@ -770,6 +808,33 @@ static int rocketnet_client_open_session_packet( struct rocketnet_client_protoco
     return type_data_bytes;
 }
 
+// The keep-alive's eight type bytes name the client index and the slot
+// count. Checked here, as the open's type-data validator, so a keep-alive
+// whose index or count is invalid is refused before the open commits:
+// per the reading order it then keeps only its replay-window mark and does
+// not refresh the idle timeout or feed the trackers. The refusal keeps its
+// existing counter.
+
+static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protocol_t * client,
+                                                 const uint8_t * type_data,
+                                                 int type_data_bytes )
+{
+    (void) type_data_bytes;         // the open sized the eight type bytes
+
+    const uint8_t * p = type_data;
+    int client_index = (int) rocketnet_read_uint32( &p );
+    int max_clients = (int) rocketnet_read_uint32( &p );
+
+    if ( client_index < 0 || client_index >= max_clients || max_clients > ROCKETNET_MAX_CLIENTS )
+    {
+        rocketnet_spam( "client rejected keep-alive. invalid index" );
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE]++;
+        return 0;
+    }
+
+    return 1;
+}
+
 static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol_t * client,
                                                 const uint8_t * packet_data,
                                                 int packet_bytes,
@@ -788,31 +853,22 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, 8,
                                                                 packet_data, packet_bytes,
-                                                                current_time, opened, &type_data_offset );
+                                                                current_time, opened, &type_data_offset,
+                                                                rocketnet_client_validate_keep_alive );
     if ( type_data_bytes < 0 )
         return 0;
-
-    const uint8_t * p = opened + type_data_offset;
-    int client_index = (int) rocketnet_read_uint32( &p );
-    int max_clients = (int) rocketnet_read_uint32( &p );
-
-    if ( client_index < 0 || client_index >= max_clients || max_clients > ROCKETNET_MAX_CLIENTS )
-    {
-        rocketnet_spam( "client rejected keep-alive. invalid index" );
-        client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE]++;
-        return 0;
-    }
 
     client->counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED]++;
     rocketnet_spam( "client received keep alive" );
 
     // the first keep-alive is how the client learns it is connected, and
-    // which slot it holds
+    // which slot it holds; the validator already accepted its index
 
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
-        client->client_index = client_index;
-        client->max_clients = max_clients;
+        const uint8_t * p = opened + type_data_offset;
+        client->client_index = (int) rocketnet_read_uint32( &p );
+        client->max_clients = (int) rocketnet_read_uint32( &p );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     }
 
@@ -845,7 +901,7 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES, -1,
                                                                 packet_data, packet_bytes,
-                                                                current_time, opened, &type_data_offset );
+                                                                current_time, opened, &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -879,7 +935,7 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES, 0,
                                                                 packet_data, packet_bytes,
-                                                                current_time, opened, &type_data_offset );
+                                                                current_time, opened, &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -912,7 +968,7 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
                                                                 ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES,
                                                                 -( ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ),
                                                                 packet_data, packet_bytes,
-                                                                current_time, opened, &type_data_offset );
+                                                                current_time, opened, &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -963,7 +1019,7 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
                                                                 &type_counters,
                                                                 ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES, 0,
                                                                 packet_data, packet_bytes,
-                                                                current_time, opened, &type_data_offset );
+                                                                current_time, opened, &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 

@@ -705,6 +705,102 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_server_transport_destroy( server );
 }
 
+void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
+{
+    // A capacity below one refuses at once: it consumes nothing, moves no
+    // cursor and counts nothing, so all queued payloads stay for the next
+    // call with a buffer that can hold them.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    // The server sends two payloads; the client queues them without any call to
+    // receive_packet, so the cursor has not been touched.
+
+    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "capacity", 8 );
+    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "second", 6 );
+    rocketnet_server_transport_send_packets( server );
+
+    bool queued = false;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && !queued )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_num_payloads( client ) >= 2 )
+            queued = true;
+        else
+            rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( queued );
+    rocketnet_check( rocketnet_client_transport_num_payloads( client ) == 2 );
+
+    const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( client );
+    const uint64_t refused_before = counters->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
+
+    // A capacity of zero (and a negative one) returns at once without
+    // consuming: the payload is still the cursor's next.
+
+    uint8_t tiny[1];
+    rocketnet_check( rocketnet_client_transport_receive_packet( client, tiny, 0 ) == 0 );
+    rocketnet_check( rocketnet_client_transport_receive_packet( client, tiny, -8 ) == 0 );
+    rocketnet_check( rocketnet_client_transport_receive_packet( client, tiny, -1 ) == 0 );
+    rocketnet_check( counters->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == refused_before );
+
+    // Both queued payloads drain intact in send order.
+
+    const int capacity = rocketnet_client_transport_max_payload_bytes( client );
+    rocketnet_check( capacity >= 8 );
+    static uint8_t packet[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
+    int packet_bytes = rocketnet_client_transport_receive_packet( client, packet, capacity );
+    rocketnet_check( packet_bytes == 8 );
+    rocketnet_check( memcmp( packet, "capacity", 8 ) == 0 );
+
+    // A zero-capacity call between payloads also leaves the remainder queued.
+
+    rocketnet_check( rocketnet_client_transport_receive_packet( client, tiny, 0 ) == 0 );
+    rocketnet_check( counters->values[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == refused_before );
+
+    packet_bytes = rocketnet_client_transport_receive_packet( client, packet, capacity );
+    rocketnet_check( packet_bytes == 6 );
+    rocketnet_check( memcmp( packet, "second", 6 ) == 0 );
+
+    // The batch is drained, so subsequent calls return zero.
+
+    rocketnet_check( rocketnet_client_transport_receive_packet( client, packet, capacity ) == 0 );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_transport_udp_loopback()
 {
     // the first packets on a real socket: the whole connect over UDP through
@@ -1796,6 +1892,95 @@ void rocketnet_test_transport_acks_and_client_stats()
     rocketnet_server_transport_destroy( server );
 }
 
+void rocketnet_test_client_stats_of_empty_slot_read_zero()
+{
+    // A game reading stats for a slot whose client has left must see zeros,
+    // exactly as an index out of range reads: a departed client's numbers
+    // must not outlive its slot. A client connects and moves its slot's
+    // published stats, the server-side disconnect releases the slot, and
+    // every field of that now-empty slot then reads zero.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 8;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, 0x99100ULL, (uint64_t) time( NULL ), token ) );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 && rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    const int slot = rocketnet_client_transport_client_index( client );
+    rocketnet_check( slot >= 0 );
+    rocketnet_check( rocketnet_server_transport_is_client_connected( server, slot ) );
+
+    // one payload each update until the slot's published stats move, running
+    // long enough for every round-robin stats phase to pass several times
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 1.0 )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+        if ( frame )
+        {
+            memcpy( frame + context.payload_index, "ping", 4 );
+            if ( rocketnet_client_transport_finish_packet( client, &context, 4 ) > 0 )
+                rocketnet_client_transport_send_packets( client );
+        }
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    struct rocketnet_server_transport_client_stats_t stats;
+    rocketnet_server_transport_client_stats( server, slot, &stats );
+    rocketnet_check( stats.bandwidth_received_kbps > 0.0f );
+
+    // the server disconnects the client, releasing the slot immediately
+
+    rocketnet_server_transport_disconnect_client( server, slot );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_send_packets( server );
+    rocketnet_check( !rocketnet_server_transport_is_client_connected( server, slot ) );
+
+    // an empty slot reads as zeros, as an index out of range does
+
+    rocketnet_server_transport_client_stats( server, slot, &stats );
+    rocketnet_check( stats.rtt == 0.0f );
+    rocketnet_check( stats.jitter == 0.0f );
+    rocketnet_check( stats.packet_loss == 0.0f );
+    rocketnet_check( stats.bandwidth_sent_kbps == 0.0f );
+    rocketnet_check( stats.bandwidth_received_kbps == 0.0f );
+    rocketnet_check( stats.bandwidth_acked_kbps == 0.0f );
+
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+    }
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_transport_fragmentation()
 {
     // the declared-capacity surface end to end over UDP loopback: a
@@ -2193,7 +2378,7 @@ void rocketnet_test_config_precedence()
     // public query: max_payload_bytes
 
     struct rocketnet_test_env_guard_t payload_guard;
-    rocketnet_test_env_clear( &payload_guard, "ROCKETNET_MAX_PAYLOAD_BYTES" );
+    rocketnet_test_env_clear( &payload_guard, "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -2215,7 +2400,7 @@ void rocketnet_test_config_precedence()
 
     // env displaces struct
 
-    setenv( "ROCKETNET_MAX_PAYLOAD_BYTES", "20000", 1 );
+    setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
@@ -2675,14 +2860,14 @@ void rocketnet_test_config_env_aliases()
     rocketnet_test_env_save( &alias_guard, "ROCKETNET_SERVER_NUM_QUEUES" );
 
     struct rocketnet_test_env_guard_t successor_guard;
-    rocketnet_test_env_save( &successor_guard, "ROCKETNET_NUM_XDP_QUEUES" );
+    rocketnet_test_env_save( &successor_guard, "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
 
     struct rocketnet_test_env_guard_t driver_guard;
     rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
 
     // the alias is honored where the successor is unset...
 
-    unsetenv( "ROCKETNET_NUM_XDP_QUEUES" );
+    unsetenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3", 1 );
 
     struct rocketnet_server_transport_config_t config;
@@ -2701,7 +2886,7 @@ void rocketnet_test_config_env_aliases()
     // ...and yields to the successor when both are set
 
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
-    setenv( "ROCKETNET_NUM_XDP_QUEUES", "2", 1 );
+    setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
     server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
     rocketnet_check( server );
     rocketnet_server_transport_destroy( server );
@@ -2717,8 +2902,8 @@ void rocketnet_test_config_env_aliases()
     // exported variable) is what create reads.
 
     struct rocketnet_test_env_guard_t address_guard;
-    rocketnet_test_env_save( &address_guard, "ROCKETNET_PUBLIC_ADDRESS" );
-    setenv( "ROCKETNET_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
+    rocketnet_test_env_save( &address_guard, "ROCKETNET_SERVER_PUBLIC_ADDRESS" );
+    setenv( "ROCKETNET_SERVER_PUBLIC_ADDRESS", "127.0.0.1:0", 1 );
 
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
@@ -3680,6 +3865,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape },
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
+    { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
@@ -3691,6 +3877,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
+    { "test_client_stats_of_empty_slot_read_zero", rocketnet_test_client_stats_of_empty_slot_read_zero },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },

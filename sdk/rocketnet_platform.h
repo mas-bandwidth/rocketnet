@@ -404,3 +404,36 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
     __atomic_store_n( value, 0, __ATOMIC_RELEASE );
 #endif
 }
+
+// ----------------------------------------------------------------
+//
+// The linux connection-type probe reads the kernel route table over netlink.
+// Its reply loop is extracted behind the receive call so the unit suite can
+// drive it without a socket; a failed or empty receive ends the probe instead
+// of spinning. These types and the declaration are linux-only.
+//
+// ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#include "rocketnet_route.h"
+#include <limits.h>
+#include <stdint.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
+
+extern void * rocketnet_global_context;
+
+template <typename T> struct rocketnet_vector_t;
+// Reads the kernel route table dump over netlink until an NLMSG_DONE message
+// ends it; returns true when the dump was read in full, false when a receive
+// fails or returns zero. receive is the recvmsg call, passed so tests can
+// drive the probe without a socket. get_connection_type maps a false result
+// to ROCKETNET_CONNECTION_TYPE_UNKNOWN.
+bool rocketnet_platform_read_route_table(
+    int sock,
+    struct sockaddr_nl * kernel,
+    rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
+    ssize_t (*receive)( int, struct msghdr *, int ) );
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

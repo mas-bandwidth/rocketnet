@@ -941,7 +941,15 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
-    rocketnet_assert( packet_capacity > 0 );
+
+    if ( packet_capacity < 1 )
+    {
+        // a capacity below one consumes nothing: no payload fits, so the
+        // cursor does not move and nothing is counted -- the payloads stay
+        // queued for the next call with a buffer that can hold them
+
+        return 0;
+    }
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 

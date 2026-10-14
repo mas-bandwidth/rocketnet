@@ -747,7 +747,7 @@ template <typename T> struct rocketnet_vector_t
         clear();
     }
 
-    inline void clear() 
+    inline void clear()
     {
         if ( data )
         {
@@ -912,6 +912,77 @@ static int classify_connection_type( rocketnet_vector_t<rocketnet_ifforward4_t> 
     }
 }
 
+// reads the kernel route table replies over netlink until an NLMSG_DONE
+// message ends the dump. receive is called for each read; in the real probe
+// it is recvmsg, and tests pass a fake. returns true when the dump was read
+// in full; false when a receive failed or returned zero (the caller falls
+// back to ROCKETNET_CONNECTION_TYPE_UNKNOWN).
+bool rocketnet_platform_read_route_table(
+    int sock,
+    struct sockaddr_nl * kernel,
+    rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
+    ssize_t (*receive)( int, struct msghdr *, int ) )
+{
+    bool done = false;
+    while ( !done )
+    {
+        struct msghdr rtnl_reply;
+        struct iovec io_reply;
+
+        memset( &io_reply, 0, sizeof( io_reply ) );
+        memset( &rtnl_reply, 0, sizeof( rtnl_reply ) );
+
+        const size_t IFLIST_REPLY_BUFFER = 8192;
+        char reply[IFLIST_REPLY_BUFFER];
+        io_reply.iov_base = reply;
+        io_reply.iov_len = IFLIST_REPLY_BUFFER;
+        rtnl_reply.msg_iov = &io_reply;
+        rtnl_reply.msg_iovlen = 1;
+        rtnl_reply.msg_name = kernel;
+        rtnl_reply.msg_namelen = sizeof( *kernel );
+
+        ssize_t len = receive( sock, &rtnl_reply, 0 );
+
+        // a receive interrupted by a signal is retried once; the other exits
+        // are named below.
+        if ( len == -1 && errno == EINTR )
+        {
+            len = receive( sock, &rtnl_reply, 0 );
+        }
+
+        if ( len > 0 )
+        {
+            for ( struct nlmsghdr * msg_ptr = (struct nlmsghdr *)( reply ); NLMSG_OK( msg_ptr, len ); msg_ptr = NLMSG_NEXT( msg_ptr, len ) )
+            {
+                if ( msg_ptr->nlmsg_type == 24 )
+                {
+                    rocketnet_ifforward4_t route;
+                    if ( parse_kernel_route( msg_ptr, &route ) )
+                    {
+                        if ( !route_table->add( route ) )
+                        {
+                            // allocation failure: the dump cannot be kept.
+                            return false;
+                        }
+                    }
+                }
+                else if ( msg_ptr->nlmsg_type == 3 )
+                {
+                    // NLMSG_DONE: the dump is complete.
+                    done = true;
+                }
+            }
+        }
+        else
+        {
+            // len is 0 or -1: no data read; the dump cannot be completed.
+            return false;
+        }
+    }
+    // the loop exited on NLMSG_DONE: the route table was read in full.
+    return true;
+}
+
 static int get_connection_type()
 {
     rocketnet_vector_t<rocketnet_iftable_t> interface_list;
@@ -1055,49 +1126,12 @@ static int get_connection_type()
         // send request
         sendmsg( sock, (struct msghdr *)( &rtnl_msg ), 0 );
 
-        // read reply
-
-        bool done = false;
-        while ( !done )
+        // read reply; a receive that fails or returns zero ends the probe
+        // instead of spinning, and the connection type falls back to UNKNOWN.
+        if ( !rocketnet_platform_read_route_table( sock, &kernel, &route_table, recvmsg ) )
         {
-            struct msghdr rtnl_reply;
-            struct iovec io_reply;
-
-            memset( &io_reply, 0, sizeof( io_reply ) );
-            memset( &rtnl_reply, 0, sizeof( rtnl_reply ) );
-
-            const size_t IFLIST_REPLY_BUFFER = 8192;
-            char reply[IFLIST_REPLY_BUFFER];
-            io_reply.iov_base = reply;
-            io_reply.iov_len = IFLIST_REPLY_BUFFER;
-            rtnl_reply.msg_iov = &io_reply;
-            rtnl_reply.msg_iovlen = 1;
-            rtnl_reply.msg_name = &kernel;
-            rtnl_reply.msg_namelen = sizeof( kernel );
-
-            int len = recvmsg( sock, &rtnl_reply, 0 );
-            if ( len )
-            {
-                for ( struct nlmsghdr * msg_ptr = (struct nlmsghdr *)( reply ); NLMSG_OK( msg_ptr, len ); msg_ptr = NLMSG_NEXT( msg_ptr, len ) )
-                {
-                    if ( msg_ptr->nlmsg_type == 24 )
-                    {
-                        rocketnet_ifforward4_t route;
-                        if ( parse_kernel_route( msg_ptr, &route ) )
-                        {
-                            if ( !route_table.add( route ) )
-                            {
-                                close( sock );
-                                return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-                            }
-                        }
-                    }
-                    else if ( msg_ptr->nlmsg_type == 3 )
-                    {
-                        done = true;
-                    }
-                }
-            }
+            close( sock );
+            return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
         }
 
         close( sock );
