@@ -25,7 +25,7 @@ carried in this file. It does not run a compiler, does not read or write a
 file, and does not use the clock, a socket, or the network. The compile
 itself is the functional part and runs only outside --self-test.
 
-The baseline header names the clang that produced it (`clang version 21.1.8`).
+The baseline header names the clang that produced it (`clang version 18.1.3`).
 The gate runs that clang: `clang++-<major>` when it is on PATH, otherwise
 `clang++`, and only when the binary reports the same version. A different
 clang fails the job with its own `clang --version` line. Those diagnostics

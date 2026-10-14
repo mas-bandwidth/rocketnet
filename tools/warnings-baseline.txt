@@ -1,7 +1,14 @@
-# clang version 21.1.8
+# clang version 18.1.3
 # columns: file, warning flag, enclosing function, normalised message
 # the baseline only shrinks: delete an entry in the same change that stops producing it
 sdk/rocketnet.cpp	-Wcast-align	rocketnet_free	cast from 'uint8_t *' (aka 'unsigned char *') to 'rocketnet_allocation_header_t *' increases required alignment from 1 to 8
+sdk/rocketnet.cpp	-Wformat-nonliteral	default_log_function	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_debug	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_error	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_info	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_printf	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_spam	format string is not a string literal
+sdk/rocketnet.cpp	-Wformat-nonliteral	rocketnet_warn	format string is not a string literal
 sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
 sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
 sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
@@ -23,6 +30,7 @@ sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (
 sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint32_t *' (aka 'unsigned int *') increases required alignment from 1 to 4
 sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint64_t *' (aka 'unsigned long *') increases required alignment from 1 to 8
 sdk/rocketnet_allocator.cpp	-Wcast-align	rn_send_store_init	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint32_t *' (aka 'unsigned int *') increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wformat-nonliteral	rn_text_append	format string is not a string literal
 sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
 sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
 sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'

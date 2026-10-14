@@ -11,11 +11,14 @@
 # It does not compile the example programs, and it does not run the test suite.
 #
 # THE COMPILER: tools/warnings-baseline.txt names the clang that produced it.
-# The gate runs that clang (clang++-21 when the header says clang version
-# 21.1.8) when the binary is on PATH, and accepts plain clang++ only when
-# that binary reports the same version. A different clang fails this job
-# with its own version. Its diagnostics are not new warnings, and they are
-# not absorbed by editing the baseline by hand.
+# The gate runs clang++-<major> from that header when the binary is on PATH,
+# and accepts plain clang++ only when it reports the same version. This
+# baseline was produced by Ubuntu clang 18.1.3, the clang++ on the runner
+# that does not have clang++-21. The eight -Wformat-nonliteral lines are
+# what that clang reports for vsnprintf under Ubuntu 24.04's fortified
+# headers. A different clang fails this job with its own version. Its
+# diagnostics are not new warnings, and they are not absorbed by editing
+# the baseline by hand.
 
 name: compiler warnings
 
