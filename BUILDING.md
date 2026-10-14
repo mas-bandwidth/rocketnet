@@ -66,6 +66,14 @@ compiles later on the target kernel, which needs BTF; it is not compiled by `mak
 The generated header lives in each build tree, so concurrent configurations do
 not rewrite the checkout. Windows copies the committed header into its build tree.
 
+Runtime prerequisites for the XDP server: creating a server with the `xdp`
+driver compiles that tarball on the target machine at create time, so the
+runtime host carries its own toolchain in addition to the build prerequisites
+above: clang with the BPF target, `make`, `tar`, and the libbpf headers (the
+`libbpf-dev` package the Linux build dependencies already install). A missing
+tool or a failed compile refuses the create at the build step and logs the
+compiler's output, before any load is attempted.
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`

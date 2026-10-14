@@ -31,6 +31,7 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
 #include <errno.h>
@@ -1266,22 +1267,102 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        fwrite( rocketnet_server_xdp_tar_gz, sizeof(rocketnet_server_xdp_tar_gz), 1, file );
+        const bool written = fwrite( rocketnet_server_xdp_tar_gz, sizeof(rocketnet_server_xdp_tar_gz), 1, file ) == 1;
+        const int write_errno = errno;
+        const bool closed = fclose( file ) == 0;
 
-        fclose( file );
+        if ( !written || !closed )
+        {
+            rocketnet_error( "could not write %s (%s)", tarball, strerror( written ? errno : write_errno ) );
+            rocketnet_server_socket_remove_workdir( workdir );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
     }
 
-    // unzip source and build server_xdp.o, entirely inside the private directory
+    // unzip source and build server_xdp.o, entirely inside the private directory.
+    // stderr joins stdout so a compiler failure is captured rather than lost,
+    // and the exit status is checked: a failed build refuses here, with the
+    // compiler's own lines, instead of surfacing later as a load failure.
     {
         char command[2048];
         snprintf( command, sizeof(command),
-                  "cd %s && tar -zxf server_xdp_source.tar.gz && make server_xdp.o", workdir );
+                  "cd %s && tar -zxf server_xdp_source.tar.gz && make server_xdp.o 2>&1", workdir );
+
+        // the tail of the build output in a fixed buffer: create time only,
+        // never the hot path, and nothing here allocates
+        char build_output[8192];
+        size_t build_output_length = 0;
+        build_output[0] = '\0';
+
         FILE * file = popen( command, "r" );
-        if ( file )
+        if ( !file )
         {
-            char buffer[1024];
-            while ( fgets( buffer, sizeof(buffer), file ) != NULL ) {}
-            pclose( file );
+            rocketnet_error( "could not run build command '%s' (%s)", command, strerror( errno ) );
+            rocketnet_server_socket_remove_workdir( workdir );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
+        }
+
+        char line[1024];
+        while ( fgets( line, sizeof(line), file ) != NULL )
+        {
+            const size_t line_length = strlen( line );
+            if ( build_output_length + line_length >= sizeof(build_output) )
+            {
+                // keep the last lines: drop the oldest bytes up to a line boundary
+                size_t drop = build_output_length / 2;
+                while ( drop < build_output_length && build_output[drop] != '\n' )
+                    drop++;
+                if ( drop < build_output_length )
+                    drop++;
+                memmove( build_output, build_output + drop, build_output_length - drop );
+                build_output_length -= drop;
+            }
+            memcpy( build_output + build_output_length, line, line_length );
+            build_output_length += line_length;
+            build_output[build_output_length] = '\0';
+        }
+
+        const int build_status = pclose( file );
+
+        bool build_failed = false;
+        if ( build_status == -1 )
+        {
+            rocketnet_error( "build command '%s' could not be waited for (%s)", command, strerror( errno ) );
+            build_failed = true;
+        }
+        else if ( !WIFEXITED( build_status ) )
+        {
+            rocketnet_error( "build command '%s' did not exit normally (raw status %d, signal %d)", command, build_status, WIFSIGNALED( build_status ) ? WTERMSIG( build_status ) : 0 );
+            build_failed = true;
+        }
+        else if ( WEXITSTATUS( build_status ) != 0 )
+        {
+            rocketnet_error( "build command '%s' failed with exit status %d", command, WEXITSTATUS( build_status ) );
+            build_failed = true;
+        }
+
+        if ( !build_failed )
+        {
+            char object[1024];
+            snprintf( object, sizeof(object), "%s/server_xdp.o", workdir );
+            struct stat object_stat;
+            memset( &object_stat, 0, sizeof(object_stat) );
+            if ( stat( object, &object_stat ) != 0 || object_stat.st_size == 0 )
+            {
+                rocketnet_error( "build command '%s' did not produce a nonempty %s", command, object );
+                build_failed = true;
+            }
+        }
+
+        if ( build_failed )
+        {
+            if ( build_output_length > 0 )
+                rocketnet_error( "server_xdp build output (last lines):\n%s", build_output );
+            rocketnet_server_socket_remove_workdir( workdir );
+            rocketnet_server_socket_destroy( server_socket );
+            return NULL;
         }
     }
 
