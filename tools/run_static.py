@@ -171,9 +171,10 @@ def run_gcc_analyzer():
 
 def run_clang_tidy():
     if shutil.which("clang-tidy") is None:
-        print("clang-tidy not found on PATH; the clang-tidy half did not run",
-              file=sys.stderr)
-        return []
+        raise RuntimeError(
+            "clang-tidy is not on PATH; the clang-tidy half of the gate did "
+            "not run, so the baseline cannot be compared. Install clang-tidy "
+            "and rerun.")
     findings = []
     for rel in sdk_sources():
         command = [
@@ -234,7 +235,11 @@ def main():
     args = parser.parse_args()
 
     ensure_compile_db()
-    findings = current_findings(args.only)
+    try:
+        findings = current_findings(args.only)
+    except RuntimeError as err:
+        print("static gate FAILED: %s" % err, file=sys.stderr)
+        return 1
 
     if args.report:
         with open(args.report, "w", encoding="utf-8") as handle:
