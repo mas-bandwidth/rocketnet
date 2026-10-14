@@ -195,7 +195,12 @@ static void replay_trace_compare( const replay_window_ref_t & model, const struc
     int dn = 0;
     dynamic[dn++] = f;
     dynamic[dn++] = f + 1;
-    dynamic[dn++] = h;
+    // sequence 0 is out of the ring and the real code asserts it away
+    // (rocketnet_replay_already_received, sdk/rocketnet_replay.cpp:29-30);
+    // the model's already_received is likewise undefined at 0, so a probe
+    // set built from highest == 0 must never emit it.
+    if ( h != 0 )
+        dynamic[dn++] = h;
     dynamic[dn++] = h + 1;
     if ( h > 1 )
         dynamic[dn++] = h - 1;
