@@ -1,0 +1,65 @@
+# tools/msan_known.txt: the known MemorySanitizer findings for the portable
+# unit suite. A finding is the top frame of one MemorySanitizer warning, in
+# the form the gate prints: function and source location, with a binary-only
+# frame written as `(bin/test)` (the offset slides when the suite changes) and
+# a libstdc++ frame written under `include/c++/` (the gcc version is not part
+# of the finding). A warning whose top frame is absent here fails
+# `bash tools/run_msan.sh`. The gate passes when the run is clean or every
+# finding is listed. Origin traces from a Linux x86_64 bench with clang 21
+# -fsanitize=memory -fsanitize-memory-track-origins=2 follow each finding.
+#
+# Recorded against the portable unit suite at this tree. The reads are in the
+# vendored sodium constant-time primitives, in the random helpers that read a
+# sodium fill before the shadow says it is initialised, in a test memcmp of an
+# uninitialised buffer, and in a libstdc++ tree copy of a node allocated by
+# the suite's own operator new (uninstrumented as far as the shadow is
+# concerned).
+
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14971:9
+# origin: Uninitialized value was stored to memory at
+# origin: rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14960:14
+# origin: rocketnet_sodium_crypto_scalarmult_curve25519_ref10_base sodium/sodium.c:24277:5
+# origin: rocketnet_sodium_crypto_scalarmult_curve25519_base sodium/sodium.c:24513:12
+# origin: rocketnet_sodium_crypto_box_curve25519xsalsa20poly1305_keypair sodium/sodium.c:8997:12
+# origin: rocketnet_sodium_crypto_box_keypair sodium/sodium.c:7086:12
+# origin: rocketnet_sodium_crypto_box_seal sodium/sodium.c:8460:9
+# origin: rocketnet_write_connect_token(rocketnet_signed_connect_data_t const*, rocketnet_connect_token_private_t const*, unsigned char const*, unsigned char*) sdk/rocketnet_connect_token.cpp:87:10
+
+memcmp (bin/test)
+# origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
+# origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
+
+rocketnet_random_float sdk/rocketnet.cpp:357:5
+# origin: Uninitialized value was stored to memory at
+# origin: rocketnet_random_float sdk/rocketnet.cpp:356:12
+# origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:904:23
+# origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:10880:9
+# origin: rocketnet_unit_worker(char const*) test.cpp:77:18
+# origin: suite_main(int, char**, int (*)(char const*), int (*)(), char const* (*)(int), suite_exec const*, int, char const**, int, bool) test/suite_runner.h:178:16
+# origin: main test.cpp:169:12
+# origin: (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a600)
+
+load64_be sodium/sodium.h:1464:5
+# origin: Uninitialized value was stored to memory at
+# origin: load64_be sodium/sodium.h:1463:7
+# origin: be64dec_vect sodium/sodium.c:21865:18
+# origin: SHA512_Transform sodium/sodium.c:21928:5
+# origin: SHA512_Pad sodium/sodium.c:22001:5
+# origin: rocketnet_sodium_crypto_hash_sha512_final sodium/sodium.c:22074:5
+# origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
+# origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
+
+rocketnet_random_uint32 sdk/rocketnet.cpp:378:5
+# origin: Uninitialized value was created by an allocation of 'value' in the stack frame
+# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:376:5
+
+std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
+# origin: Uninitialized value was created by a heap allocation
+# origin: operator new(unsigned long) (bin/test)
+# origin: std::__new_allocator<std::_Rb_tree_node<unsigned long>>::allocate(unsigned long, void const*) include/c++/bits/new_allocator.h:151:27
+# origin: std::allocator_traits<std::allocator<std::_Rb_tree_node<unsigned long>>>::allocate(std::allocator<std::_Rb_tree_node<unsigned long>>&, unsigned long) include/c++/bits/alloc_traits.h:614:20
+# origin: std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_get_node() include/c++/bits/stl_tree.h:1170:9
+# origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_create_node<unsigned long const&>(unsigned long const&) include/c++/bits/stl_tree.h:1253:22
+# origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node::operator()<unsigned long const&>(unsigned long const&) const include/c++/bits/stl_tree.h:1136:18
+# origin: std::_Rb_tree_iterator<unsigned long> std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_insert_<unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2481:4
+
