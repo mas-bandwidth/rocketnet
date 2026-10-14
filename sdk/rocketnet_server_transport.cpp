@@ -1292,26 +1292,24 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 
 static void rocketnet_server_transport_abort_packet_unchecked( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, uint64_t backend_id );
 
-uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
+static enum rocketnet_send_result_t rocketnet_server_transport_start_packet_result( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context, uint8_t ** out_frame )
 {
-    rocketnet_assert( server_transport );
-    rocketnet_assert( context );
-
     memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
+    *out_frame = NULL;
 
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
-        return NULL;
+        return ROCKETNET_SEND_NOT_RUNNING;
 
     if ( request_bytes < 1 || request_bytes > server_transport->max_payload_bytes )
     {
         rocketnet_spam( "server start packet refused. request out of range" );
-        return NULL;
+        return ROCKETNET_SEND_INVALID_PAYLOAD;
     }
 
     rocketnet_address_t to;
     uint64_t sequence;
     if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
-        return NULL;
+        return ROCKETNET_SEND_CONNECTION_GONE;
 
     uint8_t * frame = NULL;
 
@@ -1327,7 +1325,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_spam( "server send arena full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
-            return NULL;
+            return ROCKETNET_SEND_ARENA_FULL;
         }
 
         rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
@@ -1343,9 +1341,10 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
             rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
-            return NULL;
+            return ROCKETNET_SEND_LEASE_FULL;
         }
-        return frame;
+        *out_frame = frame;
+        return ROCKETNET_SEND_OK;
     }
 
     if ( rocketnet_server_transport_staged( server_transport ) )
@@ -1355,7 +1354,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         if ( !frame )
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-            return NULL;
+            return ROCKETNET_SEND_RING_FULL;
         }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
@@ -1369,7 +1368,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_spam( "server payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-            return NULL;
+            return ROCKETNET_SEND_RING_FULL;
         }
 
         ring->info[slot].to = to;
@@ -1397,8 +1396,19 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
-        return NULL;
+        return ROCKETNET_SEND_LEASE_FULL;
     }
+    *out_frame = frame;
+    return ROCKETNET_SEND_OK;
+}
+
+uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( context );
+
+    uint8_t * frame = NULL;
+    (void) rocketnet_server_transport_start_packet_result( server_transport, client_index, request_bytes, context, &frame );
     return frame;
 }
 
@@ -1793,13 +1803,11 @@ enum rocketnet_send_result_t rocketnet_server_transport_send_packet( struct rock
     rocketnet_assert( server_transport );
     rocketnet_assert( payload_data );
 
-    if ( payload_bytes < 1 || payload_bytes > server_transport->max_payload_bytes )
-        return ROCKETNET_SEND_INVALID_PAYLOAD;
-
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_transport_start_packet( server_transport, client_index, payload_bytes, &context );
-    if ( !frame )
-        return ROCKETNET_SEND_NOTHING_STAGED;
+    uint8_t * frame = NULL;
+    const enum rocketnet_send_result_t start_result = rocketnet_server_transport_start_packet_result( server_transport, client_index, payload_bytes, &context, &frame );
+    if ( start_result != ROCKETNET_SEND_OK )
+        return start_result;
 
     memcpy( frame + context.payload_index, payload_data, payload_bytes );
 

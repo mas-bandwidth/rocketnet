@@ -615,23 +615,22 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->config.state_change_callback( client_transport->context, state_before, client_transport->protocol.state );
 }
 
+static enum rocketnet_send_result_t rocketnet_client_transport_start_packet_result( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context, uint8_t ** out_frame );
+
 enum rocketnet_send_result_t rocketnet_client_transport_send_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
 {
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-
-    if ( packet_bytes < 1 || packet_bytes > client_transport->max_payload_bytes )
-        return ROCKETNET_SEND_INVALID_PAYLOAD;
 
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_client_transport_start_packet( client_transport, packet_bytes, &context );
-    if ( !frame )
-        return ROCKETNET_SEND_NOTHING_STAGED;
+    uint8_t * frame = NULL;
+    const enum rocketnet_send_result_t start_result = rocketnet_client_transport_start_packet_result( client_transport, packet_bytes, &context, &frame );
+    if ( start_result != ROCKETNET_SEND_OK )
+        return start_result;
 
     memcpy( frame + context.payload_index, packet_data, packet_bytes );
 
-    enum rocketnet_send_result_t result = rocketnet_client_transport_finish_packet( client_transport, &context, packet_bytes );
+    const enum rocketnet_send_result_t result = rocketnet_client_transport_finish_packet( client_transport, &context, packet_bytes );
     rocketnet_client_transport_send_packets( client_transport );
     return result;
 }
@@ -643,22 +642,20 @@ enum rocketnet_send_result_t rocketnet_client_transport_send_packet( rocketnet_c
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
-uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
+static enum rocketnet_send_result_t rocketnet_client_transport_start_packet_result( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context, uint8_t ** out_frame )
 {
-    rocketnet_assert( client_transport );
-    rocketnet_assert( context );
-
     memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
+    *out_frame = NULL;
 
     if ( request_bytes < 1 || request_bytes > client_transport->max_payload_bytes )
     {
         rocketnet_spam( "client start packet refused. request out of range" );
-        return NULL;
+        return ROCKETNET_SEND_INVALID_PAYLOAD;
     }
 
     uint64_t sequence;
     if ( !rocketnet_client_protocol_start_payload( &client_transport->protocol, &sequence ) )
-        return NULL;
+        return ROCKETNET_SEND_CONNECTION_GONE;
 
     uint8_t * frame = NULL;
 
@@ -674,7 +671,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         {
             rocketnet_spam( "client payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
-            return NULL;
+            return ROCKETNET_SEND_RING_FULL;
         }
 
         ring->info[slot].wire_bytes = 0;
@@ -695,7 +692,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         {
             rocketnet_spam( "client send arena full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
-            return NULL;
+            return ROCKETNET_SEND_ARENA_FULL;
         }
 
         context->payload_index = 0;
@@ -713,8 +710,19 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     {
         rocketnet_platform_atomic_add_u64( &client_transport->counters.values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
         rocketnet_client_transport_abort_packet_unchecked( client_transport, context );
-        return NULL;
+        return ROCKETNET_SEND_LEASE_FULL;
     }
+    *out_frame = frame;
+    return ROCKETNET_SEND_OK;
+}
+
+uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( context );
+
+    uint8_t * frame = NULL;
+    (void) rocketnet_client_transport_start_packet_result( client_transport, request_bytes, context, &frame );
     return frame;
 }
 
