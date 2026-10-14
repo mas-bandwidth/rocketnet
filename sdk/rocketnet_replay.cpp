@@ -6,6 +6,8 @@
 #include "rocketnet_replay.h"
 #include "rocketnet.h"
 
+#include <string.h>
+
 static int rocketnet_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
@@ -53,10 +55,9 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
         uint64_t skipped = sequence - replay->highest_opened;
         if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
         {
-            replay->window[0] = 0;
-            replay->window[1] = 0;
-            replay->window[2] = 0;
-            replay->window[3] = 0;
+            // STANDARD.md Replay Protection and tla/ReplayWindow.tla Cleared:
+            // a full-window skip clears every word (ClearedWords = Words).
+            memset( replay->window, 0, sizeof( replay->window ) );
         }
         else
         {
