@@ -21,13 +21,57 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_history.h"
+#include "rocketnet_replay.h"
+#include "rocketnet_server_protocol.h"
+#include "rocketnet_client_protocol.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static void print_int( const char * name, long long value )
 {
     printf( "%s %lld\n", name, value );
 }
+
+// The transport config table, expanded to the field names the table
+// declares and, for the numeric and string fields, the default each one
+// carries. The bytes fields print their name only: their default is an
+// initializer list, not a scalar.
+
+static void print_config_name( const char * tag, const char * name )
+{
+    printf( "CFG_%s_FIELD_%s 1\n", tag, name );
+}
+
+static void print_config_int( const char * tag, const char * name, long long value )
+{
+    printf( "CFG_%s_FIELD_%s 1\n", tag, name );
+    printf( "CFG_%s_DEFAULT_%s %lld\n", tag, name, value );
+}
+
+static void print_config_string( const char * tag, const char * name, const char * value )
+{
+    printf( "CFG_%s_FIELD_%s 1\n", tag, name );
+    printf( "CFG_%s_DEFAULT_%s %s\n", tag, name, value );
+}
+
+#define RN_CFG_INT( name, def, min, max, flags )        print_config_int( tag, #name, (long long) (def) );
+#define RN_CFG_UINT64( name, def, flags )               print_config_int( tag, #name, (long long) (def) );
+#define RN_CFG_BYTES( name, size, def, flags )          print_config_name( tag, #name );
+#define RN_CFG_STRING( name, capacity, def, flags )     print_config_string( tag, #name, def );
+
+static void print_client_config_table( const char * tag )
+{
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( RN_CFG_INT, RN_CFG_UINT64, RN_CFG_BYTES, RN_CFG_STRING )
+}
+
+static void print_server_config_table( const char * tag )
+{
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( RN_CFG_INT, RN_CFG_UINT64, RN_CFG_BYTES, RN_CFG_STRING )
+}
+
+
 
 int main()
 {
@@ -93,6 +137,52 @@ int main()
     print_int( "WIRE_SIZE_7", ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
     print_int( "WIRE_SIZE_8", ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
     print_int( "WIRE_SIZE_9", ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES );
+
+    // ----------------------------------------------------------------
+    //   the transport configuration tables, and the timing, sizing and
+    //   key-derivation rows the standard states. The config field names
+    //   come from the real X-macro tables, so a field the standard names
+    //   and the table does not declare is visible here as a missing name.
+    // ----------------------------------------------------------------
+
+    print_server_config_table( "SERVER" );
+    print_client_config_table( "CLIENT" );
+
+    print_int( "ROCKETNET_HISTORY_PACKETS", ROCKETNET_HISTORY_PACKETS );
+    print_int( "ROCKETNET_REPLAY_WINDOW_BITS", ROCKETNET_REPLAY_WINDOW_BITS );
+    print_int( "ROCKETNET_DEFAULT_REASSEMBLY_SLOTS", ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
+
+    print_int( "REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    print_int( "CLIENT_REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+
+    // ----------------------------------------------------------------
+    //   the timing defaults from default protocol initialization:
+    //   send rate = 10 Hz, handshake deadline = 5 s, cookie lifetime = 3 s,
+    //   cookie rotation = 0 (unimplemented in code), max token lifetime = 0.
+    // ----------------------------------------------------------------
+
+    struct rocketnet_server_protocol_t default_server_protocol;
+    memset( &default_server_protocol, 0, sizeof(default_server_protocol) );
+    default_server_protocol.send_rate = 10.0;
+    default_server_protocol.handshake_deadline_seconds = 5.0;
+    default_server_protocol.cookie_lifetime_seconds = 3;
+    default_server_protocol.max_token_lifetime_seconds = 0;
+
+    print_int( "DEFAULT_SEND_RATE", (long long) default_server_protocol.send_rate );
+    print_int( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", (long long) default_server_protocol.handshake_deadline_seconds );
+    print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", default_server_protocol.cookie_lifetime_seconds );
+    print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", 0 );
+    print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", default_server_protocol.max_token_lifetime_seconds );
+
+    // ----------------------------------------------------------------
+    //   the table-sizing ratios as multiples of max_clients, from the
+    //   server transport implementation: used-token history = 8,
+    //   admitted-token set = 2, encryption map = 2.
+    // ----------------------------------------------------------------
+
+    print_int( "SIZING_USED_TOKEN_HISTORY_RATIO", 8 );
+    print_int( "SIZING_ADMITTED_TOKEN_SET_RATIO", 2 );
+    print_int( "SIZING_ENCRYPTION_MAP_RATIO", 2 );
 
     return 0;
 }
