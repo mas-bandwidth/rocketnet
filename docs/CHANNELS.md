@@ -1574,8 +1574,8 @@ code by hand before it is written down.
 
 | Module | Models | Invariants and properties | Reversed witness (rule removed, expected failure) |
 |---|---|---|---|
-| `RNWindow` (exists, `tla/RNWindow.tla`, commit `b70f73c`, run on a bench) | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors, holds on one ordered channel; update boundaries with P6; the 24-bit number reconstructed against `R` (13.5) | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, `DeliveredOnce`, `OrderedDeliveredInOrder`, `WireNumberReconstructs`, LIVE `EveryReliableAckedAndDelivered` (strong fairness on the oldest write and the ack send, plus `AcksLand`, 14) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision. Unsigned reconstruction: misread. Ordered delivered on arrival: out of order. Duplicates taken as fresh: delivered twice |
-| `RNRing` | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap. No padding at the boundary: span outside the ring |
+| `RNWindow` (exists, `tla/RNWindow.tla`, commit `b70f73c`, run on a bench; code checked at `e289a90633b4`) | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors, holds on one ordered channel; update boundaries with P6; the 24-bit number reconstructed against `R` (13.5) | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, `DeliveredOnce`, `OrderedDeliveredInOrder`, `WireNumberReconstructs`, `TablesBounded`, LIVE `EveryReliableAckedAndDelivered` (strong fairness on the oldest write and the ack send, plus `AcksLand`, 14) | `U'` ignoring partial blocks: slot collision (`ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock`). Dropping P6 (same-update reply): slot collision (`ChannelsWindowWitnessReplyOpensNextUpdate`). Unsigned reconstruction: misread. Ordered delivered on arrival: out of order. Duplicates taken as fresh: delivered twice |
+| `RNRing` (exists, `tla/RNRing.tla`, commit `f30c2a8`, run on a bench; code checked at `e289a90633b4`) | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap (`ChannelsWindowWitnessFloorIsUPrime`). No padding at the boundary: span outside the ring (`ChannelsWindowWitnessPaddingAtTheBoundary`) |
 | `RNChannel` | the four counters and coupling, holds, the drain, newest-sequenced | `OrderedExactlyOnceInOrder`, `SequencedNeverBackwards`, `NoSequencedDuplicate` (study items 18, 19), `OrderedTraceUnchangedBySequenced` (I5) | the heap-drain path without the watermark reset: item 19's stale drop |
 | `RNBlocks` | split, consecutive numbering, the contiguous span, receive by index | `DeliveredEqualsSent`, `NoPartialDelivery`, `OneOrderingSlotPerBlock` | placement by arrival instead of index: the study's §8.2 corruption |
 | `RNScheduler` | priority levels, ready lists, channel FIFO, window stall | `FirstWriteInOrderPerChannel`, `UnreliableNotBlockedByWindow`, LIVE `NoStarvation` | per-message priority without channel FIFO: `FirstWriteInOrderPerChannel` fails |
@@ -1597,6 +1597,39 @@ under the `"alternate"` loss pattern. That reaches every witness in 8 to 33
 states and checks liveness in under a minute. The `"arbitrary"` loss run
 with liveness takes 14 minutes at capacity 1 and is a bench run, not a
 committed case (`tla/README-RNWindow.md`).
+
+**`RNWindow` and `RNRing` action-to-function map** (hand-checked at commit
+`e289a90633b4` on top of `8bcc945e4415`; every action citation in
+`sdk/rocketnet_window_send.cpp`, `sdk/rocketnet_window_receive.cpp` and
+`sdk/rocketnet_window_ack.cpp` matches its TLA+ transition and updates the
+exact variables the action updates):
+
+| Module | TLA+ action / operator | C++ function(s) and file | State updated and guard kept |
+|---|---|---|---|
+| `RNWindow` | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp:74`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp:21`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp:290`) | `next = U = U' = R = first_number`, `ring_next = 0`, `stalled = 0`, `violation = NONE`, empty `sent_packets` / `sent_index` / `sent_refs` / `resend_fifo`, `rto = rto_initial`, `backoff = 1` |
+| `RNWindow` | `NumberRecord` | `rn_window_send_first_write` (`sdk/rocketnet_window_send.cpp:100`), `rn_window_send_first_write_block` (`:126`) via `rn_window_send_admit` (`:30`) and `rn_window_send_set_number` (`:51`) | Guard `next + count <= U' + W`; writes `send_numbers[n % W]` (`number`, `descriptor`, `fragment`, `ring_start`, `ring_units`, `acked = 0`), advances `next`; increments `MESSAGE_WINDOW_STALL` once per stall |
+| `RNWindow` | `WritePacket(S, pid)` / `WriteOldest` | `rocketnet_message_writer_add` (`sdk/rocketnet_message.cpp`), `rn_window_ack_commit_packet` (`sdk/rocketnet_window_ack.cpp:336`), `rn_window_ack_resend` (`:526`) | Records `{packet_id, send_time, ref_first, ref_count}` in `sent_packets`, inserts `packet_id` in `sent_index`, appends `numbers` to `sent_refs` (evicting oldest entries when `P` or `16P` is full, counting `MESSAGE_SENT_MAP_EVICTED`), links unacked slots at the tail of `resend_fifo`; `rn_window_ack_resend` walks `resend_fifo` from head while `now >= last_send + rto·backoff` (`O(due)`), re-commits under a new `packet_id`, and steps `backoff` (`1, 2, 4, 8`) |
+| `RNWindow` | `ReceiveAck(q)` | `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp:411`), `rn_window_ack_on_acks` (`:492`) -> `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp:156`) | Ignores unknown/evicted `packet_id` in `O(1)`; on match, samples RFC 6298 RTT (`srtt`, `rttvar`, `rto`), resets `backoff = 1`, unlinks each newly acked `n >= U` from `resend_fifo`, frees its store chunk (`rn_region_send_free_fragment`), sets `acked = 1`, advances `U` past contiguous acked numbers, and sets `U' = U - oldest->fragment` when `U < next` (`U' = next` when `U == next`) |
+| `RNWindow` | `OpenPacket(p)` (`Recon`, `Accept`, `Advance`) | `rocketnet_message_reader_begin` / `rocketnet_message_reader_next` (`sdk/rocketnet_message.cpp`), `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp:32`) | Signed 24-bit half-range `Recon` against `R` (`:40-44`); drops `delta < 0` or set bit as `RN_WINDOW_RECEIVE_DUPLICATE` (`MESSAGE_DUPLICATE`, `:48,60`); refuses `delta >= W` with `ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW` (`:50`); refuses live descriptor naming another number with `ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION` (`:64`); claims `receive_descriptors[n % W]` (`live = 1`), sets `received_bits[n % W]`, and runs `Advance` (`:89-98`), clearing consecutive set bits from `R` and incrementing `R` |
+| `RNWindow` | `FixBatch` / `SendAck` | transport update boundary (P2 and P6, section 2) | Transport fixes update *j*'s received batch before any packet built in update *j* leaves, and any reply to an ack from update *j* opens in update *j+1* or later |
+| `RNWindow` | `EndUpdate` | `rn_window_receive_release` (`sdk/rocketnet_window_receive.cpp:104`) | Clears `receive_descriptors[number % W].live = 0` when `live && descriptor->number == number` (at the end of the delivery update for delivered records, or when a held record/block completes) |
+| `RNRing` | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp:74`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp:21`) | `next = U = U' = 0`, `ring_next = 0`, all receive descriptors `live = 0` |
+| `RNRing` | `WantSingle(len)` / `PlaceSingle` | `rn_window_send_first_write` (`sdk/rocketnet_window_send.cpp:100`) via `rn_window_send_round16` (`:10`), `rn_window_send_position` (`:15`), `rn_window_send_admit` (`:30`), `rn_window_send_set_number` (`:51`) | Rounds `bytes` up to `len16` (`Len16`); pads `p` to the next multiple of `B` when `len16 > B - (ring_next % B)` (`Pos`); admits iff `next + 1 <= U' + W` and `p - floor <= B - len16` where `floor = send_numbers[U' % W].ring_start` when `U' < next` else `p` (`Admits`); records `[p, p + len16)` and sets `ring_next = p + len16` |
+| `RNRing` | `WantBlock` / `PlaceBlock` | `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp:126`) | Computes `count = ceil(bytes / F)` and `span = (count - 1)·F + round16(last)`; pads `p` across a `B` boundary if `span > B - (ring_next % B)`; admits all `count` fragments at once iff `next + count <= U' + W` and `p - floor <= B - span`; assigns consecutive numbers `next .. next + count - 1` with contiguous sub-spans `[p + i·F, p + i·F + frag_len16)` |
+| `RNRing` | `Open(n)` | `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp:32`), `rn_region_ring_span_valid` (`sdk/rocketnet_allocator.h:158`, layer-2 check 8 in `sdk/rocketnet_message.cpp`) | Verifies `(ring * 16) + span <= B` (`SpanInsideRing`) and claims `[ring * 16, ring * 16 + span)` inside `[0, B)` |
+| `RNRing` | `Release(n)` | `rn_window_receive_release` (`sdk/rocketnet_window_receive.cpp:104`) | Releases `n`'s live descriptor and ring span once delivery or block completion finishes |
+| `RNRing` | `Ack(n)` | `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp:411`) -> `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp:156`) | Marks `n` acked, advances `U`, and keeps `U'` at `U - oldest->fragment` so `floor = ring_start(U')` never moves past an incomplete block's first fragment |
+
+**Layer 3 guarantee-to-test and reversed-witness table:**
+
+| Layer 3 guarantee (section 3) / TLA+ property | TLA+ module and property / witness | Unit test(s) in `test_channels.cpp` | Bench rule-removal check (temporary 1-line mutation on `vision`, reverted) |
+|---|---|---|---|
+| Every reliable record is delivered once (given P2 and P6); resends and sent-map eviction never lose or duplicate delivery | `RNWindow`: `AckedImpliesReceived`, `DeliveredOnce`, `OrderedDeliveredInOrder`, `TablesBounded`, LIVE `EveryReliableAckedAndDelivered` | `ChannelsWindowReceiveDuplicateIsCountedNotViolation`, `ChannelsWindowAckOfAnUnknownIdIsIgnored`, `ChannelsWindowAckFreesTheChunkAndAdvancesU`, `ChannelsWindowRttSampleIsUnambiguousAcrossResends`, `ChannelsWindowEvictionKeepsNumbersResendable`, `ChannelsWindowBackoffDoublesToEightAndResetsOnAck`, `ChannelsWindowResendWalkStopsAtTheFirstNotDue`, `ChannelsWindowFailedSendMarksDueNow`, `ChannelsWindowReliableTimeoutEntersTheErrorState`, `ChannelsWindowReceiveOverTheLossySimulator`, `ChannelsWindowSendAndReceiveOverTheLossySimulator`, `ChannelsWindowLossySoak` | Covered by the lossy-simulator and soak walks at 0, 10 and 50% loss (including forced `P`-ring and `16P`-ref eviction and failed sends) |
+| The receiver never needs room it does not have; wire numbers reconstruct without aliasing and stay inside `[R, R + W)` | `RNWindow`: `ReceiverNeverOutsideWindow`, `WireNumberReconstructs`; `RNRing`: LIVE `EveryAdmissibleMessagePlaced` | `ChannelsWindowSendNumbersLateNeverAtSend`, `ChannelsWindowSendCountBoundStallsAtUPrimePlusW`, `ChannelsWindowSendStallLetsUnreliableThrough`, `ChannelsWindowSendAnyMessageFitsWhenNothingIsOutstanding`, `ChannelsWindowReceiveAcceptsInOrder`, `ChannelsWindowReceiveOutsideWindowIsViolation`, `ChannelsWindowReceiveReconstructsAcrossThe24BitWrap`, `ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses` | — |
+| Slot writes never touch a live message (`U'` holds at a partial block's first number) | `RNWindow`: `NoSlotCollision` (`MCRNWindowBrokenBlockUPrime.cfg`, `KeepBlockUPrime = FALSE`) | `ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock`, `ChannelsWindowReceiveSlotCollisionIsViolation` | `sdk/rocketnet_window_send.cpp:174`: `send->U_prime = send->U - oldest->fragment;` → `send->U_prime = send->U;` fails `./bin/test ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock` at `test_channels.cpp:4570: rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE` |
+| Slot writes never touch a live message across update boundaries (P6: a reply to a packet opened in update *j* opens in update *j+1* or later, after `EndUpdate` releases update *j*'s deliveries) | `RNWindow`: `NoSlotCollision` (`MCRNWindowBrokenSameUpdateReply.cfg`, `RequireFixBatch = FALSE`) | `ChannelsWindowWitnessReplyOpensNextUpdate` (plus transport P6 test `test_transport_reply_opens_a_later_update`) | `test_channels.cpp:4609`: `const int keep_p6 = 1;` → `const int keep_p6 = 0;` in the transport stand-in fails `./bin/test ChannelsWindowWitnessReplyOpensNextUpdate` at `test_channels.cpp:4642: rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE` |
+| Ring writes never touch a live message (`floor` is `ring_start(U')`, never `ring_start(U)`) | `RNRing`: `LiveSpansDisjoint` (`MCRNRingBrokenFloorAtU.cfg`, `FloorAtUPrime = FALSE`) | `ChannelsWindowWitnessFloorIsUPrime`, `ChannelsWindowSendFloorIsUPrimeNotU`, `ChannelsWindowSendBlockTakesConsecutiveNumbersAndOneSpan` | `sdk/rocketnet_window_send.cpp:38`: `send_numbers[send->U_prime % W].ring_start` → `send_numbers[send->U % W].ring_start` fails `./bin/test ChannelsWindowWitnessFloorIsUPrime` at `test_channels.cpp:4696: live[j] == 0` |
+| Every ring placement stays inside `[0, B)` without wrapping across the end of the ring (boundary padding) | `RNRing`: `SpanInsideRing` (`MCRNRingBrokenNoPadding.cfg`, `PadAtBoundary = FALSE`) | `ChannelsWindowWitnessPaddingAtTheBoundary`, `ChannelsWindowSendRingPadsAtTheBoundary` | `sdk/rocketnet_window_send.cpp:20`: `return span > remaining ? send->ring_next + remaining : send->ring_next;` → `return send->ring_next;` fails `./bin/test ChannelsWindowWitnessPaddingAtTheBoundary` at `test_channels.cpp:4738: rn_region_ring_span_valid( &rig.region, ring_offset, 48 ) == 1` |
 
 ### 15.1 `RNSlots`, drafted and run
 
@@ -1883,17 +1916,23 @@ requires.
 
 ### 18.3 Not done by this card
 
-- Layers 1 and 2 are in the tree (sections 4 and 5). The modules in section 15
-  are the plan, and `RNSlots` exists only as
-  the draft in 15.1, run on a bench.
-- `RNWindow` exists (`tla/RNWindow.tla`, commit `b70f73c`, rocketnet PR
-  #209) and was run with TLC on a bench (hetzner2, 2026-10-13). Its committed
-  cases, `MCRNWindow.cfg`, `MCRNWindowSafety.cfg` and the five
-  `MCRNWindowBroken*.cfg`, pass or fail as declared, and
-  `tla/README-RNWindow.md` replays every trace. The window code (card C3)
-  does not exist yet, so the traces are checked against this design and not
-  against code. Its `tla/RUNS.tsv` records are owed to `tlacheck run --group
-  rnwindow`.
+- Layers 1, 2 and 3 are in the tree (sections 4, 5 and 6). In section 15,
+  `RNWindow` and `RNRing` are in `tla/`, and `RNSlots` exists as the draft in
+  15.1, run on a bench; the remaining modules in section 15 are the plan for
+  layers 4 to 7.
+- `RNWindow` (`tla/RNWindow.tla`, commit `b70f73c`, rocketnet PR #209) and
+  `RNRing` (`tla/RNRing.tla`, commit `f30c2a8`, rocketnet PR #211) were run with
+  TLC on a bench (`tla/RUNS.tsv`). With the Layer 3 window code in the tree
+  (`sdk/rocketnet_window_send.cpp`, `sdk/rocketnet_window_receive.cpp`,
+  `sdk/rocketnet_window_ack.cpp`, commit `e289a90633b4` on top of
+  `sprint/rocketnet-window` `8bcc945e4415`), every `RNWindow` and `RNRing`
+  action was hand-checked against its C++ function, and the four Layer 3
+  reversed witnesses (`ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock`,
+  `ChannelsWindowWitnessReplyOpensNextUpdate`,
+  `ChannelsWindowWitnessFloorIsUPrime` and
+  `ChannelsWindowWitnessPaddingAtTheBoundary`) were replayed in
+  `test_channels.cpp` and verified to fail on their named invariants under each
+  one-line rule removal on the `vision` bench (section 15).
 - The per-entry sizes in section 14 are pinned by layer 1's static asserts.
 - P2 and P6 are kept by
   `test_transport_acked_unfragmented_was_in_exactly_one_batch` and
