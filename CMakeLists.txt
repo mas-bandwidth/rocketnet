@@ -235,7 +235,10 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
     rocketnet_use_sodium(rocketnet_test_support)
-    add_executable(test test.cpp test_channels.cpp)
+    # Every test_unit_<topic>.cpp at the repository root registers with
+    # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
+    file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
+    add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     # test_dev_token_minting_absent_in_release probes the shared release
