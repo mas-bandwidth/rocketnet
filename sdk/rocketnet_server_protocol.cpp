@@ -954,15 +954,11 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
 
-    // session types: mark the sequence received and advance the high-water
-    // mark first, per the reading order -- no malformed or mis-sized packet
-    // has any effect beyond its replay-window mark, so the idle-timeout
-    // refresh and the slot confirmation wait below the checks
-
-    rocketnet_replay_advance( replay, sequence );
-
-    // session traffic for a mapping with no slot is a lost-response race or
-    // an injection; the retransmitted response repairs the former
+    // session types: after the open, ignore a mapping without a slot before
+    // marking the replay window, per STANDARD.md Reading packets and
+    // Processing session packets at the server, and NoAdvanceBeforeConnect
+    // in tla/ReplayWindow.tla. Connected traffic advances before type checks;
+    // the idle-timeout refresh and slot confirmation wait below those checks.
 
     if ( mapping->client_index == -1 )
     {
@@ -970,6 +966,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         counters[type_counters->not_connected]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
+
+    rocketnet_replay_advance( replay, sequence );
 
     int client_index = mapping->client_index;
 
