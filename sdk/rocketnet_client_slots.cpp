@@ -22,6 +22,14 @@ struct rocketnet_client_slots_t
     int * next;                             // chain link per slot
     int num_buckets;
 
+    // the free list: a stack of unused client indices, popped on connect
+    // and pushed on disconnect, so finding a free slot is constant time in
+    // the number of client slots and never a search (STANDARD.md,
+    // "Lookup complexity": "a free slot is found from a free list, not a
+    // search")
+    int * free_stack;                        // max_clients, unused indices
+    int free_stack_count;
+
     // hot: walked by find
     uint64_t * client_id;
     int * connected;
@@ -37,7 +45,8 @@ uint64_t rocketnet_client_slots_allocation_bytes(int clients)
     if (clients < 1) return 0;
     const uint64_t n = (uint64_t)clients;
     return rocketnet_memory_allocations({sizeof(rocketnet_client_slots_t), 2*n*sizeof(int),
-        n*sizeof(int), n*sizeof(uint64_t), n*sizeof(int), n*sizeof(int), n*sizeof(int), n*ROCKETNET_USER_DATA_BYTES});
+        n*sizeof(int), n*sizeof(uint64_t), n*sizeof(int), n*sizeof(int), n*sizeof(int), n*sizeof(int),
+        n*ROCKETNET_USER_DATA_BYTES});
 }
 
 struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context, int max_clients )
@@ -67,9 +76,10 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     slots->connected = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
     slots->mapping_index = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
     slots->confirmed = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
+    slots->free_stack = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) max_clients );
     slots->user_data = (uint8_t*) rocketnet_malloc( context, (size_t) ROCKETNET_USER_DATA_BYTES * (size_t) max_clients );
 
-    if ( !slots->bucket_head || !slots->next || !slots->client_id || !slots->connected || !slots->mapping_index || !slots->confirmed || !slots->user_data )
+    if ( !slots->bucket_head || !slots->next || !slots->client_id || !slots->connected || !slots->mapping_index || !slots->confirmed || !slots->free_stack || !slots->user_data )
     {
         rocketnet_client_slots_destroy( slots );
         return NULL;
@@ -87,6 +97,13 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     for ( int i = 0; i < max_clients; i++ )
         slots->mapping_index[i] = -1;
 
+    // the free list is filled so the first max_clients assigns pop 0, 1, 2
+    // and so on in order: the stack holds the indices highest-first, and
+    // the pop at the top of the stack is index 0
+    for ( int i = 0; i < max_clients; i++ )
+        slots->free_stack[i] = max_clients - 1 - i;
+    slots->free_stack_count = max_clients;
+
     return slots;
 }
 
@@ -99,6 +116,7 @@ void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
     rocketnet_free( slots->context, slots->connected );
     rocketnet_free( slots->context, slots->mapping_index );
     rocketnet_free( slots->context, slots->confirmed );
+    rocketnet_free( slots->context, slots->free_stack );
     rocketnet_free( slots->context, slots->user_data );
     rocketnet_free( slots->context, slots );
 }
@@ -151,19 +169,16 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     rocketnet_assert( user_data );
     rocketnet_assert( rocketnet_client_slots_find( slots, client_id ) == -1 );
 
-    // the lowest free slot, as netcode assigns them
+    // a free slot comes from the free list, not a search: a stack of unused
+    // indices, popped here on connect and pushed on release, so the
+    // per-connection lookup is constant time in the number of client slots,
+    // as STANDARD.md's "Lookup complexity" rule requires ("a free slot is
+    // found from a free list, not a search"). a full table pops nothing and
+    // returns -1.
 
-    int client_index = -1;
-    for ( int i = 0; i < slots->max_clients; i++ )
-    {
-        if ( !slots->connected[i] )
-        {
-            client_index = i;
-            break;
-        }
-    }
-    if ( client_index == -1 )
+    if ( slots->free_stack_count == 0 )
         return -1;
+    int client_index = slots->free_stack[--slots->free_stack_count];
 
     slots->connected[client_index] = 1;
     slots->confirmed[client_index] = 0;
@@ -266,6 +281,11 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     slots->client_id[client_index] = 0;
     slots->mapping_index[client_index] = -1;
     memset( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, 0, ROCKETNET_USER_DATA_BYTES );
+
+    // the free list takes the index back: pushed on disconnect, popped on
+    // the next connect, so the slot is immediately available for reuse and
+    // no slot is ever handed out twice while held
+    slots->free_stack[slots->free_stack_count++] = client_index;
 
     slots->num_connected--;
 
