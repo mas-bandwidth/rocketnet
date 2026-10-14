@@ -3610,6 +3610,53 @@ void rocketnet_test_admission_hook_drops_before_verify()
     rocketnet_test_server_teardown( &test );
 }
 
+void rocketnet_test_slotless_session_packet_leaves_window()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x12345678ULL, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    rocketnet_check( mapping->client_index == -1 );
+    rocketnet_check( !mapping->established );
+
+    // A valid session keep-alive opens on the half-open mapping, but has no
+    // assigned slot. Its rejection leaves every byte of the mapping intact.
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    const uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 8] = { 0 };
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag, 1,
+                                                     NULL, plaintext, sizeof(plaintext), test.server.protocol_id,
+                                                     mapping->connection_salt, NULL, mapping->keys.session_client_to_server );
+    rocketnet_check( packet_bytes > 0 );
+
+    struct rocketnet_replay_protection_t replay_before;
+    memcpy( &replay_before, &mapping->replay_session, sizeof(replay_before) );
+    struct rocketnet_encryption_mapping_t mapping_before;
+    memcpy( &mapping_before, mapping, sizeof(mapping_before) );
+    uint64_t not_connected_before = test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED];
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                               ROCKETNET_TEST_CREATE_TS, 101.0, response, &response_bytes,
+                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == not_connected_before + 1 );
+    rocketnet_check( memcmp( &mapping->replay_session, &replay_before, sizeof(replay_before) ) == 0 );
+    rocketnet_check( memcmp( mapping, &mapping_before, sizeof(mapping_before) ) == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_replay_protection()
 {
     struct rocketnet_replay_protection_t replay;
@@ -11562,6 +11609,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_handshake_work_budget_per_update", rocketnet_test_handshake_work_budget_per_update },
     { "test_admission_hook_drops_before_verify", rocketnet_test_admission_hook_drops_before_verify },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
+    { "test_slotless_session_packet_leaves_window", rocketnet_test_slotless_session_packet_leaves_window },
     { "test_replay_protection", rocketnet_test_replay_protection },
     { "test_client_slots", rocketnet_test_client_slots },
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
