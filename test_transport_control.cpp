@@ -113,7 +113,7 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
     strcpy(config.driver, "portable");
-    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, 0.0);
+    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
     rocketnet_server_driver_close(&server->io);
     *operations = {};

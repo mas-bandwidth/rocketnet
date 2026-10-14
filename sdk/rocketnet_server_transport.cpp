@@ -420,8 +420,7 @@ uint64_t rocketnet_server_transport_required_memory(const rocketnet_server_trans
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
                                                                          const char * public_address_string,
-                                                                         const struct rocketnet_server_transport_config_t * config,
-                                                                         double time )
+                                                                         const struct rocketnet_server_transport_config_t * config)
 {
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
@@ -433,8 +432,6 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     }
 
     rocketnet_assert( public_address_string );
-
-    (void) time;
 
     // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
     // the default shape; the caller's struct is the middle layer; the
@@ -971,6 +968,15 @@ void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
+
+    // the caller's clock is clamped once, before anything reads it: a NaN,
+    // an infinity or a step backwards becomes the last good time, counted and
+    // loud in a debug build. the last good time starts at zero, the value a
+    // value-initialized transport carries.
+
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( server_transport->time, time, &time_clamped );
+
     server_transport->packet_leases.reset();
 
     server_transport->time = time;

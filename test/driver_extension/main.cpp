@@ -18,7 +18,7 @@ int main()
     rocketnet_server_transport_dev_config(&server_config);
     server_config.max_clients = 4;
     strcpy(server_config.driver, "external_test");
-    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &server_config, rocketnet_time());
+    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &server_config);
     CHECK(server && strcmp(rocketnet_server_transport_driver(server), "external_test") == 0);
     char address[64];
     snprintf(address, sizeof(address), "127.0.0.1:%u", rocketnet_server_transport_port(server));

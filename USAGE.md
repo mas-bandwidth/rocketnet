@@ -61,6 +61,14 @@ update, send or ACK rate. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
 sent by it, and nothing is guaranteed sent without it.
 
+The `time` passed to `update` — and to `rocketnet_client_transport_create` — must
+be finite and non-decreasing: a game clock in seconds, monotonic. A NaN, an
+infinity or a step backwards is clamped to the last good time, counted once in
+`rocketnet_api_misuse_count`, and asserted (`rocketnet_assert`) in a debug build;
+a release build clamps and goes on rather than freezing a timeout or rewinding a
+deadline. The library never reads a clock of its own on these paths, so a game
+owns time and a test can hold it still.
+
 Driver eagerness above that floor differs, and it is a *server*-side difference:
 on the server the GSO rung flushes update's own staging — protocol responses,
 keep-alives — inline in update, and so do the portable and msgx rungs, which
@@ -367,7 +375,7 @@ means different things:
   the ordinary path. The token names the server and carries the keys; the config
   only carries what the token does not.
 
-- **Server:** `rocketnet_server_transport_create( context, address, NULL, time )`
+- **Server:** `rocketnet_server_transport_create( context, address, NULL )`
   gets the default shape, which has **no keys** — and a server with no keys is
   refused, never defaulted, because default keys are how every deployment of a
   protocol ends up sharing one identity. So a NULL config succeeds on the server

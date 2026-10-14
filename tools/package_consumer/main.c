@@ -37,7 +37,7 @@ int main(void)
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = 1;
     strcpy(config.driver, "portable");
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, 0.0);
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server != NULL);
     CHECK(strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
     rocketnet_server_transport_destroy(server);
