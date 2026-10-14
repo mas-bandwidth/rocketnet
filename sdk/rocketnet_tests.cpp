@@ -3262,6 +3262,7 @@ void rocketnet_test_full_server_refuses_before_keypair()
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS );
     rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
     rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_seal == 1 );
 
     rocketnet_test_server_teardown( &test );
 }
