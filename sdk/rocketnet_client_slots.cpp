@@ -185,8 +185,10 @@ int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * sl
 uint64_t rocketnet_client_slots_client_id( const struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
-    rocketnet_assert( client_index >= 0 && client_index < slots->max_clients );
-    rocketnet_assert( slots->connected[client_index] );
+    if ( client_index < 0 || client_index >= slots->max_clients )
+        return 0;
+    if ( !slots->connected[client_index] )
+        return 0;
     return slots->client_id[client_index];
 }
 

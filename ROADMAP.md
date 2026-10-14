@@ -4,19 +4,20 @@ Rendered mechanically from the work record's roadmap data by `python3 tools/rend
 
 | release | status | cards | what it holds |
 |---|---|---:|---|
-| v1.1.0 | next | 24 | The channels work: the message layer with UNRELIABLE and RELIABLE_ORDERED over n channels, up to the client and server objects and the C API, with the connect layer's TLA+ models and the first game integration held as the release gate. |
+| v1.1.0 | next | 50 | The channels work: the message layer with UNRELIABLE and RELIABLE_ORDERED over n channels, up to the client and server objects and the C API, with the connect layer's TLA+ models, the handshake, replay and binding fixes from the security read, and the first game integration held as the release gate. |
 | v1.2.0 | planned | 5 | The other six reliability types, enabled one at a time on the existing state with the model extended first, and the RakNet-matching C# shim. |
 | v1.3.0 | planned | 3 | The scaling work: 1024 and 10k channels, and about 1000 connections with channels on. |
 | v1.4.0 | planned | 18 | What TODO.md and TRANSPORT_READINESS.md still list: the public C surface, XDP and driver rungs, the swarm and the long soaks, kernel replay protection, the session layer, flows and broadcast, hardening validation and the release policy. |
 
 ## v1.1.0
 
-24 cards in 2 streams. The channels work: the message layer with UNRELIABLE and RELIABLE_ORDERED over n channels, up to the client and server objects and the C API, with the connect layer's TLA+ models and the first game integration held as the release gate.
+50 cards in 3 streams. The channels work: the message layer with UNRELIABLE and RELIABLE_ORDERED over n channels, up to the client and server objects and the C API, with the connect layer's TLA+ models, the handshake, replay and binding fixes from the security read, and the first game integration held as the release gate.
 
 | stream | cards | landed | ready | waiting | planned | held |
 |---|---:|---:|---:|---:|---:|---:|
-| rocketnet-channels | 17 | 3 | 3 |  | 10 | 1 |
-| rocketnet-tla | 7 | 3 | 4 |  |  |  |
+| rocketnet-channels | 23 | 3 | 4 | 5 | 10 | 1 |
+| rocketnet-tla | 10 | 3 | 4 | 3 |  |  |
+| rocketnet-fixes | 17 |  | 9 | 8 |  |  |
 
 ### rocketnet-channels
 
@@ -37,6 +38,12 @@ Rendered mechanically from the work record's roadmap data by `python3 tools/rend
 15. `planned` Soak the message layer at full configured load: no malloc or free, counters asserted while running, a fuzz target per parser (`heavy`)
 16. `held` HELD release gate: the first integrating game vendors the SDK and proves the two message types under real conditions (`frontier`)
 17. `planned` The sodium re-vendor: the gutted two-file flatten with Ed25519 and sealed boxes, replacing the system package before anything ships (`heavy`)
+18. `ready` Layer 3: the UNRELIABLE send and receive paths, small messages aggregated into a frame and the packet-sized zero-copy form (`heavy`)
+19. `waiting` Layer 3: RELIABLE_ORDERED as the design and the model say, a send queue from the allocator, a bounded packet-to-message map, resend and the receiver's ordering window (`heavy`)
+20. `waiting` Layer 4: the scheduler, each update within the packet budget, four priorities then round robin among channels (`heavy`)
+21. `waiting` Layer 5: the client and server objects over the transports, one allocator per client and per server slot carved at connect (`heavy`)
+22. `waiting` Layer 6: the message API as an extern C surface in sdk/rocketnet.h, and the C# binding over it (`heavy`)
+23. `waiting` Soak the client and server at 32, 1024 and 10000 channels with mixed UNRELIABLE and RELIABLE_ORDERED traffic (`pro`)
 
 ### rocketnet-tla
 
@@ -47,6 +54,29 @@ Rendered mechanically from the work record's roadmap data by `python3 tools/rend
 5. `ready` ServerConnection: the server's slots and encryption mapping, including the leak the audits suspect (`frontier`)
 6. `ready` Security: the connect token lifecycle, the prefilter and keyed filter, the replay window, with an attacker (`frontier`)
 7. `ready` FragmentsAndAcks: fragment reassembly, the ack window and burned sequences (`frontier`)
+8. `waiting` Every function that implements a modelled transition cites its TLA+ module and action (`heavy`)
+9. `waiting` The client connection machine and the server slot machine as pure modules: state in, events in, actions out (`heavy`)
+10. `waiting` The connect token lifecycle, the filters, the replay window and the key exchange as pure modules (`heavy`)
+
+### rocketnet-fixes
+
+1. `ready` The cookie's bounds and signature are verified (`flash`)
+2. `waiting` The admission hook drops a packet before any verify (`flash`)
+3. `waiting` A full server refuses before any keypair work: cheap refusals before crypto (`flash`)
+4. `ready` The client keeps its cookie until the challenge (`flash`)
+5. `waiting` The cookie key rotates (`flash`)
+6. `ready` A bounded handshake work budget per update (`flash`)
+7. `waiting` The token is bound at response open (`flash`)
+8. `waiting` The replay window advances only after the connect check (`flash`)
+9. `ready` A long sequence skip clears the whole replay window (`flash`)
+10. `ready` A hostile fragment id cannot poison a reassembly slot (`flash`)
+11. `ready` Receive drops an oversize datagram (`flash`)
+12. `waiting` A second connection from a client takes its seat correctly (`flash`)
+13. `ready` C# binding: safe handles, a double destroy throws (`heavy`)
+14. `waiting` C# binding: a null config is accepted (`flash`)
+15. `waiting` C# binding: spans are checked against the epoch (`flash`)
+16. `ready` Release builds refuse development keys (`pro`)
+17. `ready` Release builds do not export development token minting (`flash`)
 
 ## v1.2.0
 

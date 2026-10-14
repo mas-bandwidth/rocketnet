@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CheckCCompilerFlag)
+include(CheckCXXCompilerFlag)
+include(CheckLinkerFlag)
 
 # Defaults preserve the checkout's make workflow; embedded consumers build only libraries.
 set(ROCKETNET_TOP_LEVEL OFF)
@@ -9,6 +12,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(ROCKETNET_TOP_LEVEL ON)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
+option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
@@ -87,6 +91,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
     sdk/rocketnet_abi.cpp
     sdk/rocketnet_ack.cpp
+    sdk/rocketnet_allocator.cpp
     sdk/rocketnet_address.cpp
     sdk/rocketnet_base64.cpp
     sdk/rocketnet_client_protocol.cpp
@@ -103,6 +108,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
+    sdk/rocketnet_unreliable.cpp
     sdk/rocketnet_network_simulator.cpp
     sdk/rocketnet_platform.cpp
     sdk/rocketnet_protocol.cpp
@@ -116,9 +122,33 @@ set(ROCKETNET_SOURCE
     ${ROCKETNET_DRIVER_SOURCES}
 )
 
+if(ROCKETNET_HARDEN)
+    foreach(language C CXX)
+        if(language STREQUAL "C")
+            check_c_compiler_flag("-fstack-protector-strong" ROCKETNET_C_STACK_PROTECTOR)
+            check_c_compiler_flag("-fcf-protection" ROCKETNET_C_CF_PROTECTION)
+        else()
+            check_cxx_compiler_flag("-fstack-protector-strong" ROCKETNET_CXX_STACK_PROTECTOR)
+            check_cxx_compiler_flag("-fcf-protection" ROCKETNET_CXX_CF_PROTECTION)
+        endif()
+    endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        check_linker_flag(CXX "-Wl,-z,relro,-z,now" ROCKETNET_LINK_RELRO_NOW)
+    endif()
+endif()
+
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
 add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+# The development library: the same source compiled with ROCKETNET_DEVELOPMENT=1,
+# so the dev flow (examples, functional suite, soak, serialize) keeps the
+# development token minting and accepts the published development keys that the
+# production library refuses. Never installed: it is a build-tree dev aid.
+add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+# The development shared library: the same source with ROCKETNET_DEVELOPMENT=1,
+# for the C# binding smoke, whose loopback connect mints its own token. Never
+# installed; the production shared library must not carry the minting symbol.
+add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(RocketNet::rocketnet ALIAS rocketnet)
 add_library(RocketNet::rocketnet_shared ALIAS rocketnet_shared)
 
@@ -129,12 +159,21 @@ set_target_properties(rocketnet_shared PROPERTIES
     OUTPUT_NAME rocketnet ARCHIVE_OUTPUT_NAME rocketnet_import
     VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
     C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+set_target_properties(rocketnet_shared_dev PROPERTIES
+    OUTPUT_NAME rocketnet_dev
+    VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
-foreach(target rocketnet rocketnet_shared)
+target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
+foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev)
     add_dependencies(${target} rocketnet_xdp_header)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_features(${target} PRIVATE cxx_std_11)
-    target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
+    if(target STREQUAL "rocketnet_dev" OR target STREQUAL "rocketnet_shared_dev")
+        target_compile_definitions(${target} PUBLIC ROCKETNET_DEVELOPMENT=1)
+    else()
+        target_compile_definitions(${target} PRIVATE ROCKETNET_DEVELOPMENT=0)
+    endif()
     if(ROCKETNET_DRIVER_REGISTRY_HEADER)
         target_compile_definitions(${target} PRIVATE "ROCKETNET_DRIVER_REGISTRY_HEADER=\"${ROCKETNET_DRIVER_REGISTRY_HEADER}\"")
     endif()
@@ -157,18 +196,34 @@ foreach(target rocketnet rocketnet_shared)
     else()
         target_compile_options(${target} PUBLIC -ffp-contract=off)
     endif()
+    if(ROCKETNET_HARDEN)
+        target_compile_definitions(${target} PRIVATE "$<$<CONFIG:Release>:_FORTIFY_SOURCE=2>")
+        foreach(language C CXX)
+            if(ROCKETNET_${language}_STACK_PROTECTOR)
+                target_compile_options(${target} PRIVATE
+                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fstack-protector-strong>")
+            endif()
+            if(ROCKETNET_${language}_CF_PROTECTION)
+                target_compile_options(${target} PRIVATE
+                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fcf-protection>")
+            endif()
+        endforeach()
+    endif()
     if(APPLE)
         target_link_libraries(${target} PRIVATE "-framework CoreFoundation" "-framework SystemConfiguration")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(${target} PRIVATE RocketNet::Bpf RocketNet::Xdp)
     endif()
 endforeach()
+if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW)
+    target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
+endif()
 
 if(ROCKETNET_BUILD_EXAMPLES)
-    foreach(example client server)
-        add_executable(${example} ${example}.c)
-        target_link_libraries(${example} PRIVATE rocketnet)
-    endforeach()
+    add_executable(client client.c)
+    target_link_libraries(client PRIVATE rocketnet_dev)
+    add_executable(server server.c)
+    target_link_libraries(server PRIVATE rocketnet)
 endif()
 if(ROCKETNET_BUILD_TESTS)
     add_executable(test_sodium test_sodium.c)
@@ -183,11 +238,18 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(test test.cpp test_channels.cpp)
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
-    foreach(test_target test_lifecycle test_serialize test_driver test_transport_control)
+    # test_dev_token_minting_absent_in_release probes the shared release
+    # library, so the test target must build it: CI legs build `test` alone,
+    # and without this the shared library is missing and the probe goes red.
+    add_dependencies(test rocketnet_shared)
+    foreach(test_target test_lifecycle test_driver test_transport_control)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
         target_link_libraries(${test_target} PRIVATE rocketnet)
     endforeach()
+    add_executable(test_serialize test_serialize.cpp)
+    target_include_directories(test_serialize PRIVATE test)
+    target_link_libraries(test_serialize PRIVATE rocketnet_dev)
     rocketnet_use_sodium(test_transport_control)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(test_xdp test_xdp.cpp sdk/rocketnet_server_socket_linux.cpp
@@ -222,7 +284,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/lifecycle_driver.cpp)
-    target_link_libraries(functional PRIVATE rocketnet Threads::Threads)
+    target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_dependencies(functional test_xdp test_serialize test_transport_control)
@@ -246,9 +308,15 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak_sim soak_sim.cpp)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
-    foreach(tool soak soak_sim keygen transport_memory)
+    add_executable(transport_fill bench/transport_fill.cpp)
+    add_executable(lease_cost bench/lease_cost.cpp)
+    foreach(tool keygen transport_memory)
         target_link_libraries(${tool} PRIVATE rocketnet)
     endforeach()
+    foreach(tool soak soak_sim transport_fill lease_cost)
+        target_link_libraries(${tool} PRIVATE rocketnet_dev)
+    endforeach()
+    target_link_libraries(lease_cost PRIVATE Threads::Threads)
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
 endif()

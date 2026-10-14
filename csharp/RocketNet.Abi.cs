@@ -25,8 +25,13 @@ public static unsafe partial class RocketNet
 
     static IntPtr LoadAndValidate()
     {
+#if ROCKETNET_DEVELOPMENT
+        string fileName = OperatingSystem.IsWindows() ? "rocketnet_dev.dll"
+                        : OperatingSystem.IsMacOS() ? "librocketnet_dev.dylib" : "librocketnet_dev.so";
+#else
         string fileName = OperatingSystem.IsWindows() ? "rocketnet.dll"
                         : OperatingSystem.IsMacOS() ? "librocketnet.dylib" : "librocketnet.so";
+#endif
         string? env = Environment.GetEnvironmentVariable( "ROCKETNET_LIBRARY_PATH" );
         IntPtr handle;
         if ( env != null )

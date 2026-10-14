@@ -238,6 +238,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 
 int rocketnet_open_sealed_packet( uint8_t * out_data,
                                   uint8_t * out_session_nonce,
+                                  int out_capacity,
                                   const uint8_t * packet_data,
                                   int packet_bytes,
                                   uint8_t packet_type,
@@ -269,6 +270,11 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
         header_bytes += ROCKETNET_SESSION_NONCE_BYTES;
 
     if ( packet_bytes < header_bytes + ROCKETNET_PACKET_TAG_BYTES )
+        return -1;
+
+    // Refuse if the output buffer is too small for the plaintext
+    int plaintext_bytes = packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES;
+    if ( out_capacity < plaintext_bytes )
         return -1;
 
     if ( out_session_nonce )

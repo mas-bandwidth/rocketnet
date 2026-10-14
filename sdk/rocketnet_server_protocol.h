@@ -16,6 +16,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_server.h"
 
 // Server-side connection request processing: the ladder from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
@@ -49,6 +50,7 @@ struct rocketnet_server_protocol_t
     uint8_t previous_cookie_key[ROCKETNET_COOKIE_KEY_BYTES];
     int has_previous_cookie_key;
     int cookie_lifetime_seconds;                            // default 3
+    int max_token_lifetime_seconds;                         // 0 means no limit
 
     double handshake_deadline_seconds;                      // default 5
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
@@ -61,6 +63,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_server_acks_t * acks;
     struct rocketnet_reassembly_set_t * reassembly;         // per-client fragment reassembly, one connection per slot
     struct rocketnet_counters_t * counters;
+    struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
 };
 
 // Processes one connection request packet, full wire bytes including the

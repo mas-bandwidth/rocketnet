@@ -277,7 +277,7 @@ static void check_sealed_packet()
     CHECK( rocketnet_prefilter_check( packet, packet_bytes, filter_value ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
-    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, packet, packet_bytes,
+    int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet, packet_bytes,
                                                      ROCKETNET_CONNECTION_PAYLOAD_PACKET, sequence,
                                                      protocol_id, salt, NULL, key );
     CHECK( opened_bytes == (int) sizeof( plaintext ) );
@@ -286,7 +286,7 @@ static void check_sealed_packet()
     // a flipped byte anywhere inside must refuse: the seal is over the
     // whole packet, on this host as on any other
     packet[packet_bytes / 2] ^= 0x01;
-    CHECK( rocketnet_open_sealed_packet( opened, NULL, packet, packet_bytes,
+    CHECK( rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet, packet_bytes,
                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, sequence,
                                          protocol_id, salt, NULL, key ) < 0 );
 

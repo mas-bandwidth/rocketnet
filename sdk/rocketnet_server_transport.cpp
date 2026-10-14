@@ -137,6 +137,11 @@ struct rocketnet_server_transport_t
     rocketnet_address_t bind_address;
     rocketnet_address_t public_address;
 
+    // the admission gate: consulted before process_packet for a source with
+    // no encryption mapping. NULL admits every source (the default).
+    rocketnet_server_admission_callback_t admission_callback;
+    void * admission_context;
+
     // the granted driver (ROCKETNET_DRIVER_*), decided by the ladder at
     // create and constant for the transport's life -- the runtime fork
     // every seam function below branches on, one predictable branch
@@ -551,6 +556,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         return NULL;
     }
 
+    // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+    if ( config->protocol_id == 0 )
+    {
+        rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        return NULL;
+    }
+
     // the driver candidate list parses before anything allocates: a typo
     // fails here, loudly, listing the valid names
 
@@ -602,8 +614,18 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     server_transport->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int num_reassembly_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
-    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0;
-    (void) development_keys;
+    const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
+                                 memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
+    if ( development_keys )
+    {
+#if ROCKETNET_DEVELOPMENT
+        rocketnet_info( "development keys detected; running in development mode" );
+#else // !ROCKETNET_DEVELOPMENT
+        rocketnet_error( "development keys detected in release build; refusing to start" );
+        rocketnet_free( context, server_transport );
+        return NULL;
+#endif // ROCKETNET_DEVELOPMENT
+    }
 
     // THE LADDER (#106): candidates tried left to right, first grant wins.
     // an operator who wrote the list owns the list -- nothing is appended
@@ -791,8 +813,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     protocol->cookie_lifetime_seconds = 3;
+    protocol->max_token_lifetime_seconds = 0;
     protocol->handshake_deadline_seconds = 5.0;
-    protocol->max_timeout_seconds = 0;
+    protocol->max_timeout_seconds = config->max_timeout_seconds;
     protocol->allow_negative_timeout = 0;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * 2 );
@@ -933,6 +956,30 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     }
 }
 
+// The admission gate, consulted by the receive loops before a packet is
+// handed to the protocol. A source with a mapping has already cleared the
+// connect ladder and bypasses the gate; a callback that says DROP stops an
+// unmapped packet before any protocol work -- and any crypto -- runs. The
+// test drives this directly to pin the drop-before-verify contract.
+int rocketnet_server_transport_admission( const struct rocketnet_server_protocol_t * protocol,
+                                          rocketnet_server_admission_callback_t callback,
+                                          void * context,
+                                          const struct rocketnet_address_t * from,
+                                          const uint8_t * packet_data,
+                                          int packet_bytes )
+{
+    if ( !callback || rocketnet_encryption_map_find( protocol->encryption_map, from ) != -1 )
+        return ROCKETNET_SERVER_ADMISSION_ADMIT;
+    return callback( context, from, packet_data, packet_bytes );
+}
+
+void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context )
+{
+    rocketnet_assert( server_transport );
+    server_transport->admission_callback = callback;
+    server_transport->admission_context = context;
+}
+
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     rocketnet_assert( server_transport );
@@ -978,6 +1025,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     {
         server_transport->stats_frames[stats_index].packets_received++;
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+        // the admission gate: an unmapped source goes through the application's
+        // callback before any send frame is reserved or protocol work runs, so
+        // a drop costs no crypto and no staging
+        if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &received->from[i], received->packet_data[i], received->packet_bytes[i] ) == ROCKETNET_SERVER_ADMISSION_DROP )
+            continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;
@@ -1068,6 +1121,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         server_transport->stats_frames[stats_index].packets_received++;
         server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( packet_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+
+        // the admission gate: an unmapped source goes through the application's
+        // callback before any send frame is reserved or protocol work runs, so
+        // a drop costs no crypto and no staging
+        if ( rocketnet_server_transport_admission( &server_transport->protocol, server_transport->admission_callback, server_transport->admission_context, &from, receive_frame, packet_bytes ) == ROCKETNET_SERVER_ADMISSION_DROP )
+            continue;
 
         uint8_t * payload = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES : NULL;

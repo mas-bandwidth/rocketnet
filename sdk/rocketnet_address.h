@@ -46,4 +46,28 @@ ROCKETNET_EXPORT_FUNC void rocketnet_address_convert_ipv4_to_ipv6( struct rocket
 
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 
+// the one rule for an ipv4-mapped source (::ffff:a.b.c.d) on receive.
+//
+// on a dual stack socket (IPV6_V6ONLY off) the kernel delivers every ipv4
+// client as a mapped address: it is accepted and canonicalised to native
+// ipv4 here, at the edge, so connection keys, rate limits, cookies and token
+// binding all see one address per client.
+//
+// anywhere the real ipv6 header is seen -- a raw or xdp ipv6 path, or an
+// ipv6-only socket -- a mapped source never occurs legitimately (RFC 4291
+// 2.5.5.2): it is spoofed, and dropped.
+//
+// returns false when the source must be dropped. any other source passes
+// through unchanged.
+
+static inline bool rocketnet_address_accept_received_source( struct rocketnet_address_t * from, bool dual_stack )
+{
+    if ( !rocketnet_address_is_ipv4_in_ipv6( from ) )
+        return true;
+    if ( !dual_stack )
+        return false;
+    rocketnet_address_convert_ipv6_to_ipv4( from );
+    return true;
+}
+
 #endif // #ifndef ROCKETNET_ADDRESS_H

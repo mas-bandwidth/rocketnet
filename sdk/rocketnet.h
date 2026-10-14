@@ -537,7 +537,9 @@ struct rocketnet_client_transport_config_t
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
+#if ROCKETNET_DEVELOPMENT
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
+#endif // #if ROCKETNET_DEVELOPMENT
 
 // time is the game's clock, a double in seconds, monotonic; pass the same
 // clock to every call that takes one. The library never reads a clock of
@@ -654,6 +656,22 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocke
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
 
 struct rocketnet_server_transport_t;
+struct rocketnet_address_t;
+
+// The admission gate: a callback the application installs on a server
+// transport, consulted for every received packet whose source has no
+// encryption mapping -- traffic that has not cleared the connect handshake --
+// before it reaches the protocol's process step. Return
+// ROCKETNET_SERVER_ADMISSION_ADMIT to process the packet, or
+// ROCKETNET_SERVER_ADMISSION_DROP to drop it before any crypto work runs.
+// A mapped source (an in-flight handshake or an established connection)
+// bypasses the gate: it has already cleared the connect ladder, and this gate
+// is about admission, not session policing. The callback runs on the receive
+// thread and must be fast and thread-safe.
+
+#define ROCKETNET_SERVER_ADMISSION_ADMIT 0
+#define ROCKETNET_SERVER_ADMISSION_DROP  1
+typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
 // the shape with no keys -- create refuses it until keys are supplied
@@ -708,7 +726,8 @@ struct rocketnet_server_transport_t;
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
-    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )
+    STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
+    INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )
 
 struct rocketnet_server_transport_config_t
 {
@@ -781,6 +800,12 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct roc
 ROCKETNET_EXPORT_FUNC void rocketnet_forbid_xdp_commit( void );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+
+// The admission gate, set per transport (see the callback type above). NULL
+// callback -- the default -- admits every source: the connect ladder alone
+// decides. May be set or cleared at any time between updates.
+
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
 // The payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
@@ -1089,6 +1114,100 @@ namespace rocketnet
 }
 
 #endif // #if defined(__cplusplus) && defined(SERIALIZE_H)
+
+// -----------------------------------------
+//                                messages
+// -----------------------------------------
+
+// The message layer above the transports (docs/CHANNELS.md). What is here
+// today is layer 1's surface: the constants every layer shares, the message
+// config, and the sizing of one connection's region, callable before any
+// connect. The client and server objects arrive with layer 8.
+
+#ifndef ROCKETNET_MAX_CHANNELS
+#define ROCKETNET_MAX_CHANNELS                                         32
+#endif // #ifndef ROCKETNET_MAX_CHANNELS
+
+#if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
+#error ROCKETNET_MAX_CHANNELS must be between 1 and 65536
+#endif
+
+// reliability, per send -- RakNet's values and numbering (PacketPriority.h:46-85)
+
+#define ROCKETNET_UNRELIABLE                                            0
+#define ROCKETNET_UNRELIABLE_SEQUENCED                                  1
+#define ROCKETNET_RELIABLE                                              2
+#define ROCKETNET_RELIABLE_ORDERED                                      3
+#define ROCKETNET_RELIABLE_SEQUENCED                                    4
+#define ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT                           5
+#define ROCKETNET_RELIABLE_WITH_ACK_RECEIPT                             6
+#define ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT                     7
+
+#define ROCKETNET_PRIORITY_IMMEDIATE                                    0
+#define ROCKETNET_PRIORITY_HIGH                                         1
+#define ROCKETNET_PRIORITY_MEDIUM                                       2
+#define ROCKETNET_PRIORITY_LOW                                          3
+
+#define ROCKETNET_RECEIPT_ACKED                                         1
+#define ROCKETNET_RECEIPT_LOSS                                          2
+
+// the largest message start_message writes into a real wire frame, zero copy:
+// the payload capacity less the one form byte
+
+#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1191
+
+// the block stride, a wire constant
+
+#define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
+
+// The message config table, one declaration deriving struct, defaults and
+// validation, as the transports' tables (docs/CHANNELS.md 12). Fields marked
+// WIRE must be identical on both ends; CONFIG verifies them (layer 7).
+// Validation applies the ranges here and the cross rules of section 14, and
+// refuses, never clamps.
+
+#define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
+    INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
+    INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
+    INT_FIELD( receive_ring_bytes,      65536,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
+    INT_FIELD( max_message_bytes,       32768,   1191, 1 << 20,                0 )   /* WIRE, <= receive_ring_bytes */     \
+    INT_FIELD( send_buffer_bytes,      131072,  12288, 1 << 28,                0 )                                         \
+    INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
+    INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
+    INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                         \
+    INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
+    INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
+    INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
+    INT_FIELD( rto_initial_ms,           1000,     10, 60000,                  0 )                                         \
+    INT_FIELD( rto_min_ms,                 50,      1, 60000,                  0 )                                         \
+    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
+
+struct rocketnet_message_config_t
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+};
+
+ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
+
+// 1 when the config is accepted, else 0 with a log line naming the rule.
+// NULL means the defaults. Allocation-free; safe before init.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
+
+// The exact bytes of one connection's region (docs/CHANNELS.md 14): the
+// formula plus the 64-byte alignment of each part. 0 for a refused config;
+// NULL means the defaults. Allocation-free; callable before init or connect.
+// A server holds one region per client slot, a client one.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
+
+// The formula, each term at this config, the padding, the region and the
+// total for num_connections regions, as text into buffer. Returns the full
+// length (as snprintf: a short buffer is truncated and terminated, and NULL
+// with 0 measures), or 0 for a refused config. Allocation-free.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size );
+
+// The same lines, logged at info level. Returns the region bytes, or 0 refused.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
 // -----------------------------------------
 

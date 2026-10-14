@@ -6,8 +6,10 @@
 #include "rocketnet.h"
 #include "test/suite_runner.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int rocketnet_unit_test_count();
 const char * rocketnet_unit_test_name( int index );
@@ -20,6 +22,8 @@ int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
+void rocketnet_channels_prepare( const char * name );
+void rocketnet_channels_prepare_log( const char * name );
 
 static int rocketnet_suite_test_count()
 {
@@ -57,6 +61,9 @@ static int rocketnet_unit_worker( const char * name )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
+    // allocator cases install their hooks here: replacement is refused after init
+    rocketnet_channels_prepare( name );
+
     if ( !rocketnet_init() )
     {
         printf( "error: failed to initialize rocketnet\n" );
@@ -64,6 +71,7 @@ static int rocketnet_unit_worker( const char * name )
     }
 
     rocketnet_unit_prepare();
+    rocketnet_channels_prepare_log( name );
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
         result = rocketnet_unit_run_named( name );
@@ -72,8 +80,83 @@ static int rocketnet_unit_worker( const char * name )
     return result;
 }
 
+#if defined(_MSC_VER)
+#define ROCKETNET_TEST_FP_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define ROCKETNET_TEST_FP_NOINLINE __attribute__((noinline))
+#else
+#define ROCKETNET_TEST_FP_NOINLINE
+#endif
+
+// Canary: the estate's strict floating-point floor is -ffp-contract=off
+// (GCC/Clang) or /fp:precise (MSVC). Compiled with contraction enabled, a*b+c
+// here rounds once into an FMA and changes the result; under the floor it takes
+// two roundings. The inputs ride through volatile so nothing folds at compile
+// time, and the arithmetics live in out-of-line helpers so the backend is free
+// to contract (and the probe is about the setting, not common-subexpression
+// folding). One rounding yields 0x33800000 (float) / 0x3C90000000000000
+// (double); the floor yields 0x00000000 / 0x0000000000000000.
+
+ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_float( float a, float b, float c )
+{
+    const float r = a * b + c;
+    uint32_t bits;
+    memcpy( &bits, &r, sizeof( bits ) );
+    if ( bits != UINT32_C(0x00000000) )
+    {
+        printf( "FAIL test_fp_contract_off: float a*b+c bits 0x%08X, expected 0x00000000\n", (unsigned) bits );
+        return 1;
+    }
+    return 0;
+}
+
+ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_double( double a, double b, double c )
+{
+    const double r = a * b + c;
+    uint64_t bits;
+    memcpy( &bits, &r, sizeof( bits ) );
+    if ( bits != UINT64_C(0x0000000000000000) )
+    {
+        printf( "FAIL test_fp_contract_off: double a*b+c bits 0x%016llX, expected 0x0000000000000000\n", (unsigned long long) bits );
+        return 1;
+    }
+    return 0;
+}
+
+static int test_fp_contract_off()
+{
+    const uint32_t ab_bits = UINT32_C(0x3F800800);
+    const uint32_t c_bits  = UINT32_C(0xBF801000);
+    volatile float av, bv, cv;
+    float a, b, c;
+    memcpy( &a, &ab_bits, sizeof( a ) );
+    memcpy( &b, &ab_bits, sizeof( b ) );
+    memcpy( &c, &c_bits, sizeof( c ) );
+    av = a;
+    bv = b;
+    cv = c;
+
+    const uint64_t dab_bits = UINT64_C(0x3FF0000002000000);
+    const uint64_t dc_bits  = UINT64_C(0xBFF0000004000000);
+    volatile double dav, dbv, dcv;
+    double da, db, dc;
+    memcpy( &da, &dab_bits, sizeof( da ) );
+    memcpy( &db, &dab_bits, sizeof( db ) );
+    memcpy( &dc, &dc_bits, sizeof( dc ) );
+    dav = da;
+    dbv = db;
+    dcv = dc;
+
+    int rc = rocketnet_fp_check_float( av, bv, cv );
+    rc |= rocketnet_fp_check_double( dav, dbv, dcv );
+    return rc;
+}
+
 int main( int argc, char ** argv )
 {
+    if ( test_fp_contract_off() )
+        return 1;
+
     // ./bin/test <name> runs that one test alone, in this process: a suite
     // name, or a message-layer test's alias (the name a card's TEST line uses)
 

@@ -112,6 +112,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 
 int rocketnet_open_sealed_packet( uint8_t * out_data,
                                   uint8_t * out_session_nonce,
+                                  int out_capacity,
                                   const uint8_t * packet_data,
                                   int packet_bytes,
                                   uint8_t packet_type,

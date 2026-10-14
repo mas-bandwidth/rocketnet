@@ -10,12 +10,14 @@ other six later changes neither the wire nor the per-channel state.
 Read it beside [RAKNET-RELIABILITY.md](RAKNET-RELIABILITY.md) (cited "the
 study", with its invariants written I1 to I17). The transport facts are cited
 as `file:line` at origin/main `7314a3d`. `S:n` is STANDARD.md line n and `U:n`
-is USAGE.md line n. Layer 2 is built (`sdk/rocketnet_message.h`, section 5);
-nothing above it is yet. Names that are not yet in the tree (`ROCKETNET_MAX_CHANNELS`, `rocketnet_server_t`, the `rn_*`
-internals) are introduced here.
+is USAGE.md line n. Layer 1 is built (`sdk/rocketnet_allocator.h`, section 4)
+and layer 2 is built (`sdk/rocketnet_message.h`, section 5); nothing above
+layer 2 is yet. `ROCKETNET_MAX_CHANNELS` is in `sdk/rocketnet.h`. Names that
+are not yet in the tree (`rocketnet_server_t`, the public object surface) are
+introduced here.
 
-**Status: design, for Glenn's correction of the layer list (section 3) before
-layer 1 starts.**
+**Status: layers 1 and 2 are built. The layer list (section 3) is still for
+Glenn's correction before layer 3 starts.**
 
 ---
 
@@ -84,11 +86,11 @@ paired with the test or card that keeps it true.
 | # | Precondition | Evidence | Kept by |
 |---|---|---|---|
 | P1 | A payload up to `ROCKETNET_MAX_PAYLOAD_BYTES` = 1192 is one wire packet. `start_packet` hands back a 16-aligned frame, and the payload sits at `frame + payload_index`. | `sdk/rocketnet.h:420`, `:815-821` | existing transport tests |
-| P2 | **For an unfragmented payload (type 5), an acked packet id means the payload was in exactly one delivered batch at the peer.** The sequence is marked received at open (`sdk/rocketnet_server_protocol.cpp:791`, `sdk/rocketnet_client_protocol.cpp:711`). The payload is then copied into the batch, which is sized to the receive drain bound, so it cannot overflow (`sdk/rocketnet_server_transport.cpp:982-1018`, `sdk/rocketnet_constants.h:30,53`). The client's receive thread drops before opening when it is full (`sdk/rocketnet_client_transport.cpp:1111`), and its batch has the same capacity (`:407`). The only "acked but not delivered" exits are a malformed ack block or a wrong opened size (`sdk/rocketnet_server_protocol.cpp:806-829`), and a correct peer never sends those. | as cited | **F1 must be fixed first** (below); test card C0b |
+| P2 | **For an unfragmented payload (type 5), an acked packet id means the payload was in exactly one delivered batch at the peer.** The sequence is marked received at open (`sdk/rocketnet_server_protocol.cpp:791`, `sdk/rocketnet_client_protocol.cpp:711`). The payload is then copied into the batch, which is sized to the receive drain bound, so it cannot overflow (`sdk/rocketnet_server_transport.cpp:982-1018`, `sdk/rocketnet_constants.h:30,53`). The client's receive thread drops before opening when it is full (`sdk/rocketnet_client_transport.cpp:1111`), and its batch has the same capacity (`:407`). The only "acked but not delivered" exits are a malformed ack block or a wrong opened size (`sdk/rocketnet_server_protocol.cpp:806-829`), and a correct peer never sends those. | as cited | `test_transport_acked_unfragmented_was_in_exactly_one_batch` in `sdk/rocketnet_tests.cpp` and `functional/rocketnet_functional_tests.cpp` (card C0b, commit `bec3ed5`); **F1 must be fixed first** (below) |
 | P3 | **For a fragmented payload (type 9), P2 does not hold.** A fragment's sequence is marked received before reassembly can refuse it as stale or displace its slot as abandoned (`sdk/rocketnet_fragment.cpp:250-256, 375-376`). The payload id still surfaces once every fragment is acked (`sdk/rocketnet_ack.cpp:403-415`). So **no reliable record ever rides a fragmented payload.** Large reliable messages are split by this layer (layer 5). | as cited | rule L2.4 below |
 | P4 | Acked packet ids arrive once per update, with the client index on the server. They are valid until the next update, and overflow is deferred to a later update, never lost (`sdk/rocketnet.h:966-976`, `:640-646`). An id is a process-wide ticket that never repeats (`sdk/rocketnet_packet_lease.h:7-8`). | as cited | existing |
 | P5 | A missing ack does not prove loss: history overflow (`U:283-291`) and burned sequences (`U:126-160`) both leave gaps. This layer treats silence as "resend after the RTO", never as a delivery fact. | as cited | design |
-| P6 | **Causality across updates.** If the peer sends anything in reply to a packet this end opened in update *j*, this end opens the reply in update *j+1* or later. Update *j*'s batch is fixed before any packet that update builds can leave. The server takes one `receive()` batch and then processes it (`sdk/rocketnet_server_transport.cpp:968-1045`). The client swaps its receive buffers at the start of `update` (`sdk/rocketnet_client_transport.cpp:466, 563`). | as cited | test card C0b |
+| P6 | **Causality across updates.** If the peer sends anything in reply to a packet this end opened in update *j*, this end opens the reply in update *j+1* or later. Update *j*'s batch is fixed before any packet that update builds can leave. The server takes one `receive()` batch and then processes it (`sdk/rocketnet_server_transport.cpp:968-1045`). The client swaps its receive buffers at the start of `update` (`sdk/rocketnet_client_transport.cpp:466, 563`). | as cited | `test_transport_reply_opens_a_later_update` in `sdk/rocketnet_tests.cpp` and `functional/rocketnet_functional_tests.cpp` (card C0b, commit `bec3ed5`) |
 | P7 | The thread contract: `update` and `send_packets` run on the main thread. `start_packet`, `finish_packet` and `abort_packet` run on any thread strictly between the two, with a join or barrier as the handoff (`sdk/rocketnet.h:841-855`, `U:39-50`). | as cited | inherited, section 16.1 |
 | P8 | The client delivers payloads from state 3 (SENDING_CONNECTION_RESPONSE) on (`sdk/rocketnet_client_protocol.cpp:666-675, 826-831`). A client transport makes exactly one connection. | as cited | the client endpoint lives from create (layer 8) |
 | P9 | **The server needs one addition, in two parts.** A slot can be released and reassigned inside one update: a disconnect packet releases it (`sdk/rocketnet_server_protocol.cpp:934-944`) and a later response in the same batch can claim it. The batch entries tag only the slot, at receive time (`sdk/rocketnet_server_transport.cpp:1014, 1031, 1103, 1120`; acked ids `sdk/rocketnet_server_protocol.cpp:860`), and acked ids may be deferred to a later update (P4). So no reading of the slot's state after the update, by any accessor, can say which connection an entry belongs to: `is_client_connected`, `client_id` and a connection id read at update end all name the slot's *last* owner. **(a)** `uint64_t rocketnet_server_transport_client_connection_id( server, client_index )`: nonzero, unique for each connection over the transport's lifetime, and 0 while the slot is free. **(b)** Each batch entry carries the connection id of the connection it was received for, written beside `client_index` when the entry is appended: `rocketnet_server_transport_payload_connection_ids( server, const uint64_t ** connection_id )` and `rocketnet_server_transport_acked_connection_ids( server, const uint64_t ** connection_id )`, parallel to the existing arrays. (a) tells the object who owns the slot now; (b) tells it whose an entry is. The object compares them when it applies an entry (10.2). | as cited | **transport card C0a** |
@@ -107,7 +109,7 @@ starts.
 
 | L | Layer | Owns | Guarantees | Checked by |
 |---|---|---|---|---|
-| 1 | **Region** (the allocator) | One block per connection: fixed tables, the send store (three slab classes) and the receive ring | No allocation after create. Every pointer it hands out stays inside the region. A slab allocates and frees in O(1). It refuses when full. | unit tests, including every refusal; `RNSendStore` |
+| 1 | **Region** (the allocator) | One block per connection: fixed tables, the send store (three slab classes) and the receive ring | No allocation after create. Every pointer it hands out stays inside the region. A slab allocates and frees in O(1). It refuses when full. | unit tests, including every refusal |
 | 2 | **Records** (the wire) | The packet forms SINGLE and RECORDS, the record codec, and the receiver's checks in order | Encoding then decoding is the identity. Every malformed input maps to exactly one violation counter. SINGLE costs one byte. | known-answer vectors (section 13.6); a fuzz target |
 | 3 | **Reliable window** | Connection-wide message numbers, the window `W`, the ring floor, the sent-packet map, RTO and resend, and the receiver's bitset and descriptors | Every reliable record is delivered once (given P2 and P6). The receiver never needs room it does not have. Its slot and ring writes never touch a live message. | `RNWindow`, `RNRing` |
 | 4 | **Channels and dispatch** | Four counters per channel on each side, the dispatch of all eight reliabilities, held ordered messages, the newest held sequenced message | Ordered delivery is exactly-once and in order. Sequenced delivery never goes backwards. The receipt types are their base types plus bookkeeping. | `RNChannel`, `RNReceipts` |
@@ -155,8 +157,80 @@ ring placement, being a multiple of 16, is 16-aligned too.
 **Checked by.** Unit tests that fill every class to refusal, free in random
 order and refill, and assert the free-list counts; a carve test that asserts
 every table is in bounds for the minimum, default and maximum configurations;
-and `RNSendStore`, a small module that checks a class never double-allocates a
-chunk and never loses one.
+and assert that a class never double-allocates or loses a chunk.
+
+**As built** (`sdk/rocketnet_allocator.h` and `.cpp`, card C1). The code taught
+the design these points:
+
+- **Allocated at create, carved at connect.** An *arena* is the object's one
+  `rocketnet_malloc`: its header, its region structs, then `max_clients`
+  regions (one for a client) back to back, each 64-aligned. `rn_region_carve`
+  runs at every connect in the region's own memory and allocates nothing. It
+  resets every fixed table, rethreads the store's and the descriptor pool's
+  free lists, and leaves the ring's and the chunks' bytes alone, because every
+  reader of them writes first. The carve is O(tables), once per connection,
+  never on a send or receive path.
+- **The send descriptors are layer 1's.** The `64·Q` term is a pool with an
+  intrusive LIFO free list. `rn_region_send_alloc` takes a descriptor and its
+  store chunks together, or neither. A full pool counts
+  `MESSAGE_SEND_QUEUE_FULL`; a full store counts `MESSAGE_SEND_STORE_FULL`.
+  Each counts once per refused send, on the owner's counters, atomically,
+  because an object's regions share them. A size outside 1 to
+  `max_message_bytes` is the caller's refusal to count (`MESSAGE_SEND_REFUSED`,
+  layer 8) and takes nothing here.
+- **Each class's links live inside its third.** The thirds are 64-aligned
+  (`floor(S/3)` rounded down to 64). Each holds its chunks, then one u32 link
+  per chunk, so a class has `floor(third / (chunk + 4))` chunks and nothing
+  lies outside `S`.
+  - At the defaults the classes are 330 × 128, 84 × 512 and 37 × 1152.
+  - A free chunk's link names the next free chunk.
+  - An allocated chunk's link carries `IN_USE`, `HEAD` on a chain's first
+    chunk, and the next chunk of its block. A block's chain therefore costs no
+    bytes, and a double free is an exact refusal in every build, not only an
+    assert. The send-store tests exercise this refusal.
+- **No fallback to a larger class.** A message takes the smallest class that
+  fits, or it is refused. Fallback would make one class's exhaustion drain the
+  others and blur which counter means what.
+- **At the defaults, `MESSAGE_SEND_QUEUE_FULL` cannot fire.** The store's 451
+  chunks run out before the 1024 descriptors can. The queue bound only binds
+  when `Q` is below the store's chunk count (for example a client with
+  `send_queue_messages = 64`, which is how the soak reaches it). Whether the
+  default `Q` should drop to the store's chunk count is choice G7 (18.2).
+- **The lean profile is refused by the store rule.** At `S = 65536` the large
+  class holds 18 chunks. The default `max_message_bytes` of 32768 needs 29.
+  The lean profile therefore also needs `max_message_bytes <= 20,736`.
+- **One validation rule more:** `rto_min_ms <= rto_initial_ms <= rto_max_ms`.
+  The clamp in 6.4 needs `min <= max`, and a first timeout outside the clamp
+  has no meaning.
+- **The exact region** is the formula plus at most 63 bytes of alignment per
+  part. At the defaults the padding is 0, and the region is 449,024 bytes,
+  which is section 14's figure to the byte.
+- **Every entry type is pinned** to its section 14 size by a static assert.
+  `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
+  a 32-bit target too.
+- **The sizing is callable before connect.**
+  - `rocketnet_message_connection_bytes` returns the region.
+  - `rocketnet_message_connection_sizing` writes the formula, each term at the
+    config, the store's classes, the padding, the region and the total for `n`
+    connections. It writes into a caller's buffer, with snprintf's contract,
+    and allocates nothing.
+  - `rocketnet_message_print_connection_sizing` logs the same lines at info
+    level.
+- **The gate:** `test_channels_allocator_no_live_allocation`, in
+  `test_channels.cpp`, run by `./bin/test`.
+  - **What it traps.** It fails at the first call, while armed, to any of the
+    rocketnet allocator hooks, the global operator new or delete, or, on glibc
+    without a sanitizer, `malloc`, `free`, `calloc`, `realloc` or the aligned
+    forms.
+  - **What it soaks.** A 16-slot server arena and 16 one-region client arenas
+    at full configured load. Every carve-out is driven to capacity each round,
+    with a reconnect every 20th tick.
+  - **The stand-in.** The soak drives layer 1's carve-outs the way layers 3 to
+    8 will. Layer 2 holds no state and allocates nothing (section 5). Each
+    later layer must run its own send and receive paths under the same traps
+    when it lands. The two size macros (`ROCKETNET_MESSAGE_SINGLE_BYTES`,
+    `ROCKETNET_MESSAGE_FRAGMENT_BYTES`) are defined once in `sdk/rocketnet.h`;
+    the codec header uses those.
 
 ## 5. Layer 2: records in a packet
 
@@ -236,6 +310,49 @@ taught the design four things, now in 13.2 and 13.3:
   is not the last knows the block's end only to within the last fragment's
   length, so it checks the shortest block it could be part of, and a base
   below 0 is a span outside the ring.
+
+**As built.** `sdk/rocketnet_unreliable.{h,cpp}` is the UNRELIABLE send and
+receive path of the message layer over this codec and layer 1's region
+(5, 6.3, 6.4, 9.3, 11.2): a bounded FIFO of messages copied into the send
+store (a full store or queue is a counted drop and nothing grows — R1, and a
+message longer than the record's u16 length is dropped and counted at the
+send call, never enqueued), a
+fill that aggregates small messages as code-0 records into one RECORDS
+payload with this layer's writer until the next one does not fit, frees each
+chunk as soon as it is written (9.3 step 3) and plans a block (a message
+longer than one large store chunk, 1152 bytes) alone in its own large payload
+(L2.3), copying the whole chain so the record never reads across a chunk
+boundary, a zero-copy SINGLE helper
+that touches no module state (11.2), and a receive that delivers each code-0
+record as a pointer into the payload into the caller's Du entries, dropping
+and counting the rest when Du is full (6.3 step 4). As this layer it holds
+no window state: an unreliable record takes no number, no received bit, no
+receive descriptor and no ring span, and a packet that carried only
+unreliable records is never entered in the sent-packet map (5, 6.1, 6.4). A
+finish_packet failure drops and counts the packet's unreliable records
+(6.4, Failed send; `MESSAGE_UNRELIABLE_SEND_FAILED`). Two counters were
+appended: `MESSAGE_UNRELIABLE_DELIVERY_FULL` and
+`MESSAGE_UNRELIABLE_SEND_FAILED`. Its tests are in `test_channels.cpp` in
+`./bin/test`:
+`ChannelsUnreliableSmallMessagesShareOneFrame`,
+`ChannelsUnreliableRecordNeverSplitAcrossPackets`,
+`ChannelsUnreliableLargeMessageTravelsAlone`,
+`ChannelsUnreliableSingleZeroCopyAtPayloadRoot`,
+`ChannelsUnreliableStoreFullDropsAndCounts`,
+`ChannelsUnreliableDeliveryBudgetDropsAndCounts`,
+`ChannelsUnreliableFailedSendDropsAndCounts`,
+`ChannelsUnreliableChunkFreedWhenWritten`,
+`ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore`,
+`ChannelsUnreliableMessagePastU16LengthRefused`, and the lossy-wire walk
+`ChannelsUnreliableOverTheLossySimulator` (0, 10 and 50 percent loss with
+reordering; every delivered message is byte-identical to one sent, and at
+each loss level every send attempt is refused, still in the FIFO, delivered,
+dropped for a full delivery budget, or lost on the wire — R8, with attempted
+counted at the send calls, refused cross-checked against the store-full
+counter, delivered on the receive side, and wire loss measured as the gap
+between the code-0 records parsed into the frames the test sent and parsed
+out of the frames it received — while the whole walk runs under the
+no-live-allocation trap — R1).
 
 ## 6. Layer 3: the reliable window
 
@@ -890,8 +1007,16 @@ struct rocketnet_message_config_t
 
 ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
 
+// 1 accepted, 0 refused with a log line naming the rule; NULL is the defaults (landed, C1)
+ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
+
 // Allocation-free: the bytes one connection's region needs (section 14 of docs/CHANNELS.md).
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_config_t * config );
+
+// Allocation-free: the formula, each term, the padding, the region and the total for n
+// connections, as text, with snprintf's contract; and the same lines logged at info (landed, C1)
+ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size );
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
 struct rocketnet_message_context_t
 {
@@ -1151,7 +1276,50 @@ Number, sequencing and ordering are 24-bit counters that wrap. Each end keeps
 half range (2^23). For numbers the reference is `R`. For ordering it is the
 channel's `ordered_read`. For sequencing it is the channel's
 `sequenced_watermark`. Every live value lies within `W` (at most 2^20) of its
-reference, so the half range never aliases.
+reference.
+
+That covers live values, not every value that arrives. A resend of `n` can
+still be in flight after `n` was received, acked and passed: the receiver
+drops it as a duplicate only if it reads it as `n`, and the half range reads
+it as `n` only while `R - n < 2^23`. Above, nothing in this layer bounds how
+long a stale copy travels; the bound comes from the transport. Its replay
+window refuses any packet `ROCKETNET_REPLAY_WINDOW_BITS` =
+`ROCKETNET_HISTORY_PACKETS` or more sequences behind the highest it has
+opened, and any packet it opened before (`sdk/rocketnet_replay.cpp:32-39`,
+`sdk/rocketnet_replay.h:26`). `ROCKETNET_HISTORY_PACKETS` is 4096 by default
+and at most 32768 (`sdk/rocketnet_history.h:8,13`). So when a stale copy of
+`n` is opened, at most 32767 packets written after it have been opened. When
+the copy was written, `n >= U'` and so `next <= n + W`. Each later packet
+first-writes at most 170 numbered records (a payload is at most 1192 bytes,
+and a code 2 record is at least a 6-byte header and 1 data byte, 13.2). A
+block numbers all its fragments at once, up to `ceil(2^20 / 1152) = 911` of
+them (`max_message_bytes` is at most 2^20, `sdk/rocketnet.h:1173`), which can
+run ahead of the packets that carry them by at most 911 numbers. In the worst
+case:
+
+```
+R - n <= W + 32767 × 170 + 911 <= 2^20 + 5,570,390 + 911 = 6,619,877 ≈ 6.3 × 2^20 < 2^23
+```
+
+So the half range never aliases, on two assumptions. First, the replay window
+keeps its depth: F1 (section 2) is about what the window holds, not how deep
+it reaches, and `rocketnet_replay_already_received` refuses by depth
+independently of the bits. Second, **transport sequences rise in packet write
+order**. In the code a sequence is taken when the packet is started, by an
+atomic increment (`rocketnet_client_protocol_start_payload`,
+`sdk/rocketnet_client_protocol.cpp:1068`; the server's mapping,
+`sdk/rocketnet_server_protocol.cpp:1524`; stored in the context at
+`sdk/rocketnet_client_transport.cpp:697`). So sequences rise in
+`start_packet` order. They rise in write order only if this layer fills each
+connection's packets in the order it started them. `write_packets` (9.3) does
+that: it runs per connection and fills one packet at a time. A design that
+fills one connection's packets from several threads at once (P7 allows
+`start_packet` on any thread) must keep a connection's fills in start order,
+or redo this bound. `RNWindow` checks the reading itself
+(`WireNumberReconstructs`). On a FIFO path TLC proves `2^24 >= 2W` enough
+(a stale copy is at most `W` behind `R`). With reordering and no age bound
+TLC finds the alias (`tla/README-RNWindow.md`), which is why the replay
+window's depth is part of this argument.
 
 ### 13.6 Known-answer vectors
 
@@ -1244,18 +1412,35 @@ That is about 428 MiB for a 1000-client server, on top of the transport's own
 memory (`rocketnet_server_transport_required_memory`).
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to
-  about 177 KiB per connection, or 173 MiB at 1000.
+  about 177 KiB per connection, or 173 MiB at 1000. As built, its store holds 18 large chunks, so it also needs
+  `max_message_bytes <= 20,736` (section 4).
 - **Channel cost:** 48 bytes per channel. 1024 channels cost 48 KiB per
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No
   other term moves, and nothing scales as channels × window. That is what
   makes the 10k stress run a one-number change (I15).
+- **Sizing `P`, the sent-packet ring.** `P` must be larger than the number of
+  packets a connection writes in one RTT, resends included. An ack is
+  matched through the ring (6.4). If the sender writes `P` more packets
+  between writing a packet and receiving its ack, that packet's entry has
+  been evicted when the ack lands, and the ack is ignored. Its numbers stay
+  unacked and are resent, and the resends can evict their own entries the
+  same way. A sender under RTO back-off with a small `P` can do this until
+  `reliable_timeout`. Correctness does not depend on `P` (eviction costs
+  bandwidth only), but liveness does. `RNWindow` needs this as an assumption
+  (`AcksLand`): without it TLC finds a lasso in which every ack names an
+  evicted id (`tla/README-RNWindow.md`). At the defaults, 256 packets per RTT
+  is `max_packets_per_update` times the updates in one RTT. Card C3 checks
+  the default against that, and counts evictions
+  (`MESSAGE_SENT_MAP_EVICTED`) so a shortfall shows.
 - **Validation at create** refuses any of these:
   - `max_message_bytes > B`;
   - `ceil(max_message_bytes / F) > W`;
   - `W` not a power of two;
   - `B` not a multiple of 16;
   - a 1152 class (a third of `S`) too small to hold one maximal block, that
-    is, fewer than `ceil(max_message_bytes/F)` chunks.
+    is, fewer than `ceil(max_message_bytes/F)` chunks (as built, the class
+    holds `floor(third / 1156)` chunks with their links, section 4);
+  - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1).
 
   Validation refuses and never clamps.
 
@@ -1270,8 +1455,7 @@ code by hand before it is written down.
 
 | Module | Models | Invariants and properties | Reversed witness (rule removed, expected failure) |
 |---|---|---|---|
-| `RNSendStore` | the three-class slab | `NoDoubleAllocate`, `NoLeak` (free + used = total), `RefuseOnlyWhenFull` | free-list push before the in-use flag clears: double allocate |
-| `RNWindow` | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors; update boundaries with P6 | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, LIVE `EveryReliableEventuallyAcked` (weak fairness on Deliver) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision |
+| `RNWindow` (exists, `tla/RNWindow.tla`, commit `b70f73c`, run on a bench) | sender numbering with `U'`, the count bound, sent map and acks; the receiver's `R`, bitset and descriptors, holds on one ordered channel; update boundaries with P6; the 24-bit number reconstructed against `R` (13.5) | `ReceiverNeverOutsideWindow` (a correct sender never trips 6.5), `NoSlotCollision`, `AckedImpliesReceived`, `DeliveredOnce`, `OrderedDeliveredInOrder`, `WireNumberReconstructs`, LIVE `EveryReliableAckedAndDelivered` (strong fairness on the oldest write and the ack send, plus `AcksLand`, 14) | `U'` ignoring partial blocks: slot collision. Dropping P6 (same-update reply): slot collision. Unsigned reconstruction: misread. Ordered delivered on arrival: out of order. Duplicates taken as fresh: delivered twice |
 | `RNRing` | ring placement, the padding rule and the floor; receiver live spans | `LiveSpansDisjoint`, `SpanInsideRing`, LIVE `EveryAdmissibleMessagePlaced` | a floor of `ring_start(U)` instead of `U'`: overlap. No padding at the boundary: span outside the ring |
 | `RNChannel` | the four counters and coupling, holds, the drain, newest-sequenced | `OrderedExactlyOnceInOrder`, `SequencedNeverBackwards`, `NoSequencedDuplicate` (study items 18, 19), `OrderedTraceUnchangedBySequenced` (I5) | the heap-drain path without the watermark reset: item 19's stale drop |
 | `RNBlocks` | split, consecutive numbering, the contiguous span, receive by index | `DeliveredEqualsSent`, `NoPartialDelivery`, `OneOrderingSlotPerBlock` | placement by arrival instead of index: the study's §8.2 corruption |
@@ -1283,6 +1467,17 @@ code by hand before it is written down.
 The instances are small: 2 to 3 channels, `W = 4`, `B = 64` (4 units), 3 to 4
 messages, and Link capacity 3. `RNEndpoint` is the largest, and it runs on a
 bench machine, never on the working machine.
+
+`RNWindow` is the exception. A slot collision needs two live numbers `W`
+apart, `n` and `n + W`, so with `W = 4` and only 3 or 4 messages (numbers
+0..3) no two numbers ever share a slot. The two reversed witnesses above
+could never fail there, and the green run would prove nothing about slots.
+Its instance is `W = 2` with numbers 0..4 (a block of two at 1..2, and
+`NumMod = 4`, so 4 is sent as 0 and the numbers wrap), on Link capacity 2
+under the `"alternate"` loss pattern. That reaches every witness in 8 to 33
+states and checks liveness in under a minute. The `"arbitrary"` loss run
+with liveness takes 14 minutes at capacity 1 and is a bench run, not a
+committed case (`tla/README-RNWindow.md`).
 
 ### 15.1 `RNSlots`, drafted and run
 
@@ -1517,7 +1712,7 @@ requires.
 - **C0b.** Transport tests that pin P2 and P6: an acked unfragmented id means
   the payload was in exactly one batch; a reply is never seen in the update
   that elicited it. Both on every driver.
-- **C1.** Layer 1: region carve, send store, `RNSendStore`, and
+- **C1.** Layer 1: region carve, send store, and
   `rocketnet_message_connection_bytes`.
 - **C2.** Layer 2: codec, checks, vectors and fuzz target. The STANDARD.md
   _Messages_ section lands with it (G4).
@@ -1559,13 +1754,33 @@ requires.
 - **G6. A wire violation disconnects** (R6). The alternative, counting and
   dropping the rest of the payload, would let a malformed packet lose reliable
   data silently.
+- **G7. The default send queue** (card C1). At the defaults the store holds 451
+  chunks and `Q = 1024`, so a send is always refused by the store first and
+  `MESSAGE_SEND_QUEUE_FULL` cannot fire: 573 descriptors (36 KiB per
+  connection) can never be used. A default `Q` at or below the store's chunk
+  count, such as 448, would make both bounds reachable and save 36 KiB per
+  connection. Keeping 1024 leaves headroom for an application that raises `S`.
+  This card keeps the design's 1024 and records the fact.
 
 ### 18.3 Not done by this card
 
-- No code and no test. No TLA+ module is committed: the modules in section 15
-  are the plan, and `RNSlots` exists only as the draft in 15.1, run on a bench.
-- The per-entry sizes in section 14 are working figures. Layer 1 pins them.
-- P2 and P6 are argued from the code. Their tests are card C0b.
+- Layers 1 and 2 are in the tree (sections 4 and 5). The modules in section 15
+  are the plan, and `RNSlots` exists only as
+  the draft in 15.1, run on a bench.
+- `RNWindow` exists (`tla/RNWindow.tla`, commit `b70f73c`, rocketnet PR
+  #209) and was run with TLC on a bench (hetzner2, 2026-10-13). Its committed
+  cases, `MCRNWindow.cfg`, `MCRNWindowSafety.cfg` and the five
+  `MCRNWindowBroken*.cfg`, pass or fail as declared, and
+  `tla/README-RNWindow.md` replays every trace. The window code (card C3)
+  does not exist yet, so the traces are checked against this design and not
+  against code. Its `tla/RUNS.tsv` records are owed to `tlacheck run --group
+  rnwindow`.
+- The per-entry sizes in section 14 are pinned by layer 1's static asserts.
+- P2 and P6 are kept by
+  `test_transport_acked_unfragmented_was_in_exactly_one_batch` and
+  `test_transport_reply_opens_a_later_update`, each in `sdk/rocketnet_tests.cpp`
+  (in-memory simulator) and `functional/rocketnet_functional_tests.cpp` (real
+  loopback), card C0b, commit `bec3ed5`.
 - The RTO behaviour when acks are paced only by keep-alives was reasoned, not
   measured.
 - The C# shim surface is still the study's provisional §13.

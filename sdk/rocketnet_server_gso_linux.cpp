@@ -253,12 +253,11 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
         }
         out->port = rocketnet_platform_ntohs( addr->sin6_port );
 
-        if ( socket_ipv6 && rocketnet_address_is_ipv4_in_ipv6( out ) )
-        {
-            rocketnet_address_convert_ipv6_to_ipv4( out );
-        }
+        // an ipv6 gso socket is always dual stack (IPV6_V6ONLY is cleared at
+        // open), so a mapped source is an ipv4 client: canonicalise it. an
+        // ipv4 socket never sees AF_INET6, so a mapped source there drops.
 
-        return true;
+        return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
     else if ( input->ss_family == AF_INET )
     {

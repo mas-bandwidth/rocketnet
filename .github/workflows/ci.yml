@@ -129,22 +129,27 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.os }} / ${{ matrix.build_type }}${{ matrix.leg != 'ab' && format(' ({0})', matrix.leg) || '' }}
-    # macOS rows run on the fleet's self-hosted Apple-silicon runners (labels self-hosted,macOS,ARM64,rocketnet;
-    # four on the fleet today, the Macs added in October): hosted macOS is $0.16/min and was ~80% of September's
-    # Actions bill. matrix.os stays the display name and the image the row was written against; runner, when set,
-    # is the label set runs-on uses instead.
+    # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: space-org and
+    # hetzner-org today), provisioned by rowan-tools fleet/packages.yml (group_vars ci_apt_packages), which is why the
+    # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
+    # hulk carried: hulk went down and every Linux job sat QUEUED for hours.
+    # macOS rows run on HOSTED macos-15 AS A STOPGAP (2026-10-13): no [self-hosted,macOS,ARM64,rocketnet] runner was
+    # ever registered, so those rows never started. Hosted macOS is $0.16/min and was ~80% of September's Actions
+    # bill; the self-hosted target is mini-m5 (the fleet's Apple-silicon Mac) once its org runner is registered, and
+    # these rows go back to a runner label then. matrix.os stays the display name and the image the row was written
+    # against; runner, when set, is the label set runs-on uses instead.
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # linux x64
-          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","rocketnet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","rocketnet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: a, runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: b, runner: '["self-hosted","Linux","X64","fleet"]' }
           # macos apple silicon
-          - { os: macos-15,     build_type: Debug,   leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
-          - { os: macos-15,     build_type: Release, leg: ab, runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+          - { os: macos-15,     build_type: Debug,   leg: ab }   # hosted stopgap; mini-m5 once registered
+          - { os: macos-15,     build_type: Release, leg: ab }   # hosted stopgap; mini-m5 once registered
     steps:
 
       - uses: actions/checkout@v4
@@ -176,6 +181,10 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Debug
           cmake --build build --parallel
+
+      - name: Check the floating-point floor on every compiler invocation
+        if: runner.os == 'Linux'
+        run: bash tools/check_fp_contract.sh
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
@@ -471,7 +480,7 @@ jobs:
 
   sanitizers:
     name: asan + ubsan
-    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     steps:
 
       - uses: actions/checkout@v4
@@ -545,7 +554,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (libFuzzer, corpus replay)
-    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     steps:
 
       - uses: actions/checkout@v4
@@ -575,6 +584,7 @@ jobs:
       - name: Build the harness
         run: |
           clang++ -g -O1 -std=c++17 \
+            -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
             -lbpf -lxdp -lpthread \
@@ -611,8 +621,10 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          cp -r fuzz/corpus /tmp/fuzz-corpus
-          ./bin/fuzz /tmp/fuzz-corpus -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+          # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
+          # shared by every runner on the machine, so the pass would start from another run's grown corpus
+          cp -r fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
+          ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
         if: failure()
@@ -761,7 +773,7 @@ jobs:
 
       - name: Build the big-endian wire check
         run: |
-          s390x-linux-gnu-g++ -std=c++11 -Wall -Isdk \
+          s390x-linux-gnu-g++ -std=c++11 -Wall -ffp-contract=off -Isdk \
             tools/bigendian/wire_check.cpp build/librocketnet.a \
             -L/usr/lib/s390x-linux-gnu -Wl,-rpath-link,/usr/lib/s390x-linux-gnu \
             -lbpf -lxdp -lpthread \
@@ -817,7 +829,7 @@ jobs:
 
   conformance:
     name: STANDARD.md conformance
-    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     steps:
 
       - uses: actions/checkout@v4
@@ -839,7 +851,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","rocketnet"]' }
+          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos-15 }
           - { os: windows-2025 }
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
@@ -902,11 +914,11 @@ jobs:
 
       - name: Build the shared library
         if: runner.os != 'Windows'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target rocketnet_shared -j
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target rocketnet_shared rocketnet_shared_dev -j
 
       - name: Build the shared library (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -A x64 && cmake --build build --config Release --target rocketnet_shared --parallel
+        run: cmake -B build -A x64 && cmake --build build --config Release --target rocketnet_shared rocketnet_shared_dev --parallel
 
       - name: Build the C# binding and smoke test
         run: dotnet build csharp/smoke -c Release
@@ -979,7 +991,7 @@ jobs:
 
   tsan:
     name: tsan (${{ matrix.leg }})
-    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     strategy:
       fail-fast: false
       matrix:
@@ -993,6 +1005,12 @@ jobs:
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+
+      # setarch -R runs each tsan binary with address-space randomisation off FOR THAT PROCESS ONLY (no sysctl,
+      # no root). gcc 13's tsan runtime (Ubuntu 24.04: the hetzner org runners) cannot map its shadow under the
+      # kernel's default vm.mmap_rnd_bits=32 and dies "FATAL: ThreadSanitizer: unexpected memory mapping" before
+      # main (measured on hetzner1 and hetzner2, 2026-10-13; the same binary passes under setarch -R). Hosted
+      # images lower the sysctl instead; this works on both and changes nothing tsan observes.
 
       - name: Configure
         run: >
@@ -1014,27 +1032,27 @@ jobs:
         if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: ./bin/test
+        run: setarch "$(uname -m)" -R ./bin/test
 
       - name: Run the functional suite under tsan
         if: matrix.leg == 'threaded transport'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         timeout-minutes: 30
-        run: ./bin/functional
+        run: setarch "$(uname -m)" -R ./bin/functional
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
-        run: ./bin/soak 20000
+        run: setarch "$(uname -m)" -R ./bin/soak 20000
 
       - name: Allocation lifecycle under tsan
         if: matrix.leg == 'loopback soak'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
           ROCKETNET_DRIVER: portable
-        run: ./bin/test_lifecycle
+        run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
   # THE PINNED-SODIUM LEG.
   # Explicit system-sodium integration mode against a content-verified
@@ -1042,7 +1060,7 @@ jobs:
   # this older backend checks interoperability across supported deployments.
   sodium-pinned:
     name: pinned libsodium (built from source)
-    runs-on: [self-hosted, Linux, X64, rocketnet]   # was ubuntu-24.04; hulk runners (see the macOS note above)
+    runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then hulk's rocketnet label; the fleet's org runners (see build-and-test's note)
     env:
       SODIUM_VERSION: "1.0.20"
       SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
@@ -1161,7 +1179,7 @@ jobs:
           # the Linux platform selftest stays on the hosted image: it is the bench-host capability check
           # (bench/selftest.sh), and hulk fails its UDP_SEGMENT legs with EIO on loopback (measured 2026-09-21)
           - { os: ubuntu-24.04 }
-          - { os: macos-15,     runner: '["self-hosted","macOS","ARM64","rocketnet"]' }
+          - { os: macos-15 }   # hosted stopgap; mini-m5 once registered
     steps:
 
       - uses: actions/checkout@v4

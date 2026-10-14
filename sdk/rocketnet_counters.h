@@ -10,6 +10,21 @@
 
 #include <stdint.h>
 
+// The handshake work budget: the most post-cookie handshakes (connection
+// requests whose cookie validated) one update will process, per server. A
+// request past the budget is dropped before any asymmetric work and counted,
+// so a flood of staged attempts cannot spend the whole update on signature
+// verification. Lives in this header so the protocol ladder and the test
+// share one number rather than copying it.
+#define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE      1024
+
+// Returned by rocketnet_server_protocol_process_connection_request when the
+// handshake budget is exhausted: the next value after
+// ROCKETNET_SERVER_PROCESS_ACCEPTED (5). Declared here, in the same header as
+// the drop counter it causes, so the test reads the code it asserts from the
+// same header that returns it.
+#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED        6
+
 // Counters, per the standard's observability section: one counter per
 // distinct reason a packet is rejected, arrival counted separately from
 // outcome, monotonic and never reset. Names are the standard's; indices are
@@ -64,6 +79,7 @@ enum
 
     // connection response processing, in the standard's order
     ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED,
+    ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE,
     ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
     ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE,
     ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN,
@@ -298,12 +314,51 @@ enum
     // size errors from off-path salt injection.
     ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE,
 
+    // the message layer's region (docs/CHANNELS.md 4): a send refused because
+    // the connection's send store had no chunk of the class it needs (or, for
+    // a block, not every chunk it needs), and a send refused because every
+    // send descriptor was in use. Exhaustion is a counted refusal, never
+    // growth; nothing is taken from either when one refuses. Counted on the
+    // owner's counters, once per refused send. appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL,
+    ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL,
+
+    // a cookie-valid connection request arrived after the update's handshake
+    // budget was spent and was dropped before any asymmetric work, counted so
+    // the drop is observable rather than silent. appended: indices are the
+    // contract.
+    ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED,
+
+    // a connection request whose cookie verified but whose source had already
+    // spent the failed-signature-verify budget for this window: refused before
+    // the Ed25519 verify ran. distinct from SIGNATURE_DID_NOT_VERIFY, which
+    // counts verifies that actually ran and failed. appended: indices are the
+    // contract.
+    ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT,
+
+    // the UNRELIABLE path (docs/CHANNELS.md 5, 6.3, 6.4, 9.3, 11.2): a code-0
+    // record dropped on receive because the per-update unreliable delivery
+    // budget Du was full (section 6.3 step 4), and a code-0 message dropped on
+    // send: because finish_packet refused the packet that carried it (section
+    // 6.4, Failed send), or because it is longer than the record's u16 length
+    // and can never be carried. Unreliable semantics allow all three; each is
+    // counted once per dropped message. appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL,
+    ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED,
+
     ROCKETNET_NUM_COUNTERS
 };
 
 struct rocketnet_counters_t
 {
     uint64_t values[ROCKETNET_NUM_COUNTERS];
+
+    // Per-server, per-update handshake budget state, not a published counter:
+    // how many post-cookie connection requests this server has processed in
+    // the current update. Reset by the protocol sweep once per update, so the
+    // cap is enforced per server rather than process-wide; the drop it causes
+    // is the published counter above.
+    uint64_t handshakes_processed_this_update;
 };
 
 #include "rocketnet.h"                  // rocketnet_counter_name lives in the forest header
