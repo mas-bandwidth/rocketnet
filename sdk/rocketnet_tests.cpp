@@ -9598,6 +9598,167 @@ void rocketnet_test_fragment_punched_loss()
     rocketnet_test_fragment_pair_teardown( &pair );
 }
 
+// --- a live client id waits for its slot to end ---
+
+// builds a connection request around a freshly minted token for one client
+// id, with the caller's token lifetime fields -- a second client's token,
+// not the connected pair's own
+
+static void rocketnet_test_build_fresh_request( uint8_t * request, uint64_t client_id,
+                                                uint64_t create, uint64_t expire, int32_t timeout,
+                                                const uint8_t * salt )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_test_fill_vector_fields( &signed_fields, &private_fields );
+    signed_fields.create_timestamp = create;
+    signed_fields.expire_timestamp = expire;
+    signed_fields.timeout_seconds = timeout;
+    private_fields.client_id = client_id;
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, salt, rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+}
+
+// runs a connection request from an explicit source address, so a second
+// client sits beside the pair's own without sharing its address
+
+static int rocketnet_test_process_from( struct rocketnet_test_server_t * test,
+                                        const struct rocketnet_address_t * from,
+                                        const uint8_t * request, int request_bytes,
+                                        uint64_t current_timestamp, double current_time,
+                                        uint8_t * response, int * response_bytes )
+{
+    return rocketnet_server_protocol_process_connection_request( &test->server, from,
+                                                        request, request_bytes,
+                                                        current_timestamp, current_time,
+                                                        response, response_bytes );
+}
+
+// the cookie exchange for an explicit source address
+
+static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t * test,
+                                                  const struct rocketnet_address_t * from,
+                                                  uint8_t * request )
+{
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int result = rocketnet_test_process_from( test, from, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                              ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    memcpy( request + ROCKETNET_PREFILTER_BYTES, response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
+}
+
+void rocketnet_test_live_client_id_refused_until_timeout()
+{
+    // a client id on the connected pair holds its slot: a second client,
+    // from another address, with a fresh token for the same id, is refused
+    // and counted with no response at every update until the first slot's
+    // timeout releases it -- then the same request proceeds.
+
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    struct rocketnet_address_t second_address;
+    rocketnet_check( rocketnet_address_parse( &second_address, "198.51.100.9:56789" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_fresh_request( request, 0xF4A6ULL, ROCKETNET_TEST_CREATE_TS + 1, ROCKETNET_TEST_EXPIRE_TS, 10, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate_from( &pair.test, &second_address, request );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    // the live slot's last receive was at 100.4 with a 10 s timeout, so it
+    // survives every update below 110.4: each one refuses the request and
+    // answers nothing, counting the refusal every time
+    uint64_t expected = pair.test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED];
+    for ( double t = 101.0; t < 110.4; t += 1.0 )
+    {
+        rocketnet_server_protocol_update( &pair.test.server, t );
+        rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof(request),
+                                                      ROCKETNET_TEST_CREATE_TS, t, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_check( response_bytes == 0 );
+        expected++;
+        rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] == expected );
+    }
+    rocketnet_check( rocketnet_client_slots_find( pair.test.server.client_slots, 0xF4A6ULL ) != -1 );
+
+    // the silent first slot times out (CLIENT_TIMED_OUT +1), releasing the
+    // id; the same request now proceeds to a challenge
+    rocketnet_server_protocol_update( &pair.test.server, 110.5 );
+    rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == 1 );
+    rocketnet_check( rocketnet_client_slots_find( pair.test.server.client_slots, 0xF4A6ULL ) == -1 );
+
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof(request),
+                                                  ROCKETNET_TEST_CREATE_TS, 110.5, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
+void rocketnet_test_client_id_free_after_clean_disconnect()
+{
+    // the slot a live client id holds is freed the moment the client's
+    // disconnect packets reach the server: the same request that was
+    // refused now proceeds at the same time value.
+
+    static struct rocketnet_test_fragment_pair_t pair;
+    rocketnet_test_fragment_pair_setup( &pair );
+
+    struct rocketnet_address_t second_address;
+    rocketnet_check( rocketnet_address_parse( &second_address, "198.51.100.9:56789" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_fresh_request( request, 0xF4A6ULL, ROCKETNET_TEST_CREATE_TS + 1, ROCKETNET_TEST_EXPIRE_TS, 10, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate_from( &pair.test, &second_address, request );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    // while the first client holds the slot the same request is refused
+    rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof(request),
+                                                  ROCKETNET_TEST_CREATE_TS, pair.time, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] == 1 );
+
+    // the first client disconnects: its packets reach the server, which
+    // releases the slot at once
+    uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+    int burst_count = 0;
+    int burst_bytes = 0;
+    rocketnet_client_protocol_disconnect( &pair.client, burst, &burst_count, &burst_bytes );
+    rocketnet_check( burst_count == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    rocketnet_check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    rocketnet_check( rocketnet_server_protocol_process_packet( &pair.test.server, &pair.test.client_address, burst, burst_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, pair.time,
+                                                      response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( !rocketnet_client_slots_connected( pair.test.server.client_slots, 0 ) );
+    rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
+
+    // at the same time value the same request proceeds
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof(request),
+                                                  ROCKETNET_TEST_CREATE_TS, pair.time, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
+    rocketnet_test_fragment_pair_teardown( &pair );
+}
+
 void rocketnet_test_fragment_vector()
 {
     // the frozen type 9 vector from Appendix A, reproduced by the real
@@ -11503,6 +11664,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_value_tracker", rocketnet_test_value_tracker },
     { "test_wire_server_packet_valid", rocketnet_test_wire_server_packet_valid },
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
+    { "test_live_client_id_refused_until_timeout", rocketnet_test_live_client_id_refused_until_timeout },
+    { "test_client_id_free_after_clean_disconnect", rocketnet_test_client_id_free_after_clean_disconnect },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
 #if ROCKETNET_PLATFORM_HAS_IPV6
