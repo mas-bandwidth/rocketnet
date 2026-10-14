@@ -27,7 +27,7 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// The schedule matrix: every sequence of length up to 3 over the phase
+// The schedule matrix: every sequence of length up to 4 over the phase
 // alphabet, against each driver, asserting the non-defect invariants. The
 // alphabet is U (update), D (disconnect), S (send_packets with no fill),
 // P (send_packets with one payload filled), R (a repeated send_packets) and
@@ -125,19 +125,25 @@ static void phase_assert_invariants( phase_fixture_t * p )
 static void run_phase_matrix( bool staged )
 {
     // the phase alphabet as a fixed enumeration of sequences of length up to
-    // three. each entry names its operations; the last operation of each is
+    // four. each entry names its operations; the last operation of each is
     // asserted. the disconnect schedules that matter are the reader orders
-    // U D, U D S, U D R and U S D S.
-    static const phase_op_t sequences[][3] =
+    // U D, U D S, U D R and U S D S, plus their length-four extensions.
+    static const phase_op_t sequences[][4] =
     {
-        { OP_UPDATE, OP_COUNT, OP_COUNT },
-        { OP_UPDATE, OP_SEND_EMPTY, OP_COUNT },
-        { OP_UPDATE, OP_DISCONNECT, OP_COUNT },
-        { OP_UPDATE, OP_DISCONNECT, OP_SEND_EMPTY },
-        { OP_UPDATE, OP_DISCONNECT, OP_REPEAT_SEND },
-        { OP_UPDATE, OP_SEND_PAYLOAD, OP_REPEAT_SEND },
-        { OP_UPDATE, OP_PARTIAL_SEND, OP_SEND_EMPTY },
-        { OP_UPDATE, OP_SEND_PAYLOAD, OP_PARTIAL_SEND },
+        { OP_UPDATE, OP_COUNT, OP_COUNT, OP_COUNT },
+        { OP_UPDATE, OP_SEND_EMPTY, OP_COUNT, OP_COUNT },
+        { OP_UPDATE, OP_DISCONNECT, OP_COUNT, OP_COUNT },
+        { OP_UPDATE, OP_DISCONNECT, OP_SEND_EMPTY, OP_COUNT },
+        { OP_UPDATE, OP_DISCONNECT, OP_REPEAT_SEND, OP_COUNT },
+        { OP_UPDATE, OP_SEND_PAYLOAD, OP_REPEAT_SEND, OP_COUNT },
+        { OP_UPDATE, OP_PARTIAL_SEND, OP_SEND_EMPTY, OP_COUNT },
+        { OP_UPDATE, OP_SEND_PAYLOAD, OP_PARTIAL_SEND, OP_COUNT },
+        { OP_UPDATE, OP_DISCONNECT, OP_SEND_EMPTY, OP_SEND_EMPTY },
+        { OP_UPDATE, OP_DISCONNECT, OP_SEND_EMPTY, OP_REPEAT_SEND },
+        { OP_UPDATE, OP_SEND_EMPTY, OP_DISCONNECT, OP_SEND_EMPTY },
+        { OP_UPDATE, OP_DISCONNECT, OP_SEND_PAYLOAD, OP_SEND_EMPTY },
+        { OP_UPDATE, OP_SEND_PAYLOAD, OP_DISCONNECT, OP_SEND_EMPTY },
+        { OP_UPDATE, OP_DISCONNECT, OP_PARTIAL_SEND, OP_SEND_EMPTY },
     };
     const int num_sequences = (int)( sizeof( sequences ) / sizeof( sequences[0] ) );
 
@@ -149,7 +155,7 @@ static void run_phase_matrix( bool staged )
         p.server = make_server( &p.f, &p.operations, 1, staged );
 
         double time = 1.0;
-        for ( int i = 0; i < 3 && sequences[s][i] != OP_COUNT; ++i )
+        for ( int i = 0; i < 4 && sequences[s][i] != OP_COUNT; ++i )
         {
             phase_apply( &p, sequences[s][i], time );
             time += 1.0;
