@@ -12,6 +12,7 @@
 #include "rocketnet_server_protocol.h"
 
 #include "rocketnet_wire.h"
+#include "rocketnet_client_protocol.h"
 
 #include <unordered_map>
 
@@ -2372,6 +2373,83 @@ void rocketnet_test_transport_ipv6_loopback()
     rocketnet_server_transport_destroy( server );
 }
 
+void rocketnet_test_server_handshake_deadline_from_config()
+{
+    struct rocketnet_test_env_guard_t deadline_guard, driver_guard;
+    rocketnet_test_env_clear( &deadline_guard, "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_DRIVER" );
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.handshake_deadline_seconds = 2;
+    snprintf( config.driver, sizeof(config.driver), "portable" );
+    const double start_time = 100.0;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, start_time );
+    rocketnet_check( server );
+    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( address_string, sizeof(address_string), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    const uint64_t timestamp = (uint64_t) time( NULL );
+    rocketnet_check( rocketnet_write_dev_connect_token( address_string, rocketnet_random_uint64(), timestamp, token ) );
+    struct rocketnet_client_protocol_t client;
+    struct rocketnet_counters_t client_counters;
+    rocketnet_client_protocol_init( &client, &client_counters );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token, start_time - 0.5, timestamp ) );
+    struct rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+        ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES], payload[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, start_time - 0.5, packet, &packet_bytes );
+    rocketnet_check( packet_bytes > 0 );
+    rocketnet_platform_socket_send_packet( peer, &client.server_address, packet, packet_bytes );
+    const double delivery_start = rocketnet_platform_time();
+    while ( !client.has_cookie && rocketnet_platform_time() - delivery_start < 5.0 )
+    {
+        rocketnet_server_transport_update( server, start_time );
+        struct rocketnet_address_t from;
+        const int received = rocketnet_platform_socket_receive_packet( peer, &from, packet, sizeof(packet) );
+        if ( received > 0 )
+        {
+            int payload_bytes = 0;
+            rocketnet_client_protocol_process_packet( &client, packet, received, start_time, payload, sizeof(payload), &payload_bytes );
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( client.has_cookie );
+    // Keep the client waiting for its challenge: resend requests but never
+    // process the challenge or send a connection response.
+    for ( int retry = 0; retry < 4; ++retry )
+    {
+        const double now = start_time + retry * 0.5;
+        rocketnet_client_protocol_update( &client, now, packet, &packet_bytes );
+        rocketnet_check( packet_bytes > 0 );
+        rocketnet_platform_socket_send_packet( peer, &client.server_address, packet, packet_bytes );
+        const uint64_t expected = retry == 0 ? 1 : retry;
+        const int counter = retry == 0 ? ROCKETNET_COUNTER_MAPPING_CREATED : ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT;
+        const double wait_start = rocketnet_platform_time();
+        while ( rocketnet_server_transport_counters( server )->values[counter] < expected && rocketnet_platform_time() - wait_start < 5.0 )
+        {
+            rocketnet_server_transport_update( server, now );
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( rocketnet_server_transport_counters( server )->values[counter] == expected );
+        rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
+    }
+    rocketnet_server_transport_update( server, start_time + 1.999 );
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
+    rocketnet_server_transport_update( server, start_time + 2.0 );
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+    rocketnet_server_transport_update( server, start_time + 3.0 );
+    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
+    rocketnet_platform_socket_destroy( peer );
+    rocketnet_server_transport_destroy( server );
+    rocketnet_test_env_restore( &driver_guard );
+    rocketnet_test_env_restore( &deadline_guard );
+}
+
 void rocketnet_test_config_precedence()
 {
     // DEFAULT < STRUCT < ENV, observed through the one config field with a
@@ -3883,6 +3961,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
+    { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
