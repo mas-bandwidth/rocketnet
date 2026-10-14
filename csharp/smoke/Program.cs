@@ -639,7 +639,17 @@ static class Smoke
             if ( !spanAfter.IsEmpty )
                 Fail( "span-after-update: span remained valid after update (should be invalidated)" );
             RocketNet.ClientTransportAbortPacket( spanClient, ref spanContext );
+            RocketNet.ReceivedPayload payloadAfterDispose = RocketNet.ClientTransportPayloadSpan( spanClient, 0 );
             RocketNet.ClientTransportDestroy( spanClient );
+            try
+            {
+                _ = payloadAfterDispose.Length;
+                Fail( "a received payload was read after its transport was destroyed" );
+            }
+            catch ( ObjectDisposedException )
+            {
+                Ok( "smoke_csharp_received_span_disposed_owner" );
+            }
             Ok( "smoke_csharp_span_after_update_invalidated" );
         }
 

@@ -1230,7 +1230,8 @@ public static unsafe partial class RocketNet
     /// owner's next update: it captures the owner's update epoch at creation and checks it on
     /// every read, so reading it after the next update throws <see cref="StalePayloadException"/>
     /// instead of handing back memory the library has since reused. Read it within the update
-    /// that delivered it and never retain the <see cref="Span"/> across one.</summary>
+    /// that delivered it, never retain the <see cref="Span"/> across one, and do not dispose its
+    /// owner first; reading after disposal throws <see cref="ObjectDisposedException"/>.</summary>
     public readonly ref struct ReceivedPayload
     {
         readonly ReadOnlySpan<byte> span;
@@ -1256,9 +1257,23 @@ public static unsafe partial class RocketNet
 
         void EnsureFresh()
         {
-            int current = client is not null ? client.updateEpoch : server!.updateEpoch;
-            if ( current != epoch )
-                throw new StalePayloadException();
+            if ( client is not null )
+            {
+                if ( client.IsClosed )
+                    throw new ObjectDisposedException( nameof( ClientTransportHandle ) );
+                if ( client.updateEpoch != epoch )
+                    throw new StalePayloadException();
+                return;
+            }
+            if ( server is not null )
+            {
+                if ( server.IsClosed )
+                    throw new ObjectDisposedException( nameof( ServerTransportHandle ) );
+                if ( server.updateEpoch != epoch )
+                    throw new StalePayloadException();
+                return;
+            }
+            throw new InvalidOperationException( "The received payload has no owning transport." );
         }
 
         /// <summary>Nonzero when the payload holds no bytes.</summary>
@@ -1296,12 +1311,23 @@ public static unsafe partial class RocketNet
             this.bytes = bytes;
         }
 
+        void EnsureFresh()
+        {
+            if ( owner is null )
+                throw new InvalidOperationException( "The payload batch has no owning transport." );
+            if ( owner.IsClosed )
+                throw new ObjectDisposedException( nameof( ClientTransportHandle ) );
+            if ( owner.updateEpoch != epoch )
+                throw new StalePayloadException();
+        }
+
         /// <summary>One payload of the batch as a checked view. Reading it after the owner's next
         /// update throws <see cref="StalePayloadException"/>.</summary>
         public ReceivedPayload this[int index]
         {
             get
             {
+                EnsureFresh();
                 if ( (uint) index >= (uint) Count )
                     throw new IndexOutOfRangeException();
                 return new ReceivedPayload( new ReadOnlySpan<byte>( data[index], bytes[index] ), owner!, epoch );
@@ -1367,12 +1393,23 @@ public static unsafe partial class RocketNet
             this.bytes = bytes;
         }
 
+        void EnsureFresh()
+        {
+            if ( owner is null )
+                throw new InvalidOperationException( "The payload batch has no owning transport." );
+            if ( owner.IsClosed )
+                throw new ObjectDisposedException( nameof( ServerTransportHandle ) );
+            if ( owner.updateEpoch != epoch )
+                throw new StalePayloadException();
+        }
+
         /// <summary>One payload of the batch as a checked view. Reading it after the owner's next
         /// update throws <see cref="StalePayloadException"/>.</summary>
         public ReceivedPayload this[int index]
         {
             get
             {
+                EnsureFresh();
                 if ( (uint) index >= (uint) Count )
                     throw new IndexOutOfRangeException();
                 return new ReceivedPayload( new ReadOnlySpan<byte>( data[index], bytes[index] ), owner!, epoch );
@@ -1382,6 +1419,7 @@ public static unsafe partial class RocketNet
         /// <summary>The sender of one payload of the batch.</summary>
         public int ClientIndex( int index )
         {
+            EnsureFresh();
             if ( (uint) index >= (uint) Count )
                 throw new IndexOutOfRangeException();
             return clientIndex[index];

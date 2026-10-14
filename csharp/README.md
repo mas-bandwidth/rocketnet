@@ -66,11 +66,13 @@ Received payloads are now checked views. `ClientTransportPayloadSpan`,
 `ReceivedPayload`, a `ref struct` whose `Span`, `Length`, `IsEmpty` and indexer
 each check the owner transport's update epoch captured at creation. Reading one
 after the next update throws `StalePayloadException` instead of handing back
-memory the library has reused. Migrate `ReadOnlySpan<byte> payload = batch[i]`
-to `ReadOnlySpan<byte> payload = batch[i].Span`, and the single-payload
-accessors likewise (`.Span`). The step before an update is still to consume the
-payload; the check turns a stale read into an exception rather than silent
-corruption. Native/managed layout is unchanged. The acked-packet accessors are
+memory the library has reused; reading after disposing its owner throws
+`ObjectDisposedException`. The server batch's `ClientIndex` accessor checks the
+same lifetime before reading native metadata. Migrate
+`ReadOnlySpan<byte> payload = batch[i]` to
+`ReadOnlySpan<byte> payload = batch[i].Span`, and the single-payload accessors
+likewise (`.Span`). Consume each payload before updating or disposing its
+transport. Native/managed layout is unchanged. The acked-packet accessors are
 not payload accessors and keep their existing lifetime.
 
 `CounterCount()` reports the loaded library's counter count; `CountersSpan` uses
