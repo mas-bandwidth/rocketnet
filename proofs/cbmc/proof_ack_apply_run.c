@@ -14,6 +14,10 @@
     of records that were unacked, each of those records ends acked, and the
     marking walk visits each sequence once when any of them was unacked.
 
+    The harness initializes exactly the sent records in the symbolic run.
+    The leaf reads no other record under the run assumptions; the negative
+    RTT sample and absent packet ids/aggregates bypass the other arrays.
+
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
     Unwinding: ACK_RUN_BOUND. The complete bound is 4096, one pass over the
@@ -21,7 +25,6 @@
 */
 
 #include <stdint.h>
-#include <string.h>
 
 #ifndef ACK_RUN_BOUND
 #define ACK_RUN_BOUND 4096
@@ -182,7 +185,6 @@ int main( void )
     uint64_t batch_full_counter;
     int newly_acked;
 
-    memset( &endpoint, 0, sizeof endpoint );
     endpoint.highest_sequence = nondet_uint64();
     low = nondet_uint64();
     high = nondet_uint64();
