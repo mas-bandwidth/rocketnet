@@ -362,7 +362,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES sdk/rocketnet.h sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
-    sdk/rocketnet_platform.h sdk/rocketnet_counters.h
+    sdk/rocketnet_platform.h sdk/rocketnet_counters.h sdk/rocketnet_route.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)

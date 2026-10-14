@@ -410,11 +410,11 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 // The linux connection-type probe reads the kernel route table over netlink.
 // Its reply loop is extracted behind the receive call so the unit suite can
 // drive it without a socket; a failed or empty receive ends the probe instead
-// of spinning. These types and the declaration are linux-only.
+// of spinning. These internal C++ types and the declaration are linux-only.
 //
 // ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__cplusplus)
 
 #include "rocketnet_route.h"
 #include <limits.h>
@@ -436,4 +436,4 @@ bool rocketnet_platform_read_route_table(
     rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
     ssize_t (*receive)( int, struct msghdr *, int ) );
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#endif // linux internal C++ route probe

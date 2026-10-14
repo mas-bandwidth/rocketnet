@@ -14,6 +14,16 @@
 #endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "consumer failed: %s\n", #c); return 1; } } while (0)
 
+static int expected_null_assertions;
+static void count_null_assertion(const char * condition, const char * function, const char * file, int line)
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    ++expected_null_assertions;
+}
+
 int main(void)
 {
     CHECK(rocketnet_abi_version() == ROCKETNET_ABI_VERSION);
@@ -21,10 +31,17 @@ int main(void)
     CHECK(rocketnet_abi_field_offset("rocketnet_client_transport_config_t", "state_change_callback") == offsetof(struct rocketnet_client_transport_config_t, state_change_callback));
     CHECK(rocketnet_abi_field_size("rocketnet_server_transport_config_t", "driver") == ROCKETNET_DRIVER_STRING_LENGTH);
     CHECK(rocketnet_abi_field_count("rocketnet_packet_context_t") == 6);
+    CHECK(rocketnet_assert_function_pointer != NULL);
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    /* Deliberate NULL queries retain their counted Debug assertion contract. */
+    rocketnet_assert_function(count_null_assertion);
     CHECK(rocketnet_abi_type_size(NULL) == SIZE_MAX);
     CHECK(rocketnet_abi_field_count("missing") == -1);
     CHECK(rocketnet_abi_field_offset("rocketnet_packet_context_t", "missing") == SIZE_MAX);
     CHECK(rocketnet_abi_field_size("missing", NULL) == SIZE_MAX);
+    rocketnet_assert_function(NULL);
+    CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
+    CHECK(expected_null_assertions == (ROCKETNET_ASSERTS ? 2 : 0));
     CHECK(rocketnet_assert_function_pointer != NULL);
     CHECK(rocketnet_num_counters() >= ROCKETNET_NUM_COUNTERS);
     CHECK(rocketnet_init(NULL));

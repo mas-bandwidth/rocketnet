@@ -10003,17 +10003,17 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     // a 16-byte buffer with a trailing canary is refused before anything is
     // written: the canary and the payload bytes beside it are untouched
 
-    struct { uint8_t buffer[16]; uint8_t canary[8]; } small;
-    memset( &small, 0xA5, sizeof(small) );
+    struct { uint8_t buffer[16]; uint8_t canary[8]; } short_buffer;
+    memset( &short_buffer, 0xA5, sizeof(short_buffer) );
     int payload_bytes = 12345;
 
     const uint64_t too_small_before = counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
-                                                              small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+                                                              short_buffer.buffer, (int) sizeof(short_buffer.buffer), &payload_bytes ) == 0 );
     rocketnet_check( payload_bytes == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small_before + 1 );
-    for ( int i = 0; i < (int) sizeof(small); i++ )
-        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+    for ( int i = 0; i < (int) sizeof(short_buffer); i++ )
+        rocketnet_check( ( (uint8_t *) &short_buffer )[i] == 0xA5 );
 
     // the refusal precedes any read of the packet: a packet that would not
     // survive the prefilter is refused here instead, only the capacity
@@ -10027,14 +10027,14 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
 
     payload_bytes = 12345;
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, one_byte, (int) sizeof(one_byte), pair.time,
-                                                               small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+                                                               short_buffer.buffer, (int) sizeof(short_buffer.buffer), &payload_bytes ) == 0 );
     rocketnet_check( payload_bytes == 0 );
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
         rocketnet_check( counters[i] == counters_before[i] + ( i == ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL ? 1 : 0 ) );
     rocketnet_check( pair.client.state == state_before );
     rocketnet_check( pair.client.received_session_sequence == received_sequence_before );
-    for ( int i = 0; i < (int) sizeof(small); i++ )
-        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+    for ( int i = 0; i < (int) sizeof(short_buffer); i++ )
+        rocketnet_check( ( (uint8_t *) &short_buffer )[i] == 0xA5 );
 
     // the same packet, untouched by the refused call, is accepted whole into a
     // full buffer and lands byte-exact
