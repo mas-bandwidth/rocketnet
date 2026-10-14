@@ -339,6 +339,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 // thread-safe and return storage aligned for fundamental types. RocketNet adds
 // alignment/ownership metadata, so callbacks receive larger sizes and their
 // original pointer on free.
+// a NULL malloc_function or free_function is a counted no-op that returns false.
 ROCKETNET_EXPORT_FUNC bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // Counts every refused API misuse since the process started: a create before
