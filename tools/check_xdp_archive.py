@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Check generated and committed XDP archives against their shared source list."""
 import argparse
+import hashlib
 import io
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 
 def inputs_for(root, directory):
     listing = directory / "source-list.txt"
@@ -57,6 +60,42 @@ def generate_and_check(root, output, inputs, xxd):
         raise RuntimeError("embedded header differs from source archive")
 
 
+def check_reproducible(source, directory, inputs, xxd):
+    archives = []
+    builds = [(1_000_000_000, 0o022), (1_700_000_000, 0o077)]
+    for index, (mtime, umask) in enumerate(builds):
+        root = directory / f"repro{index}"
+        for path in inputs.values():
+            target = root / path.relative_to(source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+            os.utime(target, (mtime, mtime))
+        (root / "cmake").mkdir(exist_ok=True)
+        for name in ("XdpSources.cmake", "EmbedXdp.cmake"):
+            shutil.copyfile(source / "cmake" / name, root / "cmake" / name)
+        if index:
+            # Cross a wall-clock second boundary so a member timestamp
+            # taken from the build time differs between the two builds.
+            time.sleep(1.1)
+        previous_umask = os.umask(umask)
+        try:
+            output = directory / f"repro{index}-generated"
+            subprocess.run(["cmake", f"-DSOURCE_DIR={root}", f"-DOUTPUT_DIR={output}",
+                            f"-DXXD={xxd}", "-P", str(root / "cmake/EmbedXdp.cmake")], check=True)
+        finally:
+            os.umask(previous_umask)
+        archives.append((output / "rocketnet_server_xdp.tar.gz").read_bytes())
+
+    if archives[0] != archives[1]:
+        digests = [hashlib.sha256(data).hexdigest() for data in archives]
+        raise RuntimeError(f"XDP archive is not reproducible: {digests}")
+    with tarfile.open(fileobj=io.BytesIO(archives[0])) as archive:
+        for member in archive.getmembers():
+            if member.mtime != 0 or member.uid != 0 or member.gid != 0:
+                raise RuntimeError(f"XDP archive member is not normalised: {member.name}")
+    print("test_xdp_archive_reproducible")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, nargs="?", default=Path(__file__).resolve().parents[1])
@@ -77,6 +116,8 @@ def main():
                 raise SystemExit("xxd is required for generation checks")
             for _ in range(2):
                 generate_and_check(source, directory / "generated", inputs, xxd)
+
+            check_reproducible(source, directory, inputs, xxd)
 
             # A maintainer adds one source in the shared list. Copy, tar and the
             # verifier must all follow it without their own additional name edits.
