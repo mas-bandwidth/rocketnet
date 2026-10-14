@@ -1,0 +1,4 @@
+harness: harness_replay_far
+source: sdk/rocketnet_replay.cpp
+defect: a delta at least the window width clears window[0] through window[3] only, not all 64 words
+fix-card: rocketnet-replay-far-advance-clears-every-window-word
