@@ -214,6 +214,6 @@ void rocketnet_test_config_out_of_range_refuses_create()
     setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "0", 1 );
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config ) == NULL );
     rocketnet_test_env_restore( &guard );
 }
