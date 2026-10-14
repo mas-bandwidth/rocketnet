@@ -33,18 +33,17 @@ replay-near: proof_replay_advance.c
 	    --function harness_replay_near proof_replay_advance.c
 
 replay-far: proof_replay_advance.c proof_replay_advance.expected-fail
-	@status=0; \
+	@output=$$(mktemp); \
+	trap 'rm -f "$$output"' EXIT HUP INT TERM; \
+	status=0; \
 	$(CBMC) $(CBMC_FLAGS) --unwind 65 --function harness_replay_far \
-	    proof_replay_advance.c || status=$$?; \
-	if [ $$status -eq 10 ]; then \
-	    echo "expected-fail: far advance counterexample (see proof_replay_advance.expected-fail)"; \
-	    exit 0; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-	    echo "expected-fail marker is stale: harness_replay_far proved"; \
+	    --json-ui --trace proof_replay_advance.c > "$$output" 2>&1 || status=$$?; \
+	cat "$$output"; \
+	if [ $$status -ne 10 ]; then \
+	    echo "replay-far: expected CBMC verification failure (exit 10), got $$status" >&2; \
 	    exit 1; \
 	fi; \
-	exit $$status
+	python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); properties=[p for group in data if isinstance(group,dict) for p in group.get("result",[]) if isinstance(p,dict)]; bad=[p for p in properties if p.get("status") not in ("SUCCESS","UNREACHABLE")]; expected="a delta at least the width clears every word"; ok=len(bad)==1 and bad[0].get("status")=="FAILURE" and expected in bad[0].get("description","") and "harness_replay_far" in bad[0].get("property",""); print("expected-fail: far advance counterexample (see proof_replay_advance.expected-fail)" if ok else "replay-far: unrelated or missing failed property", file=sys.stdout if ok else sys.stderr); sys.exit(0 if ok else 1)' "$$output"
 
 reconstruct: proof_reconstruct_sequence.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 1 proof_reconstruct_sequence.c
