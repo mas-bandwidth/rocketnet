@@ -705,6 +705,113 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_server_transport_destroy( server );
 }
 
+void rocketnet_test_transport_send_result_causes()
+{
+    // The send result enum names a distinct cause for every way a send or
+    // finish fails to stage a packet, on both ends. Each cause that needs a
+    // live transport is reached here over loopback: OK writes the wire size
+    // to context.wire_bytes, and the refusals name their reason instead of
+    // collapsing every failure to a NULL or a zero.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    // connection gone: a client that has not connected yet refuses to send
+    rocketnet_check( rocketnet_client_transport_send_packet( client, (const uint8_t*) "x", 1 ) == ROCKETNET_SEND_CONNECTION_GONE );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    memset( payload, 0xAB, sizeof(payload) );
+
+    // OK on both ends, and the wire size lands in context.wire_bytes
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    memcpy( frame + context.payload_index, "client", 6 );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, 6 ) == ROCKETNET_SEND_OK );
+    rocketnet_check( context.wire_bytes > 0 );
+    rocketnet_client_transport_send_packets( client );
+
+    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    memcpy( frame + context.payload_index, "server", 6 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 6 ) == ROCKETNET_SEND_OK );
+    rocketnet_check( context.wire_bytes > 0 );
+    rocketnet_server_transport_send_packets( server );
+
+    // invalid payload: zero bytes or past the configured maximum
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, 0 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, 0 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES + 1 ) == ROCKETNET_SEND_INVALID_PAYLOAD );
+
+    // nothing staged: a never-started context has no lease on either end
+    struct rocketnet_packet_context_t empty;
+    memset( &empty, 0, sizeof(empty) );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &empty, 1 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &empty, 1 ) == ROCKETNET_SEND_NOTHING_STAGED );
+
+    // ring full: the client payload ring refuses once full, named as such
+    struct rocketnet_packet_context_t ring_ctx[512];
+    int ring_filled = 0;
+    for ( int i = 0; i < 512; i++ )
+    {
+        if ( !rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &ring_ctx[i] ) )
+        {
+            ring_filled = i;
+            break;
+        }
+    }
+    rocketnet_check( ring_filled == 256 );
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_SEND_RING_FULL );
+    rocketnet_client_transport_send_packets( client );
+
+    // arena full: oversized requests fill the client arena, named as such
+    struct rocketnet_packet_context_t arena_ctx[ROCKETNET_SEND_ARENA_SLOTS];
+    for ( int i = 0; i < ROCKETNET_SEND_ARENA_SLOTS; i++ )
+        rocketnet_check( rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES + 1, &arena_ctx[i] ) );
+    rocketnet_check( rocketnet_client_transport_send_packet( client, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1 ) == ROCKETNET_SEND_ARENA_FULL );
+    rocketnet_client_transport_send_packets( client );
+
+    // seal failed: the client disconnects between start and finish, so the
+    // write has no connection to seal onto
+    frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, 6 ) == ROCKETNET_SEND_SEAL_FAILED );
+
+    // not running: a stopped server refuses to stage
+    rocketnet_server_transport_stop( server );
+    rocketnet_check( rocketnet_server_transport_send_packet( server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES ) == ROCKETNET_SEND_NOT_RUNNING );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
 {
     // A capacity below one refuses at once: it consumes nothing, moves no
@@ -3864,6 +3971,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill },
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape },
+    { "test_transport_send_result_causes", rocketnet_test_transport_send_result_causes },
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },

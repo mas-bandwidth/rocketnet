@@ -6561,6 +6561,46 @@ void rocketnet_test_transport_payload_capacity()
 }
 
 
+void rocketnet_test_send_result_names_each_cause()
+{
+    // The send result enum names a distinct cause for every way a packet can
+    // fail to stage. OK is first and zero, so a caller that used to test a
+    // positive wire size for success must read context.wire_bytes instead of
+    // the return value. Every value here is a distinct cause: no two causes
+    // share a result, and every cause reachable without a socket -- a null
+    // transport or a never-started context -- names NOTHING_STAGED.
+
+    const int results[] =
+    {
+        ROCKETNET_SEND_OK,
+        ROCKETNET_SEND_NOTHING_STAGED,
+        ROCKETNET_SEND_INVALID_PAYLOAD,
+        ROCKETNET_SEND_NOT_RUNNING,
+        ROCKETNET_SEND_CONNECTION_GONE,
+        ROCKETNET_SEND_RING_FULL,
+        ROCKETNET_SEND_ARENA_FULL,
+        ROCKETNET_SEND_LEASE_FULL,
+        ROCKETNET_SEND_SEAL_FAILED,
+        ROCKETNET_SEND_FRAGMENT_PLAN_FAILED,
+        ROCKETNET_SEND_FRAGMENT_RESERVE_FAILED,
+        ROCKETNET_SEND_PARTIAL_COMMIT,
+    };
+
+    rocketnet_check( ROCKETNET_SEND_OK == 0 );
+
+    const int count = (int) ( sizeof( results ) / sizeof( results[0] ) );
+    for ( int i = 0; i < count; i++ )
+        for ( int j = i + 1; j < count; j++ )
+            rocketnet_check( results[i] != results[j] );
+
+    // the null-safe boundary names the no-lease cause without a socket
+    struct rocketnet_packet_context_t context;
+    memset( &context, 0, sizeof(context) );
+    rocketnet_check( rocketnet_client_transport_finish_packet( NULL, &context, 1 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( rocketnet_server_transport_finish_packet( NULL, &context, 1 ) == ROCKETNET_SEND_NOTHING_STAGED );
+    rocketnet_check( context.wire_bytes == 0 );
+}
+
 void rocketnet_test_client_rtt_handshake()
 {
     // the handshake's three round trips under three different imposed
@@ -11831,6 +11871,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_keyless_config_has_no_keys", rocketnet_test_server_keyless_config_has_no_keys },
     { "test_dev_keys_refused_in_release", rocketnet_test_dev_keys_refused_in_release },
     { "test_transport_payload_capacity", rocketnet_test_transport_payload_capacity },
+    { "test_send_result_names_each_cause", rocketnet_test_send_result_names_each_cause },
     { "test_client_rtt_handshake", rocketnet_test_client_rtt_handshake },
     { "test_request_path_ordering", rocketnet_test_request_path_ordering },
     { "test_request_path_uncovered_rungs", rocketnet_test_request_path_uncovered_rungs },
