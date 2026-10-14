@@ -420,6 +420,11 @@ public static unsafe partial class RocketNet
         /// this is clamped. Default 60; the native range is 1 to 3600.</summary>
         public int MaxTimeoutSeconds;
 
+        /// <summary>The half-open mapping's handshake deadline, in seconds: fixed at the
+        /// challenge, never refreshed, discharged on connect. Default 5; the native range
+        /// is 1 to 60.</summary>
+        public int HandshakeDeadlineSeconds;
+
         /// <summary>Reads the driver candidate list as a string.</summary>
         public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
 
