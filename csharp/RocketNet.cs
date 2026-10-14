@@ -453,6 +453,38 @@ public static unsafe partial class RocketNet
         buffer[bytes.Length] = 0;
     }
 
+    /// <summary>rocketnet_send_result_t. Why a send did not stage a packet; FinishPacket and
+    /// SendPacket on both ends return it. Ok is first and zero. A caller that used to test
+    /// the wire size for success reads <see cref="PacketContext.WireBytes"/> instead, since
+    /// a positive return no longer means success.</summary>
+    public enum SendResult : int
+    {
+        /// <summary>The packet was staged and sealed.</summary>
+        Ok = 0,
+        /// <summary>No active lease: stale, consumed, modified or wrong-owner context.</summary>
+        NothingStaged = 1,
+        /// <summary>Payload out of range for the lease's capacity.</summary>
+        InvalidPayload = 2,
+        /// <summary>The server transport is not running.</summary>
+        NotRunning = 3,
+        /// <summary>The client is not connected to the server.</summary>
+        ConnectionGone = 4,
+        /// <summary>The payload or driver ring is full.</summary>
+        RingFull = 5,
+        /// <summary>The send arena is exhausted.</summary>
+        ArenaFull = 6,
+        /// <summary>The packet lease table is full.</summary>
+        LeaseFull = 7,
+        /// <summary>The wire frame could not be reserved.</summary>
+        SealFailed = 8,
+        /// <summary>The fragmented payload could not be planned.</summary>
+        FragmentPlanFailed = 9,
+        /// <summary>The fragment sequence block could not be reserved.</summary>
+        FragmentReserveFailed = 10,
+        /// <summary>Some fragments were staged before a later one failed.</summary>
+        PartialCommit = 11,
+    }
+
     /// <summary>rocketnet_packet_context_t. Filled by StartPacket, consumed by FinishPacket or
     /// AbortPacket. The fields are read-only to the caller; the payload is written at
     /// Frame + PayloadIndex, up to PayloadCapacity bytes — use the checked client/server packet payload span accessor.</summary>
@@ -471,6 +503,8 @@ public static unsafe partial class RocketNet
         public ulong Sequence;
         /// <summary>The destination client index (server side).</summary>
         public int ClientIndex;
+        /// <summary>The sealed wire size, set by FinishPacket; zero on any failure.</summary>
+        public int WireBytes;
         /// <summary>The epoch when this context was last valid.</summary>
         internal int updateEpoch;
     }
@@ -741,13 +775,13 @@ public static unsafe partial class RocketNet
     /// <summary>The convenience send: copies and flushes inline. Main thread only, never
     /// during an open fill — the simple form, not a fill-phase participant.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_send_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ClientTransportSendPacket( ClientTransportHandle client, byte* packetData, int packetBytes );
+    public static extern SendResult ClientTransportSendPacket( ClientTransportHandle client, byte* packetData, int packetBytes );
 
     /// <summary>The convenience send over a span.</summary>
-    public static void ClientTransportSendPacket( ClientTransportHandle client, ReadOnlySpan<byte> payload )
+    public static SendResult ClientTransportSendPacket( ClientTransportHandle client, ReadOnlySpan<byte> payload )
     {
         fixed ( byte* p = payload )
-            ClientTransportSendPacket( client, p, payload.Length );
+            return ClientTransportSendPacket( client, p, payload.Length );
     }
 
     /// <summary>The copying receive cursor: copies the next received payload that fits the
@@ -834,12 +868,12 @@ public static unsafe partial class RocketNet
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    internal static extern int ClientTransportFinishPacketNative( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
+    internal static extern SendResult ClientTransportFinishPacketNative( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
 
-    /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
-    /// zero when the packet was dropped instead (payload out of range, or the connection
-    /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    public static int ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes )
+    /// <summary>Seals and stages the filled packet in place. Returns the cause of the send
+    /// (<see cref="SendResult"/>); the sealed wire size lands in <see cref="PacketContext.WireBytes"/>,
+    /// zero on any failure. The sequence is burned either way, which the replay window tolerates.</summary>
+    public static SendResult ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes )
     {
         context.updateEpoch = -1;
         return ClientTransportFinishPacketNative( client, ref context, payloadBytes );
@@ -1042,12 +1076,12 @@ public static unsafe partial class RocketNet
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
-    internal static extern int ServerTransportFinishPacketNative( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
+    internal static extern SendResult ServerTransportFinishPacketNative( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
 
-    /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
-    /// zero when the packet was dropped instead (payload out of range, or the connection
-    /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    public static int ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes )
+    /// <summary>Seals and stages the filled packet in place. Returns the cause of the send
+    /// (<see cref="SendResult"/>); the sealed wire size lands in <see cref="PacketContext.WireBytes"/>,
+    /// zero on any failure. The sequence is burned either way, which the replay window tolerates.</summary>
+    public static SendResult ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes )
     {
         context.updateEpoch = -1;
         return ServerTransportFinishPacketNative( server, ref context, payloadBytes );
@@ -1069,15 +1103,15 @@ public static unsafe partial class RocketNet
     public static extern void ServerTransportSendPackets( ServerTransportHandle server );
 
     /// <summary>The convenience send: copies into an acquired packet and stages it.
-    /// Flushed by the frame's SendPackets.</summary>
+    /// Flushed by the frame's SendPackets. Returns the cause of the send.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_send_packet", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, byte* payloadData, int payloadBytes );
+    public static extern SendResult ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, byte* payloadData, int payloadBytes );
 
     /// <summary>The convenience send over a span.</summary>
-    public static void ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, ReadOnlySpan<byte> payload )
+    public static SendResult ServerTransportSendPacket( ServerTransportHandle server, int clientIndex, ReadOnlySpan<byte> payload )
     {
         fixed ( byte* p = payload )
-            ServerTransportSendPacket( server, clientIndex, p, payload.Length );
+            return ServerTransportSendPacket( server, clientIndex, p, payload.Length );
     }
 
     /// <summary>Disconnects one connected client deliberately: the redundant disconnect burst

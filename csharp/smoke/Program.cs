@@ -253,8 +253,8 @@ static class Smoke
         RocketNet.ServerTransportAbortPacket( server, ref abortDown );
         if ( !RocketNet.ClientTransportPacketPayloadSpan( client, in abortUpCopy ).IsEmpty ||
              !RocketNet.ServerTransportPacketPayloadSpan( server, in abortDownCopy ).IsEmpty ||
-             RocketNet.ClientTransportFinishPacket( client, ref abortUpCopy, 1 ) != 0 ||
-             RocketNet.ServerTransportFinishPacket( server, ref abortDownCopy, 1 ) != 0 )
+             RocketNet.ClientTransportFinishPacket( client, ref abortUpCopy, 1 ) != RocketNet.SendResult.Ok ||
+             RocketNet.ServerTransportFinishPacket( server, ref abortDownCopy, 1 ) != RocketNet.SendResult.Ok )
             Fail( "explicit abort left a live lease" );
         Ok( "client and server abort consume their leases" );
 
@@ -273,28 +273,29 @@ static class Smoke
         if (!RocketNet.ClientTransportPacketPayloadSpan(client, in tampered).IsEmpty ||
             !RocketNet.ServerTransportPacketPayloadSpan(server, in context).IsEmpty)
             Fail("invalid packet owner or metadata exposed a payload span");
-        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) != 0)
+        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) != RocketNet.SendResult.Ok)
             Fail("tampered packet context was accepted");
         FillPattern( payload.Slice( 0, 256 ), 1 );
-        if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) == 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) != RocketNet.SendResult.Ok )
             Fail( "client finish packet" );
         if (!RocketNet.ClientTransportPacketPayloadSpan(client, in original).IsEmpty ||
-            RocketNet.ClientTransportFinishPacket(client, ref original, 1) != 0)
+            RocketNet.ClientTransportFinishPacket(client, ref original, 1) != RocketNet.SendResult.Ok)
             Fail("a copied consumed context remained live");
         RocketNet.ClientTransportSendPackets( client );
 
         byte[] convenience = new byte[64];
         FillPattern( convenience, 2 );
-        RocketNet.ClientTransportSendPacket( client, convenience );
+        if ( RocketNet.ClientTransportSendPacket( client, convenience ) != RocketNet.SendResult.Ok )
+            Fail( "client convenience send" );
 
         // the oversize finish is dropped with its sequence burned, never sent
 
         RocketNet.PacketContext oversize = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref oversize ) == IntPtr.Zero )
             Fail( "client start packet (oversize)" );
-        if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != RocketNet.SendResult.Ok )
             Fail( "oversize finish was not dropped" );
-        Ok( "oversize finish_packet dropped (returned 0)" );
+        Ok( "oversize finish_packet dropped (returned invalid payload)" );
 
         bool got256 = false, got64 = false;
         for ( int i = 0; i < 1000 && !( got256 && got64 ); i++ )
@@ -337,9 +338,10 @@ static class Smoke
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref down ) == IntPtr.Zero )
             Fail( "server start packet" );
         FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in down ).Slice( 0, 256 ), 1 );
-        if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) == 0 )
+        if ( RocketNet.ServerTransportFinishPacket( server, ref down, 256 ) != RocketNet.SendResult.Ok )
             Fail( "server finish packet" );
-        RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) );
+        if ( RocketNet.ServerTransportSendPacket( server, clientIndex, new ReadOnlySpan<byte>( ConvenienceDown() ) ) != RocketNet.SendResult.Ok )
+            Fail( "server convenience send" );
 
         byte[] receiveCopy = new byte[RocketNet.ClientTransportMaxPayloadBytes( client )];
         bool shortReceiveRefused = false;
@@ -409,7 +411,7 @@ static class Smoke
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref ackedUp ) == IntPtr.Zero )
             Fail( "client start packet (acked)" );
         FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in ackedUp ).Slice( 0, 16 ), 4 );
-        if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) == 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref ackedUp, 16 ) != RocketNet.SendResult.Ok )
             Fail( "client finish packet (acked)" );
         RocketNet.ClientTransportSendPackets( client );
 
@@ -417,7 +419,7 @@ static class Smoke
         if ( RocketNet.ServerTransportStartPacket( server, clientIndex, RocketNet.MaxPayloadBytes, ref ackedDown ) == IntPtr.Zero )
             Fail( "server start packet (acked)" );
         FillPattern( RocketNet.ServerTransportPacketPayloadSpan( server, in ackedDown ).Slice( 0, 16 ), 5 );
-        if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) == 0 )
+        if ( RocketNet.ServerTransportFinishPacket( server, ref ackedDown, 16 ) != RocketNet.SendResult.Ok )
             Fail( "server finish packet (acked)" );
 
         bool clientSawAck = false, serverSawAck = false;
@@ -457,7 +459,7 @@ static class Smoke
         if ( bigUp.PayloadCapacity != RocketNet.DefaultMaxPayloadBytes )
             Fail( $"fragmented payload capacity {bigUp.PayloadCapacity}" );
         FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in bigUp ).Slice( 0, 5000 ), 6 );
-        if ( RocketNet.ClientTransportFinishPacket( client, ref bigUp, 5000 ) == 0 )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref bigUp, 5000 ) != RocketNet.SendResult.Ok )
             Fail( "client finish packet (fragmented)" );
         RocketNet.ClientTransportSendPackets( client );
 
