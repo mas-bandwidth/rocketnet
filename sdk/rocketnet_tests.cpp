@@ -7345,6 +7345,238 @@ static void rocketnet_test_null_assert_hook( const char * condition, const char 
 // hook for its duration, calls each entry point with the pointer NULL, and
 // checks both the return and the misuse count's rise. A NULL handle is refused
 // before any I/O, so no socket opens.
+
+// The export audit: a mirror of every ROCKETNET_EXPORT_FUNC entry point compiled
+// into the non-development library, in header order. Every name is either
+// exercised here (a NULL case above) or exempt (no NULL-able pointer, or NULL
+// is a valid value), each exactly once. The static_assert pins the count to
+// ROCKETNET_NUM_EXPORTED_FUNCTIONS in sdk/rocketnet.h, so a new export without
+// a case fails to build until the lists and the cases are brought in step.
+static const char * rocketnet_test_exports[] =
+{
+    "rocketnet_abi_version",
+    "rocketnet_abi_type_size",
+    "rocketnet_abi_field_count",
+    "rocketnet_abi_field_offset",
+    "rocketnet_abi_field_size",
+    "rocketnet_init",
+    "rocketnet_term",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_get_log_level",
+    "rocketnet_log_level_string",
+    "rocketnet_log_function",
+    "rocketnet_printf",
+    "rocketnet_info",
+    "rocketnet_warn",
+    "rocketnet_error",
+    "rocketnet_debug",
+    "rocketnet_spam",
+    "rocketnet_allocator",
+    "rocketnet_api_misuse_count",
+    "rocketnet_malloc",
+    "rocketnet_free",
+    "rocketnet_clear_and_free",
+    "rocketnet_user_id_string",
+    "rocketnet_random_float",
+    "rocketnet_random_uint8",
+    "rocketnet_random_uint16",
+    "rocketnet_random_uint32",
+    "rocketnet_random_uint64",
+    "rocketnet_random_bytes",
+    "rocketnet_protocol_version",
+    "rocketnet_time",
+    "rocketnet_sleep",
+    "rocketnet_copy_string",
+    "rocketnet_client_transport_state_name",
+    "rocketnet_client_transport_default_config",
+    "rocketnet_client_transport_create",
+    "rocketnet_client_transport_destroy",
+    "rocketnet_client_transport_update",
+    "rocketnet_client_transport_send_packet",
+    "rocketnet_client_transport_receive_packet",
+    "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_num_payloads",
+    "rocketnet_client_transport_payload",
+    "rocketnet_client_transport_payloads",
+    "rocketnet_client_transport_start_packet",
+    "rocketnet_client_transport_packet_payload",
+    "rocketnet_client_transport_finish_packet",
+    "rocketnet_client_transport_abort_packet",
+    "rocketnet_client_transport_send_packets",
+    "rocketnet_client_transport_state",
+    "rocketnet_client_transport_driver",
+    "rocketnet_client_transport_client_index",
+    "rocketnet_client_transport_disconnect",
+    "rocketnet_client_transport_counters",
+    "rocketnet_client_transport_stats",
+    "rocketnet_client_transport_acked_packets",
+    "rocketnet_server_transport_default_config",
+    "rocketnet_server_transport_dev_config",
+    "rocketnet_server_transport_required_memory",
+    "rocketnet_server_transport_create",
+    "rocketnet_server_transport_destroy",
+    "rocketnet_server_transport_stop",
+    "rocketnet_server_transport_state",
+    "rocketnet_server_transport_port",
+    "rocketnet_server_transport_driver",
+    "rocketnet_forbid_xdp_commit",
+    "rocketnet_server_transport_update",
+    "rocketnet_server_transport_set_admission_callback",
+    "rocketnet_server_transport_num_payloads",
+    "rocketnet_server_transport_payload",
+    "rocketnet_server_transport_payloads",
+    "rocketnet_server_transport_start_packet",
+    "rocketnet_server_transport_packet_payload",
+    "rocketnet_server_transport_finish_packet",
+    "rocketnet_server_transport_abort_packet",
+    "rocketnet_server_transport_send_packets",
+    "rocketnet_server_transport_send_packet",
+    "rocketnet_server_transport_disconnect_client",
+    "rocketnet_server_transport_num_connected_clients",
+    "rocketnet_server_transport_is_client_connected",
+    "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_counters",
+    "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_stats",
+    "rocketnet_server_transport_client_stats",
+    "rocketnet_server_transport_acked_packets",
+    "rocketnet_frame_sync_create",
+    "rocketnet_frame_sync_destroy",
+    "rocketnet_frame_sync_wait",
+    "rocketnet_frame_sync_stats",
+    "rocketnet_message_default_config",
+    "rocketnet_message_validate_config",
+    "rocketnet_message_connection_bytes",
+    "rocketnet_message_connection_sizing",
+    "rocketnet_message_print_connection_sizing",
+    "rocketnet_num_counters",
+    "rocketnet_counter_value",
+    "rocketnet_counter_name",
+};
+
+// the entry points this suite gives a NULL case (a misuse that increments the
+// count), and the ones that are exempt (no NULL-able pointer, or NULL valid).
+
+static const char * rocketnet_test_null_case_exports[] =
+{
+    "rocketnet_abi_type_size",
+    "rocketnet_abi_field_count",
+    "rocketnet_abi_field_offset",
+    "rocketnet_abi_field_size",
+    "rocketnet_printf",
+    "rocketnet_info",
+    "rocketnet_warn",
+    "rocketnet_error",
+    "rocketnet_debug",
+    "rocketnet_spam",
+    "rocketnet_allocator",
+    "rocketnet_user_id_string",
+    "rocketnet_random_bytes",
+    "rocketnet_copy_string",
+    "rocketnet_client_transport_default_config",
+    "rocketnet_client_transport_create",
+    "rocketnet_client_transport_destroy",
+    "rocketnet_client_transport_update",
+    "rocketnet_client_transport_send_packet",
+    "rocketnet_client_transport_receive_packet",
+    "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_num_payloads",
+    "rocketnet_client_transport_payload",
+    "rocketnet_client_transport_payloads",
+    "rocketnet_client_transport_start_packet",
+    "rocketnet_client_transport_packet_payload",
+    "rocketnet_client_transport_finish_packet",
+    "rocketnet_client_transport_abort_packet",
+    "rocketnet_client_transport_send_packets",
+    "rocketnet_client_transport_state",
+    "rocketnet_client_transport_driver",
+    "rocketnet_client_transport_client_index",
+    "rocketnet_client_transport_disconnect",
+    "rocketnet_client_transport_counters",
+    "rocketnet_client_transport_stats",
+    "rocketnet_client_transport_acked_packets",
+    "rocketnet_server_transport_default_config",
+    "rocketnet_server_transport_dev_config",
+    "rocketnet_server_transport_create",
+    "rocketnet_server_transport_destroy",
+    "rocketnet_server_transport_stop",
+    "rocketnet_server_transport_state",
+    "rocketnet_server_transport_port",
+    "rocketnet_server_transport_driver",
+    "rocketnet_server_transport_update",
+    "rocketnet_server_transport_set_admission_callback",
+    "rocketnet_server_transport_num_payloads",
+    "rocketnet_server_transport_payload",
+    "rocketnet_server_transport_payloads",
+    "rocketnet_server_transport_start_packet",
+    "rocketnet_server_transport_packet_payload",
+    "rocketnet_server_transport_finish_packet",
+    "rocketnet_server_transport_abort_packet",
+    "rocketnet_server_transport_send_packets",
+    "rocketnet_server_transport_send_packet",
+    "rocketnet_server_transport_disconnect_client",
+    "rocketnet_server_transport_num_connected_clients",
+    "rocketnet_server_transport_is_client_connected",
+    "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_counters",
+    "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_stats",
+    "rocketnet_server_transport_client_stats",
+    "rocketnet_server_transport_acked_packets",
+    "rocketnet_frame_sync_destroy",
+    "rocketnet_frame_sync_wait",
+    "rocketnet_frame_sync_stats",
+    "rocketnet_message_default_config",
+    "rocketnet_counter_value",
+};
+
+static const char * rocketnet_test_null_exempt_exports[] =
+{
+    "rocketnet_abi_version",
+    "rocketnet_init",
+    "rocketnet_term",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_get_log_level",
+    "rocketnet_log_level_string",
+    "rocketnet_log_function",
+    "rocketnet_api_misuse_count",
+    "rocketnet_malloc",
+    "rocketnet_free",
+    "rocketnet_clear_and_free",
+    "rocketnet_random_float",
+    "rocketnet_random_uint8",
+    "rocketnet_random_uint16",
+    "rocketnet_random_uint32",
+    "rocketnet_random_uint64",
+    "rocketnet_protocol_version",
+    "rocketnet_time",
+    "rocketnet_sleep",
+    "rocketnet_client_transport_state_name",
+    "rocketnet_server_transport_required_memory",
+    "rocketnet_forbid_xdp_commit",
+    "rocketnet_frame_sync_create",
+    "rocketnet_message_validate_config",
+    "rocketnet_message_connection_bytes",
+    "rocketnet_message_connection_sizing",
+    "rocketnet_message_print_connection_sizing",
+    "rocketnet_num_counters",
+    "rocketnet_counter_name",
+};
+
+static_assert( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) == ROCKETNET_NUM_EXPORTED_FUNCTIONS, "rocketnet_test_exports drifted from sdk/rocketnet.h" );
+
+static bool rocketnet_test_name_in( const char * name, const char * const * list, int count )
+{
+    for ( int i = 0; i < count; i++ )
+        if ( strcmp( name, list[i] ) == 0 )
+            return true;
+    return false;
+}
+
 void rocketnet_test_public_api_null_is_a_counted_no_op()
 {
     void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
@@ -7672,18 +7904,25 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_message_print_connection_sizing( NULL, 1 );
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
-    // entry points with no pointer argument take no NULL; named here so the
-    // export list stays audited against this suite: rocketnet_abi_version,
-    // rocketnet_api_misuse_count, rocketnet_forbid_xdp_commit,
-    // rocketnet_get_log_level, rocketnet_log_level, rocketnet_log_level_string,
-    // rocketnet_num_counters, rocketnet_protocol_version, rocketnet_quiet,
-    // rocketnet_random_float, rocketnet_random_uint8, rocketnet_random_uint16,
-    // rocketnet_random_uint32, rocketnet_random_uint64, rocketnet_sleep,
-    // rocketnet_term, rocketnet_time, rocketnet_client_transport_state_name,
-    // rocketnet_counter_name. rocketnet_init, rocketnet_malloc,
-    // rocketnet_log_function, rocketnet_assert_function and
-    // rocketnet_frame_sync_create take an opaque context or callback pointer
-    // that NULL is a valid value for, so they are not NULL-guarded either.
+    // the export audit: every ROCKETNET_EXPORT_FUNC entry point is either
+    // exercised in this suite with a NULL case or exempt (no NULL-able pointer, or NULL
+    // is a valid value), each exactly once, and nothing else is claimed. the
+    // static lists mirror sdk/rocketnet.h and the static_assert above pins their
+    // count, so a new export without a case fails here.
+    const int num_exports = (int)( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) );
+    const int num_null_case = (int)( sizeof(rocketnet_test_null_case_exports) / sizeof(rocketnet_test_null_case_exports[0]) );
+    const int num_null_exempt = (int)( sizeof(rocketnet_test_null_exempt_exports) / sizeof(rocketnet_test_null_exempt_exports[0]) );
+    for ( int i = 0; i < num_exports; i++ )
+    {
+        const bool in_case = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_null_case_exports, num_null_case );
+        const bool in_exempt = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_null_exempt_exports, num_null_exempt );
+        rocketnet_check( in_case != in_exempt );
+    }
+    for ( int i = 0; i < num_null_case; i++ )
+        rocketnet_check( rocketnet_test_name_in( rocketnet_test_null_case_exports[i], rocketnet_test_exports, num_exports ) );
+    for ( int i = 0; i < num_null_exempt; i++ )
+        rocketnet_check( rocketnet_test_name_in( rocketnet_test_null_exempt_exports[i], rocketnet_test_exports, num_exports ) );
+
     rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
     rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
 
