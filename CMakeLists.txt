@@ -163,6 +163,38 @@ set_target_properties(rocketnet_shared_dev PROPERTIES
     OUTPUT_NAME rocketnet_dev
     VERSION ${PROJECT_VERSION} SOVERSION ${ROCKETNET_ABI_SOVERSION}
     C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+
+# The effective archive/import library name a target writes: ARCHIVE_OUTPUT_NAME,
+# else OUTPUT_NAME, else the target name.
+function(rocketnet_effective_archive_name target outvar)
+    get_target_property(archive_name ${target} ARCHIVE_OUTPUT_NAME)
+    get_target_property(output_name ${target} OUTPUT_NAME)
+    if(archive_name AND NOT archive_name STREQUAL "archive_name-NOTFOUND")
+        set(${outvar} "${archive_name}" PARENT_SCOPE)
+    elseif(output_name AND NOT output_name STREQUAL "output_name-NOTFOUND")
+        set(${outvar} "${output_name}" PARENT_SCOPE)
+    else()
+        set(${outvar} "${target}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# A static library and a shared library's import library must not share an
+# archive/import name, or whichever writes last wins on Windows and every
+# target that links the static library pulls the DLL's import stubs instead.
+set(rocketnet_static_targets rocketnet rocketnet_dev)
+set(rocketnet_shared_targets rocketnet_shared rocketnet_shared_dev)
+foreach(static_target IN LISTS rocketnet_static_targets)
+    foreach(shared_target IN LISTS rocketnet_shared_targets)
+        rocketnet_effective_archive_name(${static_target} static_archive_name)
+        rocketnet_effective_archive_name(${shared_target} shared_archive_name)
+        if(static_archive_name STREQUAL shared_archive_name)
+            message(FATAL_ERROR
+                "static library ${static_target} archive \"${static_archive_name}\" and "
+                "shared library ${shared_target} import archive \"${shared_archive_name}\" collide")
+        endif()
+    endforeach()
+endforeach()
+
 target_compile_definitions(rocketnet_shared PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
 target_compile_definitions(rocketnet_shared_dev PUBLIC ROCKETNET_SHARED PRIVATE ROCKETNET_EXPORT)
 foreach(target rocketnet rocketnet_dev rocketnet_shared rocketnet_shared_dev)
