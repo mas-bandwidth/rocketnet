@@ -601,12 +601,12 @@ void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_si
 
 // --------------------------------------------------------------------------
 
-static void rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
-                                        const struct rocketnet_address_t * from,
-                                        const struct rocketnet_address_t * to,
-                                        const uint8_t * packet_data,
-                                        int packet_bytes,
-                                        double delivery_time )
+static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
+                                       const struct rocketnet_address_t * from,
+                                       const struct rocketnet_address_t * to,
+                                       const uint8_t * packet_data,
+                                       int packet_bytes,
+                                       double delivery_time )
 {
     // the lowest free slot. every slot below free_hint is occupied, which is
     // the invariant the audit checks, so starting there finds the same slot
@@ -624,10 +624,11 @@ static void rocketnet_simulator_insert( struct rocketnet_network_simulator_t * s
         memcpy( simulator->packet_data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packet_data, (size_t) packet_bytes );
         rocketnet_simulator_link( simulator, i );
         simulator->free_hint = i + 1;
-        return;
+        return 1;
     }
     simulator->free_hint = simulator->capacity;
     rocketnet_spam( "network simulator queue full. packet dropped" );
+    return 0;
 }
 
 void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * simulator,
@@ -676,8 +677,8 @@ int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simula
     {
         if ( packet_data[i] == NULL || packet_bytes[i] <= 0 || packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
             continue;
-        rocketnet_simulator_insert( simulator, from, to, packet_data[i], packet_bytes[i], delivery_time );
-        accepted++;
+        if ( rocketnet_simulator_insert( simulator, from, to, packet_data[i], packet_bytes[i], delivery_time ) )
+            accepted++;
     }
     return accepted;
 }
