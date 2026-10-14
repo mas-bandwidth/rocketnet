@@ -7545,9 +7545,13 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_message_default_config( NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
+    // required_memory documents NULL config as defaults, so NULL is a valid
+    // value here, not a misuse; the same call must not raise the count.
     before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_server_transport_required_memory( NULL, "portable" ) == 0 );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_check( rocketnet_server_transport_required_memory( NULL, "portable" ) > 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+    rocketnet_check( rocketnet_server_transport_required_memory( NULL, NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_counter_value( NULL, 0 ) == 0 );
@@ -7598,6 +7602,67 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     before = rocketnet_api_misuse_count();
     rocketnet_spam( NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // the remaining pointer-taking entry points
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_random_bytes( NULL, 4 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_copy_string( NULL, "x", 4 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    {
+        char dest[4];
+        rocketnet_check( rocketnet_copy_string( dest, NULL, 4 ) == 0 );
+    }
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_create( NULL, NULL, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_create( NULL, NULL, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // rocketnet_allocator refuses a NULL callback in a partial or full set
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_allocator( NULL, NULL ) == false );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // rocketnet_free and rocketnet_clear_and_free already treat NULL p as a
+    // no-op; it is not a misuse, so the count must not move.
+    before = rocketnet_api_misuse_count();
+    rocketnet_free( NULL, NULL );
+    rocketnet_clear_and_free( NULL, NULL, 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // message sizing and validation document NULL config as defaults, not a
+    // misuse; each must not raise the count and must not dereference NULL.
+    before = rocketnet_api_misuse_count();
+    rocketnet_message_validate_config( NULL );
+    rocketnet_message_connection_bytes( NULL );
+    rocketnet_message_connection_sizing( NULL, 1, NULL, 0 );
+    rocketnet_message_print_connection_sizing( NULL, 1 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // entry points with no pointer argument take no NULL; named here so the
+    // export list stays audited against this suite: rocketnet_abi_version,
+    // rocketnet_api_misuse_count, rocketnet_forbid_xdp_commit,
+    // rocketnet_get_log_level, rocketnet_log_level, rocketnet_log_level_string,
+    // rocketnet_num_counters, rocketnet_protocol_version, rocketnet_quiet,
+    // rocketnet_random_float, rocketnet_random_uint8, rocketnet_random_uint16,
+    // rocketnet_random_uint32, rocketnet_random_uint64, rocketnet_sleep,
+    // rocketnet_term, rocketnet_time, rocketnet_client_transport_state_name,
+    // rocketnet_counter_name. rocketnet_init, rocketnet_malloc,
+    // rocketnet_log_function, rocketnet_assert_function and
+    // rocketnet_frame_sync_create take an opaque context or callback pointer
+    // that NULL is a valid value for, so they are not NULL-guarded either.
+    rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
+    rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
 
     // frame sync
 

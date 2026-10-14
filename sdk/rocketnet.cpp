@@ -493,6 +493,8 @@ uint64_t rocketnet_random_uint64()
 
 void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 {
+    if ( !rocketnet_api_null_guard( data ) )
+        return;
     randombytes_buf( data, bytes );
 }
 
@@ -500,7 +502,11 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
-    if ( !dest || !source || dest_size == 0 )
+    if ( !rocketnet_api_null_guard( dest ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( source ) )
+        return 0;
+    if ( dest_size == 0 )
         return 0;
     memset( dest, 0, dest_size );
     size_t i = 0;

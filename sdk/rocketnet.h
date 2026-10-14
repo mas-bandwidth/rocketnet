@@ -376,6 +376,7 @@ ROCKETNET_EXPORT_FUNC uint32_t rocketnet_random_uint32();
 
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_random_uint64();
 
+// a NULL data is a counted no-op that writes nothing.
 ROCKETNET_EXPORT_FUNC void rocketnet_random_bytes( uint8_t * data, size_t bytes );
 
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_protocol_version();
@@ -423,6 +424,7 @@ inline void rocketnet_endian_fix( uint64_t * value )
 
 // -----------------------------------------
 
+// a NULL dest or source is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size );
 
 // -----------------------------------------
@@ -580,6 +582,8 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // clock to every call that takes one. The library never reads a clock of
 // its own on these paths, so a game owns time and a test can hold it still.
 
+// a NULL connect_token is a counted no-op that returns NULL; a NULL config is
+// the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
@@ -783,6 +787,8 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketn
 // Query each candidate separately: "auto" and driver lists are not concrete plans.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
 
+// a NULL public_address_string is a counted no-op that returns NULL; a NULL
+// config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first

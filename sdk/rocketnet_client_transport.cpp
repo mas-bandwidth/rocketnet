@@ -154,6 +154,9 @@ static void rocketnet_client_thread_function( void * data );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
+    if ( !rocketnet_api_null_guard( connect_token ) )
+        return NULL;
+
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )

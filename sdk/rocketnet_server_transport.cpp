@@ -416,10 +416,6 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
 
 uint64_t rocketnet_server_transport_required_memory(const rocketnet_server_transport_config_t * config, const char * driver)
 {
-    if ( !rocketnet_api_null_guard( config ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( driver ) )
-        return 0;
     rocketnet_server_memory_plan_t plan;
     return rocketnet_server_transport_memory_plan(config, driver, plan) ? plan.total_bytes : 0;
 }
@@ -429,6 +425,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                          double time )
 {
+    if ( !rocketnet_api_null_guard( public_address_string ) )
+        return NULL;
+
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )
