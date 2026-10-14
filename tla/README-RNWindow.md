@@ -160,6 +160,31 @@ value exhausts TLC's tableau.
 
 ## How to run it
 
+The model's operation sequences are also driven in C++ by
+`test_unit_window_sequences.cpp` (a unit-file test in `./bin/test`, registered
+with `REGISTER_UNIT_TEST`). An independent reference of count, `U'`, ring
+occupancy, descriptor ownership and delivery is compared with the sender and
+receiver window operations after every action. Those operations are
+`rn_window_send_*` and `rn_window_receive_*`. A tree that has
+`sdk/rocketnet_window_send.h` drives that code. This base does not have those
+files yet, so the test compiles the landed admit, `U'` and receive rules and
+drives them. The count bound and the ring floor both read `U'`, not `U`.
+Putting `U` in either place is the pre-fix sender: the partial-block count
+probe and the floor-at-`U` probe go red.
+
+Every sequence of write, block, ack, release and retransmit of length six at
+`W = 8` is walked (the operations take any power-of-two width; the message
+config's minimum is 64, so the exhaustive region is synthetic). A seeded
+million-step walk runs at the real constants (`W = 1024`, `B = 65536`) against
+the real descriptor pool. Directed probes cover `W - 1`, `W`, `W + 1`, the ring
+boundary, a partial-block ack floor, descriptor release only after the update
+has released a held record, and the 24-bit wrap. After every action the test
+asserts `n < U' + W`, that live ring spans are disjoint and inside `B`, that an
+ack does not free a held record, and that each reliable number is delivered
+once. A failed check prints a replayable seed and the action list. No open
+window-sequence defect card is known on this base, so the test carries no
+expected-fail marker.
+
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
 
 ```sh
