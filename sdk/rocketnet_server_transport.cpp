@@ -233,9 +233,30 @@ static void rocketnet_server_driver_abort_packet( rocketnet_server_transport_t *
 {
     transport->io.operations->abort_packet( transport->io.instance, id, frame );
 }
-static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t * transport )
+// How many leading frames the last flush or send_batch published. -1 means
+// that publish completed. A driver that does not report a short publish
+// leaves the value here, so the transport treats the publish as complete.
+// A non-negative value is a short count: the tail stays pending and
+// send_flushed does not catch up.
+#define ROCKETNET_SERVER_PUBLISH_HOOK 1
+static volatile int rocketnet_server_publish_accepted = -1;
+
+static int rocketnet_server_take_publish( int offered )
 {
+    const int accepted = rocketnet_server_publish_accepted;
+    rocketnet_server_publish_accepted = -1;
+    if ( accepted < 0 || accepted > offered )
+        return offered;
+    return accepted;
+}
+
+static bool rocketnet_server_driver_send_packets( rocketnet_server_transport_t * transport )
+{
+    rocketnet_server_publish_accepted = -1;
     transport->io.operations->flush( transport->io.instance );
+    const int accepted = rocketnet_server_publish_accepted;
+    rocketnet_server_publish_accepted = -1;
+    return accepted < 0;
 }
 
 // Control frames borrow this buffer only during synchronous send_batch.
@@ -246,20 +267,52 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
     rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
     rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
+    int slot[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
-    for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
+    struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
+    for ( int i = 0; i < send_buffer->num_packets; i++ )
     {
-        if ( server_transport->send_buffer.packet_bytes[i] > 0 )
+        if ( send_buffer->packet_bytes[i] > 0 )
         {
-            sends[num_sends].to = &server_transport->send_buffer.to[i];
-            sends[num_sends].packet_data = server_transport->send_buffer.data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
-            sends[num_sends].packet_bytes = server_transport->send_buffer.packet_bytes[i];
+            sends[num_sends].to = &send_buffer->to[i];
+            sends[num_sends].packet_data = send_buffer->data + i * ROCKETNET_FRAME_SIZE + ROCKETNET_FRAME_WIRE_OFFSET;
+            sends[num_sends].packet_bytes = send_buffer->packet_bytes[i];
+            slot[num_sends] = i;
             num_sends++;
         }
     }
-    if ( num_sends > 0 )
-        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
-    server_transport->send_buffer.num_packets = 0;
+    if ( num_sends == 0 )
+    {
+        send_buffer->num_packets = 0;
+        return;
+    }
+
+    // Commit already counted these frames. A short publish keeps the tail
+    // in the buffer so the next send tries it once, not a second count.
+    rocketnet_server_publish_accepted = -1;
+    server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+    const int accepted = rocketnet_server_take_publish( num_sends );
+    if ( accepted >= num_sends )
+    {
+        send_buffer->num_packets = 0;
+        return;
+    }
+
+    int dst = 0;
+    for ( int j = accepted; j < num_sends; j++ )
+    {
+        const int src = slot[j];
+        if ( dst != src )
+        {
+            send_buffer->to[dst] = send_buffer->to[src];
+            send_buffer->packet_bytes[dst] = send_buffer->packet_bytes[src];
+            memmove( send_buffer->data + dst * ROCKETNET_FRAME_SIZE,
+                     send_buffer->data + src * ROCKETNET_FRAME_SIZE,
+                     ROCKETNET_FRAME_SIZE );
+        }
+        dst++;
+    }
+    send_buffer->num_packets = dst;
 }
 
 // The send frame seam every driver serves: reserve hands back a frame to
@@ -322,6 +375,10 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
+        // Every commit through this seam advances the staged counter, the
+        // disconnect burst included. The stats bucket above already counted
+        // the frame; the publish path must not count it again.
+        server_transport->send_staged++;
         return;
     }
 
@@ -1261,8 +1318,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         if ( rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_FLUSH_ON_UPDATE ) )
         {
-            server_transport->send_flushed = server_transport->send_staged;
-            rocketnet_server_driver_send_packets( server_transport );
+            // A failed or partial publish leaves send_flushed behind so the
+            // next send_packets tries the tail. A completed one catches up.
+            if ( rocketnet_server_driver_send_packets( server_transport ) )
+                server_transport->send_flushed = server_transport->send_staged;
         }
 
         return;
@@ -1758,17 +1817,25 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         server_transport->stats_pending_packets_sent = 0;
         server_transport->stats_pending_bytes_sent = 0;
 
-        // Publish only work staged since the previous driver flush.
+        // Publish only work staged since the previous completed flush.
+        // The fold above already counted payload frames. Do not count them
+        // again here, and do not catch the counters up when the publish
+        // was short or failed.
 
         if ( server_transport->send_staged != server_transport->send_flushed )
         {
-            server_transport->send_flushed = server_transport->send_staged;
-            rocketnet_server_driver_send_packets( server_transport );
+            if ( rocketnet_server_driver_send_packets( server_transport ) )
+                server_transport->send_flushed = server_transport->send_staged;
         }
 
         rocketnet_send_arena_reset( server_transport->send_arena );
         return;
     }
+
+    // Control frames committed after update sit in the send buffer. They
+    // leave on this call, ahead of the payload ring, and each send_batch
+    // applies its own short-publish count.
+    rocketnet_server_flush_control_buffer( server_transport );
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
@@ -1777,29 +1844,62 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
         num_packets = ROCKETNET_SERVER_PAYLOAD_RING_SIZE;
 
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
+    int send_slot[ROCKETNET_SERVER_PAYLOAD_RING_SIZE];
     int num_sends = 0;
 
     for ( uint64_t i = 0; i < num_packets; i++ )
     {
         if ( ring->info[i].wire_bytes > 0 )
         {
-            // the payload accumulation rides the flush walk: the ring already
-            // holds every committed packet's wire size, so this costs nothing
-
-            server_transport->stats_frames[stats_index].packets_sent++;
-            server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
-
             sends[num_sends].to = &ring->info[i].to;
             sends[num_sends].packet_data = ring->data + i * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
             sends[num_sends].packet_bytes = ring->info[i].wire_bytes;
+            send_slot[num_sends] = (int) i;
             num_sends++;
         }
     }
 
-    if ( num_sends > 0 )
-        server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+    if ( num_sends == 0 )
+    {
+        ring->num_packets = 0;
+        rocketnet_send_arena_reset( server_transport->send_arena );
+        return;
+    }
 
-    ring->num_packets = 0;
+    rocketnet_server_publish_accepted = -1;
+    server_transport->io.operations->send_batch( server_transport->io.instance, sends, num_sends );
+    const int accepted = rocketnet_server_take_publish( num_sends );
+
+    // Count a payload frame only when this publish accepts it, so a retry
+    // of the tail counts that frame once.
+    for ( int j = 0; j < accepted; j++ )
+    {
+        const int src = send_slot[j];
+        server_transport->stats_frames[stats_index].packets_sent++;
+        server_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[src].wire_bytes + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    }
+
+    if ( accepted >= num_sends )
+    {
+        ring->num_packets = 0;
+    }
+    else
+    {
+        int dst = 0;
+        for ( int j = accepted; j < num_sends; j++ )
+        {
+            const int src = send_slot[j];
+            if ( dst != src )
+            {
+                ring->info[dst] = ring->info[src];
+                memmove( ring->data + (uint64_t) dst * ROCKETNET_FRAME_STRIDE,
+                         ring->data + (uint64_t) src * ROCKETNET_FRAME_STRIDE,
+                         ROCKETNET_FRAME_STRIDE );
+            }
+            dst++;
+        }
+        ring->num_packets = (uint64_t) dst;
+    }
 
     rocketnet_send_arena_reset( server_transport->send_arena );
 }
@@ -1844,6 +1944,12 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_server_protocol_disconnect_client( &server_transport->protocol, client_index, burst, &burst_count, &burst_bytes );
+
+    // tla/RNDriverSendStaging.tla, DisconnectAdvancesStaged and
+    // StagedDisconnectFlushed: each frame of this burst is committed
+    // through the seam, and that commit advances send_staged, so the next
+    // send_packets flushes the burst once. commit_send_frame already
+    // counted the frame; this loop does not count it again.
 
     for ( int i = 0; i < burst_count; i++ )
     {
