@@ -253,8 +253,8 @@ static class Smoke
         RocketNet.ServerTransportAbortPacket( server, ref abortDown );
         if ( !RocketNet.ClientTransportPacketPayloadSpan( client, in abortUpCopy ).IsEmpty ||
              !RocketNet.ServerTransportPacketPayloadSpan( server, in abortDownCopy ).IsEmpty ||
-             RocketNet.ClientTransportFinishPacket( client, ref abortUpCopy, 1 ) != RocketNet.SendResult.Ok ||
-             RocketNet.ServerTransportFinishPacket( server, ref abortDownCopy, 1 ) != RocketNet.SendResult.Ok )
+             RocketNet.ClientTransportFinishPacket( client, ref abortUpCopy, 1 ) == RocketNet.SendResult.Ok ||
+             RocketNet.ServerTransportFinishPacket( server, ref abortDownCopy, 1 ) == RocketNet.SendResult.Ok )
             Fail( "explicit abort left a live lease" );
         Ok( "client and server abort consume their leases" );
 
@@ -273,13 +273,13 @@ static class Smoke
         if (!RocketNet.ClientTransportPacketPayloadSpan(client, in tampered).IsEmpty ||
             !RocketNet.ServerTransportPacketPayloadSpan(server, in context).IsEmpty)
             Fail("invalid packet owner or metadata exposed a payload span");
-        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) != RocketNet.SendResult.Ok)
+        if (RocketNet.ClientTransportFinishPacket(client, ref tampered, 1) == RocketNet.SendResult.Ok)
             Fail("tampered packet context was accepted");
         FillPattern( payload.Slice( 0, 256 ), 1 );
         if ( RocketNet.ClientTransportFinishPacket( client, ref context, 256 ) != RocketNet.SendResult.Ok )
             Fail( "client finish packet" );
         if (!RocketNet.ClientTransportPacketPayloadSpan(client, in original).IsEmpty ||
-            RocketNet.ClientTransportFinishPacket(client, ref original, 1) != RocketNet.SendResult.Ok)
+            RocketNet.ClientTransportFinishPacket(client, ref original, 1) == RocketNet.SendResult.Ok)
             Fail("a copied consumed context remained live");
         RocketNet.ClientTransportSendPackets( client );
 
@@ -293,7 +293,7 @@ static class Smoke
         RocketNet.PacketContext oversize = default;
         if ( RocketNet.ClientTransportStartPacket( client, RocketNet.MaxPayloadBytes, ref oversize ) == IntPtr.Zero )
             Fail( "client start packet (oversize)" );
-        if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) != RocketNet.SendResult.Ok )
+        if ( RocketNet.ClientTransportFinishPacket( client, ref oversize, oversize.PayloadCapacity + 1 ) == RocketNet.SendResult.Ok )
             Fail( "oversize finish was not dropped" );
         Ok( "oversize finish_packet dropped (returned invalid payload)" );
 
