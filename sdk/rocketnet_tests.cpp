@@ -3666,6 +3666,29 @@ void rocketnet_test_replay_protection()
     rocketnet_check( !rocketnet_replay_already_received( &b, 7 ) );
 }
 
+void rocketnet_test_replay_long_skip_clears_whole_window()
+{
+    struct rocketnet_replay_protection_t replay;
+    memset( &replay, 0, sizeof(replay) );
+
+    const uint64_t window_bits = ROCKETNET_REPLAY_WINDOW_BITS;
+    for ( uint64_t sequence = 1; sequence <= window_bits; sequence++ )
+        rocketnet_replay_advance( &replay, sequence );
+
+    rocketnet_replay_advance( &replay, 3 * window_bits );
+    for ( uint64_t sequence = 2 * window_bits + 1; sequence < 3 * window_bits; sequence++ )
+        rocketnet_check( !rocketnet_replay_already_received( &replay, sequence ) );
+
+    uint8_t encoded[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+    struct rocketnet_ack_block_t decoded;
+    int bytes = rocketnet_ack_block_build( encoded, sizeof(encoded), &replay );
+    rocketnet_check( bytes == ROCKETNET_ACK_BLOCK_MIN_BYTES );
+    rocketnet_check( rocketnet_ack_block_read( &decoded, encoded, bytes, 3 * window_bits ) == bytes );
+    rocketnet_check( decoded.largest == 3 * window_bits );
+    rocketnet_check( decoded.first_range_length == 1 );
+    rocketnet_check( decoded.num_ranges == 0 );
+}
+
 void rocketnet_test_client_slots()
 {
     struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 4 );
@@ -11838,6 +11861,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_admission_hook_drops_before_verify", rocketnet_test_admission_hook_drops_before_verify },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
+    { "test_replay_long_skip_clears_whole_window", rocketnet_test_replay_long_skip_clears_whole_window },
     { "test_slotless_session_packet_leaves_window", rocketnet_test_slotless_session_packet_leaves_window },
     { "test_client_slots", rocketnet_test_client_slots },
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
