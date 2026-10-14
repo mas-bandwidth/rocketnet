@@ -16,7 +16,7 @@ concurrency:
 jobs:
   stale:
     name: Model records are current
-    runs-on: [self-hosted, Linux, X64, rocketnet]
+    runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
