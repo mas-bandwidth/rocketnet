@@ -229,6 +229,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
+    rocketnet_crypto_tally.aead_seal++;
     unsigned long long sealed_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, data, (unsigned long long) data_bytes,
                                                     associated_data, (unsigned long long) associated_data_bytes,
