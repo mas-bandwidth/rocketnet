@@ -187,6 +187,23 @@ def apply_config_overrides(base_config_path: Path, overrides: Dict[str, str], sp
     return Path(tmp.name)
 
 
+def extract_state_counts(output: str) -> Tuple[int, int]:
+    """
+    Pull (distinct, total) state counts out of TLC output.
+
+    TLC prints a running line with thousands separators
+    ("18,543 states generated, 2,146 distinct states found") before the final
+    summary. Strip the separators first so the first match is the whole number,
+    not the trailing group after a comma.
+    """
+    text = output.replace(',', '')
+    distinct_match = re.search(r'(\d+)\s+distinct states? found', text)
+    total_match = re.search(r'(\d+)\s+states? generated', text)
+    distinct_states = int(distinct_match.group(1)) if distinct_match else 0
+    total_states = int(total_match.group(1)) if total_match else 0
+    return distinct_states, total_states
+
+
 def run_tlc(module: str, config_path: Path, tla_dir: Path, tla2tools_jar: Path) -> RunResult:
     """Run TLC and return the result."""
     try:
@@ -208,11 +225,7 @@ def run_tlc(module: str, config_path: Path, tla_dir: Path, tla2tools_jar: Path) 
         output = result.stdout + result.stderr
         
         # Parse output for state counts
-        distinct_match = re.search(r'(\d+)\s+distinct states? found', output)
-        total_match = re.search(r'(\d+)\s+states? generated', output)
-        
-        distinct_states = int(distinct_match.group(1)) if distinct_match else 0
-        total_states = int(total_match.group(1)) if total_match else 0
+        distinct_states, total_states = extract_state_counts(output)
         
         # Check for invariant violation
         violated_invariant = None
@@ -307,62 +320,76 @@ def compare_result(row: RunRow, tlc_result: RunResult) -> Tuple[bool, str]:
     return False, f'unexpected result type: {row.result}'
 
 
-def main():
-    repo_root = Path(__file__).parent.parent
-    tla_dir = repo_root / 'tla'
-    runs_tsv = tla_dir / 'RUNS.tsv'
-    tla2tools_jar = Path(os.environ.get('TLA2TOOLS_JAR', '/opt/tla/tla2tools.jar'))
-    
+def run_check(tla_dir, runs_tsv, tla2tools_jar, runner=run_tlc,
+              max_distinct=MAX_DISTINCT) -> int:
+    """
+    Run the check against one tla/ tree and return the process exit code.
+
+    ``runner`` is injected so the unit test drives the whole check with a fake
+    TLC (no Java). It has the signature ``runner(module, config_path, tla_dir,
+    tla2tools_jar)`` and returns a RunResult.
+    """
+    tla_dir = Path(tla_dir)
+    runs_tsv = Path(runs_tsv)
+
     if not runs_tsv.exists():
         print(f"ERROR: {runs_tsv} not found", file=sys.stderr)
         return 1
-    
-    if not tla2tools_jar.exists():
+
+    if tla2tools_jar is None or not Path(tla2tools_jar).exists():
         print(f"ERROR: TLA2TOOLS_JAR not found at {tla2tools_jar}", file=sys.stderr)
         print("Set TLA2TOOLS_JAR environment variable", file=sys.stderr)
         return 1
-    
+
     rows = parse_runs_tsv(str(runs_tsv))
-    
-    # Check for configs in tla/ with no row
-    config_files = list(tla_dir.glob('*.cfg'))
-    referenced_configs = set()
+
+    parsed = []
     for row in rows:
-        base_file, _, _, _, _ = parse_config_description(row.config_desc)
-        referenced_configs.add(base_file)
-    
-    for cfg in config_files:
-        if cfg.name not in referenced_configs:
-            print(f"ERROR: Config file {cfg.name} has no row in RUNS.tsv", file=sys.stderr)
+        try:
+            base_file, overrides, specification, properties, checks = parse_config_description(row.config_desc)
+        except ValueError as exc:
+            print(f"ERROR: cannot parse config description for {row.module}: {exc}", file=sys.stderr)
             return 1
-    
-    # Check for rows with no config file
-    for row in rows:
-        base_file, _, _, _, _ = parse_config_description(row.config_desc)
+        parsed.append((row, base_file, overrides, specification, properties))
+
+    # A row that names a config file which is not committed is a dangling
+    # record: the tree and the table disagree, so fail.
+    for row, base_file, _, _, _ in parsed:
         if not (tla_dir / base_file).exists():
             print(f"ERROR: Row references config {base_file} which does not exist", file=sys.stderr)
             return 1
-    
+
+    referenced = {base_file for _, base_file, _, _, _ in parsed}
+
     skipped = []
+    # A committed config with no recorded row is an owed run: the models land
+    # in parallel and their rows are recorded as owed in tla/README-*.md before
+    # they are copied into RUNS.tsv. List every one, never silently, but do not
+    # fail while the rows are still owed.
+    for cfg in sorted(tla_dir.glob('*.cfg')):
+        if cfg.name not in referenced:
+            skipped.append((
+                cfg.name,
+                'no RUNS.tsv row (run not recorded yet; rows owed, see tla/README-*.md)'
+            ))
+
     failed = []
     passed_count = 0
-    
-    for row in rows:
-        if row.distinct > MAX_DISTINCT:
-            skipped.append((row, f'distinct states {row.distinct} > {MAX_DISTINCT}'))
+
+    for row, base_file, overrides, specification, properties in parsed:
+        if row.distinct > max_distinct:
+            skipped.append((f'{row.module} {row.config_desc}', f'distinct states {row.distinct} > {max_distinct}'))
             continue
         if 'not finished' in row.result.lower() or 'unfinished' in row.result.lower():
-            skipped.append((row, 'result is unfinished'))
+            skipped.append((f'{row.module} {row.config_desc}', f'result is {row.result!r}'))
             continue
-        
-        base_file, overrides, specification, properties, checks = parse_config_description(row.config_desc)
+
         base_config_path = tla_dir / base_file
-        
         tmp_config = None
         try:
             tmp_config = apply_config_overrides(base_config_path, overrides, specification, properties)
-            tlc_result = run_tlc(row.module, tmp_config, tla_dir, tla2tools_jar)
-            
+            tlc_result = runner(row.module, tmp_config, tla_dir, tla2tools_jar)
+
             ok, msg = compare_result(row, tlc_result)
             if ok:
                 passed_count += 1
@@ -373,17 +400,25 @@ def main():
         finally:
             if tmp_config and tmp_config.exists():
                 tmp_config.unlink()
-    
+
     # Print skipped
-    for row, reason in skipped:
-        print(f"SKIPPED: {row.module} {row.config_desc} - {reason}")
-    
+    for name, reason in skipped:
+        print(f"SKIPPED: {name} - {reason}")
+
     if failed:
         print(f"\n{len(failed)} check(s) failed, {passed_count} passed, {len(skipped)} skipped")
         return 1
-    
+
     print(f"\nAll {passed_count} checks passed, {len(skipped)} skipped")
     return 0
+
+
+def main():
+    repo_root = Path(__file__).parent.parent
+    tla_dir = repo_root / 'tla'
+    runs_tsv = tla_dir / 'RUNS.tsv'
+    tla2tools_jar = os.environ.get('TLA2TOOLS_JAR', '/opt/tla/tla2tools.jar')
+    return run_check(tla_dir, runs_tsv, tla2tools_jar)
 
 
 if __name__ == '__main__':

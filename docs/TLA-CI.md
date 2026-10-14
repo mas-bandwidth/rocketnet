@@ -26,11 +26,15 @@ The check:
 
 ## What Is Skipped and Why
 
-Rows are **SKIPPED** (listed with reason, never silently) when:
-- `distinct` > 2,000,000 — too large for CI runtime budget
-- `result` contains "not finished" or "unfinished" — the bench run did not complete
+The check prints a **SKIPPED** line, with its reason and never silently, for:
+- a row whose `distinct` > 2,000,000 — too large for CI runtime budget
+- a row whose `result` contains "not finished" or "unfinished" — the bench run did not complete
+- a committed `.cfg` file with no `RUNS.tsv` row — an owed run, see
+  "Config-Row Consistency" below
 
-These large or incomplete runs remain bench-only. Their results are recorded in `RUNS.tsv` for reference but are not re-verified in CI.
+The large or incomplete rows remain bench-only. Their results are recorded in
+`RUNS.tsv` for reference but are not re-verified in CI. An owed config is not a
+failure; it is listed so the missing row is visible.
 
 Example skipped rows (from current `RUNS.tsv`):
 - MCClientConnection with 772,894 distinct states (Timeout 3, Deadline 6...)
@@ -45,11 +49,16 @@ Example skipped rows (from current `RUNS.tsv`):
 
 ## Config-Row Consistency
 
-The check enforces a bidirectional correspondence:
-- Every `.cfg` file in `tla/` must have at least one row in `RUNS.tsv`
-- Every row in `RUNS.tsv` must reference an existing `.cfg` file
-
-If either condition is violated, the check fails.
+The check enforces the correspondence between the tree and the table:
+- Every row in `RUNS.tsv` must reference an existing `.cfg` file. A row that
+  names a config which is not committed is a dangling record, and the check
+  **fails**.
+- Every `.cfg` file in `tla/` that no row references is an **owed run** and is
+  shown in the SKIPPED list, never silently: its model landed in parallel and
+  its rows are recorded as owed in its `tla/README-*.md` before they are copied
+  into `RUNS.tsv`. The check **does not fail** on these, so a tree whose models
+  are ahead of its table still gets a green gate; the listed config is the
+  prompt to land the owed row.
 
 ## How a Bench Result Gets Into RUNS.tsv
 
