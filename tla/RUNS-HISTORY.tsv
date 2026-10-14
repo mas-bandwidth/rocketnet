@@ -1,0 +1,34 @@
+# Pre-tlacheck records, preserved verbatim; row-to-case mapping is in README-Link.md and README-ClientConnection.md.
+module	config	states	distinct	result	bench	date
+MCLink	MCLink.cfg (Pattern "arbitrary", Spec, ResentIsDelivered)	18543	2146	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "none", Spec, ResentIsDelivered	10424	1763	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "first", Spec, ResentIsDelivered	8966	1503	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", Spec, ResentIsDelivered	8782	1535	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "burst", Spec, ResentIsDelivered	8073	1354	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "none", SpecWireFair, LinkDelivers	10424	1763	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "first", SpecWireFair, LinkDelivers	8966	1503	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, LinkDelivers	8782	1535	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "burst", SpecWireFair, LinkDelivers	8073	1354	pass	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "arbitrary", SpecWireFair, LinkDelivers (reversed witness)	18543	2146	fail as expected: LinkDelivers violated, 44-state lasso, no delivery	vision	2026-10-06
+MCLink	MCLink.cfg with Pattern "alternate", SpecWireFair, ResentIsDelivered (reorder starvation)	8782	1535	fail as expected: ResentIsDelivered violated, 19-state lasso, see README-Link.md	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg; checks Connects, ServerNotStranded	46446	9748	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none"; checks Connects, ServerNotStranded	18794	4089	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none", C2SPattern "first", S2CPattern "first"; checks Connects, ServerNotStranded	18677	4057	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none", C2SPattern "alternate", S2CPattern "alternate"; checks Connects, ServerNotStranded	53528	11237	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none", C2SPattern "burst", S2CPattern "burst"; checks Connects, ServerNotStranded	18671	4055	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", SpecTyped; checks Connects, ServerNotStranded	159143	23032	not finished (stopped at the card's deadline): no violation in the states explored	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with RepeatKeepAlive FALSE; checks Connects	5174	1312	fail as expected: Temporal properties were violated	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate"; checks Connects	31454	7413	fail as expected: Temporal properties were violated	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with KeepAliveClock "anysend"; checks Connects	43974	9748	fail as expected: Temporal properties were violated	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, ServerMute TRUE, KindLoss "none"; checks SilentServerTimesOut, AttemptResolves	36	20	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none"; checks CrashedServerTimesOut, AttemptResolves	4794681	772894	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks safety only	186836418	28369060	not finished (stopped at the card's deadline): no violation in the states explored	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE; checks safety only	505516215	74297106	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE; checks safety only	122060197	18268052	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE; checks safety only	164999525	24756464	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE; checks safety only	508243401	75959281	not finished (stopped at the card's deadline): no violation in the states explored	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE; checks safety only	71592789	7054770	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks safety only	45006176	5051198	pass	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks EphemeralErasedOutsideHandshake	245	124	fail as expected (F4): Invariant EphemeralErasedOutsideHandshake is violated	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks TerminalAbsorbing	672	252	fail as expected (F8): Action property TerminalAbsorbing is violated	vision	2026-10-06
+MCClientConnection	MCClientConnection.cfg with Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE; checks KeysErasedWhenDown	90342	17569	fail as expected (observation): Invariant KeysErasedWhenDown is violated	vision	2026-10-06
