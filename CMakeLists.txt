@@ -108,6 +108,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
+    sdk/rocketnet_window_receive.cpp
     sdk/rocketnet_unreliable.cpp
     sdk/rocketnet_network_simulator.cpp
     sdk/rocketnet_platform.cpp
