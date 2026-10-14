@@ -352,6 +352,13 @@ enum
     // once per stall, even when the scheduler retries the same head.
     ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL,
 
+    // Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1):
+    // a sent-packet ring entry evicted to make room for a new packet (its
+    // referenced numbers stay in the resend FIFO), and a reliable record
+    // resent on the RTO. appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED,
+    ROCKETNET_COUNTER_MESSAGE_RESENT,
+
     ROCKETNET_NUM_COUNTERS
 };
 

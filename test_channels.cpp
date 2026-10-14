@@ -34,6 +34,7 @@
 #include "rocketnet_unreliable.h"
 #include "rocketnet_window_send.h"
 #include "rocketnet_window_receive.h"
+#include "rocketnet_window_ack.h"
 #include "rocketnet_network_simulator.h"
 
 #include <stdarg.h>
@@ -1010,7 +1011,7 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 449,024 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 457,216 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1020,10 +1021,10 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 449024 );
-    check( layout.region_bytes == 449024 );
-    check( rocketnet_message_connection_bytes( &config ) == 449024 );
-    check( rocketnet_message_connection_bytes( NULL ) == 449024 );
+    check( layout.formula_bytes == 457216 );
+    check( layout.region_bytes == 457216 );
+    check( rocketnet_message_connection_bytes( &config ) == 457216 );
+    check( rocketnet_message_connection_bytes( NULL ) == 457216 );
 
     const uint64_t C = 32, W = 1024, B = 65536, Q = 1024, S = 131072, P = 256, Du = 256, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
@@ -1038,6 +1039,7 @@ static void test_channels_allocator_layout()
     check( layout.bytes[RN_PART_DELIVERIES] == 24 * ( W + Du ) );
     check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == 1208 * Ru );
     check( layout.bytes[RN_PART_RECEIPTS] == 16 * Rq );
+    check( layout.bytes[RN_PART_RESEND_FIFO] == 8 * W );
 
     // every part 64-aligned, in order, disjoint, inside the region
 
@@ -1441,6 +1443,7 @@ static void test_channels_allocator_arena()
         check( rn_region_contains( region, region->deliveries, sizeof(rn_delivery_t) * (uint64_t) region->delivery_entries ) );
         check( rn_region_contains( region, region->sequenced_holds, sizeof(rn_sequenced_hold_t) * (uint64_t) region->holds ) );
         check( rn_region_contains( region, region->receipts, sizeof(rn_receipt_t) * (uint64_t) region->receipt_entries ) );
+        check( rn_region_contains( region, region->resend_fifo, sizeof(rn_resend_link_t) * (uint64_t) region->window ) );
         check( !rn_region_contains( region, region->base + region->bytes, 1 ) );
         check( !rn_region_contains( region, region->base - 1, 1 ) );
         check( region->held_entries == 2 * region->window );
@@ -1487,10 +1490,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "48C + 96.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 449024" ) != NULL );
-    check( strstr( text, "formula bytes 449024" ) != NULL );
-    check( strstr( text, "1000 connections 449024000" ) != NULL );
+    check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 457216" ) != NULL );
+    check( strstr( text, "formula bytes 457216" ) != NULL );
+    check( strstr( text, "1000 connections 457216000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1510,7 +1513,7 @@ static void test_channels_allocator_sizing()
     const int old_level = rocketnet_get_log_level();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
-    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 449024 );
+    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 457216 );
     rocketnet_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
@@ -3562,6 +3565,905 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator()
     test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 50.0f );
 }
 
+// ----------------------------------------------------------------
+//      Layer 3: the sent-packet map, resend FIFO, RTT, RTO (6.4)
+// ----------------------------------------------------------------
+
+static void test_channels_window_ack_of_an_unknown_id_is_ignored()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    const uint32_t d0 = rn_region_send_alloc( region, 64 );
+    check( d0 != RN_DESCRIPTOR_NONE );
+    uint64_t n0 = 0, p0 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, d0, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n0 == 0 );
+    rn_window_ack_commit_packet( &ack, 10, &n0, 1, 1.0 );
+
+    check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+    check( ack.resend_count == 1 );
+    check( ack.has_rtt == 0 );
+    check( ack.rto == 1.0 );
+    check( ack.backoff == 1 );
+    const uint32_t free_desc_before = region->descriptors_free;
+
+    // Unknown packet_id (keep-alive or pure-unreliable ack, or 0): ignored completely.
+    check( rn_window_ack_on_ack( &ack, 999, 1.05 ) == 0 );
+    check( rn_window_ack_on_ack( &ack, 0, 1.05 ) == 0 );
+    const uint64_t unknown_batch[3] = { 11, 42, 1000 };
+    check( rn_window_ack_on_acks( &ack, unknown_batch, 3, 1.05 ) == 0 );
+
+    check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+    check( ack.resend_count == 1 );
+    check( ack.has_rtt == 0 );
+    check( ack.rto == 1.0 );
+    check( ack.backoff == 1 );
+    check( send.U == 0 && send.U_prime == 0 );
+    check( region->descriptors_free == free_desc_before );
+
+    // Valid ack of packet 10 at t = 1.08 samples RTT = 0.08s and advances U.
+    check( rn_window_ack_on_ack( &ack, 10, 1.08 ) == 1 );
+    check( ack.has_rtt == 1 );
+    check( ack.srtt > 0.079999 && ack.srtt < 0.080001 );
+    check( send.U == 1 && send.U_prime == 1 );
+    check( rn_window_ack_entries_in_flight( &ack ) == 0 );
+
+    // A duplicate ack of packet 10 is now unknown and ignored without altering RTT.
+    const double srtt_after = ack.srtt;
+    const double rto_after = ack.rto;
+    check( rn_window_ack_on_ack( &ack, 10, 1.50 ) == 0 );
+    check( ack.srtt == srtt_after && ack.rto == rto_after );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_ack_frees_the_chunk_and_advances_u()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    const uint32_t small_total = rn_send_store_total_chunks( &region->store, RN_STORE_SMALL );
+    const uint32_t large_total = rn_send_store_total_chunks( &region->store, RN_STORE_LARGE );
+    const uint32_t desc_total = region->queue;
+
+    // d0: 64-byte single message (n = 0)
+    const uint32_t d0 = rn_region_send_alloc( region, 64 );
+    // d1: 2500-byte 3-fragment block (n = 1, 2, 3)
+    const uint32_t d1 = rn_region_send_alloc( region, 2500 );
+    // d2: 64-byte single message (n = 4)
+    const uint32_t d2 = rn_region_send_alloc( region, 64 );
+    check( d0 != RN_DESCRIPTOR_NONE && d1 != RN_DESCRIPTOR_NONE && d2 != RN_DESCRIPTOR_NONE );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_total - 2 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 3 );
+    check( region->descriptors_free == desc_total - 3 );
+
+    uint64_t n0 = 0, p0 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, d0, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    uint64_t n1 = 0, p1 = 0;
+    check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2500, d1, &n1, &p1 ) == 3 );
+    uint64_t n4 = 0, p4 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, d2, &n4, &p4 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n0 == 0 && n1 == 1 && n4 == 4 );
+
+    const uint64_t n2 = 2, n3 = 3;
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 1.0 );
+    rn_window_ack_commit_packet( &ack, 2, &n1, 1, 1.0 );
+    rn_window_ack_commit_packet( &ack, 3, &n2, 1, 1.0 );
+    rn_window_ack_commit_packet( &ack, 4, &n3, 1, 1.0 );
+    rn_window_ack_commit_packet( &ack, 5, &n4, 1, 1.0 );
+    check( ack.resend_count == 5 );
+
+    // Ack packet 3 (n = 2, middle fragment of block d1) out of order:
+    // frees its one large chunk immediately, unlinks n = 2 from resend FIFO, keeps d1 in use, U stays 0.
+    check( rn_window_ack_on_ack( &ack, 3, 1.05 ) == 1 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 2 );
+    check( region->send_descriptors[d1].in_use == 1 );
+    check( region->descriptors_free == desc_total - 3 );
+    check( ack.resend_count == 4 );
+    check( send.U == 0 && send.U_prime == 0 );
+
+    // Ack packet 1 (n = 0, single message d0):
+    // frees its small chunk and descriptor d0, advances U and U' to 1.
+    check( rn_window_ack_on_ack( &ack, 1, 1.06 ) == 1 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_total - 1 );
+    check( region->send_descriptors[d0].in_use == 0 );
+    check( region->descriptors_free == desc_total - 2 );
+    check( ack.resend_count == 3 );
+    check( send.U == 1 && send.U_prime == 1 );
+
+    // Ack packet 2 (n = 1, first fragment of block d1):
+    // frees its large chunk, advances U past 1 and 2 to 3, but U' stops at 1 because n = 3 is still unacked!
+    check( rn_window_ack_on_ack( &ack, 2, 1.07 ) == 1 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total - 1 );
+    check( region->send_descriptors[d1].in_use == 1 );
+    check( ack.resend_count == 2 );
+    check( send.U == 3 && send.U_prime == 1 );
+
+    // Ack packet 4 (n = 3, last fragment of block d1):
+    // frees its last large chunk and descriptor d1, advances U and U' to 4.
+    check( rn_window_ack_on_ack( &ack, 4, 1.08 ) == 1 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_total );
+    check( region->send_descriptors[d1].in_use == 0 );
+    check( region->descriptors_free == desc_total - 1 );
+    check( ack.resend_count == 1 );
+    check( send.U == 4 && send.U_prime == 4 );
+
+    // Ack packet 5 (n = 4, single message d2):
+    // everything returned to the store and Q, U = U' = 5.
+    check( rn_window_ack_on_ack( &ack, 5, 1.09 ) == 1 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_total );
+    check( region->descriptors_free == desc_total );
+    check( ack.resend_count == 0 && ack.resend_head == RN_RESEND_NONE && ack.resend_tail == RN_RESEND_NONE );
+    check( send.U == 5 && send.U_prime == 5 );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 200;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    // Leg 1: original send in packet 1 at t = 1.00, resent in packet 2 at t = 1.25.
+    // Late ack of packet 1 at t = 1.30 samples 1.30 - 1.00 = 0.30s.
+    {
+        rn_region_carve( region );
+        rn_window_send_t send;
+        rn_window_send_init( &send, region, 0 );
+        rn_window_ack_t ack;
+        rn_window_ack_init( &ack, &send, region, &config );
+
+        uint64_t n0 = 0, p0 = 0;
+        check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+        rn_window_ack_commit_packet( &ack, 1, &n0, 1, 1.00 );
+
+        uint64_t next_pkt = 2;
+        uint64_t resent[4];
+        check( rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 4 ) == 1 );
+        check( resent[0] == 0 && next_pkt == 3 );
+        check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+
+        check( rn_window_ack_on_ack( &ack, 1, 1.30 ) == 1 );
+        check( ack.has_rtt == 1 );
+        check( ack.srtt > 0.299999 && ack.srtt < 0.300001 );
+        check( ack.rttvar > 0.149999 && ack.rttvar < 0.150001 );
+        check( ack.rto > 0.899999 && ack.rto < 0.900001 );
+        check( send.U == 1 && ack.resend_count == 0 );
+
+        // Subsequent ack of packet 2 at t = 1.35 does not double-ack n0.
+        check( rn_window_ack_on_ack( &ack, 2, 1.35 ) == 1 );
+        check( send.U == 1 && ack.resend_count == 0 );
+    }
+
+    // Leg 2: original send in packet 10 at t = 2.00 (lost), resent in packet 11 at t = 2.25.
+    // Ack of packet 11 at t = 2.33 samples 2.33 - 2.25 = 0.08s.
+    {
+        rn_region_carve( region );
+        rn_window_send_t send;
+        rn_window_send_init( &send, region, 0 );
+        rn_window_ack_t ack;
+        rn_window_ack_init( &ack, &send, region, &config );
+
+        uint64_t n0 = 0, p0 = 0;
+        check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+        rn_window_ack_commit_packet( &ack, 10, &n0, 1, 2.00 );
+
+        uint64_t next_pkt = 11;
+        uint64_t resent[4];
+        check( rn_window_ack_resend( &ack, 2.25, &next_pkt, resent, 4 ) == 1 );
+        check( resent[0] == 0 && next_pkt == 12 );
+
+        check( rn_window_ack_on_ack( &ack, 11, 2.33 ) == 1 );
+        check( ack.has_rtt == 1 );
+        check( ack.srtt > 0.079999 && ack.srtt < 0.080001 );
+        check( ack.rttvar > 0.039999 && ack.rttvar < 0.040001 );
+        check( ack.rto > 0.239999 && ack.rto < 0.240001 );
+        check( send.U == 1 && ack.resend_count == 0 );
+    }
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_eviction_keeps_numbers_resendable()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.packets_in_flight = 16; // P = 16, 16P = 256
+    config.rto_initial_ms = 200;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    // Send 20 packets (packet_id 1..20, carrying n = 0..19) at t = 1.00.
+    // Packets 1..4 are evicted when packets 17..20 are committed.
+    for ( uint32_t i = 0; i < 20; i++ )
+    {
+        uint64_t n = 0, p = 0;
+        check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+        check( n == i );
+        rn_window_ack_commit_packet( &ack, (uint64_t) ( i + 1 ), &n, 1, 1.00 );
+    }
+
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 4 );
+    check( rn_window_ack_entries_in_flight( &ack ) == 16 );
+    check( ack.resend_count == 20 );
+
+    // Evicted packet_ids 1..4 are no longer in sent_index.
+    for ( uint64_t id = 1; id <= 4; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.05 ) == 0 );
+
+    // Yet all 20 numbers remain in the resend FIFO and resend on RTO at t = 1.25!
+    uint64_t next_pkt = 100;
+    uint64_t resent[32];
+    const uint32_t count = rn_window_ack_resend( &ack, 1.25, &next_pkt, resent, 32 );
+    check( count == 20 );
+    for ( uint32_t i = 0; i < 20; i++ )
+        check( resent[i] == i );
+
+    // Acking the last 16 resent packets (104..119) plus resending the first 4 (0..3)
+    // brings U all the way to 20.
+    for ( uint64_t id = 104; id < 120; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.30 ) == 1 );
+    check( send.U == 0 && ack.resend_count == 4 );
+
+    const uint32_t count2 = rn_window_ack_resend( &ack, 1.65, &next_pkt, resent, 32 );
+    check( count2 == 4 );
+    for ( uint64_t id = 120; id < 124; id++ )
+        check( rn_window_ack_on_ack( &ack, id, 1.70 ) == 1 );
+    check( send.U == 20 && send.U_prime == 20 && ack.resend_count == 0 );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_backoff_doubles_to_eight_and_resets_on_ack()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 250;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    uint64_t n0 = 0, p0 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 0.0 );
+    check( ack.rto == 0.25 && ack.backoff == 1 );
+
+    uint64_t next_pkt = 2;
+    uint64_t out[4];
+
+    // Pass 1: due at 0.0 + 0.25 * 1 = 0.25 -> backoff becomes 2
+    check( rn_window_ack_resend( &ack, 0.249, &next_pkt, out, 4 ) == 0 );
+    check( ack.backoff == 1 );
+    check( rn_window_ack_resend( &ack, 0.25, &next_pkt, out, 4 ) == 1 );
+    check( ack.backoff == 2 );
+
+    // Pass 2: due at 0.25 + 0.25 * 2 = 0.75 -> backoff becomes 4
+    check( rn_window_ack_resend( &ack, 0.749, &next_pkt, out, 4 ) == 0 );
+    check( ack.backoff == 2 );
+    check( rn_window_ack_resend( &ack, 0.75, &next_pkt, out, 4 ) == 1 );
+    check( ack.backoff == 4 );
+
+    // Pass 3: due at 0.75 + 0.25 * 4 = 1.75 -> backoff becomes 8
+    check( rn_window_ack_resend( &ack, 1.749, &next_pkt, out, 4 ) == 0 );
+    check( ack.backoff == 4 );
+    check( rn_window_ack_resend( &ack, 1.75, &next_pkt, out, 4 ) == 1 );
+    check( ack.backoff == 8 );
+
+    // Pass 4: due at 1.75 + 0.25 * 8 = 3.75 -> backoff stays capped at 8
+    check( rn_window_ack_resend( &ack, 3.749, &next_pkt, out, 4 ) == 0 );
+    check( ack.backoff == 8 );
+    check( rn_window_ack_resend( &ack, 3.75, &next_pkt, out, 4 ) == 1 );
+    check( ack.backoff == 8 );
+
+    // Valid ack resets backoff to 1.
+    check( rn_window_ack_on_ack( &ack, next_pkt - 1, 3.80 ) == 1 );
+    check( ack.backoff == 1 );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_resend_walk_stops_at_the_first_not_due()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 200;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    const double send_times[5] = { 1.00, 1.05, 1.20, 1.25, 1.30 };
+    for ( uint32_t i = 0; i < 5; i++ )
+    {
+        uint64_t n = 0, p = 0;
+        check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+        rn_window_ack_commit_packet( &ack, (uint64_t) ( i + 1 ), &n, 1, send_times[i] );
+    }
+    check( ack.resend_head == 0 && ack.resend_tail == 4 && ack.resend_count == 5 );
+
+    // At t = 1.26 (rto = 0.20, backoff = 1):
+    // n = 0 (due 1.20) and n = 1 (due 1.25) are due; n = 2 (due 1.40) is not due.
+    uint64_t next_pkt = 10;
+    uint64_t resent[8];
+    const uint32_t count = rn_window_ack_resend( &ack, 1.26, &next_pkt, resent, 8 );
+    check( count == 2 );
+    check( resent[0] == 0 && resent[1] == 1 );
+    check( ack.resend_head == 2 && ack.resend_tail == 1 && ack.resend_count == 5 );
+    check( region->send_numbers[0].last_send == 1.26 );
+    check( region->send_numbers[1].last_send == 1.26 );
+    check( region->send_numbers[2].last_send == 1.20 );
+
+    // Calling resend again at t = 1.26 sees head (n = 2) is not due and stops immediately.
+    check( rn_window_ack_resend( &ack, 1.26, &next_pkt, resent, 8 ) == 0 );
+    check( ack.resend_head == 2 );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_failed_send_marks_due_now()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 200;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    // n = 0 sent normally in packet 1 at t = 1.00 (due at 1.20).
+    uint64_t n0 = 0, p0 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 1.00 );
+
+    // n = 1 and n = 2 numbered for a packet at t = 1.02 whose finish_packet refuses.
+    uint64_t n1 = 0, p1 = 0, n2 = 0, p2 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, RN_DESCRIPTOR_NONE, &n1, &p1 ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 48, RN_DESCRIPTOR_NONE, &n2, &p2 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n1 == 1 && p1 == 16 && n2 == 2 && p2 == 48 );
+
+    const uint64_t failed[2] = { n1, n2 };
+    rn_window_ack_packet_failed( &ack, failed, 2, 1.02 );
+
+    // Not entered in the sent-packet map; n = 1, 2 keep their numbers and ring offsets,
+    // and sit at the head of the resend FIFO ahead of n = 0.
+    check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+    check( region->send_numbers[1].number == 1 && region->send_numbers[1].ring_start == 16 );
+    check( region->send_numbers[2].number == 2 && region->send_numbers[2].ring_start == 48 );
+    check( ack.resend_count == 3 );
+    check( ack.resend_head == 1 );
+    check( region->resend_fifo[1].next == 2 );
+    check( region->resend_fifo[2].next == 0 );
+    check( ack.resend_tail == 0 );
+
+    // At t = 1.02 (no RTO wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
+    uint64_t next_pkt = 2;
+    uint64_t out[4];
+    check( rn_window_ack_resend( &ack, 1.02, &next_pkt, out, 4 ) == 2 );
+    check( out[0] == 1 && out[1] == 2 );
+    check( ack.backoff == 1 );
+    check( ack.resend_head == 0 && ack.resend_tail == 2 );
+    check( rn_window_ack_entries_in_flight( &ack ) == 3 );
+
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_reliable_timeout_enters_the_error_state()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.rto_initial_ms = 250;
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, &config );
+
+    // First send of n = 0 at t = 5.00 (reliable_timeout = 10.0s -> expires at t = 15.00).
+    uint64_t n0 = 0, p0 = 0;
+    check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 5.00 );
+
+    // Resend across several RTO passes so last_send advances while first_send stays 5.00.
+    uint64_t next_pkt = 2;
+    uint64_t out[4];
+    check( rn_window_ack_resend( &ack, 5.25, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 5.75, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 6.75, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 8.75, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 10.75, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 12.75, &next_pkt, out, 4 ) == 1 );
+    check( rn_window_ack_resend( &ack, 14.75, &next_pkt, out, 4 ) == 1 );
+    check( region->send_numbers[0].last_send == 14.75 );
+
+    // Just before 15.00: still alive.
+    check( rn_window_ack_check_timeout( &ack, 14.999 ) == 0 );
+    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    // At t = 15.00 (now - first_send == 10.0 == reliable_timeout): enters error state and stops resending.
+    check( rn_window_ack_resend( &ack, 15.00, &next_pkt, out, 4 ) == 0 );
+    check( ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+    check( rn_window_ack_check_timeout( &ack, 15.00 ) == 1 );
+
+    rn_arena_destroy( arena );
+}
+
+struct channels_lossy_soak_record_t
+{
+    uint32_t bytes;
+    uint32_t ring;
+    uint32_t ordering;
+    uint16_t fragment;
+    uint16_t fragments;
+    uint8_t block;
+    uint8_t accepted;
+    uint8_t released;
+    uint8_t data[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+};
+
+static const uint8_t * channels_lossy_soak_fragment_chunk_data( const rn_region_t * region, const rn_send_number_t * slot )
+{
+    check( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue );
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
+    check( descriptor->in_use && descriptor->chunk != RN_CHUNK_NONE );
+
+    uint32_t chain_index = 0;
+    if ( descriptor->fragments > 1 )
+    {
+        for ( uint16_t j = 0; j < slot->fragment; j++ )
+        {
+            const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );
+            const rn_send_number_t * prev_slot = &region->send_numbers[prev_num & ( region->window - 1 )];
+            if ( prev_slot->descriptor == slot->descriptor && prev_slot->number == prev_num && !prev_slot->acked )
+                chain_index++;
+        }
+    }
+
+    uint32_t chunk = descriptor->chunk;
+    for ( uint32_t step = 0; step < chain_index; step++ )
+    {
+        chunk = rn_send_store_chunk_next( &region->store, chunk );
+        check( chunk != RN_CHUNK_NONE );
+    }
+    return rn_send_store_chunk_data( &region->store, chunk );
+}
+
+static void channels_lossy_soak_send_wire_packet( rocketnet_network_simulator_t * wire,
+                                                  const rocketnet_address_t * from,
+                                                  const rocketnet_address_t * to,
+                                                  const rn_region_t * sender_region,
+                                                  const channels_lossy_soak_record_t * records,
+                                                  uint64_t packet_id,
+                                                  const uint64_t * numbers,
+                                                  uint32_t count,
+                                                  double now )
+{
+    // Wire frame format inside the simulator: 8-byte little-endian packet_id
+    // prefix followed by a Layer 2 RECORDS payload.
+    uint8_t frame[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t * p = frame;
+    rocketnet_write_uint64( &p, packet_id );
+
+    rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, frame + 8, ROCKETNET_MAX_PAYLOAD_BYTES );
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        const uint64_t n = numbers[i];
+        const rn_send_number_t * slot = &sender_region->send_numbers[n & ( sender_region->window - 1 )];
+        check( slot->number == n && !slot->acked );
+        const channels_lossy_soak_record_t * item = &records[n];
+        const uint8_t * chunk_bytes = channels_lossy_soak_fragment_chunk_data( sender_region, slot );
+        check( memcmp( chunk_bytes, item->data, item->bytes ) == 0 );
+
+        rocketnet_message_record_t rec;
+        memset( &rec, 0, sizeof(rec) );
+        rec.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+        rec.block = item->block;
+        rec.number = (uint32_t) ( n & ROCKETNET_MESSAGE_U24_MASK );
+        rec.ring = item->ring;
+        rec.ordering = item->ordering & ROCKETNET_MESSAGE_U24_MASK;
+        rec.channel = 0;
+        rec.fragment = item->fragment;
+        rec.fragments = item->block ? ( item->fragments - 1 ) : 0;
+        rec.data = chunk_bytes;
+        rec.bytes = (int) item->bytes;
+        check( rocketnet_message_writer_add( &writer, &rec ) == 1 );
+    }
+    const int payload_bytes = rocketnet_message_writer_finish( &writer );
+    check( payload_bytes > 0 );
+    rocketnet_network_simulator_send( wire, from, to, frame, 8 + payload_bytes, now );
+}
+
+static void test_channels_window_lossy_soak_leg( float loss_percent )
+{
+    const uint32_t W = 64;
+    const uint32_t P = 16;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t B = 8 * F;
+    const int total_messages = 140;
+    const uint32_t max_records = 512;
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 4;
+    config.window_messages = (int) W;
+    config.receive_ring_bytes = (int) B;
+    config.max_message_bytes = (int) ( 3 * F );
+    config.send_buffer_bytes = 65536;
+    config.send_queue_messages = 64;
+    config.packets_in_flight = (int) P;
+    config.rto_min_ms = 20;
+    config.rto_initial_ms = 50;
+    config.rto_max_ms = 400;
+    config.reliable_timeout_ms = 60000;
+
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 2, &counters );
+    check( arena );
+    rn_region_t * source = rn_arena_region( arena, 0 );
+    rn_region_t * target = rn_arena_region( arena, 1 );
+    rn_region_carve( source );
+    rn_region_carve( target );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, source, 0 );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, source, &config );
+    rn_window_receive_t receive;
+    rn_window_receive_init( &receive, target, 0 );
+
+    rocketnet_network_simulator_t * wire = rocketnet_network_simulator_create(
+        NULL, 8192, 0x5EED1234ULL + (uint64_t) loss_percent );
+    check( wire );
+    rocketnet_network_simulator_config( wire, 0.02, 0.015, loss_percent, 25.0f );
+
+    rocketnet_address_t sender_addr, receiver_addr;
+    check( rocketnet_address_parse( &sender_addr, "127.0.0.1:41000" ) );
+    check( rocketnet_address_parse( &receiver_addr, "127.0.0.1:41001" ) );
+
+    rocketnet_message_limits_t limits;
+    limits.num_channels = config.num_channels;
+    limits.enabled_codes = rocketnet_message_enabled_codes( 0x09 );
+    limits.window_messages = (int) W;
+    limits.max_message_bytes = config.max_message_bytes;
+    limits.receive_ring_bytes = (int) B;
+
+    static channels_lossy_soak_record_t records[max_records];
+    memset( records, 0, sizeof(records) );
+    uint8_t live[8 * ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    memset( live, 0, sizeof(live) );
+    uint8_t received[8 + ROCKETNET_MAX_PAYLOAD_BYTES];
+
+    uint64_t next_packet_id = 1;
+    int next_message = 0;
+    int accepted_total = 0;
+    int drained = 0;
+    double now = 1.0;
+
+    rn_trap_phase = "window_lossy_soak";
+    rn_trap_armed = 1;
+
+    for ( int tick = 0; tick < 20000 && drained < 16; tick++ )
+    {
+        now += 0.005;
+
+        // 1. Sender receives transport ACK frames from the simulator and feeds
+        //    rn_window_ack_on_acks.
+        rocketnet_address_t from_addr;
+        for ( int bytes = rocketnet_network_simulator_receive( wire, &sender_addr, now, &from_addr, received );
+              bytes > 0;
+              bytes = rocketnet_network_simulator_receive( wire, &sender_addr, now, &from_addr, received ) )
+        {
+            check( bytes >= 4 && ( ( bytes - 4 ) % 8 ) == 0 );
+            const uint8_t * q = received;
+            const uint32_t ack_count = rocketnet_read_uint32( &q );
+            check( bytes == (int) ( 4 + 8 * ack_count ) && ack_count <= 64 );
+            uint64_t ack_ids[64];
+            for ( uint32_t i = 0; i < ack_count; i++ )
+                ack_ids[i] = rocketnet_read_uint64( &q );
+            rn_window_ack_on_acks( &ack, ack_ids, ack_count, now );
+        }
+
+        // 2. Resend due numbers from the resend FIFO on the RTO.
+        uint64_t resent_numbers[32];
+        const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 32 );
+        check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+        for ( uint32_t i = 0; i < resent_count; i++ )
+        {
+            // rn_window_ack_resend assigned packet_ids [next_packet_id - resent_count + i]
+            const uint64_t pkt_id = next_packet_id - resent_count + i;
+            const uint64_t num = resent_numbers[i];
+            channels_lossy_soak_send_wire_packet( wire, &sender_addr, &receiver_addr, source,
+                                                  records, pkt_id, &num, 1, now );
+        }
+
+        // 3. Number and send up to 2 new messages per tick (mixing small, medium,
+        //    and multi-fragment blocks). Every 23rd message simulates a
+        //    finish_packet failure so failed-send recovery is exercised too.
+        for ( int step = 0; step < 2 && next_message < total_messages; step++ )
+        {
+            const int is_block = ( next_message % 6 == 0 );
+            const int msg_bytes = is_block ? (int) ( 2 * F + 32 ) : ( ( next_message % 3 == 0 ) ? 256 : 48 );
+
+            const uint32_t d = rn_region_send_alloc( source, msg_bytes );
+            if ( d == RN_DESCRIPTOR_NONE )
+                break;
+
+            uint64_t first = 0, ring_pos = 0;
+            uint32_t count = 0;
+            if ( is_block )
+            {
+                count = rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                                          (uint32_t) msg_bytes, d, &first, &ring_pos );
+            }
+            else if ( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                                  (uint32_t) msg_bytes, d, &first, &ring_pos ) == RN_WINDOW_SEND_NUMBERED )
+            {
+                count = 1;
+            }
+
+            if ( count == 0 )
+            {
+                rn_region_send_free( source, d );
+                break;
+            }
+
+            check( first + count <= max_records );
+            rn_send_descriptor_t * descriptor = &source->send_descriptors[d];
+            descriptor->first_number = first;
+            descriptor->fragments = (uint16_t) count;
+            descriptor->fragments_acked = 0;
+
+            uint32_t chunk = descriptor->chunk;
+            uint64_t nums[4];
+            for ( uint32_t i = 0; i < count; i++ )
+            {
+                const uint64_t n = first + i;
+                nums[i] = n;
+                const uint32_t frag_bytes = is_block ? ( i + 1 < count ? F : ( (uint32_t) msg_bytes - i * F ) ) : (uint32_t) msg_bytes;
+                channels_lossy_soak_record_t * item = &records[n];
+                item->bytes = frag_bytes;
+                item->ring = (uint32_t) ( ( source->send_numbers[n % W].ring_start % B ) / 16 );
+                item->ordering = (uint32_t) next_message;
+                item->fragment = (uint16_t) i;
+                item->fragments = (uint16_t) count;
+                item->block = (uint8_t) is_block;
+                for ( uint32_t b = 0; b < frag_bytes; b++ )
+                    item->data[b] = (uint8_t) ( n * 37u + b * 13u + 1u );
+
+                check( chunk != RN_CHUNK_NONE );
+                memcpy( rn_send_store_chunk_data( &source->store, chunk ), item->data, frag_bytes );
+                chunk = rn_send_store_chunk_next( &source->store, chunk );
+            }
+
+            if ( next_message % 23 == 11 )
+            {
+                rn_window_ack_packet_failed( &ack, nums, count, now );
+            }
+            else
+            {
+                for ( uint32_t i = 0; i < count; i++ )
+                {
+                    const uint64_t pkt_id = next_packet_id++;
+                    rn_window_ack_commit_packet( &ack, pkt_id, &nums[i], 1, now );
+                    channels_lossy_soak_send_wire_packet( wire, &sender_addr, &receiver_addr, source,
+                                                          records, pkt_id, &nums[i], 1, now );
+                }
+            }
+            next_message++;
+        }
+
+        // 4. Assert TablesBounded on the sent-packet map at every tick.
+        check( rn_window_ack_entries_in_flight( &ack ) <= P );
+        check( ack.pkt_tail - ack.pkt_head <= P );
+        check( rn_window_ack_refs_in_flight( &ack ) <= 16 * P );
+        check( ack.resend_count <= W );
+        rn_soak_check_accounting( source );
+
+        // 5. Receiver opens incoming packets, parses Layer 2 records, runs
+        //    rn_window_receive_accept, and sends back a simulated transport ACK
+        //    frame listing the received packet_ids (plus an occasional unknown
+        //    keep-alive sequence id to exercise unknown-ack ignoring).
+        uint64_t ack_out[64];
+        uint32_t ack_out_count = 0;
+        for ( int bytes = rocketnet_network_simulator_receive( wire, &receiver_addr, now, &from_addr, received );
+              bytes > 0;
+              bytes = rocketnet_network_simulator_receive( wire, &receiver_addr, now, &from_addr, received ) )
+        {
+            check( bytes > 8 );
+            const uint8_t * q = received;
+            const uint64_t pkt_id = rocketnet_read_uint64( &q );
+            if ( ack_out_count < 62 )
+                ack_out[ack_out_count++] = pkt_id;
+
+            rocketnet_message_reader_t reader;
+            check( rocketnet_message_reader_begin( &reader, received + 8, bytes - 8, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+            rocketnet_message_record_t record;
+            while ( rocketnet_message_reader_next( &reader, &record ) )
+            {
+                const uint64_t n = record.number;
+                check( n < send.next && n < max_records );
+                channels_lossy_soak_record_t * item = &records[n];
+                check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
+                check( record.bytes == (int) item->bytes && record.ring == item->ring );
+                check( memcmp( record.data, item->data, item->bytes ) == 0 );
+
+                uint32_t slot = RN_DESCRIPTOR_NONE;
+                const int answer = rn_window_receive_accept( &receive, &record, &slot );
+                check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+                if ( answer == RN_WINDOW_RECEIVE_ACCEPT )
+                {
+                    check( !item->accepted && slot == n % W );
+                    item->accepted = 1;
+                    accepted_total++;
+                    const uint32_t span = ( item->bytes + 15 ) & ~15u;
+                    const uint32_t start = item->ring * 16;
+                    check( rn_region_ring_span_valid( target, start, span ) );
+                    for ( uint32_t j = start; j < start + span; j++ )
+                    {
+                        check( live[j] == 0 );
+                        live[j] = (uint8_t) ( ( n & 0x7F ) + 1 );
+                    }
+                }
+                else
+                {
+                    check( answer == RN_WINDOW_RECEIVE_DUPLICATE && item->accepted );
+                }
+            }
+        }
+
+        if ( ack_out_count > 0 )
+        {
+            // Piggyback an unknown transport sequence (keep-alive) on every 5th ACK frame.
+            if ( ( tick % 5 == 0 ) && ack_out_count < 64 )
+                ack_out[ack_out_count++] = 0x10000000ULL + (uint64_t) tick;
+
+            uint8_t ack_frame[4 + 64 * 8];
+            uint8_t * p = ack_frame;
+            rocketnet_write_uint32( &p, ack_out_count );
+            for ( uint32_t i = 0; i < ack_out_count; i++ )
+                rocketnet_write_uint64( &p, ack_out[i] );
+            rocketnet_network_simulator_send( wire, &receiver_addr, &sender_addr,
+                                              ack_frame, (int) ( 4 + 8 * ack_out_count ), now );
+        }
+
+        // 6. Release completed singles and blocks at the receiver.
+        for ( uint64_t n = 0; n < send.next; n++ )
+        {
+            channels_lossy_soak_record_t * item = &records[n];
+            if ( !item->accepted || item->released )
+                continue;
+            if ( item->block )
+            {
+                const uint64_t first = n - item->fragment;
+                bool all_have = true;
+                for ( uint16_t f = 0; f < item->fragments; f++ )
+                {
+                    if ( !records[first + f].accepted )
+                    {
+                        all_have = false;
+                        break;
+                    }
+                }
+                if ( !all_have )
+                    continue;
+            }
+            rn_window_receive_release( &receive, n );
+            item->released = 1;
+            const uint32_t span = ( item->bytes + 15 ) & ~15u;
+            const uint32_t start = item->ring * 16;
+            for ( uint32_t j = start; j < start + span; j++ )
+            {
+                check( live[j] == (uint8_t) ( ( n & 0x7F ) + 1 ) );
+                live[j] = 0;
+            }
+        }
+
+        if ( next_message == total_messages && send.U == send.next && send.U_prime == send.next && receive.R == send.next )
+            drained++;
+        else
+            drained = 0;
+    }
+
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+
+    check( next_message == total_messages && drained == 16 );
+    check( accepted_total == (int) send.next );
+    check( receive.R == send.next && send.U == send.next && send.U_prime == send.next );
+    check( ack.resend_count == 0 && ack.resend_head == RN_RESEND_NONE && ack.resend_tail == RN_RESEND_NONE );
+    check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( source->descriptors_free == source->queue );
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+        check( rn_send_store_free_chunks( &source->store, c ) == rn_send_store_total_chunks( &source->store, c ) );
+    for ( uint64_t n = 0; n < send.next; n++ )
+        check( records[n].accepted == 1 && records[n].released == 1 && source->send_numbers[n % W].acked == 1 );
+    for ( uint32_t j = 0; j < B; j++ )
+        check( live[j] == 0 );
+    if ( loss_percent >= 50.0f )
+    {
+        check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );
+        check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) > 0 );
+    }
+
+    rocketnet_network_simulator_destroy( wire );
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_lossy_soak()
+{
+    test_channels_window_lossy_soak_leg( 0.0f );
+    test_channels_window_lossy_soak_leg( 10.0f );
+    test_channels_window_lossy_soak_leg( 50.0f );
+}
+
 struct channels_test_t
 {
     const char * name;
@@ -3609,6 +4511,15 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_window_receive_advance_clears_only_what_it_passes", "ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses", test_channels_window_receive_advance_clears_only_what_it_passes },
     { "test_channels_window_receive_over_the_lossy_simulator", "ChannelsWindowReceiveOverTheLossySimulator", test_channels_window_receive_over_the_lossy_simulator },
     { "test_channels_window_send_and_receive_over_the_lossy_simulator", "ChannelsWindowSendAndReceiveOverTheLossySimulator", test_channels_window_send_and_receive_over_the_lossy_simulator },
+    { "test_channels_window_ack_of_an_unknown_id_is_ignored", "ChannelsWindowAckOfAnUnknownIdIsIgnored", test_channels_window_ack_of_an_unknown_id_is_ignored },
+    { "test_channels_window_ack_frees_the_chunk_and_advances_u", "ChannelsWindowAckFreesTheChunkAndAdvancesU", test_channels_window_ack_frees_the_chunk_and_advances_u },
+    { "test_channels_window_rtt_sample_is_unambiguous_across_resends", "ChannelsWindowRttSampleIsUnambiguousAcrossResends", test_channels_window_rtt_sample_is_unambiguous_across_resends },
+    { "test_channels_window_eviction_keeps_numbers_resendable", "ChannelsWindowEvictionKeepsNumbersResendable", test_channels_window_eviction_keeps_numbers_resendable },
+    { "test_channels_window_backoff_doubles_to_eight_and_resets_on_ack", "ChannelsWindowBackoffDoublesToEightAndResetsOnAck", test_channels_window_backoff_doubles_to_eight_and_resets_on_ack },
+    { "test_channels_window_resend_walk_stops_at_the_first_not_due", "ChannelsWindowResendWalkStopsAtTheFirstNotDue", test_channels_window_resend_walk_stops_at_the_first_not_due },
+    { "test_channels_window_failed_send_marks_due_now", "ChannelsWindowFailedSendMarksDueNow", test_channels_window_failed_send_marks_due_now },
+    { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
+    { "test_channels_window_lossy_soak", "ChannelsWindowLossySoak", test_channels_window_lossy_soak },
 };
 
 int rocketnet_channels_test_count()
@@ -3664,7 +4575,8 @@ static int rocketnet_channels_is_allocator_test( const char * name )
         if ( strcmp( channels_tests[i].name, name ) != 0 && strcmp( channels_tests[i].alias, name ) != 0 )
             continue;
         return strncmp( channels_tests[i].name, "test_channels_allocator_", 24 ) == 0 ||
-            strcmp( channels_tests[i].name, "test_channels_window_send_and_receive_over_the_lossy_simulator" ) == 0;
+            strcmp( channels_tests[i].name, "test_channels_window_send_and_receive_over_the_lossy_simulator" ) == 0 ||
+            strcmp( channels_tests[i].name, "test_channels_window_lossy_soak" ) == 0;
     }
     return 0;
 }

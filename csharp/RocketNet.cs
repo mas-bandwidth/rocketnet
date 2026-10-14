@@ -110,7 +110,7 @@ public static unsafe partial class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 201;
+    public const int NumCounters = 203;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -319,6 +319,8 @@ public static unsafe partial class RocketNet
         MessageUnreliableSendFailed,
         MessageDuplicate,
         MessageWindowStall,
+        MessageSentMapEvicted,
+        MessageResent,
     }
 #pragma warning restore 1591
 

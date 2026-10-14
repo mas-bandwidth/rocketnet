@@ -220,6 +220,8 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED:                 return "MESSAGE_UNRELIABLE_SEND_FAILED";
         case ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL:                           return "MESSAGE_WINDOW_STALL";
         case ROCKETNET_COUNTER_MESSAGE_DUPLICATE:                              return "MESSAGE_DUPLICATE";
+        case ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED:                       return "MESSAGE_SENT_MAP_EVICTED";
+        case ROCKETNET_COUNTER_MESSAGE_RESENT:                                 return "MESSAGE_RESENT";
         default:
             rocketnet_assert( 0 );
             return "???";

@@ -39,6 +39,7 @@
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
 #define RN_CHUNK_NONE           0xFFFFFFFFu
+#define RN_RESEND_NONE          0xFFFFFFFFu
 
 struct rn_channel_send_t                // 32 bytes (7.1)
 {
@@ -159,6 +160,12 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
+struct rn_resend_link_t                 // 8 bytes: the sender's resend FIFO links, indexed number % W (6.4)
+{
+    uint32_t prev;
+    uint32_t next;
+};
+
 // ----------------------------------------------------------------
 //                        the region's layout
 // ----------------------------------------------------------------
@@ -180,6 +187,7 @@ enum
     RN_PART_DELIVERIES,                 // 24 (W + Du)
     RN_PART_SEQUENCED_HOLDS,            // 1208 Ru
     RN_PART_RECEIPTS,                   // 16 Rq
+    RN_PART_RESEND_FIFO,                // 8 W
     RN_NUM_PARTS
 };
 
@@ -310,6 +318,7 @@ struct rn_region_t
     rn_delivery_t * deliveries;
     rn_sequenced_hold_t * sequenced_holds;
     rn_receipt_t * receipts;
+    rn_resend_link_t * resend_fifo;
 
     uint32_t descriptors_free_head;
     uint32_t descriptors_free;
@@ -327,6 +336,10 @@ void rn_region_carve( rn_region_t * region );
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
 
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
+
+// frees one fragment's store chunk from an in-use send descriptor's chain,
+// and returns the descriptor itself to Q when its last fragment is acked (6.4).
+void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor, uint32_t chain_index );
 
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );
 
