@@ -2786,8 +2786,8 @@ every mapping they hold, bought with nothing. The handshake deadline is a
 server-side configuration value, in seconds, and it is not carried in the token,
 because it protects the server and nothing the client presents should set it.
 
-**It has a sensible default and it is tunable per game.** The default SHOULD be
-five seconds: a client retransmitting at the send rate gets tens of attempts
+**It has a sensible default and it is tunable per game.** The server config field `handshake_deadline_seconds` defaults to
+five seconds (range 1 to 60): a client retransmitting at the send rate gets tens of attempts
 inside it, which covers ordinary loss and a poor round trip with room to spare,
 while cutting an attacker's hold time to a fraction of a gameplay timeout. But
 five seconds is a judgement about a population of players, not a property of the
