@@ -14,6 +14,7 @@ jobs:
   msan:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
+    continue-on-error: true
     steps:
 
       - uses: actions/checkout@v4

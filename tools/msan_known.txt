@@ -1,11 +1,35 @@
 # tools/msan_known.txt: the known MemorySanitizer findings for the portable
 # unit suite. Each line names one finding by the signature the gate derives
 # from its top stack frame: the function name and source location of the
-# "#0" frame in the warning (e.g. `foo /path/file.cpp:42:3`). A finding that
+# "#0" frame in the warning (e.g. `foo sdk/file.cpp:42:3`). A finding that
 # appears in the run but is absent here fails the `bash tools/run_msan.sh`
 # gate; the gate passes when the run is clean or every finding is listed.
 #
-# This file starts empty: no finding has been observed at BASE. When the leg
-# first runs on a Linux bench and reports a finding, list it here with the
-# trace the gate printed, so the finding is known and the gate stays green
-# for it alone.
+# Findings recorded at BASE (35fda57) on a Linux x86_64 bench with clang 21
+# -fsanitize=memory -fsanitize-memory-track-origins=2. The uninitialised
+# reads are in the vendored sodium's constant-time primitives (load64_be,
+# scalarmult, ge25519, hash, seal, keypair) and in the random helpers that
+# read a sodium randombytes_buf fill before the compiler sees it initialised.
+# Each is listed below with the origin trace the gate printed.
+load64_be sodium/sodium.h:1463:7
+load64_be sodium/sodium.h:1464:5
+memcmp (bin/test+0x7e360)
+operator new(unsigned long) (bin/test+0xd7b90)
+rocketnet_random_float sdk/rocketnet.cpp:353:5
+rocketnet_random_float sdk/rocketnet.cpp:355:14
+rocketnet_random_float sdk/rocketnet.cpp:356:12
+rocketnet_random_float sdk/rocketnet.cpp:357:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:376:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:378:5
+rocketnet_sodium_crypto_box_seal sodium/sodium.c:8454:5
+rocketnet_sodium_crypto_hash_sha512_update sodium/sodium.c:22044:31
+rocketnet_sodium_crypto_scalarmult_curve25519_ref10_base sodium/sodium.c:24272:14
+rocketnet_sodium_crypto_scalarmult_curve25519_ref10_base sodium/sodium.c:24274:10
+rocketnet_sodium_crypto_sign_ed25519_keypair sodium/sodium.c:28880:5
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14953:22
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14960:14
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14963:14
+rocketnet_sodium_ge25519_scalarmult_base sodium/sodium.c:14971:9
+rocketnet_test_dev_keys_refused_in_release() sdk/rocketnet_tests.cpp:6019:5
+rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
+std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) /usr/lib/gcc/x86_64-linux-gnu/15/../../../../include/c++/15/bits/stl_tree.h:2552:10

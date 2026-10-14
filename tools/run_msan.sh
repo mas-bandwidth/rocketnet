@@ -19,20 +19,33 @@ cd "$(dirname "$0")/.."
 build_dir=build-msan
 flags="-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer"
 
+# The unit suite defines its own global operator new/delete (test_channels.cpp)
+# to arm the allocation-failure trap; the MSan C++ runtime ships replacements
+# too. Allow the duplicate so the instrumented in-tree operator wins; malloc is
+# still intercepted and poisoned by the MSan runtime, so shadow tracking holds.
+link_flags="-Wl,--allow-multiple-definition"
+
+# Give the MSan build its own output directory; the release build's bin/ must
+# not be clobbered, or the gate could run a stale, non-instrumented binary.
+abs_build="$PWD/$build_dir"
 cmake -S . -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_C_FLAGS="$flags" \
-    -DCMAKE_CXX_FLAGS="$flags"
+    -DCMAKE_CXX_FLAGS="$flags $link_flags" \
+    -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$abs_build/bin" \
+    -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$abs_build/lib" \
+    -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$abs_build/lib"
 
 cmake --build "$build_dir" --target test --parallel
 
+test_bin="$abs_build/bin/test"
 log="$TMPDIR/msan.log"
 known_file=tools/msan_known.txt
 
 set +e
-./bin/test >"$log" 2>&1
+"$test_bin" >"$log" 2>&1
 status=$?
 set -e
 
@@ -49,8 +62,12 @@ fi
 echo "MSan: findings (each with its origin trace):"
 cat "$log"
 
+root="$(pwd)/"
 grep -E "^    #0 " "$log" \
     | sed -E 's/^[[:space:]]*#0[[:space:]]+0x[0-9a-f]+[[:space:]]+in[[:space:]]+([^ ]+)[[:space:]]+(.*)$/\1 \2/' \
+    | sed "s|${root}||g" \
+    | sed -E 's/ \(BuildId: [0-9a-f]+\)//' \
+    | sed -E 's|\((build-msan/)?bin/test|(bin/test|' \
     | sort -u > "$TMPDIR/msan_findings.txt"
 
 : > "$TMPDIR/msan_unmatched.txt"
