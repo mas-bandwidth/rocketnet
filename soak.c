@@ -83,7 +83,7 @@ int main( int argc, char ** argv )
     // returns NULL and the run exits 1, which reads as a soak failure rather
     // than as a busy port.
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     if ( !server )
     {
         printf( "soak: failed to create the server transport\n" );

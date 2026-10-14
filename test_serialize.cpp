@@ -36,7 +36,7 @@ int main()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     check( server );
 
     char server_address[64];

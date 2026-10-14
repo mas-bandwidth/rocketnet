@@ -97,7 +97,7 @@ int main(int argc, char ** argv)
     rocketnet_allocator(allocate, release);
     if (!rocketnet_init()) return 1;
     rocketnet_forbid_xdp_commit();
-    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, rocketnet_time());
+    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     if (!server) { fprintf(stderr, "memory profile configuration refused\n"); rocketnet_term(); return 1; }
     const bool same_driver = strcmp(rocketnet_server_transport_driver(server), driver) == 0;
     printf("{\"live_allocator_bytes\":%zu,\"peak_allocator_bytes\":%zu,\"live_allocations\":%zu,\"process_peak_rss_bytes\":%llu}\n",
