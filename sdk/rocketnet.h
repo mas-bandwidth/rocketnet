@@ -804,6 +804,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // count from 1, the gso driver refuses past its 32 queue geometry
 // (ROCKETNET_GSO_MAX_QUEUES).
 
+// The handshake deadline is fixed at the challenge, never refreshed, and discharged on connect.
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,          64,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
@@ -818,7 +819,8 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )                          \
     STRING_FIELD( public_address,        ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              0 )                          \
-    INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )
+    INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
+    INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )
 
 struct rocketnet_server_transport_config_t
 {
