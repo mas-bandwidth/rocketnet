@@ -160,6 +160,24 @@ value exhausts TLC's tableau.
 
 ## How to run it
 
+The model's operation sequences are also driven in C++ by
+`test_unit_window_sequences.cpp` (a unit-file test in `./bin/test`, registered
+with `REGISTER_UNIT_TEST`). It runs a reference of RNWindow's numbered records
+and RNRing's placement against the real region state the sdk owns: the send
+descriptor pool (`rn_region_send_alloc` / `rn_region_send_free`), the sender's
+per-number table (`region->send_numbers`), the receiver's descriptors and bitset
+(`region->receive_descriptors`, `region->received_bits`), and the receiver's
+ring predicate (`rn_region_ring_span_valid`). Every sequence up to length six at
+`W = 8` is walked, and a seeded million-step walk runs at the real constants
+(`W = 1024`, `B = 65536`), with a wrap pass that starts just below `2^24` and
+crosses it. After every action it asserts the count bound `n < U' + W`, that
+live ring spans are disjoint and 16-aligned inside `B`, that an ack never frees a
+held record, that each number is delivered once, and that the 24-bit wire number
+reads back as itself (`WireNumberReconstructs`). A failed check prints a
+replayable seed and the action list. The layer-3 window operations the module
+describes still do not exist under `sdk/` at this commit; the test drives the
+real region state that does.
+
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
 
 ```sh
