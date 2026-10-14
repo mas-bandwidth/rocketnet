@@ -13,7 +13,10 @@ and stays green while the fix card is open.
   the salt-mismatch branch) without incrementing any outcome counter, so
   `CONNECTION_REQUEST_RECEIVED` runs one ahead of the sum of its outcomes. The
   refusal needs a named counter (a `CONNECTION_REQUEST_SALT_MISMATCH`-style
-  entry) for the ledger to balance.
+  entry) for the ledger to balance. The request-ledger check counts these
+  refusals and lets them pass so the campaign stays green while the fix card is
+  open; the fix card lands the counter and removes the salt-mismatch count from
+  the ledger sum, then verifies this input no longer fires.
 
 - `connection_response_refused_refreshes_idle_clock` — the refusal-immutability
   oracle. A connection response (type 3) that opens and is then refused
