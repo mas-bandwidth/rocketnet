@@ -120,21 +120,33 @@ static const abi_field_t * find_field(const char * type_name, const char * field
 uint32_t rocketnet_abi_version(void) { return ROCKETNET_ABI_VERSION; }
 size_t rocketnet_abi_type_size(const char * name)
 {
+    if ( !rocketnet_api_null_guard( name ) )
+        return SIZE_MAX;
     const auto * type = find_type(name);
     return type ? type->size : SIZE_MAX;
 }
 int rocketnet_abi_field_count(const char * name)
 {
+    if ( !rocketnet_api_null_guard( name ) )
+        return -1;
     const auto * type = find_type(name);
     return type ? type->count : -1;
 }
 size_t rocketnet_abi_field_offset(const char * type_name, const char * field_name)
 {
+    if ( !rocketnet_api_null_guard( type_name ) )
+        return SIZE_MAX;
+    if ( !rocketnet_api_null_guard( field_name ) )
+        return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->offset : SIZE_MAX;
 }
 size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
 {
+    if ( !rocketnet_api_null_guard( type_name ) )
+        return SIZE_MAX;
+    if ( !rocketnet_api_null_guard( field_name ) )
+        return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->size : SIZE_MAX;
 }

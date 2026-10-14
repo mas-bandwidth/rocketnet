@@ -7394,6 +7394,384 @@ void rocketnet_test_allocator_refusal_is_returned()
     rocketnet_check( rocketnet_init() );
 }
 
+static int rocketnet_test_null_asserts = 0;
+
+static void rocketnet_test_null_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_test_null_asserts++;
+}
+
+// Every exported entry point checks each pointer it would dereference once, at
+// the boundary. A NULL is a counted no-op that returns the documented value and,
+// in a debug build, fires rocketnet_assert. This suite installs a non-aborting
+// hook for its duration, calls each entry point with the pointer NULL, and
+// checks both the return and the misuse count's rise. A NULL handle is refused
+// before any I/O, so no socket opens.
+void rocketnet_test_public_api_null_is_a_counted_no_op()
+{
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
+    rocketnet_test_null_asserts = 0;
+
+    uint64_t before;
+    uint8_t packet[64];
+    memset( packet, 0, sizeof( packet ) );
+    struct rocketnet_packet_context_t context;
+    memset( &context, 0, sizeof( context ) );
+    struct rocketnet_client_transport_stats_t client_stats;
+    struct rocketnet_server_transport_stats_t server_stats;
+    struct rocketnet_frame_sync_stats_t frame_stats;
+    int payload_bytes = 0;
+    int capacity = 0;
+    int client_index = 0;
+    const int * client_ids = NULL;
+    uint8_t * const * payload_data = NULL;
+    const int * payload_sizes = NULL;
+    const uint64_t * acked = NULL;
+
+    // client transport
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_destroy( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_update( NULL, 0.0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_send_packet( NULL, packet, 4 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_receive_packet( NULL, packet, 64 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_max_payload_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_num_payloads( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_payload( NULL, 0, &payload_bytes ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_payloads( NULL, &payload_data, &payload_sizes ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_start_packet( NULL, 4, &context ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_packet_payload( NULL, &context, &capacity ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_abort_packet( NULL, &context );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_finish_packet( NULL, &context, 4 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_send_packets( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_state( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_driver( NULL ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_client_index( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_disconnect( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_counters( NULL ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_acked_packets( NULL, &acked ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_stats( NULL, &client_stats );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // server transport
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_destroy( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_stop( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_state( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_port( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_driver( NULL ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_update( NULL, 0.0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_num_payloads( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_is_client_connected( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_id( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_max_payload_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_counters( NULL ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_send_packets( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_send_packet( NULL, 0, packet, 4 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_disconnect_client( NULL, 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_stats( NULL, &server_stats );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_acked_packets( NULL, &client_ids, &acked ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_payload( NULL, 0, &client_index, &payload_bytes ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_payloads( NULL, &client_ids, &payload_data, &payload_sizes ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_start_packet( NULL, 0, 4, &context ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_packet_payload( NULL, &context, &capacity ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_finish_packet( NULL, &context, 4 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_abort_packet( NULL, &context );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_client_stats( NULL, 0, NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_set_admission_callback( NULL, NULL, NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_default_config( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_transport_dev_config( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // config defaults and introspection
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_default_config( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_message_default_config( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // required_memory documents NULL config as defaults, so NULL is a valid
+    // value here, not a misuse; the same call must not raise the count.
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_required_memory( NULL, "portable" ) > 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+    rocketnet_check( rocketnet_server_transport_required_memory( NULL, NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_counter_value( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_user_id_string( 0, NULL, 0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_abi_type_size( NULL ) == SIZE_MAX );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_abi_field_count( NULL ) == -1 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_abi_field_offset( NULL, NULL ) == SIZE_MAX );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_abi_field_size( NULL, NULL ) == SIZE_MAX );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // the log entry points refuse a NULL format
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_info( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_warn( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_error( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_debug( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_spam( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // the remaining pointer-taking entry points
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_random_bytes( NULL, 4 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_copy_string( NULL, "x", 4 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    {
+        char dest[4];
+        rocketnet_check( rocketnet_copy_string( dest, NULL, 4 ) == 0 );
+    }
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_create( NULL, NULL, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_create( NULL, NULL, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // rocketnet_allocator refuses a NULL callback in a partial or full set
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_allocator( NULL, NULL ) == false );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    // rocketnet_free and rocketnet_clear_and_free already treat NULL p as a
+    // no-op; it is not a misuse, so the count must not move.
+    before = rocketnet_api_misuse_count();
+    rocketnet_free( NULL, NULL );
+    rocketnet_clear_and_free( NULL, NULL, 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // message sizing and validation document NULL config as defaults, not a
+    // misuse; each must not raise the count and must not dereference NULL.
+    before = rocketnet_api_misuse_count();
+    rocketnet_message_validate_config( NULL );
+    rocketnet_message_connection_bytes( NULL );
+    rocketnet_message_connection_sizing( NULL, 1, NULL, 0 );
+    rocketnet_message_print_connection_sizing( NULL, 1 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // entry points with no pointer argument take no NULL; named here so the
+    // export list stays audited against this suite: rocketnet_abi_version,
+    // rocketnet_api_misuse_count, rocketnet_forbid_xdp_commit,
+    // rocketnet_get_log_level, rocketnet_log_level, rocketnet_log_level_string,
+    // rocketnet_num_counters, rocketnet_protocol_version, rocketnet_quiet,
+    // rocketnet_random_float, rocketnet_random_uint8, rocketnet_random_uint16,
+    // rocketnet_random_uint32, rocketnet_random_uint64, rocketnet_sleep,
+    // rocketnet_term, rocketnet_time, rocketnet_client_transport_state_name,
+    // rocketnet_counter_name. rocketnet_init, rocketnet_malloc,
+    // rocketnet_log_function, rocketnet_assert_function and
+    // rocketnet_frame_sync_create take an opaque context or callback pointer
+    // that NULL is a valid value for, so they are not NULL-guarded either.
+    rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
+    rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
+
+    // frame sync
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_frame_sync_destroy( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_frame_sync_wait( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_frame_sync_stats( NULL, &frame_stats );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    (void) client_index;
+
+    rocketnet_assert_function( saved_assert );
+}
+
 void rocketnet_test_frame_sync_wait()
 {
     // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
@@ -11955,6 +12333,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
+    { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },
     { "test_ack_block_encoding", rocketnet_test_ack_block_encoding },
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },

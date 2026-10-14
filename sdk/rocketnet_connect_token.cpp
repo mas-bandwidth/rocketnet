@@ -195,6 +195,10 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
                                        uint64_t current_timestamp,
                                        uint8_t * connect_token )
 {
+    if ( !rocketnet_api_null_guard( server_address_string ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( connect_token ) )
+        return 0;
     rocketnet_assert( server_address_string );
     rocketnet_assert( connect_token );
 
