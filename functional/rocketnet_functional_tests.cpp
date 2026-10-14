@@ -222,7 +222,7 @@ static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * serve
             break;
         }
         frame[context.payload_index] = (uint8_t) count;
-        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
+        rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) == ROCKETNET_SEND_OK );
         count++;
     }
     if ( completion_capacity && count != completion_capacity )
@@ -320,7 +320,7 @@ void rocketnet_test_transport_ring_exhaustion()
         if ( frame )
         {
             memcpy( frame + context.payload_index, "again", 5 );
-            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) > 0 );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) == ROCKETNET_SEND_OK );
         }
         rocketnet_server_transport_send_packets( server );
 
@@ -362,7 +362,7 @@ static void rocketnet_test_client_hammer_thread( void * data )
         uint8_t * payload = frame + context.payload_index;
         payload[0] = (uint8_t) args->thread_id;
         payload[1] = (uint8_t) i;
-        rocketnet_check( rocketnet_client_transport_finish_packet( args->client, &context, 2 ) > 0 );
+        rocketnet_check( rocketnet_client_transport_finish_packet( args->client, &context, 2 ) == ROCKETNET_SEND_OK );
     }
 }
 
@@ -626,7 +626,7 @@ void rocketnet_test_transport_start_finish_shape()
         auto aborted = changed;
         rocketnet_server_transport_abort_packet(server, &aborted);
         rocketnet_check(aborted.frame == NULL);
-        rocketnet_check(rocketnet_server_transport_finish_packet(server, &changed, 1) == 0);
+        rocketnet_check(rocketnet_server_transport_finish_packet(server, &changed, 1) != ROCKETNET_SEND_OK);
     }
     rocketnet_check(rocketnet_server_transport_packet_payload(server, &context, &checked_capacity) == frame + context.payload_index);
     auto expired = context;
@@ -635,7 +635,7 @@ void rocketnet_test_transport_start_finish_shape()
 
     rocketnet_server_transport_finish_packet( server, &context, context.payload_capacity + 1 );
     rocketnet_check(rocketnet_server_transport_packet_payload(server, &expired, &checked_capacity) == NULL);
-    rocketnet_check(rocketnet_server_transport_finish_packet(server, &expired, 1) == 0);
+    rocketnet_check(rocketnet_server_transport_finish_packet(server, &expired, 1) != ROCKETNET_SEND_OK);
 
     // an aborted packet is harmless
 
@@ -678,7 +678,7 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check(reply_frame);
     rocketnet_check(reply.payload_index == (arena ? 0 : ROCKETNET_FRAME_PAYLOAD_OFFSET));
     memcpy(reply_frame + reply.payload_index, "reply", 5);
-    rocketnet_check(rocketnet_client_transport_finish_packet(client, &reply, 5) > 0);
+    rocketnet_check(rocketnet_client_transport_finish_packet(client, &reply, 5) == ROCKETNET_SEND_OK);
     rocketnet_client_transport_send_packets(client);
     bool replied = false;
     start = rocketnet_platform_time();
@@ -1801,14 +1801,14 @@ void rocketnet_test_transport_acks_and_client_stats()
     uint8_t * frame = rocketnet_client_transport_start_packet( high_client, ROCKETNET_MAX_PAYLOAD_BYTES, &up_context );
     rocketnet_check( frame );
     memcpy( frame + up_context.payload_index, "ping", 4 );
-    rocketnet_check( rocketnet_client_transport_finish_packet( high_client, &up_context, 4 ) > 0 );
+    rocketnet_check( rocketnet_client_transport_finish_packet( high_client, &up_context, 4 ) == ROCKETNET_SEND_OK );
     rocketnet_client_transport_send_packets( high_client );
 
     struct rocketnet_packet_context_t down_context;
     frame = rocketnet_server_transport_start_packet( server, high_slot, ROCKETNET_MAX_PAYLOAD_BYTES, &down_context );
     rocketnet_check( frame );
     memcpy( frame + down_context.payload_index, "pong", 4 );
-    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4 ) > 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4 ) == ROCKETNET_SEND_OK );
 
     // pump until both notifications surface: the server sees its id come
     // back from the high slot, the client sees its own -- each exactly the
@@ -1940,7 +1940,7 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
         if ( frame )
         {
             memcpy( frame + context.payload_index, "ping", 4 );
-            if ( rocketnet_client_transport_finish_packet( client, &context, 4 ) > 0 )
+            if ( rocketnet_client_transport_finish_packet( client, &context, 4 ) == ROCKETNET_SEND_OK )
                 rocketnet_client_transport_send_packets( client );
         }
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
@@ -2030,7 +2030,7 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( up_context.payload_index == 0 );
     rocketnet_check( up_context.payload_capacity == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     memcpy( frame, pattern, 5000 );
-    rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 5000 ) > 0 );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 5000 ) == ROCKETNET_SEND_OK );
     rocketnet_client_transport_send_packets( client );
 
     int server_received = 0;
@@ -2076,7 +2076,7 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( frame );
     rocketnet_check( down_context.payload_index == 0 );
     memcpy( frame, pattern, 9000 );
-    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 9000 ) > 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 9000 ) == ROCKETNET_SEND_OK );
 
     int client_received = 0;
     int down_acks_seen = 0;
@@ -2124,7 +2124,7 @@ void rocketnet_test_transport_fragmentation()
     frame = rocketnet_client_transport_start_packet( client, 5000, &up_context );
     rocketnet_check( frame );
     memcpy( frame, pattern, 64 );
-    rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 64 ) > 0 );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &up_context, 64 ) == ROCKETNET_SEND_OK );
     rocketnet_client_transport_send_packets( client );
 
     server_received = 0;
@@ -2158,7 +2158,7 @@ void rocketnet_test_transport_fragmentation()
     frame = rocketnet_server_transport_start_packet( server, 0, 4000, &down_context );
     rocketnet_check( frame );
     memcpy( frame, pattern, 4000 );
-    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4000 ) > 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4000 ) == ROCKETNET_SEND_OK );
 
     static uint8_t cursor_buffer[ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES];
     int cursor_received = 0;
@@ -2184,7 +2184,7 @@ void rocketnet_test_transport_fragmentation()
     frame = rocketnet_server_transport_start_packet( server, 0, 3000, &down_context );
     rocketnet_check( frame );
     memcpy( frame, pattern, 3000 );
-    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 3000 ) > 0 );
+    rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 3000 ) == ROCKETNET_SEND_OK );
 
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 &&
@@ -2211,7 +2211,7 @@ void rocketnet_test_transport_fragmentation()
             frame = rocketnet_server_transport_start_packet( server, 0, 2500, &burst_context );
             rocketnet_check( frame );
             memcpy( frame, pattern, 2500 );
-            rocketnet_check( rocketnet_server_transport_finish_packet( server, &burst_context, 2500 ) > 0 );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &burst_context, 2500 ) == ROCKETNET_SEND_OK );
         }
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
@@ -3578,7 +3578,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
             {
                 const int sequence = sent_client + 1;
                 memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) > 0 )
+                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(sequence) ) == ROCKETNET_SEND_OK )
                 {
                     client_id_to_sequence[ctx.packet_id] = sequence;
                     sent_client++;
@@ -3593,7 +3593,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
             {
                 const int sequence = sent_server + 1;
                 memcpy( frame + ctx.payload_index, &sequence, sizeof(sequence) );
-                if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) > 0 )
+                if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(sequence) ) == ROCKETNET_SEND_OK )
                 {
                     server_id_to_sequence[ctx.packet_id] = sequence;
                     sent_server++;
@@ -3789,7 +3789,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
             {
                 const int request = sent + 1;
                 memcpy( frame + ctx.payload_index, &request, sizeof(request) );
-                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(request) ) > 0 )
+                if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof(request) ) == ROCKETNET_SEND_OK )
                 {
                     request_opened_update[request] = update;
                     sent++;
@@ -3820,7 +3820,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                     if ( frame )
                     {
                         memcpy( frame + ctx.payload_index, &request, sizeof(request) );
-                        if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(request) ) > 0 )
+                        if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof(request) ) == ROCKETNET_SEND_OK )
                             rocketnet_server_transport_send_packets( server );
                     }
                 }

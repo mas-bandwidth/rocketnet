@@ -71,6 +71,7 @@ static const abi_field_t packet_context_fields[] =
     FIELD(packet_id)
     FIELD(sequence)
     FIELD(client_index)
+    FIELD(wire_bytes)
 };
 #undef ABI_TYPE
 
