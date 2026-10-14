@@ -3,6 +3,18 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+// KDF context strings, exactly 8 ASCII bytes, with no terminating null in
+// the hash input. The derive functions pass these macros; the conformance
+// dump includes this file under ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and
+// expands the same ones.
+
+#define ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S "RKTNHNDC"
+#define ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C "RKTNHNDS"
+#define ROCKETNET_KDF_CONTEXT_SESSION_C2S   "RKTNSESC"
+#define ROCKETNET_KDF_CONTEXT_SESSION_S2C   "RKTNSESS"
+
+#ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+
 #include "rocketnet_keys.h"
 #include "rocketnet.h"
 
@@ -39,8 +51,8 @@ void rocketnet_derive_handshake_keys( struct rocketnet_connection_keys_t * keys,
     memcpy( input, connection_salt, 8 );
     memcpy( input + 8, session_nonce, 8 );
 
-    rocketnet_derive_key( keys->handshake_client_to_server, token_client_to_server_key, input, 16, "RKTNHNDC" );
-    rocketnet_derive_key( keys->handshake_server_to_client, token_server_to_client_key, input, 16, "RKTNHNDS" );
+    rocketnet_derive_key( keys->handshake_client_to_server, token_client_to_server_key, input, 16, ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S );
+    rocketnet_derive_key( keys->handshake_server_to_client, token_server_to_client_key, input, 16, ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C );
 }
 
 int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
@@ -72,11 +84,13 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     memcpy( input + 96, connection_salt, 8 );
     memcpy( input + 104, session_nonce, 8 );
 
-    rocketnet_derive_key( keys->session_client_to_server, token_client_to_server_key, input, 112, "RKTNSESC" );
-    rocketnet_derive_key( keys->session_server_to_client, token_server_to_client_key, input, 112, "RKTNSESS" );
+    rocketnet_derive_key( keys->session_client_to_server, token_client_to_server_key, input, 112, ROCKETNET_KDF_CONTEXT_SESSION_C2S );
+    rocketnet_derive_key( keys->session_server_to_client, token_server_to_client_key, input, 112, ROCKETNET_KDF_CONTEXT_SESSION_S2C );
 
     sodium_memzero( shared_secret, sizeof(shared_secret) );
     sodium_memzero( input, sizeof(input) );
 
     return 1;
 }
+
+#endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
