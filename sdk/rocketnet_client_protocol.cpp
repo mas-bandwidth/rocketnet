@@ -959,9 +959,19 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN, ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK,
         ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE };
 
-    // a fragment is accepted in the same states as a payload and feeds
-    // reassembly; the shared machinery already applied its ack block and
-    // added it to the ack debt -- fragments elicit
+    // a fragment is accepted only in connected, per STANDARD.md
+    // _Fragmentation_ and FragmentOnlyWhenConnected in
+    // tla/ClientConnection.tla: in any other state it is refused here,
+    // before the open and before any reassembly call. Payload types other
+    // than 9 keep their states in the shared open below.
+
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_spam( "client ignored fragment. not connected" );
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED]++;
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE]++;
+        return 0;
+    }
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;

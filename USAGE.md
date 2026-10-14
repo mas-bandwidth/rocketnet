@@ -330,6 +330,12 @@ One X-macro table per transport in `rocketnet.h` derives the struct, the default
 the environment variable names, the parse and the validation. For everything in
 the table, there is one declaration and the rest is generated from it.
 
+The server field `handshake_deadline_seconds` defaults to 5 seconds and accepts
+1 to 60. It fixes the half-open mapping deadline when the challenge is created;
+requests never refresh it, and connecting discharges it. Set it in the server
+config or with `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS`. It is independent
+of the connect token's connected idle timeout.
+
 **The table is not the whole environment surface**, and the difference matters
 because only the table's variables get the precedence, logging and validation
 described below. Reading every `getenv` in `sdk/`, these sit outside it:
