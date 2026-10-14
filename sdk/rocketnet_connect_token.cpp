@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_connect_token.h"
+#include "rocketnet_crypto_tally.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet.h"
@@ -120,6 +121,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
                                           const uint8_t * signature,
                                           const uint8_t * backend_public_key )
 {
+    rocketnet_crypto_tally.signature_verify++;
     return crypto_sign_verify_detached( signature, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_public_key ) == 0;
 }
 
@@ -129,6 +131,7 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
                                           const uint8_t * server_secret_key )
 {
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    rocketnet_crypto_tally.seal_open++;
     if ( crypto_box_seal_open( private_block,
                                signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,
                                ROCKETNET_SEALED_BLOCK_BYTES,
