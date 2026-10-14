@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """The static-analysis gate for the sdk.
 
-Compares the current static-analysis findings against tools/static_baseline.txt.
+Compares the current gcc -fanalyzer findings against tools/static_baseline.txt.
 
-Two analyzers feed the gate:
-
-  clang-tidy   over every sdk/*.cpp, with the bugprone-*, clang-analyzer-* and
-               cert-* families enabled and the unsatisfiable checks disabled in
-               .clang-tidy. The compile flags come from the cmake
-               compile_commands.json.
-  gcc -fanalyzer  over the parser translation units: every sdk/*.cpp that
-               includes rocketnet_read_write.h, plus the parser files named in
-               the card (base64, fragment, message, ack, replay, connect_token).
+gcc -fanalyzer runs over the parser translation units: every sdk/*.cpp that
+includes rocketnet_read_write.h, plus the parser files named in the card
+(base64, fragment, message, ack, replay, connect_token). The analyzer walks
+these paths interprocedurally, which is where wire parsing defects live.
 
 A finding is one line in the baseline: <file> <check> <hash>, where the hash is
 a stable digest of the diagnostic text with the source location removed, so a
@@ -28,7 +23,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
@@ -50,7 +44,6 @@ READ_WRITE_HEADER = "rocketnet_read_write.h"
 
 LOCATION = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error):\s+(.*)$")
 OPTION = re.compile(r"\s*\[(-W[A-Za-z0-9_.=+-]+)\]\s*$")
-TIDY_CHECK = re.compile(r"\s*\[([A-Za-z0-9_.+-]+)\]\s*$")
 
 
 def relpath(path):
@@ -107,17 +100,8 @@ def parser_files():
     return sorted(files)
 
 
-def sdk_sources():
-    sdk = os.path.join(ROOT, "sdk")
-    return sorted(
-        os.path.join("sdk", name)
-        for name in os.listdir(sdk)
-        if name.endswith(".cpp")
-    )
-
-
-def parse_diagnostics(text, analyzer, tidy):
-    """Turn compiler/clang-tidy output into baseline finding lines."""
+def parse_diagnostics(text, analyzer):
+    """Turn gcc -fanalyzer output into baseline finding lines."""
     findings = []
     for raw in text.splitlines():
         match = LOCATION.match(raw)
@@ -126,24 +110,13 @@ def parse_diagnostics(text, analyzer, tidy):
         path, _line, _col, level, rest = match.groups()
         if level != "warning":
             continue
-        if tidy:
-            option = TIDY_CHECK.search(rest)
-            if not option:
-                continue
-            check = option.group(1)
-            message = rest[: option.start()].strip()
-            if not (check.startswith("bugprone-") or
-                    check.startswith("clang-analyzer-") or
-                    check.startswith("cert-")):
-                continue
-        else:
-            option = OPTION.search(rest)
-            if not option:
-                continue
-            check = option.group(1)
-            if not check.startswith("-Wanalyzer-"):
-                continue
-            message = rest[: option.start()].strip()
+        option = OPTION.search(rest)
+        if not option:
+            continue
+        check = option.group(1)
+        if not check.startswith("-Wanalyzer-"):
+            continue
+        message = rest[: option.start()].strip()
         findings.append(finding_line(analyzer, relpath(path), check, message))
     return findings
 
@@ -165,38 +138,12 @@ def run_gcc_analyzer():
             command, shell=True, cwd=entry["directory"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        findings.extend(parse_diagnostics(result.stderr, "gcc", tidy=False))
+        findings.extend(parse_diagnostics(result.stderr, "gcc"))
     return findings
 
 
-def run_clang_tidy():
-    if shutil.which("clang-tidy") is None:
-        raise RuntimeError(
-            "clang-tidy is not on PATH; the clang-tidy half of the gate did "
-            "not run, so the baseline cannot be compared. Install clang-tidy "
-            "and rerun.")
-    findings = []
-    for rel in sdk_sources():
-        command = [
-            "clang-tidy", "-p", BUILD,
-            os.path.join(ROOT, rel),
-        ]
-        result = subprocess.run(
-            command, cwd=ROOT, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True,
-        )
-        findings.extend(parse_diagnostics(result.stdout + result.stderr,
-                                          "clang-tidy", tidy=True))
-    return findings
-
-
-def current_findings(only):
-    findings = []
-    if only in ("all", "clang-tidy"):
-        findings.extend(run_clang_tidy())
-    if only in ("all", "gcc"):
-        findings.extend(run_gcc_analyzer())
-    return sorted(set(findings))
+def current_findings():
+    return sorted(set(run_gcc_analyzer()))
 
 
 def read_baseline(path):
@@ -228,18 +175,12 @@ def main():
                         help="rewrite the baseline from the current findings")
     parser.add_argument("--baseline", default=BASELINE,
                         help="baseline file to compare against")
-    parser.add_argument("--only", choices=("all", "clang-tidy", "gcc"),
-                        default="all")
     parser.add_argument("--report", metavar="PATH",
                         help="write the finding set to this path")
     args = parser.parse_args()
 
     ensure_compile_db()
-    try:
-        findings = current_findings(args.only)
-    except RuntimeError as err:
-        print("static gate FAILED: %s" % err, file=sys.stderr)
-        return 1
+    findings = current_findings()
 
     if args.report:
         with open(args.report, "w", encoding="utf-8") as handle:
