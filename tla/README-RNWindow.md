@@ -162,21 +162,28 @@ value exhausts TLC's tableau.
 
 The model's operation sequences are also driven in C++ by
 `test_unit_window_sequences.cpp` (a unit-file test in `./bin/test`, registered
-with `REGISTER_UNIT_TEST`). It runs a reference of RNWindow's numbered records
-and RNRing's placement against the real region state the sdk owns: the send
-descriptor pool (`rn_region_send_alloc` / `rn_region_send_free`), the sender's
-per-number table (`region->send_numbers`), the receiver's descriptors and bitset
-(`region->receive_descriptors`, `region->received_bits`), and the receiver's
-ring predicate (`rn_region_ring_span_valid`). Every sequence up to length six at
-`W = 8` is walked, and a seeded million-step walk runs at the real constants
-(`W = 1024`, `B = 65536`), with a wrap pass that starts just below `2^24` and
-crosses it. After every action it asserts the count bound `n < U' + W`, that
-live ring spans are disjoint and 16-aligned inside `B`, that an ack never frees a
-held record, that each number is delivered once, and that the 24-bit wire number
-reads back as itself (`WireNumberReconstructs`). A failed check prints a
-replayable seed and the action list. The layer-3 window operations the module
-describes still do not exist under `sdk/` at this commit; the test drives the
-real region state that does.
+with `REGISTER_UNIT_TEST`). An independent reference of count, `U'`, ring
+occupancy, descriptor ownership and delivery is compared with the sender and
+receiver window operations after every action. Those operations are
+`rn_window_send_*` and `rn_window_receive_*`. A tree that has
+`sdk/rocketnet_window_send.h` drives that code. This base does not have those
+files yet, so the test compiles the landed admit, `U'` and receive rules and
+drives them. The count bound and the ring floor both read `U'`, not `U`.
+Putting `U` in either place is the pre-fix sender: the partial-block count
+probe and the floor-at-`U` probe go red.
+
+Every sequence of write, block, ack, release and retransmit of length six at
+`W = 8` is walked (the operations take any power-of-two width; the message
+config's minimum is 64, so the exhaustive region is synthetic). A seeded
+million-step walk runs at the real constants (`W = 1024`, `B = 65536`) against
+the real descriptor pool. Directed probes cover `W - 1`, `W`, `W + 1`, the ring
+boundary, a partial-block ack floor, descriptor release only after the update
+has released a held record, and the 24-bit wrap. After every action the test
+asserts `n < U' + W`, that live ring spans are disjoint and inside `B`, that an
+ack does not free a held record, and that each reliable number is delivered
+once. A failed check prints a replayable seed and the action list. No open
+window-sequence defect card is known on this base, so the test carries no
+expected-fail marker.
 
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
 
