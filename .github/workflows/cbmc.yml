@@ -1,0 +1,32 @@
+# CBMC proofs of the arithmetic leaves that finish, on pull requests that
+# touch the sdk. The job budget is five minutes. This workflow runs the
+# default target only. It does not run slow-unproved.
+
+name: CBMC
+
+on:
+  pull_request:
+    paths:
+      - 'sdk/**'
+      - 'proofs/cbmc/**'
+      - '.github/workflows/cbmc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cbmc:
+    name: cbmc (arithmetic leaf proofs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the CBMC proofs
+        run: |
+          if ! command -v cbmc >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y cbmc
+          fi
+          make -C proofs/cbmc
