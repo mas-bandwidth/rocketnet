@@ -11276,6 +11276,24 @@ void rocketnet_test_config_env_names_are_per_endpoint()
     rocketnet_test_env_restore( &client_guard );
 }
 
+void rocketnet_test_handshake_deadline_is_configured()
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    rocketnet_check( config.handshake_deadline_seconds == 5 );
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.handshake_deadline_seconds = 0;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.handshake_deadline_seconds = 61;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.handshake_deadline_seconds = 1;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+    config.handshake_deadline_seconds = 60;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+}
+
 void rocketnet_test_config_validation()
 {
     int num_fields = 0;
@@ -12619,6 +12637,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
+    { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_config_validation", rocketnet_test_config_validation },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
