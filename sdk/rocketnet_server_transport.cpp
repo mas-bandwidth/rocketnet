@@ -812,7 +812,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
     // the delivered mirror sizes to the server's drain bound: the receive
-    // path drains at most RECEIVE_PACKETS_PER_CLIENT packets per client
+    // one reassembly set per connection slot, created here at create and
+    // reached only from a connected slot (STANDARD.md _Fragmentation_):
+    // the path drains at most RECEIVE_PACKETS_PER_CLIENT packets per client
     // slot per update (the process arrays' sizing), and a payload takes at
     // least two fragments, so completions cap at eight per client at the
     // defaults -- exactly the default slot count. connections x slots IS
