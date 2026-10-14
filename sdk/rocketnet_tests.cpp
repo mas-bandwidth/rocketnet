@@ -9129,6 +9129,7 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     const int state_before = pair.client.state;
     const uint64_t received_sequence_before = pair.client.received_session_sequence;
 
+    payload_bytes = 12345;
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, one_byte, (int) sizeof(one_byte), pair.time,
                                                                small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
     rocketnet_check( payload_bytes == 0 );
