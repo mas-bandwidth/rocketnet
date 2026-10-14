@@ -203,7 +203,7 @@ the design these points:
   The clamp in 6.4 needs `min <= max`, and a first timeout outside the clamp
   has no meaning.
 - **The exact region** is the formula plus at most 63 bytes of alignment per
-  part. At the defaults the padding is 0, and the region is 449,024 bytes,
+  part. At the defaults the padding is 0, and the region is 457,216 bytes,
   which is section 14's figure to the byte.
 - **Every entry type is pinned** to its section 14 size by a static assert.
   `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
@@ -515,6 +515,66 @@ corruption.
   enters the error state with reason `RELIABLE_TIMEOUT` and the object
   disconnects. That catches a live peer whose message layer is broken. Without
   it the window would stall silently.
+
+**As built** (`sdk/rocketnet_window_ack.h` and `.cpp`, sent-packet map, resend
+FIFO, RTT, RTO, backoff and reliable timeout). The implementation made these
+details explicit:
+
+- **Resend FIFO (`8W`).** The region carves `W` entries of `rn_resend_link_t`
+  (`{prev, next}`, 8 bytes each, `RN_RESEND_NONE = UINT32_MAX`), indexed by
+  `n % W`. That gives O(1) unlink on out-of-order ack and O(1) move-to-tail on
+  commit or resend without scanning `W`, and adds `8W` to section 14's region
+  formula (`104.125W`, `457,216` bytes at the defaults).
+- **Commit and eviction.** `rn_window_ack_commit_packet` writes
+  `{packet_id, send_time, ref_start, ref_count}` into the circular `P`-entry
+  `sent_packets` ring, inserts `packet_id -> ring_slot` into the open-addressed
+  `2P`-entry `sent_index` table (Knuth multiplicative hash with backward-shift
+  deletion), and writes the `uint32_t` references (`n & 0xFFFFFFu`, bit 31
+  reserved for layer 4 receipt serials) into the circular `16P`-entry
+  `sent_refs` ring. On each referenced number's first send (`last_send == 0.0`)
+  it sets `first_send = now`; on every send it sets `last_send = now` and links
+  the slot at the tail of the resend FIFO. When `sent_count == P` or
+  `sent_ref_count + count > 16P`, the oldest sent-packet entries are evicted
+  first and counted in `MESSAGE_SENT_MAP_EVICTED`; evicted numbers keep their
+  `send_numbers` entries and resend-FIFO links so they resend on the RTO.
+- **Ack, chunk release and RTT.** `rn_window_ack_on_ack` looks up `packet_id`
+  in `sent_index`; unknown or zero ids return 0 in O(1) without touching RTT,
+  `backoff` or window bounds. A matched entry takes one unambiguous RFC 6298
+  sample `R_sample = now - send_time` (`srtt = R_sample`, `rttvar = R_sample/2`
+  on the first sample; `rttvar = 3/4·rttvar + 1/4·|srtt - R_sample|`,
+  `srtt = 7/8·srtt + 1/8·R_sample` thereafter; `rto = clamp(srtt + max(0.001,
+  4·rttvar), rto_min, rto_max)`), resets `backoff = 1`, and walks the entry's
+  references. For each reference whose slot `n % W` still names `n` and is
+  unacked, it unlinks `n` from the resend FIFO, frees that fragment's chunk via
+  `rn_region_send_free_fragment` (releasing the send descriptor when the last
+  unacked fragment of a block or single message is freed), and calls
+  `rn_window_send_on_ack` to advance `U` and `U'`.
+- **Resend, failed send and reliable timeout.** `rn_window_ack_resend` checks
+  `rn_window_ack_check_timeout` first (if any unacked number has
+  `now - first_send >= reliable_timeout`, `ack->error` becomes
+  `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
+  from `resend_head` while `now >= last_send + rto·backoff`, stopping at the
+  first entry that is not due (`O(due)`). Each due number is moved to the tail
+  with `last_send = now`, committed under a fresh `packet_id`, and counted in
+  `MESSAGE_RESENT`. If at least one entry with `last_send > 0.0` was resent in
+  the pass, `backoff` doubles up to 8 (`1, 2, 4, 8`).
+  `rn_window_ack_packet_failed` handles a `finish_packet` refusal without
+  entering the packet in the sent-packet map: each numbered record gets
+  `first_send = now` (if unset), `last_send = 0.0` (due immediately without
+  stepping `backoff`), and is linked at the head of the resend FIFO in order.
+- **Tests.** `test_channels.cpp` pins these rules in
+  `ChannelsWindowAckOfAnUnknownIdIsIgnored`,
+  `ChannelsWindowAckFreesTheChunkAndAdvancesU`,
+  `ChannelsWindowRttSampleIsUnambiguousAcrossResends`,
+  `ChannelsWindowEvictionKeepsNumbersResendable`,
+  `ChannelsWindowBackoffDoublesToEightAndResetsOnAck`,
+  `ChannelsWindowResendWalkStopsAtTheFirstNotDue`,
+  `ChannelsWindowFailedSendMarksDueNow`,
+  `ChannelsWindowReliableTimeoutEntersTheErrorState`, and
+  `ChannelsWindowLossySoak` (full layer 2 + layer 3 pipeline over `rn_lossy_t`
+  at 0, 10 and 50 percent loss with reordering, duplication, single and
+  multi-fragment blocks, and failed-send recovery under the no-live-allocation
+  trap).
 
 ### 6.5 The receiver's window check
 
@@ -1434,6 +1494,7 @@ exact figure.
 |---|---|
 | channel state, send and receive | `48·C` |
 | sender per-number table | `32·W` |
+| resend FIFO links | `8·W` |
 | receiver descriptors | `32·W` |
 | received bitset | `W/8` |
 | held-ordered index | `16·2W` |
@@ -1446,7 +1507,7 @@ exact figure.
 | receipt ring | `16·Rq` |
 
 ```
-connection_bytes = 48C + 96.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq
+connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq
 ```
 
 At the defaults, `C=32, W=1024, B=65536, S=131072, Q=1024, P=256, Du=256,
@@ -1455,7 +1516,7 @@ Ru=16, Rq=256`:
 | term | value |
 |---|---|
 | 48·32 | 1,536 |
-| 96.125·1024 | 98,432 |
+| 104.125·1024 | 106,624 |
 | B | 65,536 |
 | 64·1024 | 65,536 |
 | S | 131,072 |
@@ -1463,13 +1524,14 @@ Ru=16, Rq=256`:
 | 24·1280 | 30,720 |
 | 1208·16 | 19,328 |
 | 16·256 | 4,096 |
-| **total** | **449,024** bytes, about 438 KiB |
+| **total** | **457,216** bytes, 446.5 KiB |
 
-That is about 428 MiB for a 1000-client server, on top of the transport's own
+That is about 436 MiB for a 1000-client server, on top of the transport's own
 memory (`rocketnet_server_transport_required_memory`).
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to
-  about 177 KiB per connection, or 173 MiB at 1000. As built, its store holds 18 large chunks, so it also needs
+  about 179 KiB per connection (or **161,312** bytes, 157.5 KiB, with
+  `Ru=4, Rq=64`). As built, its store holds 18 large chunks, so it also needs
   `max_message_bytes <= 20,736` (section 4).
 - **Channel cost:** 48 bytes per channel. 1024 channels cost 48 KiB per
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No

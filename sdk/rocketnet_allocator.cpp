@@ -29,6 +29,7 @@ static_assert( sizeof(rn_sent_index_t) == 16, "a sent-packet index entry is 16 b
 static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
 static_assert( sizeof(rn_sequenced_hold_t) == 1208, "a sequenced hold is 1208 bytes (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
+static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
 static uint64_t rn_align64( uint64_t value )
@@ -65,11 +66,12 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
     "delivered entries",
     "sequenced holds",
     "receipt ring",
+    "resend FIFO",
 };
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] =
 {
-    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1208Ru", "16Rq",
+    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1208Ru", "16Rq", "8W",
 };
 
 const char * rn_region_part_name( int part )
@@ -126,6 +128,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_DELIVERIES] = sizeof(rn_delivery_t) * ( W + Du );
     layout->bytes[RN_PART_SEQUENCED_HOLDS] = sizeof(rn_sequenced_hold_t) * Ru;
     layout->bytes[RN_PART_RECEIPTS] = sizeof(rn_receipt_t) * Rq;
+    layout->bytes[RN_PART_RESEND_FIFO] = sizeof(rn_resend_link_t) * W;
 
     uint64_t offset = 0;
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
@@ -359,6 +362,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->deliveries = (rn_delivery_t*) ( base + layout->offset[RN_PART_DELIVERIES] );
     region->sequenced_holds = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
     region->receipts = (rn_receipt_t*) ( base + layout->offset[RN_PART_RECEIPTS] );
+    region->resend_fifo = (rn_resend_link_t*) ( base + layout->offset[RN_PART_RESEND_FIFO] );
 
     // the store's memory is S at its offset; its class tables live in the region struct
     region->store_memory = base + layout->offset[RN_PART_SEND_STORE];
@@ -387,7 +391,11 @@ void rn_region_carve( rn_region_t * region )
 
     memset( region->send_numbers, 0, sizeof(rn_send_number_t) * region->window );
     for ( uint32_t n = 0; n < region->window; n++ )
+    {
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
+        region->resend_fifo[n].prev = RN_RESEND_NONE;
+        region->resend_fifo[n].next = RN_RESEND_NONE;
+    }
     memset( region->receive_descriptors, 0, sizeof(rn_receive_descriptor_t) * region->window );
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof(rn_held_entry_t) * region->held_entries );
@@ -469,12 +477,80 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
     rocketnet_assert( descriptor->in_use );
     if ( d >= region->queue || !descriptor->in_use )
         return;
-    rn_send_store_free( &region->store, descriptor->chunk );
+    if ( descriptor->chunk != RN_CHUNK_NONE )
+        rn_send_store_free( &region->store, descriptor->chunk );
     descriptor->in_use = 0;
     descriptor->chunk = RN_CHUNK_NONE;
     descriptor->next = region->descriptors_free_head;
     region->descriptors_free_head = d;
     region->descriptors_free++;
+}
+
+void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t chain_index )
+{
+    rocketnet_assert( region );
+    rocketnet_assert( d < region->queue );
+    if ( d >= region->queue )
+        return;
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    rocketnet_assert( descriptor->in_use );
+    if ( !descriptor->in_use )
+        return;
+
+    if ( descriptor->chunk != RN_CHUNK_NONE )
+    {
+        const int c = rn_send_store_chunk_class( descriptor->chunk );
+        rocketnet_assert( c >= 0 && c < RN_STORE_NUM_CLASSES );
+        rn_store_class_t * cls = &region->store.classes[c];
+        uint32_t head = descriptor->chunk & RN_LINK_INDEX;
+        rocketnet_assert( head < cls->num_chunks );
+        rocketnet_assert( ( cls->link[head] & ( RN_LINK_IN_USE | RN_LINK_HEAD ) ) == ( RN_LINK_IN_USE | RN_LINK_HEAD ) );
+
+        uint32_t prev = RN_LINK_END;
+        uint32_t cur = head;
+        for ( uint32_t step = 0; step < chain_index && cur != RN_LINK_END; step++ )
+        {
+            prev = cur;
+            cur = cls->link[cur] & RN_LINK_INDEX;
+        }
+        if ( cur != RN_LINK_END )
+        {
+            rocketnet_assert( cur < cls->num_chunks && ( cls->link[cur] & RN_LINK_IN_USE ) != 0 );
+            const uint32_t next = cls->link[cur] & RN_LINK_INDEX;
+            if ( prev == RN_LINK_END )
+            {
+                if ( next == RN_LINK_END )
+                {
+                    descriptor->chunk = RN_CHUNK_NONE;
+                }
+                else
+                {
+                    cls->link[next] |= RN_LINK_HEAD;
+                    descriptor->chunk = ( (uint32_t) c << 30 ) | next;
+                }
+            }
+            else
+            {
+                cls->link[prev] = ( cls->link[prev] & ~RN_LINK_INDEX ) | next;
+            }
+            cls->link[cur] = cls->free_head;
+            cls->free_head = cur;
+            cls->free_count++;
+        }
+    }
+
+    const uint16_t total = descriptor->fragments > 0 ? descriptor->fragments : (uint16_t) rn_send_store_chunks_needed( (int) descriptor->bytes );
+    descriptor->fragments_acked++;
+    if ( descriptor->fragments_acked >= total )
+    {
+        if ( descriptor->chunk != RN_CHUNK_NONE )
+            rn_send_store_free( &region->store, descriptor->chunk );
+        descriptor->in_use = 0;
+        descriptor->chunk = RN_CHUNK_NONE;
+        descriptor->next = region->descriptors_free_head;
+        region->descriptors_free_head = d;
+        region->descriptors_free++;
+    }
 }
 
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes )
@@ -654,7 +730,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 96.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
