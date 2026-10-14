@@ -140,8 +140,11 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name
-// why. An ordinary single-packet payload lands in out_payload (sized at
-// least ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES) with its length in
+// why. out_payload_capacity is the true size of out_payload, which must be at
+// least ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES: a smaller capacity refuses the
+// call at entry, before the packet is read, counts RECEIVE_CURSOR_TOO_SMALL,
+// leaves out_payload and the protocol state untouched, and never overruns.
+// An ordinary single-packet payload lands in out_payload with its length in
 // out_payload_bytes; every other outcome leaves it zero. A completed
 // fragmented payload is never written here -- it can exceed this buffer --
 // and is reported through the reassembly set's completed fields instead.
@@ -151,6 +154,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      int packet_bytes,
                                      double current_time,
                                      uint8_t * out_payload,
+                                     int out_payload_capacity,
                                      int * out_payload_bytes );
 
 // Builds a payload packet for the server, and stamps the send -- ordinary

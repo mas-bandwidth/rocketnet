@@ -697,7 +697,7 @@ int main( int argc, char ** argv )
                 int delivered_bytes = 0;
                 bool processed = false;
                 SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) );
+                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes ) );
                 if ( processed && delivered_bytes > 0 )
                 {
                     if ( verify_payload( delivered, delivered_bytes ) )
