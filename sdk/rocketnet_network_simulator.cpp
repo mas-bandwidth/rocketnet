@@ -601,12 +601,12 @@ void rocketnet_network_simulator_inject_index_fault( struct rocketnet_network_si
 
 // --------------------------------------------------------------------------
 
-static void rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
-                                        const struct rocketnet_address_t * from,
-                                        const struct rocketnet_address_t * to,
-                                        const uint8_t * packet_data,
-                                        int packet_bytes,
-                                        double delivery_time )
+static int rocketnet_simulator_insert( struct rocketnet_network_simulator_t * simulator,
+                                       const struct rocketnet_address_t * from,
+                                       const struct rocketnet_address_t * to,
+                                       const uint8_t * packet_data,
+                                       int packet_bytes,
+                                       double delivery_time )
 {
     // the lowest free slot. every slot below free_hint is occupied, which is
     // the invariant the audit checks, so starting there finds the same slot
@@ -624,10 +624,11 @@ static void rocketnet_simulator_insert( struct rocketnet_network_simulator_t * s
         memcpy( simulator->packet_data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packet_data, (size_t) packet_bytes );
         rocketnet_simulator_link( simulator, i );
         simulator->free_hint = i + 1;
-        return;
+        return 1;
     }
     simulator->free_hint = simulator->capacity;
     rocketnet_spam( "network simulator queue full. packet dropped" );
+    return 0;
 }
 
 void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * simulator,
@@ -654,6 +655,32 @@ void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * si
         double duplicate_time = current_time + simulator->latency + rocketnet_simulator_random_float( simulator ) * simulator->jitter;
         rocketnet_simulator_insert( simulator, from, to, packet_data, packet_bytes, duplicate_time );
     }
+}
+
+int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simulator_t * simulator,
+                                                 const struct rocketnet_address_t * from,
+                                                 const struct rocketnet_address_t * to,
+                                                 const uint8_t * const * packet_data,
+                                                 const int * packet_bytes,
+                                                 int packet_count,
+                                                 double delivery_time )
+{
+    rocketnet_assert( simulator );
+    rocketnet_assert( from );
+    rocketnet_assert( to );
+    rocketnet_assert( packet_data );
+    rocketnet_assert( packet_bytes );
+    rocketnet_assert( packet_count >= 0 );
+
+    int accepted = 0;
+    for ( int i = 0; i < packet_count; i++ )
+    {
+        if ( packet_data[i] == NULL || packet_bytes[i] <= 0 || packet_bytes[i] > ROCKETNET_RECEIVE_CEILING )
+            continue;
+        if ( rocketnet_simulator_insert( simulator, from, to, packet_data[i], packet_bytes[i], delivery_time ) )
+            accepted++;
+    }
+    return accepted;
 }
 
 int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * simulator,
