@@ -982,6 +982,18 @@ id already connected to this server is refused, per _Processing Connection
 Requests_. That is the same rule at the scope one server can see. The backend
 widens the scope from one server to the fleet; it does not introduce the idea.
 
+**A live client id holds its slot until that slot ends.** A connection request
+or response naming a client id already connected to this server is refused and
+counted, and every retry is refused the same way, with no response, until the
+slot is gone. A slot ends at once when its client disconnects cleanly, or, if
+the client goes silent, when the connection's idle timeout releases it. That
+timeout is the token's `timeout seconds`, chosen by whoever mints the token:
+the library's own minting writes 10 seconds, so that is the default, and the
+server's `max_timeout_seconds` (60) is a ceiling on the field, not a default. A
+retry therefore proceeds as soon as the slot ends — immediately after a clean
+disconnect, and otherwise after a short timeout. Who may connect after that is
+the backend's rule, per the connected set above.
+
 *A deployment without a backend connected set has a weaker property, and should
 know which one it has: tokens are transferable between players, and the only
 cost to a sharer is that they cannot both be on the same server.*
@@ -2386,6 +2398,13 @@ every other state.
 * Do not send anything in response; the next scheduled request carries the
   cookie. (_Connection cookie packet_ gives the amplification reason this is a
   MUST.)
+* The cookie is unauthenticated to the client: an observer who sees the salt in
+  the clear can replace a stored cookie with a junk one. This layer accepts that
+  risk, because it needs an on-path observer, who could drop packets anyway, and
+  it is not expected in practice.
+* A client reconnecting with the same client id presents a fresh token, and the
+  server refuses the attempt until the previous slot ends, per _Connect token
+  sharing, and the connected set_.
 
 ### Processing a connection challenge packet
 
