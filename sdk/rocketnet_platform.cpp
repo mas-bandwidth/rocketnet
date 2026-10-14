@@ -429,9 +429,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
-    if ( socket->handle != 0 )
+    if ( socket->handle >= 0 )
     {
         close( socket->handle );
+        socket->handle = -1;
     }
     rocketnet_free( socket->context, socket );
 }
@@ -1636,9 +1637,10 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
-    if ( socket->handle != 0 )
+    if ( socket->handle >= 0 )
     {
         close( socket->handle );
+        socket->handle = -1;
     }
     
     rocketnet_free( socket->context, socket );

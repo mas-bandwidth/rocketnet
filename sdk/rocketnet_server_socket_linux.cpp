@@ -180,9 +180,9 @@ struct rocketnet_server_socket_t
     bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
     int num_pinned;                     // the pin paths recorded BY CONSTRUCTION at mkdir (their names are deterministic) -- destroy unlinks exactly these
     char pinned_paths[3][200];
-    int config_map_fd;
-    int socket_map_fd;
-    int stats_map_fd;
+    int config_map_fd = -1;
+    int socket_map_fd = -1;
+    int stats_map_fd = -1;
 
     std::atomic<uint64_t> packet_id{0};
 
@@ -1359,7 +1359,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // bound, no re-derivation to drift
 
     server_socket->config_map_fd = bpf_obj_get( server_socket->pinned_paths[0] );
-    if ( server_socket->config_map_fd <= 0 )
+    if ( server_socket->config_map_fd < 0 )
     {
         rocketnet_error( "server could not get config map: %s", strerror(errno) );
         rocketnet_server_socket_destroy( server_socket );
@@ -1367,7 +1367,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     }
 
     server_socket->socket_map_fd = bpf_obj_get( server_socket->pinned_paths[1] );
-    if ( server_socket->socket_map_fd <= 0 )
+    if ( server_socket->socket_map_fd < 0 )
     {
         rocketnet_error( "server could not get socket map: %s", strerror(errno) );
         rocketnet_server_socket_destroy( server_socket );
@@ -1375,7 +1375,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     }
 
     server_socket->stats_map_fd = bpf_obj_get( server_socket->pinned_paths[2] );
-    if ( server_socket->stats_map_fd <= 0 )
+    if ( server_socket->stats_map_fd < 0 )
     {
         rocketnet_error( "server could not get stats map: %s", strerror(errno) );
         rocketnet_server_socket_destroy( server_socket );
@@ -1620,12 +1620,21 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
         xdp_program__close( server_socket->program );
     }
 
-    if ( server_socket->config_map_fd > 0 )
+    if ( server_socket->config_map_fd >= 0 )
+    {
         close( server_socket->config_map_fd );
-    if ( server_socket->socket_map_fd > 0 )
+        server_socket->config_map_fd = -1;
+    }
+    if ( server_socket->socket_map_fd >= 0 )
+    {
         close( server_socket->socket_map_fd );
-    if ( server_socket->stats_map_fd > 0 )
+        server_socket->socket_map_fd = -1;
+    }
+    if ( server_socket->stats_map_fd >= 0 )
+    {
         close( server_socket->stats_map_fd );
+        server_socket->stats_map_fd = -1;
+    }
 
     // this instance's bpffs state goes with it: the paths recorded by
     // construction at mkdir -- so EVERY create outcome that reaches
