@@ -118,10 +118,10 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWin
 
 `MCReplayWindow.cfg` is the committed run: the rule on both counts (`ClearedWords = 6`,
 `GateBeforeAdvance = TRUE`), checking every invariant above and `Monotone`. It finishes
-in a few seconds: 958,503 states, 53,249 distinct, depth 16.
+in a few seconds: 958,503 states, 53,249 distinct, depth 15 in the measured recheck.
 
-The reversed witnesses are the same file with one constant changed to what the code
-does today and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
+The reversed witnesses use the defective behavior (historical F1, current OV-34)
+with `INVARIANTS` cut to the one rule under test, so TLC names that rule:
 
 | Run | Edit | `INVARIANTS` | Expected |
 |---|---|---|---|
