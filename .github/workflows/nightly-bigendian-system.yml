@@ -1,0 +1,193 @@
+# Nightly full-system big-endian leg.
+#
+# ci.yml's big-endian leg cross-compiles for s390x and runs the wire check
+# under qemu-user. It does not run the socket-crossing suite. Under qemu-user
+# a UDP_SEGMENT burst arrives as one datagram, and the portable rung's
+# receive loop stalls, so those results are the emulator's and not the
+# platform's. This workflow boots a real s390x guest kernel under
+# qemu-system-s390x and runs the unmodified suite there. The guest kernel
+# owns the sockets.
+#
+# What it covers: ./bin/test, then ./bin/functional on the auto ladder, then
+# ./bin/functional with the portable rung pinned. The guest image is Ubuntu
+# 24.04 s390x, checked against the release SHA256SUMS and that file's GPG
+# signature before the overlay is created. The suite is compiled inside the
+# guest, so the toolchain matches the guest. Every compile carries
+# -ffp-contract=off (the CMake target floor, and the same flag on the
+# configure line).
+#
+# What it does not cover: a physical big-endian machine, an attached xdp
+# data plane (the guest does not grant one; the pin test still asserts the
+# refusal), and the byte-order wire check, which stays on the per-commit
+# leg. This is not a per-commit gate. A red night is a finding to read.
+#
+# Reader: whoever takes the run the next morning.
+#
+# Schedule: 15 11 * * * UTC. fuzz-nightly.yml is 07:17 UTC, nightly.yml is
+# 08:40 UTC, and nightly-soak.yml is 09:00 UTC with a 90 minute cap, so that
+# window is closed by 10:30 UTC. This job starts after it.
+
+name: nightly big-endian system
+
+on:
+  schedule:
+    - cron: "15 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-bigendian-system-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bigendian-system:
+    name: s390x full system
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install qemu-system-s390x when the runner does not have it
+        run: |
+          set -euo pipefail
+          if ! command -v qemu-system-s390x >/dev/null 2>&1 || ! command -v cloud-localds >/dev/null 2>&1 || ! command -v qemu-img >/dev/null 2>&1; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-s390x cloud-image-utils qemu-utils
+          fi
+
+      - name: Verify the s390x cloud image, boot the guest, and run the suite
+        run: |
+          set -euo pipefail
+          WORK="${RUNNER_TEMP:-/tmp}/bigendian-system"
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          cd "$WORK"
+
+          BASE=https://cloud-images.ubuntu.com/releases/noble/release
+          IMAGE=ubuntu-24.04-server-cloudimg-s390x.img
+          # Pinned fingerprint of the UEC Image Automatic Signing Key.
+          # Any other key is a failed verification, and the image is not used.
+          PIN=D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+
+          curl -fsSL -o SHA256SUMS "$BASE/SHA256SUMS"
+          curl -fsSL -o SHA256SUMS.gpg "$BASE/SHA256SUMS.gpg"
+          export GNUPGHOME="$WORK/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --keyid-format long --keyserver hkps://keyserver.ubuntu.com --recv-keys "$PIN"
+          FP=$(gpg --batch --with-colons --fingerprint "$PIN" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "signing-key fingerprint ${FP}"
+          test "$FP" = "$PIN"
+          gpg --batch --status-fd 1 --keyid-format long --verify SHA256SUMS.gpg SHA256SUMS | tee gpg-status.txt
+          grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt
+          grep -q "^\[GNUPG:\] VALIDSIG ${PIN} " gpg-status.txt
+          curl -fL --retry 3 -o "$IMAGE" "$BASE/$IMAGE"
+          grep -F "*${IMAGE}" SHA256SUMS | sha256sum -c -
+
+          qemu-img create -f qcow2 -F qcow2 -b "$WORK/$IMAGE" "$WORK/overlay.qcow2" 8G
+          ssh-keygen -t ed25519 -f "$WORK/guest_key" -N "" -q
+          chmod 600 "$WORK/guest_key"
+          PUB=$(cat "$WORK/guest_key.pub")
+          cat > "$WORK/user-data" << EOF
+          #cloud-config
+          hostname: be-guest
+          resize_rootfs: true
+          ssh_pwauth: false
+          users:
+            - name: runner
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              groups: sudo
+              shell: /bin/bash
+              lock_passwd: true
+              ssh_authorized_keys:
+                - ${PUB}
+          EOF
+          printf 'instance-id: rn-be-1\nlocal-hostname: be-guest\n' > "$WORK/meta-data"
+          cloud-localds "$WORK/seed.img" "$WORK/user-data" "$WORK/meta-data"
+
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          echo "guest ssh port ${PORT}"
+          : > "$WORK/serial.log"
+          qemu-system-s390x \
+            -machine s390-ccw-virtio \
+            -cpu max \
+            -accel tcg,thread=multi \
+            -m 4096 \
+            -smp 4 \
+            -display none \
+            -serial file:"$WORK/serial.log" \
+            -drive "file=$WORK/overlay.qcow2,if=none,id=hd0,format=qcow2,cache=writeback" \
+            -device virtio-blk-ccw,drive=hd0,bootindex=1 \
+            -drive "file=$WORK/seed.img,if=none,id=cidata,format=raw" \
+            -device virtio-blk-ccw,drive=cidata \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22" \
+            -device virtio-net-ccw,netdev=net0 \
+            >"$WORK/qemu.log" 2>&1 &
+          QEMU_PID=$!
+          cleanup() {
+            if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
+              kill "$QEMU_PID" 2>/dev/null || true
+              wait "$QEMU_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          SSH=(ssh -i "$WORK/guest_key" -p "$PORT"
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o ConnectTimeout=5
+            runner@127.0.0.1)
+          SCP=(scp -i "$WORK/guest_key" -P "$PORT"
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes)
+          ok=0
+          for i in $(seq 1 90); do
+            if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+              echo "qemu exited before ssh"
+              tail -n 40 "$WORK/serial.log" || true
+              exit 1
+            fi
+            if "${SSH[@]}" true 2>/dev/null; then
+              ok=1
+              echo "ssh up at try ${i}"
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ok" != 1 ]; then
+            echo "ssh did not come up"
+            tail -n 40 "$WORK/serial.log" || true
+            exit 1
+          fi
+
+          "${SSH[@]}" 'uname -sn; date -u'
+          tar -C "$GITHUB_WORKSPACE" --exclude .git --exclude build --exclude bin -cf "$WORK/src.tar" .
+          "${SCP[@]}" "$WORK/src.tar" "runner@127.0.0.1:src.tar"
+          "${SSH[@]}" 'mkdir -p ~/src && tar -C ~/src -xf ~/src.tar'
+          "${SSH[@]}" 'sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake pkg-config libbpf-dev libxdp-dev xxd python3 time'
+          "${SSH[@]}" 'cd ~/src && cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS=-ffp-contract=off && cmake --build build --target test functional --parallel'
+          "${SSH[@]}" 'cd ~/src && readelf -h bin/test && readelf -h bin/functional && readelf -h bin/test | grep -F -q "big endian" && readelf -h bin/test | grep -F -q "IBM S/390"'
+
+          "${SSH[@]}" bash -s << 'GUEST'
+          set +e
+          cd ~/src
+          uname -sn
+          date -u
+          rc=0
+          /usr/bin/time -f UNIT_SEC=%e ./bin/test
+          u=$?
+          echo UNIT_EXIT:$u
+          [ "$u" -eq 0 ] || rc=$u
+          /usr/bin/time -f FUNC_AUTO_SEC=%e ./bin/functional
+          a=$?
+          echo FUNC_AUTO_EXIT:$a
+          [ "$a" -eq 0 ] || rc=$a
+          ROCKETNET_DRIVER=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional
+          p=$?
+          echo FUNC_PORT_EXIT:$p
+          [ "$p" -eq 0 ] || rc=$p
+          exit $rc
+          GUEST
