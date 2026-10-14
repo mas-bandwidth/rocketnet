@@ -334,6 +334,21 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_api_misuse_count();
 // caller restore them after taking the allocator.
 bool rocketnet_library_initialized();
 void rocketnet_api_misuse_record();
+
+// The public boundary's NULL guard. Every exported entry point calls this once
+// per pointer it would dereference, at the top, before any work: a NULL is a
+// counted no-op that increments rocketnet_api_misuse_count and, in a debug
+// build, fires rocketnet_assert. The entry point returns its documented value
+// when the guard says false. The check is one predictable branch, never in a
+// loop and never on an internal call.
+static inline bool rocketnet_api_null_guard( const void * p )
+{
+    if ( p != NULL )
+        return true;
+    rocketnet_api_misuse_record();
+    rocketnet_assert( p );
+    return false;
+}
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
