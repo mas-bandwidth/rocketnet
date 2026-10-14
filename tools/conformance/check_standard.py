@@ -12,22 +12,23 @@ below against the same numbers as the COMPILER sees them, taken from
 dump_constants.cpp built through the real headers.
 
 WHAT IT COMPARES: the wire-format rows, and additionally the Timing
-table's rows, the glance table's timing and sizing rows, the KDF
-context-string row, and the field names of the two transport configuration
-tables. Values read from a header macro or a config-table default are
-compared directly. A row the document states and the code cannot produce --
-the value is hardcoded rather than declared, or the behaviour is absent --
-is a mismatch too, and a mismatch is tolerated ONLY while its id is listed
-in known_divergences.tsv. A listed divergence whose document and code now
-agree is stale and also fails, so the file must shrink as fixes land.
+table's rows, the glance table's timing and sizing rows, and the field names
+of the two transport configuration tables. Values read from a header macro,
+a protocol default or a config-table default are compared directly. A row
+the document states and the code cannot produce -- the value is hardcoded
+rather than declared, or the behaviour is absent -- is a mismatch too, and
+a mismatch is tolerated ONLY while its id is listed in known_divergences.tsv.
+A listed divergence whose document and code now agree is stale and also fails,
+so the file must shrink as fixes land.
 
 WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
 the Magic row -- the standard publishes no default magic and the code ships
-none, so there is nothing to compare -- and the table-sizing ratios the code
-holds as literals in rocketnet_server_transport.cpp (the used-token history,
-admitted-token set and encryption-map multiples of max_clients), which are
-listed as known divergences until they are declared in a table this dump can
-read. The count printed at the end says how many checks ran.
+none, so there is nothing to compare -- and the KDF context strings row --
+the strings are function-local literals in sdk/rocketnet_keys.cpp rather than
+constants declared in a header this dump can expand. The table-sizing ratio
+for encryption_map (a flat 2 x max_clients against the standard's "far above
+the slot count") and cookie key rotation (unimplemented in code) are listed
+as known divergences. The count printed at the end says how many checks ran.
 
 That list is a promise and it has already been wrong once: the reader at
 PR #130's gate found Filter epoch missing from it, and missing for the
@@ -354,31 +355,51 @@ def main():
         compare("redundant disconnect packets (client)",
                 ints(cell)[0], code["CLIENT_REDUNDANT_DISCONNECT_PACKETS"])
 
-    # the send rate, the handshake deadline and the cookie lifetime are
-    # stated as configurable timing values; the code hardcodes them and
-    # leaves them out of the config table, so each is a stated divergence.
+    # the timing values are compared against the implementation's defaults.
+    # The divergence that send_rate, handshake_deadline and cookie_lifetime
+    # are missing from the transport configuration table is tracked above
+    # by config_field; cookie key rotation is unimplemented in code and
+    # is tracked as a stated divergence against 0.
 
     cell = timing_row("Send rate")
     if cell is not None:
-        stated_divergence("timing.send_rate", "send rate",
-                          ints(cell)[0], "hardcoded, not configurable")
+        compare("send rate (timing table)", ints(cell)[0],
+                code["DEFAULT_SEND_RATE"])
 
     cell = timing_row("Handshake deadline")
     if cell is not None:
-        stated_divergence("timing.handshake_deadline", "handshake deadline",
-                          ints(cell)[0], "hardcoded, not configurable")
+        compare("handshake deadline (timing table)", ints(cell)[0],
+                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
 
     cell = timing_row("Cookie lifetime")
     if cell is not None:
-        stated_divergence("timing.cookie_lifetime", "cookie lifetime",
-                          ints(cell)[0], "hardcoded, not configurable")
+        compare("cookie lifetime (timing table)", ints(cell)[0],
+                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
 
     cell = timing_row("Cookie key rotation")
     if cell is not None:
         stated_divergence("timing.cookie_rotation", "cookie key rotation",
-                          ints(cell)[0], "no rotation is implemented")
+                          ints(cell)[0], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
 
-    # ---------------- the glance table's sizing and KDF rows ----------------
+    # ---------------- the glance table's timing and sizing rows ----------------
+
+    cell = row("Send rate")
+    if cell is not None:
+        compare("send rate (glance table)", ints(cell)[0],
+                code["DEFAULT_SEND_RATE"])
+
+    cell = row("Handshake deadline")
+    if cell is not None:
+        compare("handshake deadline (glance table)", ints(cell)[0],
+                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
+
+    cell = row("Cookie lifetime / key rotation")
+    if cell is not None:
+        numbers = ints(cell)
+        compare("cookie lifetime (glance table)", numbers[0],
+                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
+        stated_divergence("timing.cookie_rotation", "cookie key rotation (glance table)",
+                          numbers[1], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
 
     cell = row("Redundant disconnects")
     if cell is not None:
@@ -394,30 +415,21 @@ def main():
 
     cell = row("Used-token history")
     if cell is not None:
-        stated_divergence("sizing.used_token_history", "used-token history",
-                          ints(cell)[0], "not declared in a table this dump reads")
+        compare("used-token history ratio", ints(cell)[0],
+                code["SIZING_USED_TOKEN_HISTORY_RATIO"])
 
     cell = row("Admitted-token set")
     if cell is not None:
-        stated_divergence("sizing.admitted_token_set", "admitted-token set",
-                          ints(cell)[0], "not declared in a table this dump reads")
+        compare("admitted-token set ratio", ints(cell)[0],
+                code["SIZING_ADMITTED_TOKEN_SET_RATIO"])
 
     # the standard's mapping-table rule: "size the mapping table far above
     # the slot count", ratio documented by the implementation. The code
     # holds a flat 2 x max_clients, which is a ratio at the floor rather
-    # than far above it, and is not declared in a table this dump reads.
+    # than far above it.
 
     stated_divergence("sizing.encryption_map", "encryption map sizing",
                       "far above the slot count", "2 x max_clients")
-
-    cell = row("KDF context strings")
-    if cell is not None:
-        published = re.findall(r"`([A-Za-z0-9]+)`", cell)
-        implemented = [code["KDF_HANDSHAKE_CLIENT_TO_SERVER"],
-                       code["KDF_HANDSHAKE_SERVER_TO_CLIENT"],
-                       code["KDF_SESSION_CLIENT_TO_SERVER"],
-                       code["KDF_SESSION_SERVER_TO_CLIENT"]]
-        compare("KDF context strings", published, implemented)
 
     # ---------------- verdict ----------------
 
