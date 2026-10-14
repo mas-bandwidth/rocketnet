@@ -24,9 +24,15 @@ that the floor had killed (a suite regression), and it shrinks the floor
 when a run kills more. On a bench without Mull it refuses loudly (exit 3) and
 writes nothing — an absent tool is not a green gate.
 
-Mull is the tool the card names. If the bench carries another LLVM-IR
-mutation tool, set `MULL_RUNNER` to its entry point; its report must still
-carry one `file:line:col: warning: (Killed|Survived):` line per mutant.
+Mull ships a versioned entry point (`mull-runner-18`, `mull-runner-21`, …)
+plus a compiler plugin (`mull-ir-frontend-<llvm>`) that embeds the mutants.
+The script finds both, builds the library under `build-mull/` with
+`-fpass-plugin=<frontend> -g -grecord-command-line` (clang, matching the
+plugin's LLVM major), and pins the run to the five files with a generated
+`build-mull/mull.yml` — which also stops the plugin from instrumenting the
+test suite and the rest of the SDK, so each mutant run stays at the suite's
+real speed. `MULL_RUNNER`, `MULL_FRONTEND`, `MULL_CC` and `MULL_CXX` override
+the discovery for a bench with a different build of the tool.
 
 ## The floor
 
@@ -36,10 +42,13 @@ file, columns `file`, `killed`, `survived`. A row whose `survived` cell is
 with more survivors than the floor fails; a run with fewer survivors shrinks
 the floor in the same pull request.
 
-The floor on this branch is unpopulated: the bench this card ran on carries
-no LLVM-IR mutation tool (Mull, and every other mutation tool checked, is
-absent), so no killed/survived counts were produced. Populate it by running
-the gate on a bench that has Mull.
+The floor on this branch is unpopulated: the first run on a Mull bench
+establishes it. The run the card drove produced 832 mutants across the five
+files (base64 89, replay 33, ack 307, fragment 159, message 244) under the
+mutator set below; a complete killed/survived reduction of those 832 mutants
+did not finish within the card's wall, so `floor.tsv` still reads `-`. The
+scheduled nightly populates it, and from then on a run with more survivors
+fails.
 
 ## Findings: surviving mutants on boundary constants
 
@@ -80,9 +89,10 @@ that should have killed it. The boundary edges the run probes:
 - `sdk/rocketnet_message.cpp:340` — `wide && record->channel < 256`: the
   check that a WIDE form is only emitted when the channel really is wide.
 
-No surviving mutant is listed below on this branch: the bench that ran this
-card has no mutation tool, so no report was produced. The first Mull run
-records its survivors here, one line each:
+No surviving mutant is listed below on this branch yet: a complete killed/
+survived reduction did not finish within the card's wall, so no survivors
+were captured. The first completed Mull run records its survivors here, one
+line each:
 
     <file>:<line>: <mutation> — <test that should have killed it>
 

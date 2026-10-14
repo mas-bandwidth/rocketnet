@@ -6,7 +6,7 @@
 # A scheduled mutation run (RN-CORRECTNESS 2026-10-14, R4): the one
 # hand-written mutant of tools/check_fuzz_oracle.py is generalised into a
 # real LLVM-IR mutation pass over the five wire-facing files, driven by
-# ./bin/test. Mull builds the library with its mutation plugin, runs the unit
+# ./bin/test. Mull builds the library with its compiler plugin, runs the unit
 # suite against each mutant, and this script reduces Mull's report to a
 # per-file killed/survived count and writes tools/mutation/floor.tsv.
 #
@@ -22,9 +22,12 @@
 # floor.tsv. On a bench without Mull it refuses loudly (exit 3) and writes
 # nothing: an absent tool is not a green gate.
 #
-# Mull is the tool the card names. If the bench carries another LLVM-IR
-# mutation tool, point MULL_RUNNER at its entry point; the report must still
-# carry one "file:line:col: warning: (Killed|Survived):" line per mutant.
+# Mull is the tool the card names. It ships a versioned entry point
+# (mull-runner-<llvm>, e.g. mull-runner-21) plus a compiler plugin
+# (mull-ir-frontend-<llvm>) that embeds the mutants when the library is
+# compiled. If the bench carries another LLVM-IR mutation tool, point
+# MULL_RUNNER at its entry point; the report must still carry one
+# "file:line:col: warning: (Killed|Survived):" line per mutant.
 
 set -euo pipefail
 
@@ -71,55 +74,145 @@ say() { printf 'run_mull: %s\n' "$*"; }
 
 fail() { say "$*" >&2; exit "${2:-1}"; }
 
-# Locate Mull: mull-runner is the modern entry point, mull-cxx the legacy
-# one. MULL_RUNNER overrides either, so a bench with a different build of the
-# plugin can still drive this gate.
+# Locate Mull. Modern Mull ships a versioned entry point
+# (mull-runner-18, mull-runner-21, ...) and keeps the older mull-cxx for
+# pre-0.17 layouts. MULL_RUNNER overrides either, so a bench with a different
+# build of the plugin can still drive this gate.
+find_runner() {
+    local d pat
+    for d in ${PATH//:/ }; do
+        [ -d "$d" ] || continue
+        for pat in "$d"/mull-runner-* "$d"/mull-runner "$d"/mull-cxx; do
+            [ -x "$pat" ] || continue
+            printf '%s\n' "$pat"
+            return 0
+        done
+    done
+    return 1
+}
+
+# The compiler plugin lives in a lib/ directory beside the runner's bin/:
+#   <prefix>/bin/mull-runner-21  and  <prefix>/lib/mull-ir-frontend-21
+find_frontend() {
+    local runner_dir lib_dir cand
+    if [ -n "${MULL_FRONTEND:-}" ] && [ -f "$MULL_FRONTEND" ]; then
+        printf '%s\n' "$MULL_FRONTEND"
+        return 0
+    fi
+    runner_dir="$(dirname "$MULL_RUNNER")"
+    lib_dir="$(dirname "$runner_dir")/lib"
+    for cand in "$lib_dir"/mull-ir-frontend-* "$lib_dir"/mull-ir-frontend; do
+        [ -f "$cand" ] || continue
+        printf '%s\n' "$cand"
+        return 0
+    done
+    return 1
+}
+
+# A clang whose LLVM matches the plugin. Derive the LLVM major from the
+# frontend file name (mull-ir-frontend-21 -> clang-21), and fall back to the
+# bare clang/clang++ on PATH.
+find_clang() {
+    local ver="$1" c cxx
+    c="${MULL_CC:-}"
+    cxx="${MULL_CXX:-}"
+    if [ -z "$c" ] && [ -n "$ver" ]; then
+        c="$(command -v "clang-$ver" 2>/dev/null || true)"
+    fi
+    if [ -z "$c" ]; then
+        c="$(command -v clang 2>/dev/null || true)"
+    fi
+    if [ -z "$cxx" ] && [ -n "$ver" ]; then
+        cxx="$(command -v "clang++-$ver" 2>/dev/null || true)"
+    fi
+    if [ -z "$cxx" ]; then
+        cxx="$(command -v clang++ 2>/dev/null || true)"
+    fi
+    [ -n "$c" ] && [ -n "$cxx" ] || return 1
+    printf '%s %s\n' "$c" "$cxx"
+}
+
 MULL_RUNNER="${MULL_RUNNER:-}"
 if [ -z "$MULL_RUNNER" ]; then
-    MULL_RUNNER="$(command -v mull-runner 2>/dev/null || true)"
-fi
-if [ -z "$MULL_RUNNER" ]; then
-    MULL_RUNNER="$(command -v mull-cxx 2>/dev/null || true)"
+    MULL_RUNNER="$(find_runner || true)"
 fi
 
 if [ -z "$MULL_RUNNER" ]; then
-    say "Mull is absent: neither mull-runner nor mull-cxx is on PATH (nor is MULL_RUNNER set)." >&2
+    say "Mull is absent: no mull-runner-*, mull-runner or mull-cxx on PATH (nor is MULL_RUNNER set)." >&2
     say "The gate is not-done on this bench: no LLVM-IR mutation tool to run, so no floor is written and no green claim is made." >&2
     exit 3
 fi
 
-say "using $MULL_RUNNER"
-
-# One instrumented build for the whole run: compile_commands.json is what
-# Mull reads to know how each mutant is compiled. The tree's own flags (the
-# strict -ffp-contract=off family floor) come from CMakeLists.txt.
-if [ ! -f "$BUILD/compile_commands.json" ]; then
-    say "configuring instrumented build at $BUILD"
-    cmake -B "$BUILD" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
+FRONTEND="$(find_frontend || true)"
+if [ -z "$FRONTEND" ]; then
+    say "found $MULL_RUNNER but no mull-ir-frontend plugin beside it (nor is MULL_FRONTEND set)." >&2
+    say "The gate is not-done on this bench: nothing embeds the mutants, so no floor is written." >&2
+    exit 3
 fi
+
+# The plugin version drives the compiler choice; the two must match LLVM.
+ver="$(basename "$FRONTEND")"
+ver="${ver#mull-ir-frontend-}"
+case "$ver" in
+    *[!0-9]*) ver="" ;;   # not a plain version; fall back to bare clang
+esac
+
+read -r MULL_CC MULL_CXX <<< "$(find_clang "$ver" || true)"
+if [ -z "$MULL_CC" ]; then
+    say "no clang on PATH to drive the Mull plugin (clang-$ver or clang)." >&2
+    say "The gate is not-done on this bench: no matching compiler, so no floor is written." >&2
+    exit 3
+fi
+
+say "using $MULL_RUNNER (frontend $FRONTEND, compiler $MULL_CC)"
+
+# The instrumented build is self-contained: everything it produces lands under
+# $BUILD, so the normal bin/ tree (the make front door) is untouched. The
+# plugin flag embeds the mutants; -g keeps the source map the plugin needs.
+# RelWithDebInfo keeps the suite fast (-O2) while the -DNDEBUG is what the
+# tree's own Release leg runs, so the tests exercise the shipped shape.
+if [ ! -f "$BUILD/CMakeCache.txt" ]; then
+    say "configuring instrumented build at $BUILD"
+    cmake -S "$ROOT" -B "$BUILD" \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_COMPILER="$MULL_CC" \
+        -DCMAKE_CXX_COMPILER="$MULL_CXX" \
+        -DCMAKE_C_FLAGS="-fpass-plugin=$FRONTEND -g -grecord-command-line" \
+        -DCMAKE_CXX_FLAGS="-fpass-plugin=$FRONTEND -g -grecord-command-line" \
+        -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$BUILD/bin" \
+        -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$BUILD/bin" \
+        -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$BUILD" >/dev/null
+fi
+
+# The mull.yml config carries the mutator set and pins the run to the five
+# files. It also stops the plugin from instrumenting the test and the rest of
+# the SDK, which keeps each mutant run at the suite's real speed.
+CONFIG="$BUILD/mull.yml"
+{
+    printf 'mutators:\n'
+    for m in "${MUTATORS[@]}"; do
+        printf '  - %s\n' "$m"
+    done
+    printf 'includePaths:\n'
+    for f in "${FILES[@]}"; do
+        printf '  - %s\n' "$(basename "$f" | sed 's/\./\\./g')"
+    done
+} > "$CONFIG"
+
 say "building"
 cmake --build "$BUILD" --target test --parallel >/dev/null
 
 TEST_BIN="$BUILD/bin/test"
 [ -x "$TEST_BIN" ] || fail "build produced no $TEST_BIN" 2
 
-# Restrict Mull to the five named files: each -include-path is a path prefix,
-# and a full file path matches exactly that file and nothing else.
-INCLUDE_ARGS=()
-for f in "${FILES[@]}"; do
-    INCLUDE_ARGS+=( -include-path "$ROOT/$f" )
-done
-
 report_file="$BUILD/mull-report.txt"
 say "running mutants against $TEST_BIN"
 set +e
-"$MULL_RUNNER" \
+MULL_CONFIG="$CONFIG" "$MULL_RUNNER" \
+    --reporters IDE \
+    --ide-reporter-show-killed \
+    --timeout 60000 \
     "$TEST_BIN" \
-    -compdb-path "$BUILD/compile_commands.json" \
-    -reporters IDE \
-    -ide-reporter-show-killed \
-    -mutators "$(IFS=,; printf '%s' "${MUTATORS[*]}")" \
-    "${INCLUDE_ARGS[@]}" \
     > "$report_file" 2>&1
 mull_status=$?
 set -e

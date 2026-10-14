@@ -46,25 +46,32 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang-18 libbpf-dev libxdp-dev libsodium-dev xxd
 
-      # Mull is the tool the card names. Its prebuilt release bundles its own
-      # LLVM, so it does not have to match the runner's clang. The asset name
-      # follows Mull's release naming for the pinned version and must be kept
-      # in step with MULL_VERSION. curl -f makes a wrong or missing asset a
-      # hard failure, so a machine without Mull can never read as green: the
-      # run_mull.sh below refuses loudly on an absent tool.
+      # Mull is the tool the card names. Its prebuilt .deb bundles a compiler
+      # plugin (mull-ir-frontend-18) tied to one LLVM major, so the runner's
+      # clang-18 must match; MULL_LLVM, MULL_VERSION and the deb asset name
+      # are one triple and must stay in step. The deb is unpacked with ar and
+      # tar (no sudo dpkg), and its bin/ + lib/ go on PATH so run_mull.sh finds
+      # mull-runner-18 and the plugin beside it. curl -f makes a wrong or
+      # missing asset a hard failure, so a machine without Mull can never read
+      # as green: run_mull.sh refuses loudly on an absent tool.
       - name: Install Mull
         env:
-          MULL_VERSION: "0.23.1"
+          MULL_LLVM: "18"
+          MULL_LLVMVER: "18.1.3"
+          MULL_VERSION: "0.34.1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/mull"
           curl -fL --retry 3 \
-            "https://github.com/mull-project/mull/releases/download/${MULL_VERSION}/mull-${MULL_VERSION}-Linux-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/mull/mull.tar.gz"
-          tar -xzf "$RUNNER_TEMP/mull/mull.tar.gz" -C "$RUNNER_TEMP/mull"
-          echo "$RUNNER_TEMP/mull" >> "$GITHUB_PATH"
+            "https://github.com/mull-project/mull/releases/download/${MULL_VERSION}/Mull-${MULL_LLVM}-${MULL_VERSION}-LLVM-${MULL_LLVMVER}-ubuntu-amd64-24.04.deb" \
+            -o "$RUNNER_TEMP/mull/mull.deb"
+          cd "$RUNNER_TEMP/mull"
+          ar x mull.deb
+          tar xf data.tar
+          echo "$RUNNER_TEMP/mull/usr/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/mull/usr/lib" >> "$GITHUB_PATH"
 
       - name: Run the mutation gate
         run: bash tools/mutation/run_mull.sh
