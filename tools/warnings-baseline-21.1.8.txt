@@ -1,0 +1,137 @@
+# clang version 21.1.8
+# columns: file, warning flag, enclosing function, normalised message
+# the baseline only shrinks: delete an entry in the same change that stops producing it
+sdk/rocketnet.cpp	-Wcast-align	rocketnet_free	cast from 'uint8_t *' (aka 'unsigned char *') to 'rocketnet_allocation_header_t *' increases required alignment from 1 to 8
+sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
+sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
+sdk/rocketnet.h	-Wunused-parameter	rocketnet_endian_fix	unused parameter 'value'
+sdk/rocketnet_address.cpp	-Wimplicit-int-conversion	rocketnet_address_convert_ipv4_to_ipv6	implicit conversion loses integer precision: 'int' to 'uint16_t' (aka 'unsigned short')
+sdk/rocketnet_address.cpp	-Wimplicit-int-conversion	rocketnet_address_convert_ipv4_to_ipv6	implicit conversion loses integer precision: 'int' to 'uint16_t' (aka 'unsigned short')
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_arena_create	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_arena_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_arena_create	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_region_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_channel_receive_t *' increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_channel_send_t *' increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_delivery_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_held_entry_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_receipt_t *' increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_receive_descriptor_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_send_descriptor_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_send_number_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_sent_index_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_sent_packet_t *' increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'rn_sequenced_hold_t *' increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint32_t *' (aka 'unsigned int *') increases required alignment from 1 to 4
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_region_point	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint64_t *' (aka 'unsigned long *') increases required alignment from 1 to 8
+sdk/rocketnet_allocator.cpp	-Wcast-align	rn_send_store_init	cast from 'uint8_t *' (aka 'unsigned char *') to 'uint32_t *' (aka 'unsigned int *') increases required alignment from 1 to 4
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_base64.cpp	-Wsign-conversion	rocketnet_base64_encode_data	implicit conversion changes signedness: 'const unsigned char' to 'char'
+sdk/rocketnet_client_transport.cpp	-Wimplicit-int-conversion	rocketnet_client_transport_create	implicit conversion loses integer precision: 'int' to 'uint16_t' (aka 'unsigned short')
+sdk/rocketnet_client_transport.cpp	-Wsign-conversion	rocketnet_client_receive_packets	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_client_transport.cpp	-Wsign-conversion	rocketnet_client_transport_send_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_fragment.cpp	-Wsign-conversion	rocketnet_reassembly_process_fragment	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_fragment.cpp	-Wsign-conversion	rocketnet_reassembly_process_fragment	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_fragment.cpp	-Wsign-conversion	rocketnet_reassembly_process_fragment	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_fragment.cpp	-Wsign-conversion	rocketnet_reassembly_process_fragment	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_frame_sync.cpp	-Wimplicit-int-float-conversion	rocketnet_frame_sync_stats	implicit conversion from 'uint64_t' (aka 'unsigned long') to 'double' may lose precision
+sdk/rocketnet_frame_sync.cpp	-Wimplicit-int-float-conversion	rocketnet_frame_sync_stats	implicit conversion from 'uint64_t' (aka 'unsigned long') to 'double' may lose precision
+sdk/rocketnet_frame_sync.cpp	-Wimplicit-int-float-conversion	rocketnet_frame_sync_wait	implicit conversion from 'uint64_t' (aka 'unsigned long') to 'double' may lose precision
+sdk/rocketnet_platform.cpp	-Wcast-align	get_connection_type	cast from 'char *' to 'struct nlmsghdr *' increases required alignment from 1 to 4
+sdk/rocketnet_platform.cpp	-Wcast-align	rocketnet_platform_hostname_resolve	cast from 'struct sockaddr *' to 'sockaddr_in *' increases required alignment from 2 to 4
+sdk/rocketnet_platform.cpp	-Wcast-align	rocketnet_platform_hostname_resolve	cast from 'struct sockaddr *' to 'sockaddr_in6 *' increases required alignment from 2 to 4
+sdk/rocketnet_platform.cpp	-Wimplicit-int-float-conversion	rocketnet_platform_init	implicit conversion from '__time_t' (aka 'long') to 'double' may lose precision
+sdk/rocketnet_platform.cpp	-Wimplicit-int-float-conversion	rocketnet_platform_time	implicit conversion from '__time_t' (aka 'long') to 'double' may lose precision
+sdk/rocketnet_platform.cpp	-Wshorten-64-to-32	get_connection_type	implicit conversion loses integer precision: 'ssize_t' (aka 'long') to 'int'
+sdk/rocketnet_platform.cpp	-Wsign-compare	get_connection_type	comparison of integers of different signs: '__u32' (aka 'unsigned int') and 'int'
+sdk/rocketnet_platform.cpp	-Wsign-conversion	get_connection_type	implicit conversion changes signedness: 'int' to 'uint32_t' (aka 'unsigned int')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	get_connection_type	implicit conversion changes signedness: 'pid_t' (aka 'int') to '__u32' (aka 'unsigned int')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	get_connection_type	implicit conversion changes signedness: 'pid_t' (aka 'int') to '__u32' (aka 'unsigned int')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	rocketnet_platform_sleep	implicit conversion changes signedness: 'int' to '__useconds_t' (aka 'unsigned int')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	rocketnet_platform_socket_receive_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	rocketnet_platform_socket_send_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_platform.cpp	-Wsign-conversion	rocketnet_platform_socket_send_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_route.h	-Wcast-align	parse_kernel_route	cast from 'char *' to 'struct rtattr *' increases required alignment from 1 to 2
+sdk/rocketnet_route.h	-Wcast-align	parse_kernel_route	cast from 'char *' to 'struct rtattr *' increases required alignment from 1 to 2
+sdk/rocketnet_route.h	-Wsign-conversion	parse_kernel_route	implicit conversion changes signedness: 'unsigned long' to 'int'
+sdk/rocketnet_server_gso_linux.cpp	-Wsign-conversion	rocketnet_server_gso_create	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wcast-align	rocketnet_server_socket_find_interface	cast from 'struct sockaddr *' to 'struct sockaddr_in *' increases required alignment from 2 to 4
+sdk/rocketnet_server_socket_linux.cpp	-Wcast-align	rocketnet_server_socket_generate_packet_header	cast from 'uint8_t *' (aka 'unsigned char *') to 'iphdr *' increases required alignment from 1 to 4
+sdk/rocketnet_server_socket_linux.cpp	-Wcast-align	rocketnet_server_socket_generate_packet_header	cast from 'uint8_t *' (aka 'unsigned char *') to 'udphdr *' increases required alignment from 1 to 2
+sdk/rocketnet_server_socket_linux.cpp	-Wcast-align	rocketnet_server_socket_xdp_thread_function	cast from 'uint8_t *' (aka 'unsigned char *') to 'iphdr *' increases required alignment from 1 to 4
+sdk/rocketnet_server_socket_linux.cpp	-Wcast-align	rocketnet_server_socket_xdp_thread_function	cast from 'uint8_t *' (aka 'unsigned char *') to 'udphdr *' increases required alignment from 1 to 2
+sdk/rocketnet_server_socket_linux.cpp	-Wimplicit-int-conversion	rocketnet_server_socket_ipv4_checksum	implicit conversion loses integer precision: 'unsigned long' to 'uint16_t' (aka 'unsigned short')
+sdk/rocketnet_server_socket_linux.cpp	-Wshadow	rocketnet_server_socket_create	declaration shadows a local variable
+sdk/rocketnet_server_socket_linux.cpp	-Wshadow	rocketnet_server_socket_xdp_thread_function	declaration shadows a local variable
+sdk/rocketnet_server_socket_linux.cpp	-Wshorten-64-to-32	pin_thread_to_cpu	implicit conversion loses integer precision: 'long' to 'int'
+sdk/rocketnet_server_socket_linux.cpp	-Wshorten-64-to-32	rocketnet_server_socket_receive_packets	implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wshorten-64-to-32	rocketnet_server_socket_xdp_thread_function	implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wshorten-64-to-32	rocketnet_server_socket_xdp_thread_function	implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long') to 'int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-compare	rocketnet_server_socket_receive_packets	comparison of integers of different signs: 'int' and 'uint32_t' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-compare	rocketnet_server_socket_xdp_thread_function	comparison of integers of different signs: 'int' and 'unsigned int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-compare	rocketnet_server_socket_xdp_thread_function	comparison of integers of different signs: 'int' and 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_abort_packet	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_abort_packet	implicit conversion changes signedness: 'uint64_t' (aka 'unsigned long') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: '__u32' (aka 'unsigned int') to 'int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to 'uint32_t' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_create	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_finish_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_finish_packet	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_finish_packet	implicit conversion changes signedness: 'uint64_t' (aka 'unsigned long') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_generate_packet_header	implicit conversion changes signedness: 'unsigned long' to 'int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_start_packet	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_start_packet	implicit conversion changes signedness: 'uint64_t' (aka 'unsigned long') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_counters	implicit conversion changes signedness: 'const int' to 'unsigned long'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: '__u32' (aka 'unsigned int') to 'int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'const __u32' (aka 'const unsigned int') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to '__u32' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to '__u64' (aka 'unsigned long long')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to 'uint32_t' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'int' to 'uint32_t' (aka 'unsigned int')
+sdk/rocketnet_server_socket_linux.cpp	-Wsign-conversion	rocketnet_server_socket_xdp_thread_function	implicit conversion changes signedness: 'uint32_t' (aka 'unsigned int') to 'const int'
+sdk/rocketnet_server_socket_linux.cpp	-Wunused-function	free_receive_frame	unused function 'free_receive_frame'
+sdk/rocketnet_server_socket_linux.cpp	-Wunused-parameter	rocketnet_server_socket_start_packet_internal	unused parameter 'packet_id'
+sdk/rocketnet_server_socket_linux.cpp	-Wunused-variable	pin_thread_to_cpu	unused variable 'num_cpus'
+sdk/rocketnet_server_transport.cpp	-Wsign-conversion	rocketnet_server_transport_send_packet	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_stats_window.h	-Wsign-conversion	rocketnet_stats_window_advance	implicit conversion changes signedness: 'int' to 'unsigned long'
+sdk/rocketnet_tests.cpp	-Wformat-nonliteral	rocketnet_test_capture_log	format string is not a string literal
+sdk/rocketnet_tests.cpp	-Wformat-nonliteral	rocketnet_test_log_capture	format string is not a string literal
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_ack_asymmetric_rate	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_ack_asymmetric_rate	implicit conversion changes signedness: 'int' to 'uint64_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_base64	operand of ? changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_config_bytes_exact_fields	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_config_bytes_exact_fields	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_config_bytes_exact_fields	implicit conversion changes signedness: 'const int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_config_bytes_exact_fields	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_crypto_key_derivation	implicit conversion changes signedness: 'int' to 'unsigned long long'
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_crypto_key_derivation	implicit conversion changes signedness: 'int' to 'unsigned long long'
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_sealed_packets	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wsign-conversion	rocketnet_test_sealed_packets	implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long')
+sdk/rocketnet_tests.cpp	-Wstring-conversion	rocketnet_test_config_table_round_trip	implicit conversion turns string literal into bool: 'const char[26]' to 'bool'
+sdk/rocketnet_tests.cpp	-Wunused-function	rocketnet_test_env_clear	unused function 'rocketnet_test_env_clear'

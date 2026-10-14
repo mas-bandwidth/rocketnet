@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Clang warning baseline for the sdk.
 
-Compiles each sdk/*.cpp with clang -fsyntax-only and the audit warning set,
-plus -ffp-contract=off, using the include paths and defines from the Release
-compile commands. Compares the multiset of normalised warnings with
-tools/warnings-baseline.txt.
+Compiles each sdk/*.cpp with clang++ on PATH, -fsyntax-only, and the audit
+warning set, plus -ffp-contract=off, using the include paths and defines
+from the Release compile commands. Compares the multiset of normalised
+warnings with the baseline recorded for that clang's version.
 
 A warning is (file, warning flag, enclosing function or nearest symbol,
 normalised message). The line number stays out of the key so a line shift
@@ -25,13 +25,12 @@ carried in this file. It does not run a compiler, does not read or write a
 file, and does not use the clock, a socket, or the network. The compile
 itself is the functional part and runs only outside --self-test.
 
-The baseline header names the clang that produced it (`clang version 18.1.3`).
-The gate runs that clang: `clang++-<major>` when it is on PATH, otherwise
-`clang++`, and only when the binary reports the same version. A different
-clang fails the job with its own `clang --version` line. Those diagnostics
-are not new warnings and they are not a reason to edit the baseline.
-`ROCKETNET_WARNING_CXX` names one binary to use instead of that search. It
-still has to report the header's version.
+The gate runs `clang++` on PATH, which is the compiler `clang --version`
+prints on these runners. `clang version 21.1.8` is compared with
+tools/warnings-baseline-21.1.8.txt. `clang version 18.1.3` is compared with
+tools/warnings-baseline-18.1.3.txt. Any other version exits before a warning
+diff and prints that version. A versioned binary such as clang++-18 is not
+required.
 """
 
 import argparse
@@ -46,7 +45,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build")
 COMPILE_DB = os.path.join(BUILD, "compile_commands.json")
-BASELINE = os.path.join(ROOT, "tools", "warnings-baseline.txt")
+BASELINE_BY_VERSION = {
+    "clang version 18.1.3": os.path.join(ROOT, "tools", "warnings-baseline-18.1.3.txt"),
+    "clang version 21.1.8": os.path.join(ROOT, "tools", "warnings-baseline-21.1.8.txt"),
+}
 
 WARNING_FLAGS = [
     "-Wall",
@@ -460,28 +462,17 @@ def compiler_in_header(text):
     return None
 
 
-def compiler_names(wanted):
-    """clang++-<major> from the baseline header, then plain clang++."""
-    names = []
-    match = re.search(r"clang version ([0-9]+)", wanted or "")
-    if match:
-        names.append("clang++-" + match.group(1))
-    names.append("clang++")
-    return names
+def baseline_for_version(version):
+    """The baseline file recorded for this clang, or None."""
+    return BASELINE_BY_VERSION.get(version)
 
 
-def format_compiler_mismatch(wanted, rows):
-    """rows is (name, first version line or None when the binary is absent)."""
-    lines = [
-        "warning gate: compiler does not match the baseline header",
-        "baseline header: " + (wanted or "(none)"),
+def format_unknown_compiler(first):
+    """Printed before any warning diff when clang++ has no recorded baseline."""
+    return [
+        "warning gate: no baseline for this clang",
+        "clang++ --version: " + (first if first else "(no version line)"),
     ]
-    for name, first in rows:
-        if first is None:
-            lines.append("%s: not on PATH" % name)
-        else:
-            lines.append("%s --version: %s" % (name, first))
-    return lines
 
 
 def compiler_probe(name):
@@ -499,41 +490,6 @@ def compiler_probe(name):
     match = re.search(r"clang version [0-9]+(?:\.[0-9]+)*", first)
     version = match.group(0) if match else "clang version unknown"
     return path, version, first
-
-
-def resolve_compiler(wanted):
-    """The compiler whose version is the baseline header, or None."""
-    override = os.environ.get("ROCKETNET_WARNING_CXX")
-    if override:
-        names = [override]
-    else:
-        names = compiler_names(wanted)
-    for name in names:
-        probed = compiler_probe(name)
-        if probed is None:
-            continue
-        path, version, first = probed
-        if not wanted or version == wanted:
-            return path, version, first
-    return None
-
-
-def mismatch_rows(wanted):
-    """Version lines for clang and for each candidate, for a failed match."""
-    override = os.environ.get("ROCKETNET_WARNING_CXX")
-    if override:
-        names = [override]
-    else:
-        names = ["clang"] + compiler_names(wanted)
-    rows = []
-    shown = []
-    for name in names:
-        if name in shown:
-            continue
-        shown.append(name)
-        probed = compiler_probe(name)
-        rows.append((name, None if probed is None else probed[2]))
-    return rows
 
 
 def ensure_compile_db():
@@ -668,31 +624,39 @@ def compile_warnings(compiler):
 
 
 def run_gate(baseline_path, write):
-    wanted = None
-    if not write:
-        if not os.path.exists(baseline_path):
-            print("no baseline at %s; run with --write-baseline" % baseline_path, file=sys.stderr)
-            return 1
-        with open(baseline_path, "r", encoding="utf-8") as handle:
-            wanted = compiler_in_header(handle.read())
-        if not wanted:
-            print("warning gate: baseline header does not name a clang version", file=sys.stderr)
-            return 1
-    resolved = resolve_compiler(wanted)
-    if resolved is None:
-        for line in format_compiler_mismatch(wanted, mismatch_rows(wanted)):
+    probed = compiler_probe("clang++")
+    if probed is None:
+        print("warning gate: clang++: not on PATH")
+        return 1
+    compiler, version, first = probed
+    recorded = baseline_for_version(version)
+    if recorded is None:
+        for line in format_unknown_compiler(first):
             print(line)
         return 1
-    compiler, version, _first = resolved
+    path = baseline_path if baseline_path else recorded
+    if not write:
+        if not os.path.exists(path):
+            print("no baseline at %s; run with --write-baseline" % path, file=sys.stderr)
+            return 1
+        with open(path, "r", encoding="utf-8") as handle:
+            header = compiler_in_header(handle.read())
+        if header != version:
+            print("warning gate: baseline header does not name this clang")
+            print("baseline header: " + (header or "(none)"))
+            print("clang++ --version: " + first)
+            return 1
     print("warning compiler: %s (%s)" % (compiler, version), file=sys.stderr)
+    print("warning baseline: " + path, file=sys.stderr)
     counts = compile_warnings(compiler)
     if write:
+        baseline_path = path
         write_baseline(baseline_path, counts, version)
         print("baseline %s: %d warnings (%s)" % (baseline_path, sum(counts.values()), version))
         return 0
-    baseline = read_baseline(baseline_path)
+    baseline = read_baseline(path)
     if baseline is None:
-        print("no baseline at %s; run with --write-baseline" % baseline_path, file=sys.stderr)
+        print("no baseline at %s; run with --write-baseline" % path, file=sys.stderr)
         return 1
     new_lines, gone_lines = diff_lines(counts, baseline)
     print("warning gate: %d current, %d baseline" % (sum(counts.values()), sum(baseline.values())))
@@ -800,25 +764,21 @@ def run_self_test():
           "header parser got %s" % compiler_in_header(header))
     check(compiler_in_header("# columns only\nsdk/a.cpp\t-Wshadow\tx\ty\n") is None,
           "a header without a clang version must not invent one")
-    check(compiler_names("clang version 21.1.8") == ["clang++-21", "clang++"],
-          "21 candidates are %s" % compiler_names("clang version 21.1.8"))
-    check(compiler_names("clang version 18.1.3") == ["clang++-18", "clang++"],
-          "18 candidates are %s" % compiler_names("clang version 18.1.3"))
-    check(compiler_names(None) == ["clang++"], "no header names clang++ only")
-    mismatch = format_compiler_mismatch("clang version 21.1.8", [
-        ("clang", "clang version 18.1.3 (sample)"),
-        ("clang++-21", None),
-        ("clang++", "clang version 18.1.3 (sample)"),
-    ])
-    check(mismatch[0] == "warning gate: compiler does not match the baseline header",
-          "mismatch must name the compiler, not a new warning: %s" % (mismatch,))
-    check(mismatch[1] == "baseline header: clang version 21.1.8",
-          "mismatch must quote the header: %s" % (mismatch,))
-    check("clang --version: clang version 18.1.3 (sample)" in mismatch,
-          "mismatch must print clang --version: %s" % (mismatch,))
-    check("clang++-21: not on PATH" in mismatch, "a missing pin must say so: %s" % (mismatch,))
-    check(not any(line.startswith("new warning:") for line in mismatch),
-          "a compiler mismatch is not a new warning")
+    check(baseline_for_version("clang version 21.1.8").endswith(
+              "tools/warnings-baseline-21.1.8.txt"),
+          "21.1.8 baseline path is %s" % baseline_for_version("clang version 21.1.8"))
+    check(baseline_for_version("clang version 18.1.3").endswith(
+              "tools/warnings-baseline-18.1.3.txt"),
+          "18.1.3 baseline path is %s" % baseline_for_version("clang version 18.1.3"))
+    check(baseline_for_version("clang version 15.0.0") is None,
+          "an unrecorded clang must not pick a baseline")
+    unknown = format_unknown_compiler("Ubuntu clang version 15.0.0 (sample)")
+    check(unknown[0] == "warning gate: no baseline for this clang",
+          "unknown clang must not look like a warning diff: %s" % (unknown,))
+    check(unknown[1] == "clang++ --version: Ubuntu clang version 15.0.0 (sample)",
+          "unknown clang must print its version: %s" % (unknown,))
+    check(not any(line.startswith("new warning:") for line in unknown),
+          "an unknown clang is not a new warning")
 
     shown_new = diff_lines(extra, counts)[0]
     shown_gone = diff_lines(missing, counts)[1]
@@ -839,8 +799,8 @@ def main():
                         help="check the normaliser and comparer on in-script sample output")
     parser.add_argument("--write-baseline", action="store_true",
                         help="rewrite the baseline from the current clang compile")
-    parser.add_argument("--baseline", default=BASELINE,
-                        help="baseline file to compare against")
+    parser.add_argument("--baseline", default=None,
+                        help="baseline file to compare against; default is the file recorded for clang++")
     args = parser.parse_args()
     if args.self_test:
         return run_self_test()
