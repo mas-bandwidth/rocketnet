@@ -505,8 +505,6 @@ public static unsafe partial class RocketNet
         public int ClientIndex;
         /// <summary>The sealed wire size, set by FinishPacket; zero on any failure.</summary>
         public int WireBytes;
-        /// <summary>The epoch when this context was last valid.</summary>
-        internal int updateEpoch;
     }
 
     /// <summary>rocketnet_client_transport_stats_t. Read with <see cref="ClientTransportGetStats"/>. rtt and
@@ -768,7 +766,6 @@ public static unsafe partial class RocketNet
     /// <summary>Advances the client one frame at the given game time.</summary>
     public static void ClientTransportUpdate( ClientTransportHandle client, double time )
     {
-        client.updateEpoch++;
         ClientTransportUpdateNative( client, time );
     }
 
@@ -861,10 +858,7 @@ public static unsafe partial class RocketNet
     /// when no packet is available (ring or arena full, not connected, request out of range).</summary>
     public static IntPtr ClientTransportStartPacket( ClientTransportHandle client, int requestBytes, ref PacketContext context )
     {
-        IntPtr result = ClientTransportStartPacketNative( client, requestBytes, ref context );
-        if ( result != IntPtr.Zero )
-            context.updateEpoch = client.updateEpoch;
-        return result;
+        return ClientTransportStartPacketNative( client, requestBytes, ref context );
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
@@ -875,7 +869,6 @@ public static unsafe partial class RocketNet
     /// zero on any failure. The sequence is burned either way, which the replay window tolerates.</summary>
     public static SendResult ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes )
     {
-        context.updateEpoch = -1;
         return ClientTransportFinishPacketNative( client, ref context, payloadBytes );
     }
 
@@ -885,7 +878,6 @@ public static unsafe partial class RocketNet
     /// <summary>Releases an acquired packet without sending it.</summary>
     public static void ClientTransportAbortPacket( ClientTransportHandle client, ref PacketContext context )
     {
-        context.updateEpoch = -1;
         ClientTransportAbortPacketNative( client, ref context );
     }
 
@@ -1011,7 +1003,6 @@ public static unsafe partial class RocketNet
     /// <summary>Advances the server one frame at the given game time.</summary>
     public static void ServerTransportUpdate( ServerTransportHandle server, double time )
     {
-        server.updateEpoch++;
         ServerTransportUpdateNative( server, time );
     }
 
@@ -1069,10 +1060,7 @@ public static unsafe partial class RocketNet
     /// IntPtr.Zero when no packet is available.</summary>
     public static IntPtr ServerTransportStartPacket( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context )
     {
-        IntPtr result = ServerTransportStartPacketNative( server, clientIndex, requestBytes, ref context );
-        if ( result != IntPtr.Zero )
-            context.updateEpoch = server.updateEpoch;
-        return result;
+        return ServerTransportStartPacketNative( server, clientIndex, requestBytes, ref context );
     }
 
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
@@ -1083,7 +1071,6 @@ public static unsafe partial class RocketNet
     /// zero on any failure. The sequence is burned either way, which the replay window tolerates.</summary>
     public static SendResult ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes )
     {
-        context.updateEpoch = -1;
         return ServerTransportFinishPacketNative( server, ref context, payloadBytes );
     }
 
@@ -1093,7 +1080,6 @@ public static unsafe partial class RocketNet
     /// <summary>Releases an acquired packet without sending it.</summary>
     public static void ServerTransportAbortPacket( ServerTransportHandle server, ref PacketContext context )
     {
-        context.updateEpoch = -1;
         ServerTransportAbortPacketNative( server, ref context );
     }
 
@@ -1207,8 +1193,6 @@ public static unsafe partial class RocketNet
     /// callers must not retain it across those operations or race them.</summary>
     public static Span<byte> ClientTransportPacketPayloadSpan( ClientTransportHandle client, in PacketContext context )
     {
-        if ( client.updateEpoch != context.updateEpoch )
-            return Span<byte>.Empty;
         byte* payload = ClientPacketPayloadNative(client, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
@@ -1217,8 +1201,6 @@ public static unsafe partial class RocketNet
     /// with the same lease validation and lifetime.</summary>
     public static Span<byte> ServerTransportPacketPayloadSpan( ServerTransportHandle server, in PacketContext context )
     {
-        if ( server.updateEpoch != context.updateEpoch )
-            return Span<byte>.Empty;
         byte* payload = ServerPacketPayloadNative(server, in context, out int capacity);
         return payload == null ? Span<byte>.Empty : new Span<byte>(payload, capacity);
     }
@@ -1355,8 +1337,6 @@ public sealed class ClientTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
     /// receive the native pointer <see cref="RocketNet.ClientTransportCreate(IntPtr,byte[],ref RocketNet.ClientTransportConfig,double)"/> returns.</summary>
     public ClientTransportHandle() : base( true ) { }
 
-    internal int updateEpoch;
-
     /// <inheritdoc/>
     protected override bool ReleaseHandle()
     {
@@ -1376,8 +1356,6 @@ public sealed class ServerTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
     /// <summary>Constructs the handle with ownership. The P/Invoke marshaller uses it to
     /// receive the native pointer <see cref="RocketNet.ServerTransportCreate"/> returns.</summary>
     public ServerTransportHandle() : base( true ) { }
-
-    internal int updateEpoch;
 
     /// <inheritdoc/>
     protected override bool ReleaseHandle()
