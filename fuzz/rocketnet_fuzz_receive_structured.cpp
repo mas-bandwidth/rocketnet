@@ -52,6 +52,7 @@
 #include "rocketnet_test_vectors.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
@@ -89,6 +90,195 @@ static void generate_payload( uint8_t * payload_data, int payload_bytes )
     const int start = payload_bytes % 256;
     for ( int i = 0; i < payload_bytes; i++ )
         payload_data[i] = (uint8_t) ( start + i );
+}
+
+// the file's abort-oracle helper: a failed property aborts, so it survives
+// NDEBUG and the sanitizers stop at the exact line the invariant broke.
+
+static void rocketnet_fuzz_require( bool condition, const char * property )
+{
+    if ( condition )
+        return;
+    fprintf( stderr, "fuzz oracle failed: %s\n", property );
+    abort();
+}
+
+// The connection state a refused packet is forbidden to touch: the idle
+// clock, the two send sequence trackers, the fragment payload id, and both
+// replay windows, byte for byte. A refusal that marks any of these is the
+// slotless-session mark class: the packet is refused yet mutates state the
+// refusal promised to leave alone.
+
+struct rocketnet_fuzz_mapping_state
+{
+    double last_receive_time;
+    uint64_t send_sequence_handshake;
+    uint64_t send_sequence_session;
+    uint64_t send_fragment_payload_id;
+    struct rocketnet_replay_protection_t replay_handshake;
+    struct rocketnet_replay_protection_t replay_session;
+};
+
+static void rocketnet_fuzz_snapshot_mapping( const struct rocketnet_encryption_mapping_t * mapping,
+                                             struct rocketnet_fuzz_mapping_state * out )
+{
+    out->last_receive_time = mapping->last_receive_time;
+    out->send_sequence_handshake = mapping->send_sequence_handshake;
+    out->send_sequence_session = mapping->send_sequence_session;
+    out->send_fragment_payload_id = mapping->send_fragment_payload_id;
+    out->replay_handshake = mapping->replay_handshake;
+    out->replay_session = mapping->replay_session;
+}
+
+static int rocketnet_fuzz_mapping_unchanged( const struct rocketnet_encryption_mapping_t * mapping,
+                                             const struct rocketnet_fuzz_mapping_state * snapshot )
+{
+    return snapshot->last_receive_time == mapping->last_receive_time &&
+           snapshot->send_sequence_handshake == mapping->send_sequence_handshake &&
+           snapshot->send_sequence_session == mapping->send_sequence_session &&
+           snapshot->send_fragment_payload_id == mapping->send_fragment_payload_id &&
+           memcmp( &snapshot->replay_handshake, &mapping->replay_handshake, sizeof(snapshot->replay_handshake) ) == 0 &&
+           memcmp( &snapshot->replay_session, &mapping->replay_session, sizeof(snapshot->replay_session) ) == 0;
+}
+
+// Counter ledger conservation, from the standard's observability section:
+// every packet family's arrival equals the sum of its terminal outcomes, and
+// the connected ledger balances. The harness mints one token for one client,
+// so a token admitted once can never yield a second CLIENT_CONNECTED.
+
+static void rocketnet_fuzz_check_ledger( const struct rocketnet_server_protocol_t * server )
+{
+    const uint64_t * c = server->counters->values;
+
+    const uint64_t request_outcomes =
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] +
+        c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == request_outcomes,
+                            "connection request ledger: received == sum of outcomes" );
+
+    // The response path has no internal-error counter of its own; its two
+    // assert-only failure sites still bump CONNECTION_REQUEST_INTERNAL_ERROR
+    // (sdk/rocketnet_server_protocol.cpp). That counter belongs to the
+    // request ledger above, so it stays out of this sum rather than being
+    // double-counted here.
+    const uint64_t response_outcomes =
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] +
+        c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] == response_outcomes,
+                            "connection response ledger: received == sum of outcomes" );
+
+    const uint64_t keep_alive_outcomes =
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE] +
+        c[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == keep_alive_outcomes,
+                            "keep alive ledger: received == sum of outcomes" );
+
+    const uint64_t payload_outcomes =
+        c[ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] +
+        c[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] +
+        c[ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK] +
+        c[ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE] +
+        c[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] == payload_outcomes,
+                            "payload ledger: received == sum of outcomes" );
+
+    const uint64_t disconnect_outcomes =
+        c[ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED] +
+        c[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED] +
+        c[ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK] +
+        c[ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE] +
+        c[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == disconnect_outcomes,
+                            "disconnect ledger: received == sum of outcomes" );
+
+    const uint64_t ack_outcomes =
+        c[ROCKETNET_COUNTER_ACK_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_ACK_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED] +
+        c[ROCKETNET_COUNTER_ACK_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_ACK_NOT_CONNECTED] +
+        c[ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK] +
+        c[ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE] +
+        c[ROCKETNET_COUNTER_ACK_ACCEPTED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_ACK_RECEIVED] == ack_outcomes,
+                            "ack ledger: received == sum of outcomes" );
+
+    const uint64_t fragment_outcomes =
+        c[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
+        c[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
+        c[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
+        c[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
+        c[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
+        c[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
+        c[ROCKETNET_COUNTER_FRAGMENT_STALE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
+        c[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
+        c[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
+        c[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
+        c[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
+        c[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == fragment_outcomes,
+                            "fragment ledger: received == sum of outcomes" );
+
+    rocketnet_fuzz_require(
+        c[ROCKETNET_COUNTER_CLIENT_CONNECTED] ==
+            c[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] +
+            c[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] +
+            (uint64_t) rocketnet_client_slots_num_connected( server->client_slots ),
+        "connected ledger: CLIENT_CONNECTED == DISCONNECTED + TIMED_OUT + connected now" );
+
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_CLIENT_CONNECTED] <= 1,
+                            "a token admitted once never yields a second CLIENT_CONNECTED" );
 }
 
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
@@ -284,8 +474,26 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
                 int delivered_client_index = -1;
-                rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
+
+                // snapshot the mapping this datagram addresses, if any, so a
+                // refused packet is proven to leave it byte-for-byte unchanged
+                const int before_index = rocketnet_encryption_map_find( server.encryption_map, &from );
+                struct rocketnet_fuzz_mapping_state before_state;
+                const int had_mapping = before_index != -1;
+                if ( had_mapping )
+                    rocketnet_fuzz_snapshot_mapping( rocketnet_encryption_map_entry( server.encryption_map, before_index ), &before_state );
+
+                const int process_result = rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
                                                           response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index );
+
+                if ( had_mapping && ( process_result == ROCKETNET_SERVER_PROCESS_IGNORED || process_result == ROCKETNET_SERVER_PROCESS_SEND_DENIED ) )
+                {
+                    const int after_index = rocketnet_encryption_map_find( server.encryption_map, &from );
+                    rocketnet_fuzz_require( after_index != -1, "a refused packet must not remove its mapping" );
+                    rocketnet_fuzz_require(
+                        rocketnet_fuzz_mapping_unchanged( rocketnet_encryption_map_entry( server.encryption_map, after_index ), &before_state ),
+                        "a refused packet must leave last_receive_time, the sequence trackers and the replay window unchanged" );
+                }
                 if ( response_bytes > 0 )
                 {
                     if ( response_bytes > ROCKETNET_RECEIVE_CEILING )
@@ -333,6 +541,8 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         time += step;
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );
     }
+
+    rocketnet_fuzz_check_ledger( &server );
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
