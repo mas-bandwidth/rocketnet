@@ -3,7 +3,8 @@ set(ROCKETNET_XDP_SOURCES
     server_xdp/Makefile
     server_xdp/server_xdp.c
     sdk/rocketnet_wire.h
-    sdk/rocketnet_xdp_limits.h)
+    sdk/rocketnet_xdp_limits.h
+    sdk/rocketnet_xdp_parse.h)
 
 # Let verification consume the same CMake list as generation and dependencies.
 if(DEFINED ROCKETNET_XDP_SOURCE_LIST_OUTPUT)

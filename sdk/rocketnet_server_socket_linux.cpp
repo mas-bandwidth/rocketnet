@@ -41,6 +41,7 @@
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
+#include "rocketnet_xdp_parse.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
 
@@ -2200,31 +2201,89 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 uint8_t * __restrict__ packet_data = (uint8_t*)socket->buffer + desc->addr;
 
-                const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
-
                 const int packet_bytes = desc->len;
 
-                if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                if ( packet_bytes >= (int) sizeof(ethhdr) + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
-                    const int index = receive_buffer->num_packets;
-
                     struct ethhdr * __restrict__ eth = (ethhdr*) packet_data;
-                    struct iphdr  * __restrict__ ip  = (iphdr*) ( (uint8_t*)packet_data + sizeof( struct ethhdr ) );
-                    struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
 
-                    uint8_t * __restrict__ payload_data = packet_data + header_bytes;
-
-                    const int payload_bytes = packet_bytes - header_bytes;
-
-                    rocketnet_address_load_ipv4( &receive_buffer->from[index], (uint32_t) ip->saddr, udp->source );
-
-                    memcpy( receive_buffer->eth[index], eth->h_source, ETH_ALEN );
-
-                    memcpy( receive_buffer->packet_data[index], payload_data, payload_bytes );
-
-                    receive_buffer->packet_bytes[index] = payload_bytes;
-
-                    receive_buffer->num_packets++;
+                    // The kernel filter has already applied the port,
+                    // bounds and structural checks; userspace derives the
+                    // source address from the frame, for IPv4 and IPv6.
+                    if ( eth->h_proto == __constant_htons( ETH_P_IPV6 ) )
+                    {
+                        if ( packet_bytes >= (int) ( sizeof(ethhdr) + 40 + sizeof(udphdr) + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ) )
+                        {
+                            // Walk the extension chain with the shared bound.
+                            const uint8_t * ip6 = packet_data + sizeof(ethhdr);
+                            uint8_t next_header = ip6[6];
+                            int offset = (int) ( sizeof(ethhdr) + 40 );
+                            int walked = 0;
+                            bool malformed = false;
+                            while ( next_header != IPPROTO_UDP )
+                            {
+                                if ( next_header == 44 || ( next_header != 0 && next_header != 43 && next_header != 60 ) || walked >= ROCKETNET_XDP_MAX_EXTENSION_HEADERS || offset + 8 > packet_bytes )
+                                {
+                                    malformed = true;
+                                    break;
+                                }
+                                const int ext_bytes = ( (int) packet_data[offset + 1] + 1 ) * 8;
+                                if ( ext_bytes < 8 || offset + ext_bytes > packet_bytes )
+                                {
+                                    malformed = true;
+                                    break;
+                                }
+                                next_header = packet_data[offset];
+                                offset += ext_bytes;
+                                walked++;
+                            }
+                            if ( !malformed && offset + (int) sizeof(udphdr) <= packet_bytes )
+                            {
+                                struct udphdr * __restrict__ udp6 = (udphdr*) ( packet_data + offset );
+                                const int payload_bytes = packet_bytes - offset - (int) sizeof(udphdr);
+                                if ( payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                                {
+                                    // An IPv4-mapped source never occurs
+                                    // legitimately in a real IPv6 header:
+                                    // it is spoofed and the packet drops.
+                                    bool mapped = true;
+                                    for ( int b = 0; b < 10; b++ )
+                                        if ( ip6[8 + b] != 0 ) mapped = false;
+                                    if ( ip6[8 + 10] != 0xff || ip6[8 + 11] != 0xff ) mapped = false;
+                                    if ( !mapped )
+                                    {
+                                        const int index = receive_buffer->num_packets;
+                                        rocketnet_address_t * from = &receive_buffer->from[index];
+                                        memset( from, 0, sizeof(*from) );
+                                        from->type = ROCKETNET_ADDRESS_IPV6;
+                                        memcpy( from->data.ipv6, ip6 + 8, 16 );
+                                        from->port = rocketnet_platform_ntohs( udp6->source );
+                                        memcpy( receive_buffer->eth[index], eth->h_source, ETH_ALEN );
+                                        memcpy( receive_buffer->packet_data[index], packet_data + offset + sizeof(udphdr), payload_bytes );
+                                        receive_buffer->packet_bytes[index] = payload_bytes;
+                                        receive_buffer->num_packets++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else if ( eth->h_proto == __constant_htons( ETH_P_IP ) )
+                    {
+                        const int header_bytes = sizeof(ethhdr) + sizeof(iphdr) + sizeof(udphdr);
+                        if ( packet_bytes >= header_bytes + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+                        {
+                            const int index = receive_buffer->num_packets;
+                            struct iphdr  * __restrict__ ip  = (iphdr*) ( (uint8_t*)packet_data + sizeof( struct ethhdr ) );
+                            struct udphdr * __restrict__ udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
+                            uint8_t * __restrict__ payload_data = packet_data + header_bytes;
+                            const int payload_bytes = packet_bytes - header_bytes;
+                            rocketnet_address_load_ipv4( &receive_buffer->from[index], (uint32_t) ip->saddr, udp->source );
+                            memcpy( receive_buffer->eth[index], eth->h_source, ETH_ALEN );
+                            memcpy( receive_buffer->packet_data[index], payload_data, payload_bytes );
+                            receive_buffer->packet_bytes[index] = payload_bytes;
+                            receive_buffer->num_packets++;
+                        }
+                    }
                 }
             }
 

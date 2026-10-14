@@ -34,6 +34,7 @@
 
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_limits.h"
+#include "rocketnet_xdp_parse.h"
 
 struct {
     __uint( type, BPF_MAP_TYPE_ARRAY );
@@ -80,107 +81,147 @@ static void server_xdp_count( __u32 counter )
 SEC("server_xdp") int server_xdp_filter( struct xdp_md *ctx )
 {
     void * data = (void*) (long) ctx->data;
-
     void * data_end = (void*) (long) ctx->data_end;
 
     struct ethhdr * eth = data;
-
-    if ( (void*)eth + sizeof(struct ethhdr) <= data_end )
+    if ( (void*)eth + sizeof(struct ethhdr) > data_end )
     {
-        if ( eth->h_proto == __constant_htons(ETH_P_IP) ) // IPV4
-        {
-            struct iphdr * ip = data + sizeof(struct ethhdr);
-
-            if ( (void*)ip + sizeof(struct iphdr) > data_end )
-            {
-                debug_printf( "smaller than ipv4 header" );
-                return XDP_DROP;
-            }
-
-            if ( ip->ihl == 5 && ip->protocol == IPPROTO_UDP ) // UDP only
-            {
-                struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
-
-                if ( (void*)udp + sizeof(struct udphdr) <= data_end )
-                {
-                    int key = 0;
-                    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
-                    if ( config == NULL || config->public_port == 0 )
-                    {
-                        debug_printf( "server_xdp is not configured" );
-                        return XDP_PASS;
-                    }
-
-                    if ( udp->dest == config->public_port && ( config->public_address == 0 || ip->daddr == config->public_address ) )
-                    {
-                        __u8 * packet_data = (unsigned char*) (void*)udp + sizeof(struct udphdr);
-
-                        // wire size bounds: nothing a server accepts is smaller
-                        // than the smallest inbound type or larger than the
-                        // receive ceiling
-
-                        if ( (void*)packet_data + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES > data_end )
-                        {
-                            debug_printf( "packet is too small" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
-                            return XDP_DROP;
-                        }
-
-                        int packet_bytes = data_end - (void*)udp - sizeof(struct udphdr);
-
-                        if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
-                        {
-                            debug_printf( "packet is too large" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
-                            return XDP_DROP;
-                        }
-
-                        // the prefilter header: the epoch names which rule
-                        // produced the filter value, so a generation this
-                        // server does not hold dies on a comparison before
-                        // the value is even examined
-
-                        if ( packet_data[1] != config->filter_epoch )
-                        {
-                            debug_printf( "wrong filter epoch" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
-                            return XDP_DROP;
-                        }
-
-                        if ( packet_data[2] != config->filter_value[0] ||
-                             packet_data[3] != config->filter_value[1] ||
-                             packet_data[4] != config->filter_value[2] ||
-                             packet_data[5] != config->filter_value[3] )
-                        {
-                            debug_printf( "wrong filter value" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
-                            return XDP_DROP;
-                        }
-
-                        const __u8 packet_type = packet_data[0];
-
-                        if ( !ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes ) )
-                        {
-                            debug_printf( "invalid packet type or size" );
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
-                            return XDP_DROP;
-                        }
-
-                        const __u32 queue_id = ctx->rx_queue_index;
-                        const int ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
-                        if ( ret == 0 )
-                        {
-                            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
-                            return XDP_REDIRECT;
-                        }
-                        return XDP_DROP;
-                    }
-                }
-            }
-        }
+        return XDP_PASS;
     }
 
-    return XDP_PASS;
+    int key = 0;
+    struct rocketnet_server_xdp_config_t * config = (struct rocketnet_server_xdp_config_t*) bpf_map_lookup_elem( &server_xdp_config_map, &key );
+    if ( config == NULL || config->public_port == 0 )
+    {
+        debug_printf( "server_xdp is not configured" );
+        return XDP_PASS;
+    }
+
+    struct rocketnet_xdp_parse_config_t parse_config;
+    parse_config.public_port = config->public_port;
+    parse_config.public_address = config->public_address;
+    __builtin_memcpy( parse_config.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+    parse_config.filter_epoch = config->filter_epoch;
+
+    __u8 * udp_payload = NULL;
+    int udp_payload_bytes = 0;
+
+    if ( eth->h_proto == __constant_htons(ETH_P_IP) ) // IPV4
+    {
+        struct iphdr * ip = data + sizeof(struct ethhdr);
+        if ( (void*)ip + sizeof(struct iphdr) > data_end )
+        {
+            debug_printf( "smaller than ipv4 header" );
+            return XDP_DROP;
+        }
+        if ( ip->ihl != 5 || ip->protocol != IPPROTO_UDP )
+        {
+            return XDP_PASS;
+        }
+        struct udphdr * udp = (void*) ip + sizeof(struct iphdr);
+        if ( (void*)udp + sizeof(struct udphdr) > data_end )
+        {
+            return XDP_DROP;
+        }
+        if ( udp->dest != config->public_port || ( config->public_address != 0 && ip->daddr != config->public_address ) )
+        {
+            return XDP_PASS;
+        }
+        udp_payload = (__u8*) (void*)udp + sizeof(struct udphdr);
+        udp_payload_bytes = (int) ( (long) data_end - (long) udp_payload );
+    }
+    else if ( eth->h_proto == __constant_htons(ETH_P_IPV6) ) // IPV6
+    {
+        struct ipv6hdr * ip6 = data + sizeof(struct ethhdr);
+        if ( (void*)ip6 + sizeof(struct ipv6hdr) > data_end )
+        {
+            debug_printf( "smaller than ipv6 header" );
+            return XDP_DROP;
+        }
+        // No IPv6 public address is configured in this revision (the config
+        // map holds an IPv4 address), so any destination address is
+        // accepted for IPv6 and the destination port alone selects.
+        __u8 * ptr = (__u8*) (void*)ip6 + sizeof(struct ipv6hdr);
+        __u8 next = ip6->nexthdr;
+        // Extension headers are walked with a small constant bound.
+        // Accepted: Hop-by-Hop (0), Routing (43), Destination Options (60).
+        // A Fragment header (44) is refused, matching the IPv4 ihl == 5
+        // strictness. The walk is unrolled so the bound is constant.
+        #pragma clang loop unroll(full)
+        for ( int i = 0; i < ROCKETNET_XDP_MAX_EXTENSION_HEADERS; i++ )
+        {
+            if ( next == IPPROTO_UDP )
+            {
+                break;
+            }
+            if ( next == 44 )
+            {
+                return XDP_DROP;
+            }
+            if ( next != 0 && next != 43 && next != 60 )
+            {
+                return XDP_PASS;
+            }
+            if ( (void*)ptr + 8 > data_end )
+            {
+                return XDP_DROP;
+            }
+            const int ext_bytes = ( (int) ptr[1] + 1 ) * 8;
+            if ( ext_bytes < 8 || (void*)ptr + ext_bytes > data_end )
+            {
+                return XDP_DROP;
+            }
+            next = ptr[0];
+            ptr += ext_bytes;
+        }
+        if ( next != IPPROTO_UDP )
+        {
+            // Past the extension bound, or a fragment after the walk.
+            if ( next == 44 || next == 0 || next == 43 || next == 60 )
+            {
+                return XDP_DROP;
+            }
+            return XDP_PASS;
+        }
+        struct udphdr * udp = (void*) ptr;
+        if ( (void*)udp + sizeof(struct udphdr) > data_end )
+        {
+            return XDP_DROP;
+        }
+        if ( udp->dest != config->public_port )
+        {
+            return XDP_PASS;
+        }
+        udp_payload = (__u8*) (void*)udp + sizeof(struct udphdr);
+        udp_payload_bytes = (int) ( (long) data_end - (long) udp_payload );
+    }
+    else
+    {
+        return XDP_PASS;
+    }
+
+    if ( (void*)udp_payload + 6 > data_end )
+    {
+        server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+        return XDP_DROP;
+    }
+
+    const int verdict = rocketnet_xdp_check_payload( udp_payload, udp_payload_bytes, &parse_config );
+
+    if ( verdict == ROCKETNET_XDP_VERDICT_REDIRECT )
+    {
+        const __u32 queue_id = ctx->rx_queue_index;
+        const int ret = bpf_redirect_map( &server_xdp_socket_map, queue_id, BPF_F_INGRESS );
+        if ( ret == 0 )
+        {
+            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+            return XDP_REDIRECT;
+        }
+        return XDP_DROP;
+    }
+
+    server_xdp_count( (__u32) verdict );
+    return XDP_DROP;
 }
 
 char _license[] SEC("license") = "GPL";
