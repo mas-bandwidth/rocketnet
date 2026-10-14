@@ -10,9 +10,12 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet.h"
 #include "rocketnet_address.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
 #include <string.h>
+
+thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * filter_value )
 {
@@ -170,6 +173,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
+    rocketnet_crypto_tally.aead_seal++;
     unsigned long long sealed_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p,
                                                     (unsigned long long) ( ack_block_bytes + payload_bytes ),
@@ -286,6 +290,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
+    rocketnet_crypto_tally.aead_open++;
     unsigned long long opened_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_decrypt( out_data, &opened_bytes, NULL,
                                                     packet_data + header_bytes,
