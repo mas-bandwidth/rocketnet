@@ -73,9 +73,9 @@ int main(int argc, char ** argv)
             // move the timing. It is caller work, never a production SDK branch.
             if (plant)
                 for (int j = 0; j < 4096; ++j) plant_state = plant_state * 1664525 + 1013904223;
-            const int bytes = rocketnet_server_transport_finish_packet(server, &context, payload_bytes);
-            CHECK(bytes > payload_bytes);
-            if (batch >= 0) wire_bytes += bytes;
+            CHECK(rocketnet_server_transport_finish_packet(server, &context, payload_bytes) == ROCKETNET_SEND_OK);
+            CHECK(context.wire_bytes > payload_bytes);
+            if (batch >= 0) wire_bytes += context.wire_bytes;
         }
         const auto end = std::chrono::steady_clock::now();
         if (batch >= 0) elapsed_ns += std::chrono::duration<double, std::nano>(end - start).count();

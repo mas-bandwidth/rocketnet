@@ -1534,13 +1534,13 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
 // partial payload the semantics already price as fragments lost on the
 // wire. Returns the total wire bytes staged.
 
-static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+static enum rocketnet_send_result_t rocketnet_server_transport_finish_arena_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     rocketnet_address_t to;
     if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, context->client_index, &to ) )
     {
         context->frame = NULL;
-        return 0;
+        return ROCKETNET_SEND_CONNECTION_GONE;
     }
 
     if ( payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES )
@@ -1549,7 +1549,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         if ( !rocketnet_server_reserve_fill_frame( server_transport, &to, context->client_index, &frame ) )
         {
             context->frame = NULL;
-            return 0;
+            return ROCKETNET_SEND_RING_FULL;
         }
 
         memcpy( frame.data + ROCKETNET_FRAME_PAYLOAD_OFFSET, context->frame, (size_t) payload_bytes );
@@ -1562,19 +1562,20 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         {
             rocketnet_server_abort_fill_frame( server_transport, &frame );
             context->frame = NULL;
-            return 0;
+            return ROCKETNET_SEND_SEAL_FAILED;
         }
 
         rocketnet_server_commit_fill_frame( server_transport, &frame, wire_bytes );
+        context->wire_bytes = wire_bytes;
         context->frame = NULL;
-        return wire_bytes;
+        return ROCKETNET_SEND_OK;
     }
 
     int fragment_count, fragment_stride;
     if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &fragment_stride ) )
     {
         context->frame = NULL;
-        return 0;
+        return ROCKETNET_SEND_FRAGMENT_PLAN_FAILED;
     }
 
     struct rocketnet_server_fill_frame_t frames[ROCKETNET_MAX_FRAGMENTS];
@@ -1588,7 +1589,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
             for ( int j = 0; j < i; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
             context->frame = NULL;
-            return 0;
+            return ROCKETNET_SEND_RING_FULL;
         }
     }
 
@@ -1602,7 +1603,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         for ( int i = 0; i < fragment_count; i++ )
             rocketnet_server_abort_fill_frame( server_transport, &frames[i] );
         context->frame = NULL;
-        return 0;
+        return ROCKETNET_SEND_FRAGMENT_RESERVE_FAILED;
     }
 
     uint32_t payload_id = rocketnet_server_protocol_next_fragment_payload_id( &server_transport->protocol, context->client_index );
@@ -1627,32 +1628,34 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
             // stagings are untouched until the main-thread flush, so the
             // whole reservation withdraws
 
+            const bool partial_commit = rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_FINISH_FINAL ) && i > 0;
             const int first_withdrawn = rocketnet_server_driver_has( server_transport->io, ROCKETNET_DRIVER_FINISH_FINAL ) ? i : 0;
             for ( int j = first_withdrawn; j < fragment_count; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
             context->frame = NULL;
-            return 0;
+            return partial_commit ? ROCKETNET_SEND_PARTIAL_COMMIT : ROCKETNET_SEND_SEAL_FAILED;
         }
         rocketnet_server_commit_fill_frame( server_transport, &frames[i], wire_bytes );
         total_wire_bytes += wire_bytes;
     }
 
+    context->wire_bytes = total_wire_bytes;
     context->frame = NULL;
-    return total_wire_bytes;
+    return ROCKETNET_SEND_OK;
 }
 
-static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
+static enum rocketnet_send_result_t rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
 
     if ( !context->frame )
-        return 0;
+        return ROCKETNET_SEND_NOTHING_STAGED;
 
     if ( payload_bytes < 1 || payload_bytes > context->payload_capacity )
     {
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
-        return 0;
+        return ROCKETNET_SEND_INVALID_PAYLOAD;
     }
 
     if ( rocketnet_send_arena_owns( server_transport->send_arena, context->frame ) )
@@ -1665,7 +1668,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     if ( wire_bytes == 0 )
     {
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
-        return 0;
+        return ROCKETNET_SEND_SEAL_FAILED;
     }
 
     if ( rocketnet_server_transport_staged( server_transport ) )
@@ -1680,23 +1683,25 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         server_transport->payload_ring.info[slot].wire_bytes = wire_bytes;
     }
 
+    context->wire_bytes = wire_bytes;
     context->frame = NULL;
 
-    return wire_bytes;
+    return ROCKETNET_SEND_OK;
 }
 
-int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+enum rocketnet_send_result_t rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
     if ( !server_transport || !context )
-        return 0;
+        return ROCKETNET_SEND_NOTHING_STAGED;
     rocketnet_packet_context_t trusted;
     uint64_t backend_id;
     if ( !server_transport->packet_leases.take(*context, trusted, backend_id) )
     {
         context->frame = NULL;
-        return 0;
+        return ROCKETNET_SEND_NOTHING_STAGED;
     }
-    const int result = rocketnet_server_transport_finish_packet_unchecked( server_transport, &trusted, payload_bytes, backend_id );
+    const enum rocketnet_send_result_t result = rocketnet_server_transport_finish_packet_unchecked( server_transport, &trusted, payload_bytes, backend_id );
+    context->wire_bytes = trusted.wire_bytes;
     context->frame = NULL;
     return result;
 }
@@ -1771,7 +1776,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 
 // the convenience: the same path underneath, plus one memcpy the caller chose
 
-void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport,
+enum rocketnet_send_result_t rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport,
                                              int client_index,
                                              const uint8_t * payload_data,
                                              int payload_bytes )
@@ -1780,16 +1785,16 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_assert( payload_data );
 
     if ( payload_bytes < 1 || payload_bytes > server_transport->max_payload_bytes )
-        return;
+        return ROCKETNET_SEND_INVALID_PAYLOAD;
 
     struct rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( server_transport, client_index, payload_bytes, &context );
     if ( !frame )
-        return;
+        return ROCKETNET_SEND_NOTHING_STAGED;
 
     memcpy( frame + context.payload_index, payload_data, payload_bytes );
 
-    rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
+    return rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
 void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )

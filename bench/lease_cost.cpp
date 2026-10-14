@@ -176,10 +176,10 @@ int main(int argc, char ** argv)
                     for (int j = 0; j < 4096; ++j) plant_state = plant_state * 1664525 + 1013904223;
                 if (finish)
                 {
-                    const int bytes = from_server
+                    const enum rocketnet_send_result_t result = from_server
                         ? rocketnet_server_transport_finish_packet(server, &context, payload_bytes)
                         : rocketnet_client_transport_finish_packet(client, &context, payload_bytes);
-                    CHECK(bytes > payload_bytes);
+                    CHECK(result == ROCKETNET_SEND_OK && context.wire_bytes > payload_bytes);
                     ++local_committed;
                 }
                 else if (from_server) rocketnet_server_transport_abort_packet(server, &context);

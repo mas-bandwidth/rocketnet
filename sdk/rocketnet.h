@@ -552,7 +552,28 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_client_transport_t * client_transport, double time );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
+// Why a send did not stage a packet. finish_packet and send_packet on both
+// ends return this; OK is first and zero. A caller that used to test the wire
+// size for success reads context.wire_bytes instead, since a positive return
+// no longer means success.
+
+enum rocketnet_send_result_t
+{
+    ROCKETNET_SEND_OK = 0,                      // the packet was staged and sealed
+    ROCKETNET_SEND_NOTHING_STAGED,              // no active lease: stale, consumed, modified or wrong-owner context
+    ROCKETNET_SEND_INVALID_PAYLOAD,             // payload out of range for the lease's capacity
+    ROCKETNET_SEND_NOT_RUNNING,                 // the server transport is not running
+    ROCKETNET_SEND_CONNECTION_GONE,             // the client is not connected to the server
+    ROCKETNET_SEND_RING_FULL,                   // the payload or driver ring is full
+    ROCKETNET_SEND_ARENA_FULL,                  // the send arena is exhausted
+    ROCKETNET_SEND_LEASE_FULL,                  // the packet lease table is full
+    ROCKETNET_SEND_SEAL_FAILED,                 // the wire frame could not be reserved
+    ROCKETNET_SEND_FRAGMENT_PLAN_FAILED,        // the fragmented payload could not be planned
+    ROCKETNET_SEND_FRAGMENT_RESERVE_FAILED,     // the fragment sequence block could not be reserved
+    ROCKETNET_SEND_PARTIAL_COMMIT,              // some fragments were staged before a later one failed
+};
+
+ROCKETNET_EXPORT_FUNC enum rocketnet_send_result_t rocketnet_client_transport_send_packet( struct rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes );
 
 // The copying cursor: pops the next delivered payload into packet_data,
 // returning its length, or zero when the update's batch is drained.
@@ -595,7 +616,7 @@ ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_start_packet( struct 
 // abort, update, flush or destroy; callers must join before those operations.
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_client_transport_packet_payload( struct rocketnet_client_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC enum rocketnet_send_result_t rocketnet_client_transport_finish_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
@@ -885,10 +906,10 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_
 // process-unique lease identifier, never driver bookkeeping. Active payload views
 // expire at finish/abort or the next update/flush; raw pointers cannot be revoked.
 //
-// finish_packet returns the sealed wire size, or zero when the packet was
-// dropped instead (payload out of range, the connection gone, or a wire
-// frame it could not reserve) -- the sequences already taken are burned
-// either way, which the receiver's replay window tolerates.
+// finish_packet returns the cause of the send (rocketnet_send_result_t) and
+// writes the sealed wire size to context.wire_bytes, zero on any failure; the
+// sequences already taken are burned either way, which the receiver's replay
+// window tolerates.
 //
 // HOW MANY are burned is not always one, and the difference is large
 // enough to reason about. An unfragmented payload burns the single
@@ -911,6 +932,7 @@ struct rocketnet_packet_context_t
     uint64_t packet_id;
     uint64_t sequence;
     int client_index;
+    int wire_bytes;                             // set by finish; 0 on any failure
 };
 
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
@@ -920,13 +942,13 @@ ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_start_packet( struct 
 // abort, update, flush or destroy; callers must join before those operations.
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_packet_payload( struct rocketnet_server_transport_t * transport, const struct rocketnet_packet_context_t * context, int * capacity );
 
-ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+ROCKETNET_EXPORT_FUNC enum rocketnet_send_result_t rocketnet_server_transport_finish_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_abort_packet( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport );
 
-ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
+ROCKETNET_EXPORT_FUNC enum rocketnet_send_result_t rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t * server_transport, int client_index, const uint8_t * payload_data, int payload_bytes );
 
 // Disconnects one connected client deliberately: the redundant disconnect
 // burst is staged and the slot frees immediately. Buffered drivers may send
@@ -1065,7 +1087,7 @@ namespace rocketnet
     inline bool server_finish_packet( struct rocketnet_server_transport_t * server, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        return rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0;
+        return rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) == ROCKETNET_SEND_OK;
     }
 
     inline void server_abort_packet( struct rocketnet_server_transport_t * server, struct rocketnet_packet_context_t & context )
@@ -1095,7 +1117,7 @@ namespace rocketnet
     inline bool client_finish_packet( struct rocketnet_client_transport_t * client, serialize::WriteStream & stream, struct rocketnet_packet_context_t & context )
     {
         stream.Flush();
-        return rocketnet_client_transport_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) != 0;
+        return rocketnet_client_transport_finish_packet( client, &context, (int) stream.GetBytesProcessed() ) == ROCKETNET_SEND_OK;
     }
 
     inline void client_abort_packet( struct rocketnet_client_transport_t * client, struct rocketnet_packet_context_t & context )

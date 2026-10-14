@@ -241,8 +241,8 @@ static void test_single_frame_arena()
             arena_pattern = 37 + attempt * 17;
             for (int i = 0; i < 64; ++i) payload[i] = uint8_t(i + arena_pattern);
             fail_seal = attempt == 0;
-            int bytes = rocketnet_server_transport_finish_packet(server, &context, 64);
-            CHECK((bytes > 0) == (attempt == 1) && !context.frame);
+            enum rocketnet_send_result_t result = rocketnet_server_transport_finish_packet(server, &context, 64);
+            CHECK((result == ROCKETNET_SEND_OK) == (attempt == 1) && !context.frame);
             if (staged)
             {
                 CHECK(f->aborts == 1);
