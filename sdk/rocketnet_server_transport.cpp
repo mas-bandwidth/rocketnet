@@ -1283,7 +1283,10 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 
 static void rocketnet_server_transport_abort_packet_unchecked( rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, uint64_t backend_id );
 
-uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
+// the acquisition behind start_packet, with the refusal's cause named for
+// the send_packet convenience; the public start_packet drops the cause
+
+static uint8_t * rocketnet_server_transport_start_packet_cause( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context, enum rocketnet_send_result_t * cause )
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
@@ -1291,18 +1294,25 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     memset( context, 0, sizeof(struct rocketnet_packet_context_t) );
 
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+    {
+        if ( cause ) *cause = ROCKETNET_SEND_NOT_RUNNING;
         return NULL;
+    }
 
     if ( request_bytes < 1 || request_bytes > server_transport->max_payload_bytes )
     {
         rocketnet_spam( "server start packet refused. request out of range" );
+        if ( cause ) *cause = ROCKETNET_SEND_INVALID_PAYLOAD;
         return NULL;
     }
 
     rocketnet_address_t to;
     uint64_t sequence;
     if ( !rocketnet_server_protocol_start_payload( &server_transport->protocol, client_index, &to, &sequence ) )
+    {
+        if ( cause ) *cause = ROCKETNET_SEND_CONNECTION_GONE;
         return NULL;
+    }
 
     uint8_t * frame = NULL;
 
@@ -1318,6 +1328,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_spam( "server send arena full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_ARENA_FULL], 1 );
+            if ( cause ) *cause = ROCKETNET_SEND_ARENA_FULL;
             return NULL;
         }
 
@@ -1334,6 +1345,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
             rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
+            if ( cause ) *cause = ROCKETNET_SEND_LEASE_FULL;
             return NULL;
         }
         return frame;
@@ -1346,6 +1358,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         if ( !frame )
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+            if ( cause ) *cause = ROCKETNET_SEND_RING_FULL;
             return NULL;
         }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
@@ -1360,6 +1373,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         {
             rocketnet_spam( "server payload ring full. packet dropped" );
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+            if ( cause ) *cause = ROCKETNET_SEND_RING_FULL;
             return NULL;
         }
 
@@ -1388,9 +1402,15 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
+        if ( cause ) *cause = ROCKETNET_SEND_LEASE_FULL;
         return NULL;
     }
     return frame;
+}
+
+uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
+{
+    return rocketnet_server_transport_start_packet_cause( server_transport, client_index, request_bytes, context, NULL );
 }
 
 static void rocketnet_server_transport_abort_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, uint64_t backend_id )
@@ -1788,9 +1808,10 @@ enum rocketnet_send_result_t rocketnet_server_transport_send_packet( struct rock
         return ROCKETNET_SEND_INVALID_PAYLOAD;
 
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_server_transport_start_packet( server_transport, client_index, payload_bytes, &context );
+    enum rocketnet_send_result_t cause = ROCKETNET_SEND_NOTHING_STAGED;
+    uint8_t * frame = rocketnet_server_transport_start_packet_cause( server_transport, client_index, payload_bytes, &context, &cause );
     if ( !frame )
-        return ROCKETNET_SEND_NOTHING_STAGED;
+        return cause;
 
     memcpy( frame + context.payload_index, payload_data, payload_bytes );
 
