@@ -59,6 +59,24 @@ void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t * si
                                        int packet_bytes,
                                        double current_time );
 
+// Delivers a prepared list of packets in the order given: receive() returns
+// packet_data[0] first, then packet_data[1], and so on. Loss, latency, jitter
+// and duplicates are not rolled here -- this is the schedule's hand, used to
+// script an exact delivery order (drop, duplicate and reorder steps are built
+// by composing this list). Every packet becomes due at delivery_time, and the
+// slot rule hands them back in list order because they are inserted in list
+// order. A packet whose size is outside 1..ROCKETNET_RECEIVE_CEILING is not
+// inserted, and a full queue drops the rest exactly as send() does. Returns
+// the number of packets handed to the wire.
+
+int rocketnet_network_simulator_deliver_packets( struct rocketnet_network_simulator_t * simulator,
+                                                 const struct rocketnet_address_t * from,
+                                                 const struct rocketnet_address_t * to,
+                                                 const uint8_t * const * packet_data,
+                                                 const int * packet_bytes,
+                                                 int packet_count,
+                                                 double delivery_time );
+
 // Receives the next packet due for this destination at this time, removing
 // it from the wire. Returns the packet size, or 0 when nothing is due.
 // out_packet must be at least the receive ceiling.
