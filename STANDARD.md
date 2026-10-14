@@ -2772,8 +2772,10 @@ legitimate client completes steps 2 and 3 in one round trip; a few seconds
 covers that with room for several retransmissions. Reusing the gameplay timeout
 here would hand an attacker a ten- to sixty-fold multiplier on the duration of
 every mapping they hold, bought with nothing. The handshake deadline is a
-server-side configuration value, in seconds, and it is not carried in the token,
-because it protects the server and nothing the client presents should set it.
+server-side configuration value, in seconds — the server config field
+`handshake_deadline_seconds`, default 5, range 1 to 60 — and it is not carried
+in the token, because it protects the server and nothing the client presents
+should set it.
 
 **It has a sensible default and it is tunable per game.** The default SHOULD be
 five seconds: a client retransmitting at the send rate gets tens of attempts

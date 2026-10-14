@@ -360,6 +360,11 @@ refused aloud with the per-endpoint name to use instead. Byte fields (keys,
 filter value) are base64. An environment variable set to the empty string is
 treated as unset, with a log line saying so.
 
+The server's `handshake_deadline_seconds` field (default 5, range 1 to 60) is
+the half-open mapping's deadline: fixed when the challenge creates the mapping,
+never refreshed, and discharged on connect. Its environment name is
+`ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS`.
+
 **Passing `NULL` for the config is the default shape** — and on the two ends that
 means different things:
 
