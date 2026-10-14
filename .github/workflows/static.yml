@@ -1,0 +1,65 @@
+# The static-analysis gate for the sdk.
+#
+# WHAT IT IS. One job: the gcc -fanalyzer findings are compared against
+# tools/static_baseline.txt. A finding that is present now but not in the
+# baseline fails the pull request. A finding that is baselined but gone also
+# fails it: the baseline only shrinks, and the stale line is deleted in the
+# same pull request that removes the finding. The report prints the baseline
+# size per check.
+#
+# WHY IT IS A GATE AND NOT A WATCH. A defect this tool proves -- a null
+# dereference, a lifetime mistake, an out-of-bounds read -- is a defect on
+# THIS commit. Nothing here waits on a clock or finds only what an hour finds,
+# so it runs per commit beside ci.yml, not in a nightly tier.
+#
+# WHAT IT COVERS. gcc -fanalyzer runs over the parser translation units: every
+# sdk/*.cpp that includes rocketnet_read_write.h, plus the parser files named
+# in the card (base64, fragment, message, ack, replay, connect_token). The
+# analyzer walks these paths interprocedurally, which is where wire parsing
+# defects live.
+#
+# No source file is changed by this card: the first baseline records the
+# findings the tool already produces on this commit.
+
+name: static analysis
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+# a superseded commit's run is not a gate on anything -- the gate is the head
+# of the branch -- so it yields its runners to the run that replaced it
+concurrency:
+  group: static-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  static:
+    name: static analysis (gcc -fanalyzer)
+    # the same fleet runners ci.yml uses; a self-hosted runner comes
+    # provisioned, so the apt step runs only for a hosted fallback
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
+
+      # compile_commands.json is what run_static.py reads to rebuild the
+      # parser files for gcc -fanalyzer with the exact per-file flags.
+      - name: Configure with compile_commands.json
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run the static gate
+        run: python3 tools/run_static.py
