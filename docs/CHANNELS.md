@@ -411,6 +411,33 @@ records until acks move `U'`. Resends and unreliable records keep flowing
 most `max_message_bytes <= B` and at most `W` fragments fits (liveness,
 checked by `RNRing`).
 
+**As built** (`sdk/rocketnet_window_send.h` and `.cpp`, sender numbering).
+The region's fixed `send_numbers` table holds each numbered record; the pure
+module holds `next`, `U`, `U'`, `ring_next`, a stall bit and a region pointer.
+Its `first_write` entry points are called only as the record enters a packet.
+Code 0/1 returns without a number; code 2 gets a zero-byte ring anchor at the
+current `ring_next`, so it can safely be `U'`. A holdable single is rounded to
+16 bytes and padded across a `B` boundary when needed. A block takes all
+fragment numbers at once and reserves `(k-1)F + round16(last_fragment_bytes)`
+ring bytes, matching check 8 in section 13.3. The fixed-stride `RNRing` model
+uses `kF` for its small instance; the concrete final fragment can be shorter.
+An ACK scans only entries `U` passes and keeps `U'` at a partial block's first
+number. A failed bound increments `MESSAGE_WINDOW_STALL` once until progress;
+unreliable writes remain available while stalled. These rules have no clock,
+socket or live allocation. `test_channels.cpp` pins them in
+`ChannelsWindowSendNumbersLateNeverAtSend`,
+`ChannelsWindowSendCountBoundStallsAtUPrimePlusW`,
+`ChannelsWindowSendRingPadsAtTheBoundary`,
+`ChannelsWindowSendFloorIsUPrimeNotU`,
+`ChannelsWindowSendBlockTakesConsecutiveNumbersAndOneSpan`,
+`ChannelsWindowSendStallLetsUnreliableThrough`, and
+`ChannelsWindowSendAnyMessageFitsWhenNothingIsOutstanding`.
+`ChannelsWindowSendAndReceiveOverTheLossySimulator` exchanges code-3 singles
+and two-fragment blocks with the receive window through the layer-2 RECORDS
+codec at 0, 10 and 50 percent loss with duplication and reordering; its ACK
+oracle waits one update after release, and a shadow byte map checks every live
+ring span while the no-live-allocation trap is armed.
+
 ### 6.3 Why the receiver never runs out of room
 
 The transport acks a packet when it opens it, before this layer sees the

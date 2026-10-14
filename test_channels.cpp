@@ -32,6 +32,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_unreliable.h"
+#include "rocketnet_window_send.h"
 #include "rocketnet_window_receive.h"
 #include "rocketnet_network_simulator.h"
 
@@ -2904,6 +2905,134 @@ static void test_channels_unreliable_over_the_lossy_simulator_entry()
 
 // -----------------------------------------
 
+// Layer 3 sender: small region fixtures exercise the real per-number table
+// without an arena allocation. The red-first assertions stay as the rules'
+// regression witnesses (CHANNELS 6.2, RNRing PlaceSingle/PlaceBlock/Ack,
+// RNWindow NumberRecord/ReceiveAck).
+
+struct channels_window_send_rig_t
+{
+    rn_region_t region;
+    rn_send_number_t numbers[8];
+    rocketnet_counters_t counters;
+    rn_window_send_t send;
+};
+
+static void channels_window_send_setup( channels_window_send_rig_t * rig, uint32_t W, uint32_t B )
+{
+    memset( rig, 0, sizeof( *rig ) );
+    rig->region.window = W;
+    rig->region.ring_bytes = B;
+    rig->region.max_message_bytes = B;
+    rig->region.send_numbers = rig->numbers;
+    rig->region.counters = &rig->counters;
+    rn_window_send_init( &rig->send, &rig->region, 0 );
+}
+
+static void test_channels_window_send_numbers_late_never_at_send()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n = UINT64_MAX, p = UINT64_MAX;
+    check( rig.send.next == 0 );                    // send_message only queues
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_UNRELIABLE );
+    check( rig.send.next == 0 );                    // no unreliable number
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( n == 0 && rig.send.next == 1 );          // first packet write takes it
+    check( rig.numbers[0].number == 0 && rig.numbers[0].acked == 0 );
+}
+
+static void test_channels_window_send_count_bound_stalls_at_u_prime_plus_w()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n, p;
+    for ( uint64_t i = 0; i < 4; i++ )
+    {
+        check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+        check( n == i );
+    }
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 1 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 1, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( n == 4 );
+}
+
+static void test_channels_window_send_ring_pads_at_the_boundary()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 8, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 0 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 48, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 64 && rig.send.ring_next == 112 ); // [32,80) would cross B
+    check( rn_region_ring_span_valid( &rig.region, p % 64, 48 ) );
+}
+
+static void test_channels_window_send_floor_is_u_prime_not_u()
+{
+    channels_window_send_rig_t rig;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_send_setup( &rig, 8, 2 * F );
+    uint64_t n, p;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 1, 0, &n, &p ) == 2 );
+    check( n == 0 && p == 0 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F - 16, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rig.send.ring_next == 2 * F );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 0 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.send.next == 3 );                    // floor 0 forbids [B,B+16)
+}
+
+static void test_channels_window_send_block_takes_consecutive_numbers_and_one_span()
+{
+    channels_window_send_rig_t rig;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_send_setup( &rig, 8, 4096 );
+    uint64_t n, p;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 17, 5, &n, &p ) == 2 );
+    check( n == 0 && p == 0 && rig.send.next == 2 );
+    check( rig.numbers[0].fragment == 0 && rig.numbers[1].fragment == 1 );
+    check( rig.numbers[0].ring_start == 0 && rig.numbers[1].ring_start == F );
+    check( rig.numbers[0].ring_units == F / 16 && rig.numbers[1].ring_units == 2 );
+    check( rig.send.ring_next == F + 32 );
+    check( rn_window_send_mark_acked( &rig.send, 1 ) == 1 );
+    check( rig.send.U == 0 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 2 && rig.send.U_prime == 2 );
+}
+
+static void test_channels_window_send_stall_lets_unreliable_through()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 1, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n, &p ) == RN_WINDOW_SEND_STALL );
+    check( rig.send.stalled && rn_window_send_can_write_unreliable( &rig.send ) );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 8, 0, &n, &p ) == RN_WINDOW_SEND_UNRELIABLE );
+    check( rig.send.next == 1 && rig.counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+}
+
+static void test_channels_window_send_any_message_fits_when_nothing_is_outstanding()
+{
+    channels_window_send_rig_t rig;
+    channels_window_send_setup( &rig, 4, 64 );
+    uint64_t n, p;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U_prime == rig.send.next );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 64, 0, &n, &p ) == RN_WINDOW_SEND_NUMBERED );
+    check( p == 64 && rig.send.ring_next == 128 );
+}
+
+// -----------------------------------------
 // CHANNELS 6.5 and RNWindow Accept: each case uses the region's W=64 bitset
 // and descriptor table. These checks were added before the receive module.
 struct channels_window_receive_rig_t
@@ -3175,6 +3304,264 @@ static void test_channels_window_receive_over_the_lossy_simulator()
     test_channels_window_receive_over_the_lossy_simulator_leg( 50.0f );
 }
 
+// CHANNELS 6.2/6.3, RNRing LiveSpansDisjoint and RNWindow NumberRecord/Accept:
+// a small layer-6 stand-in first-writes records through the real send module,
+// retransmits them over the simulator, and gives an ACK one update after the
+// receiver accepted and released each number (P2/P6). A shadow byte map checks
+// every live ring span. All arrays are fixed before the trap is armed (R1/R4).
+struct channels_window_exchange_record_t
+{
+    uint8_t data[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    uint32_t bytes;
+    uint32_t ring;
+    uint32_t ordering;
+    uint16_t fragment;
+    uint8_t block;
+    uint8_t accepted;
+    uint8_t released;
+    uint8_t acked;
+    int ack_due;
+};
+
+static void channels_window_exchange_write( rocketnet_network_simulator_t * wire,
+                                             const rocketnet_address_t * address,
+                                             const channels_window_exchange_record_t * item,
+                                             uint64_t n, uint8_t * packet, int capacity, double now )
+{
+    rocketnet_message_record_t record = channels_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                                          item->data, (int) item->bytes );
+    record.number = (uint32_t) n;
+    record.ring = item->ring;
+    record.ordering = item->ordering;
+    record.channel = 0;
+    record.block = item->block;
+    record.fragment = item->fragment;
+    record.fragments = item->block ? 1 : 0;
+    rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, packet, capacity );
+    check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+    const int bytes = rocketnet_message_writer_finish( &writer );
+    check( bytes > 0 );
+    rocketnet_network_simulator_send( wire, address, address, packet, bytes, now );
+}
+
+static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( float loss_percent )
+{
+    const uint32_t W = 64, B = 4096, F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const int messages = 80, capacity = 128;
+    rocketnet_counters_t counters = {};
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.window_messages = W;
+    config.receive_ring_bytes = B;
+    config.max_message_bytes = B;
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 2, &counters );
+    check( arena );
+    rn_region_t * source = rn_arena_region( arena, 0 );
+    rn_region_t * target = rn_arena_region( arena, 1 );
+    rn_region_carve( source );
+    rn_region_carve( target );
+    rn_window_send_t send;
+    rn_window_receive_t receive;
+    rn_window_send_init( &send, source, 0 );
+    rn_window_receive_init( &receive, target, 0 );
+
+    rocketnet_network_simulator_t * wire = rocketnet_network_simulator_create(
+        NULL, 8192, 0xE7C4A11ULL + (uint64_t) loss_percent );
+    check( wire );
+    rocketnet_address_t address;
+    check( rocketnet_address_parse( &address, "127.0.0.1:40002" ) );
+    rocketnet_network_simulator_config( wire, 0.02, 0.04, loss_percent, 30.0f );
+    rocketnet_message_limits_t limits = channels_limits( 1, 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
+    limits.window_messages = W;
+    limits.max_message_bytes = B;
+    limits.receive_ring_bytes = B;
+
+    channels_window_exchange_record_t records[capacity] = {};
+    uint8_t live[B] = {};
+    uint8_t reserved[B] = {};
+    alignas( 16 ) uint8_t packet[ROCKETNET_MAX_PAYLOAD_BYTES];
+    alignas( 16 ) uint8_t received[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
+    uint64_t send_cursor = 0;
+    int next_message = 0, accepted_total = 0, drained = 0;
+    double now = 0.0;
+
+    rn_trap_phase = "send-receive-window-wire";
+    rn_trap_armed = 1;
+    for ( int tick = 0; tick < 1500 && drained < 16; tick++ )
+    {
+        now += 0.01;
+        uint64_t newly_numbered = UINT64_MAX;
+
+        // Ack only numbers the receiver released in a prior update. This
+        // oracle stands in for the next card's sent-packet map (P2/P6).
+        for ( uint64_t n = 0; n < send.next; n++ )
+        {
+            if ( records[n].ack_due == tick && !records[n].acked )
+            {
+                check( records[n].released );
+                check( rn_window_send_mark_acked( &send, n ) == 1 );
+                records[n].acked = 1;
+            }
+        }
+
+        // Number at most one new message per update, at its first write.
+        // A block reserves both fragments and its whole span atomically.
+        if ( next_message < messages )
+        {
+            const int block = next_message % 7 == 0;
+            uint64_t first = 0, p = 0;
+            uint32_t count = 0;
+            if ( block )
+                count = rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                                          F + 17, RN_DESCRIPTOR_NONE, &first, &p );
+            else if ( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                                  16, RN_DESCRIPTOR_NONE, &first, &p ) == RN_WINDOW_SEND_NUMBERED )
+                count = 1;
+            if ( count )
+            {
+                check( first + count <= capacity );
+                for ( uint32_t i = 0; i < count; i++ )
+                {
+                    channels_window_exchange_record_t * item = &records[first + i];
+                    item->bytes = block ? ( i == 0 ? F : 17 ) : 16;
+                    item->ring = (uint32_t) ( source->send_numbers[( first + i ) % W].ring_start % B / 16 );
+                    item->ordering = (uint32_t) next_message;
+                    item->fragment = (uint16_t) i;
+                    item->block = (uint8_t) block;
+                    for ( uint32_t j = 0; j < item->bytes; j++ )
+                        item->data[j] = (uint8_t) ( ( first + i ) * 31 + j );
+                }
+                // Numbering and the first packet write are one operation in
+                // this stand-in for layer 6 (CHANNELS 6.2, I3).
+                newly_numbered = first;
+                channels_window_exchange_write( wire, &address, &records[first], first,
+                                                packet, sizeof(packet), now );
+                next_message++;
+            }
+        }
+
+        // Rewrites keep their original number and ring offset. Limit each
+        // update's packets so the lossy link and receiver both make progress.
+        const uint64_t numbered = send.next;
+        // U' pins even an ACKed fragment of a partly ACKed block. Check
+        // every sender reservation, including records the wire has not yet
+        // delivered, against an independent byte shadow (RNRing LiveSpansDisjoint).
+        memset( reserved, 0, sizeof(reserved) );
+        for ( uint64_t n = send.U_prime; n < numbered; n++ )
+        {
+            const rn_send_number_t * entry = &source->send_numbers[n % W];
+            check( entry->number == n );
+            const uint32_t span = (uint32_t) entry->ring_units * 16;
+            const uint32_t start = (uint32_t) ( entry->ring_start % B );
+            check( rn_region_ring_span_valid( source, start, span ) );
+            for ( uint32_t j = start; j < start + span; j++ )
+            {
+                check( reserved[j] == 0 );
+                reserved[j] = (uint8_t) ( n + 1 );
+            }
+        }
+        int sent = 0;
+        for ( uint64_t scan = 0; scan < numbered && sent < 8; scan++ )
+        {
+            const uint64_t n = send_cursor++ % numbered;
+            channels_window_exchange_record_t * item = &records[n];
+            if ( item->acked || n == newly_numbered )
+                continue;
+            channels_window_exchange_write( wire, &address, item, n, packet, sizeof(packet), now );
+            sent++;
+        }
+
+        // Layer 2 parses each RECORDS packet. The receive window accepts a
+        // number once; our shadow set checks its whole live ring span.
+        for ( int bytes = rocketnet_network_simulator_receive( wire, &address, now, &address, received );
+              bytes > 0;
+              bytes = rocketnet_network_simulator_receive( wire, &address, now, &address, received ) )
+        {
+            rocketnet_message_reader_t reader;
+            check( rocketnet_message_reader_begin( &reader, received, bytes, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+            rocketnet_message_record_t record;
+            while ( rocketnet_message_reader_next( &reader, &record ) )
+            {
+                const uint64_t n = record.number;
+                check( n < send.next && n < capacity );
+                channels_window_exchange_record_t * item = &records[n];
+                check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
+                check( record.bytes == (int) item->bytes && record.ring == item->ring );
+                check( memcmp( record.data, item->data, item->bytes ) == 0 );
+                uint32_t slot = RN_DESCRIPTOR_NONE;
+                const int answer = rn_window_receive_accept( &receive, &record, &slot );
+                check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+                if ( answer == RN_WINDOW_RECEIVE_ACCEPT )
+                {
+                    check( !item->accepted && slot == n % W );
+                    item->accepted = 1;
+                    accepted_total++;
+                    const uint32_t span = ( item->bytes + 15 ) & ~15u;
+                    const uint32_t start = item->ring * 16;
+                    check( rn_region_ring_span_valid( target, start, span ) );
+                    for ( uint32_t j = start; j < start + span; j++ )
+                    {
+                        check( live[j] == 0 );
+                        live[j] = (uint8_t) ( n + 1 );
+                    }
+                }
+                else
+                    check( answer == RN_WINDOW_RECEIVE_DUPLICATE && item->accepted );
+            }
+        }
+
+        // Layer 5's stand-in holds a block until both fragments arrive;
+        // singles and complete blocks release at this update's end.
+        for ( uint64_t n = 0; n < send.next; n++ )
+        {
+            channels_window_exchange_record_t * item = &records[n];
+            if ( !item->accepted || item->released )
+                continue;
+            if ( item->block )
+            {
+                const uint64_t first = n - item->fragment;
+                if ( !records[first].accepted || !records[first + 1].accepted )
+                    continue;
+            }
+            rn_window_receive_release( &receive, n );
+            item->released = 1;
+            item->ack_due = tick + 1;
+            const uint32_t span = ( item->bytes + 15 ) & ~15u;
+            const uint32_t start = item->ring * 16;
+            for ( uint32_t j = start; j < start + span; j++ )
+            {
+                check( live[j] == (uint8_t) ( n + 1 ) );
+                live[j] = 0;
+            }
+        }
+
+        if ( next_message == messages && send.U == send.next )
+            drained++;
+        else
+            drained = 0;
+    }
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+
+    check( next_message == messages && drained == 16 );
+    check( accepted_total == (int) send.next && receive.R == send.next );
+    for ( uint64_t n = 0; n < send.next; n++ )
+        check( records[n].accepted == 1 && records[n].released && records[n].acked );
+    for ( uint32_t j = 0; j < B; j++ )
+        check( live[j] == 0 );
+    check( receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    rocketnet_network_simulator_destroy( wire );
+    rn_arena_destroy( arena );
+}
+
+static void test_channels_window_send_and_receive_over_the_lossy_simulator()
+{
+    test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 0.0f );
+    test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 10.0f );
+    test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 50.0f );
+}
+
 struct channels_test_t
 {
     const char * name;
@@ -3207,6 +3594,13 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_unreliable_block_not_corrupted_across_fragmented_store", "ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore", test_channels_unreliable_block_not_corrupted_across_fragmented_store },
     { "test_channels_unreliable_message_past_u16_length_refused", "ChannelsUnreliableMessagePastU16LengthRefused", test_channels_unreliable_message_past_u16_length_refused },
     { "test_channels_unreliable_over_the_lossy_simulator", "ChannelsUnreliableOverTheLossySimulator", test_channels_unreliable_over_the_lossy_simulator_entry },
+    { "test_channels_window_send_numbers_late_never_at_send", "ChannelsWindowSendNumbersLateNeverAtSend", test_channels_window_send_numbers_late_never_at_send },
+    { "test_channels_window_send_count_bound_stalls_at_u_prime_plus_w", "ChannelsWindowSendCountBoundStallsAtUPrimePlusW", test_channels_window_send_count_bound_stalls_at_u_prime_plus_w },
+    { "test_channels_window_send_ring_pads_at_the_boundary", "ChannelsWindowSendRingPadsAtTheBoundary", test_channels_window_send_ring_pads_at_the_boundary },
+    { "test_channels_window_send_floor_is_u_prime_not_u", "ChannelsWindowSendFloorIsUPrimeNotU", test_channels_window_send_floor_is_u_prime_not_u },
+    { "test_channels_window_send_block_takes_consecutive_numbers_and_one_span", "ChannelsWindowSendBlockTakesConsecutiveNumbersAndOneSpan", test_channels_window_send_block_takes_consecutive_numbers_and_one_span },
+    { "test_channels_window_send_stall_lets_unreliable_through", "ChannelsWindowSendStallLetsUnreliableThrough", test_channels_window_send_stall_lets_unreliable_through },
+    { "test_channels_window_send_any_message_fits_when_nothing_is_outstanding", "ChannelsWindowSendAnyMessageFitsWhenNothingIsOutstanding", test_channels_window_send_any_message_fits_when_nothing_is_outstanding },
     { "test_channels_window_receive_accepts_in_order", "ChannelsWindowReceiveAcceptsInOrder", test_channels_window_receive_accepts_in_order },
     { "test_channels_window_receive_duplicate_is_counted_not_violation", "ChannelsWindowReceiveDuplicateIsCountedNotViolation", test_channels_window_receive_duplicate_is_counted_not_violation },
     { "test_channels_window_receive_outside_window_is_violation", "ChannelsWindowReceiveOutsideWindowIsViolation", test_channels_window_receive_outside_window_is_violation },
@@ -3214,6 +3608,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_window_receive_reconstructs_across_the_24_bit_wrap", "ChannelsWindowReceiveReconstructsAcrossThe24BitWrap", test_channels_window_receive_reconstructs_across_the_24_bit_wrap },
     { "test_channels_window_receive_advance_clears_only_what_it_passes", "ChannelsWindowReceiveAdvanceClearsOnlyWhatItPasses", test_channels_window_receive_advance_clears_only_what_it_passes },
     { "test_channels_window_receive_over_the_lossy_simulator", "ChannelsWindowReceiveOverTheLossySimulator", test_channels_window_receive_over_the_lossy_simulator },
+    { "test_channels_window_send_and_receive_over_the_lossy_simulator", "ChannelsWindowSendAndReceiveOverTheLossySimulator", test_channels_window_send_and_receive_over_the_lossy_simulator },
 };
 
 int rocketnet_channels_test_count()
@@ -3268,7 +3663,8 @@ static int rocketnet_channels_is_allocator_test( const char * name )
     {
         if ( strcmp( channels_tests[i].name, name ) != 0 && strcmp( channels_tests[i].alias, name ) != 0 )
             continue;
-        return strncmp( channels_tests[i].name, "test_channels_allocator_", 24 ) == 0;
+        return strncmp( channels_tests[i].name, "test_channels_allocator_", 24 ) == 0 ||
+            strcmp( channels_tests[i].name, "test_channels_window_send_and_receive_over_the_lossy_simulator" ) == 0;
     }
     return 0;
 }
