@@ -217,6 +217,8 @@ void rocketnet_log_function( void (*function)( int level, const char * format, .
 
 void rocketnet_printf( int level, const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( level > log_level )
         return;
     va_list args;
@@ -229,6 +231,8 @@ void rocketnet_printf( int level, const char * format, ... )
 
 void rocketnet_info( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_INFO > log_level )
         return;
     va_list args;
@@ -241,6 +245,8 @@ void rocketnet_info( const char * format, ... )
 
 void rocketnet_warn( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_WARN > log_level )
         return;
     va_list args;
@@ -253,6 +259,8 @@ void rocketnet_warn( const char * format, ... )
 
 void rocketnet_error( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_ERROR > log_level )
         return;
     va_list args;
@@ -265,6 +273,8 @@ void rocketnet_error( const char * format, ... )
 
 void rocketnet_debug( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_DEBUG > log_level )
         return;
     va_list args;
@@ -277,6 +287,8 @@ void rocketnet_debug( const char * format, ... )
 
 void rocketnet_spam( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_SPAM > log_level )
         return;
     va_list args;
@@ -426,6 +438,8 @@ void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
 
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size )
 {
+    if ( !rocketnet_api_null_guard( buffer ) )
+        return NULL;
     snprintf( buffer, buffer_size, "%" PRIx64, user_id );
     return buffer;
 }
