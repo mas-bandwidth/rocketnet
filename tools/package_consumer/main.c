@@ -77,6 +77,7 @@ int main(void)
     memcpy(config.server_secret_key, test_server_secret_key, sizeof(config.server_secret_key));
     memcpy(config.server_public_key, test_server_public_key, sizeof(config.server_public_key));
     memcpy(config.backend_public_key, test_backend_public_key, sizeof(config.backend_public_key));
+    config.protocol_id = 1;
     config.max_clients = 1;
     strcpy(config.driver, "portable");
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
