@@ -3,7 +3,9 @@
 # sodium compiled the same way (sodium/ is part of the build; the default
 # config uses it, so every linked object is instrumented). tools/run_msan.sh
 # is the one command. The script fails only on a finding that is not listed
-# in tools/msan_known.txt; a clean run prints "MSan: clean".
+# in tools/msan_known.txt; a clean run prints "MSan: clean". Findings are
+# present at BASE, so this job is continue-on-error: an unlisted finding still
+# makes tools/run_msan.sh exit 1, and a listed finding does not.
 name: msan
 
 on:
