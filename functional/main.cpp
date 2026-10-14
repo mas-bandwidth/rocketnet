@@ -25,7 +25,7 @@ static int rocketnet_functional_worker( const char * name )
     // parameter handler there, which fast-fails this worker before the test
     // body runs (#201). unbuffered is what a per-test child wants anyway.
 #if defined(_WIN32)
-    setvbuf( stdout, NULL, _IONBF, 0 );
+    setvbuf( stdout, NULL, _IOFBF, 4096 );
     setvbuf( stderr, NULL, _IONBF, 0 );
 #else
     setvbuf( stdout, NULL, _IOLBF, 0 );
