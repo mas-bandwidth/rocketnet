@@ -11,14 +11,12 @@
 
 #include "test_unit_registry.h"
 
-// The pinned amalgam renames its symbols. Include it before the transport
-// source so this translation unit calls those names, and skip the system
-// sodium header that would declare the unrenamed ones.
-#include "sodium/sodium.h"
-#define sodium_H
-
+// Read the transport layout and set the publish hook on the library this
+// binary already links. Do not compile the transport source here: that
+// second copy includes <sodium.h> on the test target's include path and,
+// under the pinned amalgam rename, references rocketnet_sodium_randombytes_buf.
 #define ROCKETNET_FAKE_DRIVER_CHECK(x) rocketnet_unit_check(x)
-#include "sdk/rocketnet_server_transport.cpp"
+#include "sdk/rocketnet_server_transport_internal.h"
 #include "test_fake_drivers.h"
 
 #include <stdint.h>

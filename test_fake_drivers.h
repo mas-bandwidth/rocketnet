@@ -3,15 +3,17 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Fake portable and fake staged server drivers. The caller includes the
-// transport source in this translation unit first, then this header, and
-// substitutes the fake for the driver create granted before any update runs.
-// The fake records every packet it sees instead of sending it.
+// Fake portable and fake staged server drivers. The caller makes the
+// transport layout and the publish hook visible first, then this header,
+// and substitutes the fake for the driver create granted before any update
+// runs. The fake records every packet it sees instead of sending it.
 
 #pragma once
 
 #include "sdk/rocketnet_server_protocol.h"
+#include "sdk/rocketnet_platform.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,9 +43,14 @@ struct control_fixture_t
     int max_send;
     uint8_t staged_kind[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     rocketnet_address_t reserved_to;
-    uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    // start_packet returns this root. The transport asserts it is 16-aligned,
+    // the same contract the staged drivers keep on their slot buffers.
+    alignas(16) uint8_t frame[ROCKETNET_FRAME_STRIDE];
     rocketnet_server_socket_process_packets_t received;
 };
+
+static_assert( offsetof( control_fixture_t, frame ) % 16 == 0, "staged frame root is 16-aligned" );
+static_assert( alignof( control_fixture_t ) >= 16, "the fixture allocation keeps the frame root aligned" );
 
 static void observe(control_fixture_t * f, const rocketnet_address_t * to, const uint8_t * packet, bool at_seal)
 {
