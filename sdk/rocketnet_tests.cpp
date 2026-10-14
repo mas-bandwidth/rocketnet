@@ -9810,7 +9810,14 @@ void rocketnet_test_fragment_before_connected_touches_no_reassembly()
     rocketnet_write_uint8( &fp, 0 );
     rocketnet_write_uint8( &fp, 1 );
     rocketnet_write_uint8( &fp, 0xEE );
-    int sealed = rocketnet_test_seal_raw_fragment( &pair, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1, packet );
+    // sealed by hand under the client's live session keys: the send path
+    // itself is connected-only, so the crafted packet names sequence 1
+    int sealed = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                                                pair.client.filter_value, 1,
+                                                NULL, plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 1,
+                                                pair.client.signed_fields.protocol_id, pair.client.connection_salt,
+                                                NULL, pair.client.keys.session_client_to_server );
+    rocketnet_check( sealed > 0 );
     rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packet, sealed ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_check( server_counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] == not_connected_before + 1 );
     rocketnet_check( rocketnet_test_reassembly_snapshot( pair.test.server.reassembly, after ) == snap );
