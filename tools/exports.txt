@@ -10,6 +10,7 @@ rocketnet_address_parse
 rocketnet_address_to_string
 rocketnet_address_to_string_without_port
 rocketnet_allocator
+rocketnet_api_misuse_count
 rocketnet_assert_function
 rocketnet_assert_function_pointer
 rocketnet_clear_and_free

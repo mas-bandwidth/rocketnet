@@ -569,6 +569,10 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_term", CallingConvention = CallingConvention.Cdecl )]
     public static extern void Term();
 
+    /// <summary>Counts every refused API misuse since the process started.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_api_misuse_count", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ulong ApiMisuseCount();
+
     /// <summary>Suppresses all library logging when true.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_quiet", CallingConvention = CallingConvention.Cdecl )]
     public static extern void Quiet( [MarshalAs( UnmanagedType.I1 )] bool flag );
