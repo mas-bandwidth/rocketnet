@@ -40,7 +40,7 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 256;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config);
     if ( !server )
     {
         rocketnet_term();

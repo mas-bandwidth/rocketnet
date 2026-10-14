@@ -21,7 +21,33 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <math.h>
 #include <atomic>
+
+// The one clamp both transports share. A NaN or infinite time makes every
+// timeout comparison false and freezes a transport; a backwards step rewinds
+// its deadlines. Both become the last good time instead, counted and loud in a
+// debug build. Called once per update and once at client create, never per
+// packet.
+
+double rocketnet_clamp_update_time( double last_good, double time, bool * clamped )
+{
+    if ( clamped )
+        *clamped = false;
+
+    const bool usable = isfinite( time ) && time >= last_good;
+
+    if ( !usable )
+    {
+        if ( clamped )
+            *clamped = true;
+        rocketnet_api_misuse_record();
+        rocketnet_assert( usable );
+        return last_good;
+    }
+
+    return time;
+}
 
 // the receive thread fills one buffer while update processes the other --
 // the IO, carried over whole
@@ -255,6 +281,13 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     client_transport->protocol.reassembly = client_transport->reassembly;
 
     memcpy( client_transport->protocol.filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    // the create-time clock is checked the same way an update's is: a
+    // non-finite or negative seed would poison every later comparison, so it
+    // is clamped to the initial last good time before anything reads it.
+
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( 0.0, time, &time_clamped );
 
     client_transport->config = *config;
     client_transport->time = time;
@@ -557,6 +590,14 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
 {
     rocketnet_assert( client_transport );
+
+    // the caller's clock is clamped once, before anything reads it: a NaN,
+    // an infinity or a step backwards becomes the last good time, counted and
+    // loud in a debug build.
+
+    bool time_clamped = false;
+    time = rocketnet_clamp_update_time( client_transport->time, time, &time_clamped );
+
     client_transport->packet_leases.reset();
 
     const double current_time = time;

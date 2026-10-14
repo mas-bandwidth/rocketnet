@@ -8,8 +8,20 @@
     through the state machines and the in-memory simulator.
 */
 
+#include "rocketnet.h"
+
+// The shared harness carries one call with the retired create-time argument.
+// The harness itself is outside this card's paths, so the call is routed to the
+// current three-argument entry here, at its only include site: the extra
+// argument is dropped and the call reaches the new signature unchanged.
+
+#define rocketnet_server_transport_create(a, b, c, d) rocketnet_server_transport_create(a, b, c)
 #include "harness.inc"
+#undef rocketnet_server_transport_create
+
 #include "rocketnet_server_protocol.h"
+
+#include <math.h>
 
 #include "rocketnet_wire.h"
 
@@ -23,15 +35,15 @@ void rocketnet_test_server_refuses_keyless_config()
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config) == NULL );
 
     // and out-of-range client counts are refused at the same gate
 
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 0;
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config) == NULL );
     config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40888", &config) == NULL );
 }
 
 struct rocketnet_test_hammer_args_t
@@ -71,7 +83,7 @@ void rocketnet_test_transport_disconnect_delivery()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -144,7 +156,7 @@ void rocketnet_test_client_disconnect_reports_state_change()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -240,7 +252,7 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -375,7 +387,7 @@ void rocketnet_test_transport_client_concurrent_fill()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -471,7 +483,7 @@ void rocketnet_test_transport_concurrent_fill()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -565,7 +577,7 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -715,7 +727,7 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -812,7 +824,7 @@ void rocketnet_test_transport_udp_loopback()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -939,7 +951,7 @@ void rocketnet_test_transport_stats()
 
     double game_time = 100.0;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, game_time );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -1066,6 +1078,101 @@ void rocketnet_test_transport_stats()
     rocketnet_server_transport_destroy( server );
 }
 
+// the NaN update below is loud in a debug build: the clamp asserts. the hook
+// is non-aborting so the assert is observed rather than trapping the suite,
+// the same pattern the unit tier uses for the clamp.
+
+static int rocketnet_test_update_time_clamped_asserts = 0;
+
+static void rocketnet_test_update_time_clamped_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_test_update_time_clamped_asserts++;
+}
+
+void rocketnet_test_transport_update_time_clamped()
+{
+    // RULING 9: a NaN update must not freeze a transport. a connected pair, a
+    // NaN server update (clamped to the last good time, one counted misuse),
+    // then valid updates with the client silent: the server still times the
+    // client out at the token's timeout. without the clamp the NaN poisons the
+    // clock and the misuse is never counted.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+    double game_time = 100.0;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    rocketnet_check( client );
+
+    // connect on the synthetic clock, bounded by the wall clock
+
+    double wall_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wall_start < 5.0 )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+        rocketnet_server_transport_update( server, game_time );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+
+    // one NaN update, clamped and counted; loud in a debug build, observed
+    // through a non-aborting hook so the suite goes on
+
+    rocketnet_test_update_time_clamped_asserts = 0;
+    rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
+
+    rocketnet_server_transport_update( server, NAN );
+
+    rocketnet_assert_function( NULL );
+
+    rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
+
+#if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 1 );
+#endif
+
+    // the client now goes silent: only the server is updated, and its clock
+    // advances past the token's ten second timeout
+
+    double timeout_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - timeout_start < 5.0 )
+    {
+        game_time += 1.0;
+        rocketnet_server_transport_update( server, game_time );
+        if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+            break;
+        if ( game_time > 100.0 + 20.0 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_destroy( server );
+}
+
 void rocketnet_test_transport_packet_loss_stats()
 {
     // packet loss measured under a lossy sequence, deterministically: a
@@ -1079,7 +1186,7 @@ void rocketnet_test_transport_packet_loss_stats()
 
     double game_time = 100.0;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, game_time );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -1746,7 +1853,7 @@ void rocketnet_test_transport_acks_and_client_stats()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 8;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -1904,7 +2011,7 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 8;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -1994,7 +2101,7 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -2290,7 +2397,7 @@ void rocketnet_test_transport_ipv6_loopback()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::1]", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::1]", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -2385,7 +2492,7 @@ void rocketnet_test_config_precedence()
 
     // default layer
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
     rocketnet_server_transport_destroy( server );
@@ -2393,7 +2500,7 @@ void rocketnet_test_config_precedence()
     // struct displaces default
 
     config.max_payload_bytes = 18000;
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 18000 );
     rocketnet_server_transport_destroy( server );
@@ -2401,7 +2508,7 @@ void rocketnet_test_config_precedence()
     // env displaces struct
 
     setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "20000", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( server ) == 20000 );
     rocketnet_server_transport_destroy( server );
@@ -2425,7 +2532,7 @@ static void rocketnet_test_driver_pin_exchange( const char * driver_list, const 
     rocketnet_server_transport_dev_config( &server_config );
     snprintf( server_config.driver, sizeof(server_config.driver), "%s", driver_list );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), expected_driver ) == 0 );
 
@@ -2544,7 +2651,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "%s", list );
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
         rocketnet_check( server );
         rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
         rocketnet_server_transport_stop( server );
@@ -2584,7 +2691,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_log_function( rocketnet_test_capture_log );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
@@ -2604,7 +2711,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_log_function( rocketnet_test_capture_log );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
 
         rocketnet_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
@@ -2625,7 +2732,7 @@ void rocketnet_test_server_port_zero_driver()
         rocketnet_log_function( rocketnet_test_capture_log );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
-        server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config, rocketnet_platform_time() );
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:40100", &config);
 
         rocketnet_log_level( saved_level );
         rocketnet_log_function( rocketnet_test_suite_log_function );
@@ -2640,7 +2747,7 @@ void rocketnet_test_server_port_zero_driver()
 
         snprintf( config.driver, sizeof(config.driver), "%s,portable", name );
 
-        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
         rocketnet_check( server );
         rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
         rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
@@ -2669,7 +2776,7 @@ void rocketnet_test_server_driver_pin_gso()
     snprintf( config.driver, sizeof(config.driver), "gso" );
     config.num_xdp_queues = ROCKETNET_GSO_MAX_QUEUES + 1;
 
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
 
     rocketnet_test_env_restore( &driver_guard );
 }
@@ -2707,7 +2814,7 @@ void rocketnet_test_server_driver_pin_xdp()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp" );
 
-        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40111", &config, rocketnet_platform_time() ) == NULL );
+        rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40111", &config) == NULL );
     }
 
     rocketnet_test_env_restore( &driver_guard );
@@ -2748,7 +2855,7 @@ void rocketnet_test_server_driver_ladder_fall()
         rocketnet_server_transport_dev_config( &config );
         snprintf( config.driver, sizeof(config.driver), "xdp,gso,portable" );
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
         rocketnet_check( server );
         rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "gso" ) == 0 );
         rocketnet_server_transport_stop( server );
@@ -2783,7 +2890,7 @@ void rocketnet_test_driver_pump_alias()
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "portable" ) == 0 );
     rocketnet_server_transport_stop( server );
@@ -2796,7 +2903,7 @@ void rocketnet_test_driver_pump_alias()
     struct rocketnet_server_transport_config_t pinned_config;
     rocketnet_server_transport_dev_config( &pinned_config );
     snprintf( pinned_config.driver, sizeof(pinned_config.driver), "msgx" );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &pinned_config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &pinned_config) == NULL );
 
     rocketnet_test_env_restore( &pump_guard );
     rocketnet_test_env_restore( &driver_guard );
@@ -2826,7 +2933,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     snprintf( config.driver, sizeof(config.driver), "gso" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
 
     // the grant came from the endpoint's own auto order
@@ -2844,7 +2951,7 @@ void rocketnet_test_driver_all_skipped_uses_auto()
     rocketnet_server_transport_destroy( server );
 
     snprintf( config.driver, sizeof(config.driver), "protable" );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
 
     rocketnet_test_env_restore( &driver_guard );
 }
@@ -2874,20 +2981,20 @@ void rocketnet_test_config_env_aliases()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_server_transport_destroy( server );
 
     // ...parsed strictly...
 
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "3x", 1 );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
 
     // ...and yields to the successor when both are set
 
     setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-even-a-number", 1 );
     setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
-    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config);
     rocketnet_check( server );
     rocketnet_server_transport_destroy( server );
 
@@ -2908,12 +3015,12 @@ void rocketnet_test_config_env_aliases()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "portable" );
 
-    server = rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() );
+    server = rocketnet_server_transport_create( NULL, "not.an.address", &config);
     rocketnet_check( server );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
     rocketnet_server_transport_destroy( server );
 
-    rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config, rocketnet_platform_time() ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "not.an.address", &config) == NULL );
 
     rocketnet_test_env_restore( &address_guard );
     rocketnet_test_env_restore( &driver_guard );
@@ -3524,7 +3631,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -3721,7 +3828,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config, rocketnet_platform_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
     rocketnet_check( server );
 
     char server_address[64];
@@ -3867,6 +3974,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },
+    { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },

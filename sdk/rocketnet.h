@@ -337,6 +337,15 @@ void rocketnet_api_misuse_record();
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
+// Internal to the SDK. Both transport updates clamp the caller's clock once per
+// update, before any read of it, through this helper: a non-finite time, or a
+// time below the last good one, becomes the last good time. A clamp sets
+// *clamped, counts one misuse and fires rocketnet_assert; a release build
+// clamps and goes on, a debug build is loud. It is also the client create's
+// check, seeded with a zero last good time. One compare per update, none per
+// packet.
+double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
+
 #define ROCKETNET_ALLOCATION_ALIGNMENT 64
 
 // Returns 64-byte-aligned storage, or NULL on overflow/allocation failure.
@@ -768,7 +777,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketn
 // Query each candidate separately: "auto" and driver lists are not concrete plans.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
 
-ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time );
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
 

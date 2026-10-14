@@ -932,7 +932,7 @@ public static unsafe partial class RocketNet
     /// <summary>Creates a server on the public address clients dial, e.g. "127.0.0.1:40000".
     /// On refusal the returned handle has IsInvalid true.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern ServerTransportHandle ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
+    public static extern ServerTransportHandle ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config );
 
     /// <summary>Destroys the server. Stop and wait for stopped first. Destroy runs exactly
     /// once; a second call, or any use after destroy, throws before native code.</summary>

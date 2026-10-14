@@ -183,7 +183,7 @@ static class Smoke
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig typoConfig );
         typoConfig.SetDriver( "protable" );
         RocketNet.LogLevel( RocketNet.LogLevelNone );       // the refusal is the assertion; its chatter is not
-        ServerTransportHandle typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig, time );
+        ServerTransportHandle typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig );
         RocketNet.LogLevel( RocketNet.LogLevelError );
         if ( !typoServer.IsInvalid )
             Fail( "a typo driver list must refuse create" );
@@ -194,7 +194,7 @@ static class Smoke
         serverConfig.MaxClientSlots = 4;
         string serverDriver = args.Length == 1 && args[0] == "--iocp" ? "iocp" : "portable";
         serverConfig.SetDriver( serverDriver );
-        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
+        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig );
         if ( server.IsInvalid )
             Fail( $"server create on {address}" );
         if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
