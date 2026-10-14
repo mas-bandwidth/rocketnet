@@ -103,15 +103,11 @@ static void rocketnet_fuzz_require( bool condition, const char * property )
     abort();
 }
 
-// The connection state a refused packet is forbidden to touch, split in two
-// by the finding class each half catches. The FATAL half is the slotless-
-// session mark class: the send sequence trackers and the replay-window bits,
-// which a refusal must never move. The documented half is the idle clock and
-// the two replay high-water marks: a connection response that opens and is
-// then refused still refreshes them before the already-connected check
-// (sdk/rocketnet_server_protocol.cpp, the keep-alive-index-before-check
-// class) -- a BASE finding recorded under fuzz/known/, left non-fatal so the
-// campaign stays green while the fix card is open.
+// The connection state a refused packet is forbidden to touch: the idle
+// clock, the two send sequence trackers, the fragment payload id, and both
+// replay windows, byte for byte. A refusal that marks any of these is the
+// slotless-session mark class: the packet is refused yet mutates state the
+// refusal promised to leave alone.
 
 struct rocketnet_fuzz_mapping_state
 {
@@ -134,39 +130,15 @@ static void rocketnet_fuzz_snapshot_mapping( const struct rocketnet_encryption_m
     out->replay_session = mapping->replay_session;
 }
 
-// fatal: the send trackers and the replay-window bits only. the idle clock
-// and the replay high-water marks are the documented finding, not this gate.
-static int rocketnet_fuzz_mapping_mark_unchanged( const struct rocketnet_encryption_mapping_t * mapping,
-                                                  const struct rocketnet_fuzz_mapping_state * snapshot )
+static int rocketnet_fuzz_mapping_unchanged( const struct rocketnet_encryption_mapping_t * mapping,
+                                             const struct rocketnet_fuzz_mapping_state * snapshot )
 {
-    return snapshot->send_sequence_handshake == mapping->send_sequence_handshake &&
+    return snapshot->last_receive_time == mapping->last_receive_time &&
+           snapshot->send_sequence_handshake == mapping->send_sequence_handshake &&
            snapshot->send_sequence_session == mapping->send_sequence_session &&
            snapshot->send_fragment_payload_id == mapping->send_fragment_payload_id &&
-           memcmp( snapshot->replay_handshake.window, mapping->replay_handshake.window, sizeof(snapshot->replay_handshake.window) ) == 0 &&
-           memcmp( snapshot->replay_session.window, mapping->replay_session.window, sizeof(snapshot->replay_session.window) ) == 0;
-}
-
-// The one request refusal with no outcome counter: a connection request that
-// reaches an existing in-flight mapping (no slot assigned yet) carrying a
-// different connection salt is refused silently at
-// sdk/rocketnet_server_protocol.cpp (the salt-mismatch branch), so
-// CONNECTION_REQUEST_RECEIVED runs ahead of the sum of its outcomes. This
-// predicate names that exact branch so the ledger oracle can count it and
-// let it pass while the fix card (a named counter for the branch) is open --
-// the same expected-fail convention the idle-clock finding uses above.
-
-static int rocketnet_fuzz_is_salt_mismatch( const struct rocketnet_encryption_mapping_t * mapping,
-                                            const uint8_t * packet, int packet_bytes,
-                                            const uint8_t * filter_value )
-{
-    if ( rocketnet_prefilter_check( packet, packet_bytes, filter_value ) != ROCKETNET_CONNECTION_REQUEST_PACKET )
-        return 0;
-    if ( packet_bytes != ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES )
-        return 0;
-    if ( mapping->client_index != -1 )
-        return 0;
-    return memcmp( mapping->connection_salt, packet + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES,
-                   ROCKETNET_CONNECTION_SALT_BYTES ) != 0;
+           memcmp( &snapshot->replay_handshake, &mapping->replay_handshake, sizeof(snapshot->replay_handshake) ) == 0 &&
+           memcmp( &snapshot->replay_session, &mapping->replay_session, sizeof(snapshot->replay_session) ) == 0;
 }
 
 // Counter ledger conservation, from the standard's observability section:
@@ -174,8 +146,7 @@ static int rocketnet_fuzz_is_salt_mismatch( const struct rocketnet_encryption_ma
 // the connected ledger balances. The harness mints one token for one client,
 // so a token admitted once can never yield a second CLIENT_CONNECTED.
 
-static void rocketnet_fuzz_check_ledger( const struct rocketnet_server_protocol_t * server,
-                                         uint64_t salt_mismatch_count )
+static void rocketnet_fuzz_check_ledger( const struct rocketnet_server_protocol_t * server )
 {
     const uint64_t * c = server->counters->values;
 
@@ -206,10 +177,7 @@ static void rocketnet_fuzz_check_ledger( const struct rocketnet_server_protocol_
         c[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] +
         c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] +
         c[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
-    // the salt-mismatch refusals are the one path with no outcome counter:
-    // counted by the harness above and let through so the campaign stays green
-    // while the fix card lands a named counter for the branch.
-    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == request_outcomes + salt_mismatch_count,
+    rocketnet_fuzz_require( c[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == request_outcomes,
                             "connection request ledger: received == sum of outcomes" );
 
     // The response path has no internal-error counter of its own; its two
@@ -412,10 +380,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     int payload_size = 1;
     const int MAX_OPS = 4096;
 
-    // the connection-request refusals with no outcome counter, counted by the
-    // salt-mismatch predicate above and let through the request ledger check
-    uint64_t salt_mismatch_count = 0;
-
     for ( int op = 0; op < MAX_OPS && r.pos < r.size; op++ )
     {
         const uint8_t action = fuzz_u8( &r );
@@ -519,11 +483,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 if ( had_mapping )
                     rocketnet_fuzz_snapshot_mapping( rocketnet_encryption_map_entry( server.encryption_map, before_index ), &before_state );
 
-                if ( had_mapping &&
-                     rocketnet_fuzz_is_salt_mismatch( rocketnet_encryption_map_entry( server.encryption_map, before_index ),
-                                                     packet, bytes, server.filter_value ) )
-                    salt_mismatch_count++;
-
                 const int process_result = rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
                                                           response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index );
 
@@ -532,8 +491,8 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     const int after_index = rocketnet_encryption_map_find( server.encryption_map, &from );
                     rocketnet_fuzz_require( after_index != -1, "a refused packet must not remove its mapping" );
                     rocketnet_fuzz_require(
-                        rocketnet_fuzz_mapping_mark_unchanged( rocketnet_encryption_map_entry( server.encryption_map, after_index ), &before_state ),
-                        "a refused packet must leave the sequence trackers and the replay window unchanged" );
+                        rocketnet_fuzz_mapping_unchanged( rocketnet_encryption_map_entry( server.encryption_map, after_index ), &before_state ),
+                        "a refused packet must leave last_receive_time, the sequence trackers and the replay window unchanged" );
                 }
                 if ( response_bytes > 0 )
                 {
@@ -583,7 +542,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );
     }
 
-    rocketnet_fuzz_check_ledger( &server, salt_mismatch_count );
+    rocketnet_fuzz_check_ledger( &server );
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );

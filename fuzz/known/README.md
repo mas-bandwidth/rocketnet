@@ -13,10 +13,8 @@ and stays green while the fix card is open.
   the salt-mismatch branch) without incrementing any outcome counter, so
   `CONNECTION_REQUEST_RECEIVED` runs one ahead of the sum of its outcomes. The
   refusal needs a named counter (a `CONNECTION_REQUEST_SALT_MISMATCH`-style
-  entry) for the ledger to balance. The request-ledger check counts these
-  refusals and lets them pass so the campaign stays green while the fix card is
-  open; the fix card lands the counter and removes the salt-mismatch count from
-  the ledger sum, then verifies this input no longer fires.
+  entry) for the ledger to balance. The fix card lands the counter and adds it
+  to the request-ledger sum, then verifies this input no longer fires.
 
 - `connection_response_refused_refreshes_idle_clock` — the refusal-immutability
   oracle. A connection response (type 3) that opens and is then refused
@@ -24,7 +22,6 @@ and stays green while the fix card is open.
   `mapping->last_receive_time` (and may advance `replay_handshake.highest_opened`)
   at `sdk/rocketnet_server_protocol.cpp` before the already-connected check —
   the keep-alive-index-before-check class: the packet is refused yet mutates
-  the idle clock and the replay high-water mark. The oracle's fatal check is
-  narrowed to the sequence trackers and the replay-window bits so the campaign
-  stays green; the fix card re-enables the idle-clock / high-water-mark check
-  and verifies this input no longer fires.
+  the idle clock and the replay high-water mark. The fix card moves the
+  already-connected check ahead of the idle-clock refresh and verifies this
+  input no longer fires.
