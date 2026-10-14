@@ -10,6 +10,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -531,6 +532,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
         uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
         uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
+        rocketnet_crypto_tally.keypair++;
         crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
 
         struct rocketnet_connection_keys_t keys;

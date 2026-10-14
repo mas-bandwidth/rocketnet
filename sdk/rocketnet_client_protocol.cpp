@@ -9,6 +9,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -195,6 +196,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     // never reset within it
 
     randombytes_buf( client->connection_salt, sizeof(client->connection_salt) );
+    rocketnet_crypto_tally.keypair++;
     crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key );
     client->send_sequence_handshake = 1;
     client->send_sequence_session = 1;
