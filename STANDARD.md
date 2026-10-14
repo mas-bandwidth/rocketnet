@@ -1400,6 +1400,8 @@ as a little-endian value. Post sealing:
 
 ## Reading packets
 
+On every receive path, every refusal that can be decided without cryptography (size, type, version, timestamps, slot availability, table lookups) is made before any keypair generation, scalar multiplication, AEAD operation, signature verification or sealed-box open.
+
 In this exact order:
 
 * If the packet is shorter than the 6-byte prefilter header, or longer than the
@@ -2671,6 +2673,16 @@ In this exact order, on a _connection request packet_:
 * **Generate a fresh random 64-bit session nonce for this mapping.** It is
   never reused, and because it is chosen here rather than at cookie time, no
   replayed cookie can cause a key to recur.
+* Derive the two handshake keys from the token keys, the salt and the session
+  nonce just generated. The handshake keys need no ephemeral pair, so they
+  exist before any keypair work.
+* If no client slots are available, respond with a _connection denied packet_ —
+  sealed under the handshake server-to-client key just derived, at sequence
+  one, carrying the session nonce in the clear — and stop. No mapping is
+  created, so a retransmitted request runs this path again and is denied again.
+  *The slot check stands here, ahead of the keypair and small-order steps,
+  because the handshake keys that seal the denial need no ephemeral pair: a
+  full server denies without paying for a keypair on every denial.*
 * **Obtain the server ephemeral keypair**: generate a fresh X25519 keypair for
   this mapping, or take the current one when reusing across a short rotation
   window per _Per-connection keys_. Nothing before this step needs it.
@@ -2680,18 +2692,11 @@ In this exact order, on a _connection request packet_:
   before any mapping is created — so that a client offering such a point never
   obtains a mapping. This is the third asymmetric operation on this path and it
   is deliberately after both the cookie and the signature verification.
-* Derive the four per-connection keys: the two handshake keys from the token
-  keys, the salt and the session nonce just generated; the two session keys from
-  those plus the
-  shared secret and both ephemeral public keys.
+* Derive the two session keys from the handshake material plus the
+  shared secret and both ephemeral public keys, completing the four
+  per-connection keys.
 * **Erase the shared secret**, and the server's ephemeral secret if it is not
   being reused across a rotation window, as soon as the four keys exist.
-* If no client slots are available, respond with a _connection denied packet_ —
-  sealed under the handshake server-to-client key just derived, at sequence
-  one, carrying the session nonce in the clear — and stop. No mapping is
-  created, so a retransmitted request runs this path again and is denied again.
-  *The slot check is placed here rather than earlier because a denied packet is
-  sealed, and before this point no keys exist to seal it with.*
 
 * Add an encryption mapping for the source address and port, holding the four
   derived keys, the connection salt, the session nonce, the server ephemeral
