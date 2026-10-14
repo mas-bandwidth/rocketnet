@@ -13,9 +13,8 @@ TLC run is a row in `tla/RUNS.tsv`.
 The model exists for two fix cards, `rnfix-replay-long-skip-clears-window-r2` (F1,
 rocketnet#189, High) and `rnfix-replay-advanced-after-connect-check-r2` (OV-34, Low).
 Each card's rule is an invariant, and each has a reversed witness: the committed
-instance set to what the code does today, which TLC rejects with a trace that replays
-against the code by hand. Both are recorded under "What TLC found". This PR changes
-no C++.
+instance changed to the defective behavior, which TLC rejects with a trace that
+replays against the code before its fix. Both are recorded under "What TLC found".
 
 ## What the model covers
 
@@ -43,7 +42,7 @@ builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp:70-72`); the two ag
 |---|---|---|
 | `AlreadyReceived(s)` | `rocketnet_replay_already_received`, `sdk/rocketnet_replay.cpp:27-40` | above `highest`: no; at or below `highest - W`: yes (too old, refused either way); inside: the ring bit |
 | `Advance(s)` | `rocketnet_replay_advance`, `sdk/rocketnet_replay.cpp:42-70` | above `highest`: clear what the advance skips past, then move the mark; always: set the bit for `s` |
-| `Cleared(s)` | the two branches at `:54-65` | a skip shorter than `W` clears each skipped sequence's bit (`:63-64`); a skip of `W` or more clears words `0..ClearedWords-1` (`:56-59`) |
+| `Cleared(s)` | the two branches at `:54-65` | a skip shorter than `W` clears each skipped sequence's bit; a skip of `W` or more clears `ClearedWords` words, which is the whole ring in the current code (`ClearedWords = Words`) |
 | `AckReports(s)` | `rocketnet_ack_block_build`, `sdk/rocketnet_ack.cpp:48-52, 87, 102, 114` | the block walks from `largest = highest` down to the floor reading the same ring bit, so `s` is reported received exactly when it is in range and its bit is set |
 
 **Actions**, one per operation and per outside event:
@@ -66,7 +65,7 @@ is built from it, and nothing here speaks for it.
 | Constant | Code | Committed | Witness |
 |---|---|---|---|
 | `Words`, `WordBits` | `ROCKETNET_HISTORY_PACKETS / 64` words of 64 bits | 6 words of 2 bits, `W = 12` | same |
-| `ClearedWords` | the words the long-skip branch clears | `6` (all: the rule) | `4` (`window[0..3]`: today's code) |
+| `ClearedWords` | the words the long-skip branch clears | `6` (all: the rule and current code) | `4` (`window[0..3]`: code before F1 fix) |
 | `MaxSeq` | the highest sequence explored | `36`, three windows | same |
 | `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule) | `FALSE` (today's code) |
 
@@ -148,8 +147,8 @@ the one invariant.)
 ## What TLC found
 
 Both counterexamples were replayed by hand through `sdk/rocketnet_replay.cpp` and
-`sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both are real: the code does what
-the trace says. Neither is fixed in this PR; each belongs to its fix card.
+`sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both were real at that revision.
+The F1 fix clears the whole ring; OV-34 belongs to its separate fix card.
 
 ### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
 
@@ -172,7 +171,16 @@ in word 4, kept the mark sequence 8 left there. `GenuineIsAccepted` fails on the
 state (`AlreadyReceived(20)` is `TRUE`: a genuine packet 20 is refused) and so does
 `AckReportsOnlyReceived` (`AckReports(20)`: the block tells the peer 20 arrived).
 
-Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
+The code now clears the whole ring in `sdk/rocketnet_replay.cpp`'s
+`rocketnet_replay_advance`, matching the committed run (`ClearedWords = Words`).
+The measured recheck passes the committed control (958,503 generated, 53,249 distinct)
+and rejects the `ClearedWords = 4` witness on `WindowIsTruth` (339 generated, 127
+distinct, exit 12). This witness has a four-state trace: after `Receive(8)`, the jump
+to `Receive(21)` leaves bit 8 set in the defective branch. The whole-window clear
+removes that bit before setting bit 9 for 21, so sequence 20 remains unreceived and
+cannot appear in an ack block.
+
+Against the code before the fix, at the default `W = 4096` (64 words), from a zeroed struct:
 
 1. `rocketnet_replay_advance(r, 2)`: `skipped = 2 < 4096`, the loop at `:63-64` clears
    bit 1, `:69` sets bit 2, `highest_opened = 2`.
@@ -189,15 +197,16 @@ Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
    (clear), so `first_range_length = 2`: the peer is told 4396 and 4397 arrived.
 
 The card's own test (fill `1..W`, advance to `3W`) is the same shape at full width:
-after the jump every bit `256..4095` is stale, so every sequence `2W + 257 .. 3W - 1`
-reads as received and the block reports a run of 3840 packets of which one arrived. The
-existing `rocketnet_test_replay_protection` (`sdk/rocketnet_tests.cpp:3503-3511`) says
+before the fix, after the jump every bit `256..4095` is stale, so every sequence
+`2W + 257 .. 3W - 1` reads as received and the block reports a run of 3840 packets
+of which one arrived. The existing `rocketnet_test_replay_protection`
+(`sdk/rocketnet_tests.cpp:3503-3511`) says
 "a far-ahead advance clears the whole window" but probes only sequences 1, 2 and
-`W + 1`, all in word 0, so it passes today; that is why the fix card asks for a test
+`W + 1`, all in word 0, so it passed before the fix; that is why the fix card asks for a test
 written in terms of `ROCKETNET_REPLAY_WINDOW_BITS` that reaches past word 3.
 
-Fix: `memset( replay->window, 0, sizeof( replay->window ) )` in the long-skip branch,
-which is `ClearedWords = Words` in the model. The committed run is that rule and passes.
+The fix uses `memset( replay->window, 0, sizeof( replay->window ) )` in the long-skip
+branch, which is `ClearedWords = Words` in the model. The committed run checks that rule.
 
 ### 2. OV-34: the server advances the session window before the slot check (real, `sdk/rocketnet_server_protocol.cpp:962` before `:967`)
 
