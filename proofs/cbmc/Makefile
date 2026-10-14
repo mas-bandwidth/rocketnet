@@ -21,13 +21,15 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 
 REPLAY_DELTA_BOUND ?= 4096
 ACK_RUN_BOUND ?= 4096
+# Reduced delta domains still initialize all 64 symbolic window words.
+REPLAY_UNWIND = $(shell bound=$(REPLAY_DELTA_BOUND); if [ "$$bound" -gt 65 ]; then echo "$$bound"; else echo 65; fi)
 
 .PHONY: all replay-near replay-far reconstruct ack clean
 
 all: replay-near replay-far reconstruct ack
 
 replay-near: proof_replay_advance.c
-	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_DELTA_BOUND) \
+	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_DELTA_BOUND) \
 	    --function harness_replay_near proof_replay_advance.c
 
