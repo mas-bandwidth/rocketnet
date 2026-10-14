@@ -121,6 +121,17 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     f->max_send = -1;
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
+    // the release build refuses the published development keys, so the
+    // fixture mints a fresh production pair: the create must succeed without
+    // the dev keys, and the fixture seeds its own synthetic per-client keys
+    // below.
+    uint8_t server_public[32], server_secret[32];
+    crypto_box_keypair(server_public, server_secret);
+    memcpy(config.server_public_key, server_public, 32);
+    memcpy(config.server_secret_key, server_secret, 32);
+    uint8_t backend_public[32], backend_secret[64];
+    crypto_sign_keypair(backend_public, backend_secret);
+    memcpy(config.backend_public_key, backend_public, 32);
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
