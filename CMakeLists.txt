@@ -241,6 +241,9 @@ if(ROCKETNET_BUILD_TESTS)
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    # the driver-phase matrix compiles the server transport source (for its
+    # fake-driver fixture) and so needs the vendored sodium header.
+    rocketnet_use_sodium(test)
     # test_dev_token_minting_absent_in_release probes the shared release
     # library, so the test target must build it: CI legs build `test` alone,
     # and without this the shared library is missing and the probe goes red.
