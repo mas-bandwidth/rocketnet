@@ -11,16 +11,24 @@ with no reference to the source tree -- and compares the rows it NAMES
 below against the same numbers as the COMPILER sees them, taken from
 dump_constants.cpp built through the real headers.
 
+WHAT IT COMPARES: the wire-format rows, and additionally the Timing
+table's rows, the glance table's timing and sizing rows, and the field names
+of the two transport configuration tables. Values read from a header macro,
+a protocol default or a config-table default are compared directly. A row
+the document states and the code cannot produce -- the value is hardcoded
+rather than declared, or the behaviour is absent -- is a mismatch too, and
+a mismatch is tolerated ONLY while its id is listed in known_divergences.tsv.
+A listed divergence whose document and code now agree is stale and also fails,
+so the file must shrink as fixes land.
+
 WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
-the rows it names are the wire-format ones. The glance table's timing and
-sizing rows -- send rate, handshake deadline, cookie lifetime and rotation,
-redundant disconnects, replay buffer, used-token history, admitted-token
-set -- and the Magic and KDF context-string rows are NOT compared, because
-their values live in configuration defaults, in key derivation, or in a
-backend, rather than in a wire constant this file can expand. Adding a row
-here is cheap and every one of them is worth adding; until then a green
-means the named rows agree, and the count printed at the end says how many
-that is.
+the Magic row -- the standard publishes no default magic and the code ships
+none, so there is nothing to compare -- and the KDF context strings row --
+the strings are function-local literals in sdk/rocketnet_keys.cpp rather than
+constants declared in a header this dump can expand. The table-sizing ratio
+for encryption_map (a flat 2 x max_clients against the standard's "far above
+the slot count") and cookie key rotation (unimplemented in code) are listed
+as known divergences. The count printed at the end says how many checks ran.
 
 That list is a promise and it has already been wrong once: the reader at
 PR #130's gate found Filter epoch missing from it, and missing for the
@@ -262,6 +270,166 @@ def main():
         failures.append("the implementation defines packet type(s) %s that "
                         "STANDARD.md's packet size table does not publish"
                         % ", ".join(str(t) for t in missing))
+
+    # ---------------- known divergences ----------------
+    #
+    # a divergence is tolerated only while its id is listed in the checked-in
+    # file; the file must shrink as fixes land, so a listed id whose two
+    # sides now agree is a stale-entry failure.
+
+    divergences = {}
+    divergence_path = os.path.join(HERE, "known_divergences.tsv")
+    if os.path.exists(divergence_path):
+        with open(divergence_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                fields = line.split("\t")
+                divergences[fields[0]] = fields[1] if len(fields) > 1 else "unowned"
+
+    def stated_divergence(identifier, what, published, implemented):
+        nonlocal checked
+        checked += 1
+        if str(published) == str(implemented):
+            if identifier in divergences:
+                failures.append(
+                    "known divergence %r is stale: STANDARD.md and the "
+                    "implementation now agree on %s" % (identifier, what))
+            return
+        if identifier not in divergences:
+            failures.append("%s: STANDARD.md says %s, the implementation says %s"
+                            % (what, published, implemented))
+
+    # ---------------- the transport configuration tables ----------------
+    #
+    # the field names come from the real X-macro tables. A per-server
+    # timing value the standard calls configuration and the table does not
+    # declare is the drift the audit found: it lives hardcoded in the
+    # source and no operator can set it.
+
+    server_fields = {name[len("CFG_SERVER_FIELD_"):] for name in code
+                     if name.startswith("CFG_SERVER_FIELD_")}
+    client_fields = {name[len("CFG_CLIENT_FIELD_"):] for name in code
+                     if name.startswith("CFG_CLIENT_FIELD_")}
+
+    def config_field(identifier, table, fields, name):
+        nonlocal checked
+        checked += 1
+        if name in fields:
+            if identifier in divergences:
+                failures.append(
+                    "known divergence %r is stale: the %s config table now "
+                    "declares %s" % (identifier, table, name))
+        elif identifier not in divergences:
+            failures.append(
+                "the standard states a configurable %s timing value, but the "
+                "%s transport config table does not declare a %r field"
+                % (name, table, name))
+
+    config_field("timing.send_rate", "server", server_fields, "send_rate")
+    config_field("timing.handshake_deadline", "server", server_fields,
+                 "handshake_deadline_seconds")
+    config_field("timing.cookie_lifetime", "server", server_fields,
+                 "cookie_lifetime_seconds")
+    config_field("config.max_token_lifetime_seconds", "server", server_fields,
+                 "max_token_lifetime_seconds")
+    config_field("config.allow_negative_timeout", "server", server_fields,
+                 "allow_negative_timeout")
+
+    # ---------------- the timing table ----------------
+
+    assert "ROCKETNET_HISTORY_PACKETS" in code
+    timing = {row[0]: row[1] for row in read_table(text, "Timing", "Value")}
+
+    def timing_row(label):
+        if label not in timing:
+            failures.append("STANDARD.md's timing table has no %r row" % label)
+            return None
+        return timing[label]
+
+    cell = timing_row("Redundant disconnect packets")
+    if cell is not None:
+        compare("redundant disconnect packets (timing table)", ints(cell)[0],
+                code["REDUNDANT_DISCONNECT_PACKETS"])
+        compare("redundant disconnect packets (client)",
+                ints(cell)[0], code["CLIENT_REDUNDANT_DISCONNECT_PACKETS"])
+
+    # the timing values are compared against the implementation's defaults.
+    # The divergence that send_rate, handshake_deadline and cookie_lifetime
+    # are missing from the transport configuration table is tracked above
+    # by config_field; cookie key rotation is unimplemented in code and
+    # is tracked as a stated divergence against 0.
+
+    cell = timing_row("Send rate")
+    if cell is not None:
+        compare("send rate (timing table)", ints(cell)[0],
+                code["DEFAULT_SEND_RATE"])
+
+    cell = timing_row("Handshake deadline")
+    if cell is not None:
+        compare("handshake deadline (timing table)", ints(cell)[0],
+                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
+
+    cell = timing_row("Cookie lifetime")
+    if cell is not None:
+        compare("cookie lifetime (timing table)", ints(cell)[0],
+                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
+
+    cell = timing_row("Cookie key rotation")
+    if cell is not None:
+        stated_divergence("timing.cookie_rotation", "cookie key rotation",
+                          ints(cell)[0], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
+
+    # ---------------- the glance table's timing and sizing rows ----------------
+
+    cell = row("Send rate")
+    if cell is not None:
+        compare("send rate (glance table)", ints(cell)[0],
+                code["DEFAULT_SEND_RATE"])
+
+    cell = row("Handshake deadline")
+    if cell is not None:
+        compare("handshake deadline (glance table)", ints(cell)[0],
+                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
+
+    cell = row("Cookie lifetime / key rotation")
+    if cell is not None:
+        numbers = ints(cell)
+        compare("cookie lifetime (glance table)", numbers[0],
+                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
+        stated_divergence("timing.cookie_rotation", "cookie key rotation (glance table)",
+                          numbers[1], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
+
+    cell = row("Redundant disconnects")
+    if cell is not None:
+        compare("redundant disconnects (glance table)", ints(cell)[0],
+                code["REDUNDANT_DISCONNECT_PACKETS"])
+
+    cell = row("Replay buffer")
+    if cell is not None:
+        compare("replay buffer at least", ints(cell)[0],
+                code["ROCKETNET_HISTORY_PACKETS"])
+        compare("replay window bits", ints(cell)[0],
+                code["ROCKETNET_REPLAY_WINDOW_BITS"])
+
+    cell = row("Used-token history")
+    if cell is not None:
+        compare("used-token history ratio", ints(cell)[0],
+                code["SIZING_USED_TOKEN_HISTORY_RATIO"])
+
+    cell = row("Admitted-token set")
+    if cell is not None:
+        compare("admitted-token set ratio", ints(cell)[0],
+                code["SIZING_ADMITTED_TOKEN_SET_RATIO"])
+
+    # the standard's mapping-table rule: "size the mapping table far above
+    # the slot count", ratio documented by the implementation. The code
+    # holds a flat 2 x max_clients, which is a ratio at the floor rather
+    # than far above it.
+
+    stated_divergence("sizing.encryption_map", "encryption map sizing",
+                      "far above the slot count", "2 x max_clients")
 
     # ---------------- verdict ----------------
 

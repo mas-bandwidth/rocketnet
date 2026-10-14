@@ -818,9 +818,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->max_timeout_seconds = config->max_timeout_seconds;
     protocol->allow_negative_timeout = 0;
 
-    protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * 2 );
-    protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * 8 );
-    protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * 2 );
+#define ROCKETNET_ENCRYPTION_MAP_RATIO 2
+#define ROCKETNET_USED_TOKEN_HISTORY_RATIO 8
+#define ROCKETNET_ADMITTED_TOKEN_SET_RATIO 2
+
+    protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
+    protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
+    protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
     // the delivered mirror sizes to the server's drain bound: the receive
