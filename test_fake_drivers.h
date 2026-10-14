@@ -120,7 +120,18 @@ static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketn
     f->staged = staged;
     f->max_send = -1;
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_dev_config(&config);
+    rocketnet_server_transport_default_config(&config);
+    // the release build refuses the published development keys, so the
+    // fixture supplies its own production identity: a non-zero protocol id
+    // and non-zero, non-development keys. the fixture never seals with these
+    // keys; synthetic connections carry their own mapping keys.
+    config.protocol_id = 0x6a09e667f3bcc909ULL;
+    for ( int i = 0; i < 32; ++i )
+    {
+        config.backend_public_key[i] = (uint8_t)( 0x21 + i );
+        config.server_public_key[i]  = (uint8_t)( 0x41 + i );
+        config.server_secret_key[i]  = (uint8_t)( 0x61 + i );
+    }
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
