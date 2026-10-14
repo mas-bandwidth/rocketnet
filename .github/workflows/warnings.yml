@@ -9,6 +9,13 @@
 # WHAT IT DOES NOT COVER: gcc and MSVC. This job is clang -fsyntax-only on
 # Linux, over each sdk/*.cpp, with the audit warning set and -ffp-contract=off.
 # It does not compile the example programs, and it does not run the test suite.
+#
+# THE COMPILER: tools/warnings-baseline.txt names the clang that produced it.
+# The gate runs that clang (clang++-21 when the header says clang version
+# 21.1.8) when the binary is on PATH, and accepts plain clang++ only when
+# that binary reports the same version. A different clang fails this job
+# with its own version. Its diagnostics are not new warnings, and they are
+# not absorbed by editing the baseline by hand.
 
 name: compiler warnings
 
@@ -45,4 +52,6 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
 
       - name: Run the warning gate
-        run: python3 tools/check_warnings.py
+        run: |
+          clang --version
+          python3 tools/check_warnings.py
