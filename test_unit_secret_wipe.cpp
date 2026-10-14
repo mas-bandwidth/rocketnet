@@ -277,8 +277,92 @@ static void TestClientEphemeralSecretWipedOnDenied()
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 }
 
+// The connection-request timeout (-3): reach sending-connection-request via
+// cookie, plant canary in the still-live ephemeral, let the per-state timeout
+// fire. This path still leaks (F4) so expected-fail names the fix card.
+static void TestClientEphemeralSecretWipedOnConnectionRequestTimeout()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    struct rocketnet_client_protocol_t client;
+    connect_live_attempt( &client, &counters, 100.0 );
+    feed_cookie( &client, 100.5 );
+
+    plant_canary( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
+
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT );
+    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+}
+
+// The connection-response timeout (-4): feed a valid challenge from state 2;
+// the challenge path zeroes the ephemeral (sdk/rocketnet_client_protocol.cpp:509)
+// and enters state 3. Timeout from there leaves it zero (assert green).
+static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
+{
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    struct rocketnet_client_protocol_t client;
+    connect_live_attempt( &client, &counters, 100.0 );
+    feed_cookie( &client, 100.5 );
+
+    // craft a valid challenge the client will accept (mirrors server construction)
+    uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    memset( session_nonce, 0x5A, sizeof(session_nonce) );
+
+    uint8_t server_eph_pub[ROCKETNET_KEY_BYTES];
+    memcpy( server_eph_pub, rocketnet_test_server_eph_public, ROCKETNET_KEY_BYTES );
+
+    struct rocketnet_connection_keys_t keys;
+    rocketnet_derive_handshake_keys( &keys, client.token.client_to_server_key, client.token.server_to_client_key,
+                                     client.connection_salt, session_nonce );
+
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int ch_bytes = rocketnet_write_sealed_packet( challenge, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
+                                                  client.filter_value, 1, session_nonce,
+                                                  server_eph_pub, ROCKETNET_KEY_BYTES,
+                                                  client.signed_fields.protocol_id, client.connection_salt,
+                                                  client.client_ephemeral_public_key,
+                                                  keys.handshake_server_to_client );
+    rocketnet_unit_check( ch_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    memset( &keys, 0, sizeof(keys) );
+
+    plant_canary( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES );
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, challenge, ch_bytes,
+                                                                     100.6, payload, &payload_bytes ) == 1 );
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    // zero happened on entry to state 3
+    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
+    // now drive timeout from state 3
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
+
+    rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+    rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+}
+
+// Server verify and decrypt failure paths (signature fail before open, sealed
+// private-block decrypt fail inside open_connect_token_private): no per-attempt
+// secret buffers are allocated on those early returns (server's long-term
+// keys stay live across requests; server eph pair and derived keys are created
+// only after successful token open). The connect-token scratch wipe is already
+// asserted by the green TestConnectTokenScratchIsWiped. These paths are
+// therefore not-applicable for a canary scan in this oracle.
+
 REGISTER_UNIT_TEST( TestConnectTokenScratchIsWiped );
 REGISTER_UNIT_TEST( TestClientTokenKeysAreWipedOnDisconnect );
+REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionResponseTimeout );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnCookieTimeout, "rnfix-client-terminal-states-wipe-their-secrets" );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnTokenExpired, "rnfix-client-terminal-states-wipe-their-secrets" );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnDenied, "rnfix-client-terminal-states-wipe-their-secrets" );
+REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnConnectionRequestTimeout, "rnfix-client-terminal-states-wipe-their-secrets" );
