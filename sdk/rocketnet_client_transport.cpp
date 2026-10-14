@@ -154,6 +154,15 @@ static void rocketnet_client_thread_function( void * data );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
+    // the lifecycle state is read once here, before any allocation or socket;
+    // a create before rocketnet_init is refused, logged and counted
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_client_transport_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+
     rocketnet_assert( connect_token );
 
     // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is

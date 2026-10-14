@@ -7191,6 +7191,72 @@ void rocketnet_test_frame_sync_lifecycle()
     rocketnet_frame_sync_destroy( frame_sync );
 }
 
+// a counting allocator: a create that reached allocation would move it. the
+// library is uninitialized with no live allocations when it is installed, so
+// the install is accepted.
+
+static uint64_t rocketnet_test_allocator_calls = 0;
+
+static void * rocketnet_test_allocator_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    rocketnet_test_allocator_calls++;
+    return malloc( bytes );
+}
+
+static void rocketnet_test_allocator_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
+
+void rocketnet_test_create_before_init_is_refused()
+{
+    // the worker's init is live; stop it so the creates see no library
+    rocketnet_term();
+
+    // a refused create must allocate nothing: install a counting allocator and
+    // assert it is never called. both callbacks, uninitialized, nothing live.
+    rocketnet_test_allocator_calls = 0;
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) );
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    memset( connect_token, 0, sizeof( connect_token ) );
+
+    rocketnet_check( rocketnet_client_transport_create( NULL, connect_token, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
+
+    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+    rocketnet_check( rocketnet_test_allocator_calls == 0 );
+
+    // restore the default allocator, then the library, for the worker's term
+    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+    rocketnet_check( rocketnet_init() );
+}
+
+void rocketnet_test_allocator_refusal_is_returned()
+{
+    // after init a replacement is refused and counted
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_check( !rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) );
+
+    // terminated with no live allocations: a partial set is still refused and
+    // counted; both callbacks are taken and return true
+    rocketnet_term();
+    rocketnet_check( !rocketnet_allocator( NULL, rocketnet_test_allocator_free ) );
+    rocketnet_check( !rocketnet_allocator( rocketnet_test_allocator_malloc, NULL ) );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
+
+    rocketnet_check( rocketnet_allocator( rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) );
+
+    // restore the default allocator, then the library, for the worker's term
+    rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+    rocketnet_check( rocketnet_init() );
+}
+
 void rocketnet_test_frame_sync_wait()
 {
     // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
@@ -11748,6 +11814,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
+    { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
+    { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_ack_block_encoding", rocketnet_test_ack_block_encoding },
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },

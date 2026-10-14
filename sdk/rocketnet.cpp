@@ -309,6 +309,27 @@ static size_t rocketnet_allocations = 0; // includes allocator callbacks in flig
 static bool rocketnet_initialized = false;
 static bool rocketnet_transitioning = false;
 
+// every refused API misuse counts here: a create before init, a late or partial
+// allocator replacement, and any other call the SDK refuses. relaxed: the count
+// is a diagnostic and orders against nothing.
+static std::atomic<uint64_t> rocketnet_api_misuses{ 0 };
+
+uint64_t rocketnet_api_misuse_count()
+{
+    return rocketnet_api_misuses.load( std::memory_order_relaxed );
+}
+
+void rocketnet_api_misuse_record()
+{
+    rocketnet_api_misuses.fetch_add( 1, std::memory_order_relaxed );
+}
+
+bool rocketnet_library_initialized()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    return rocketnet_initialized;
+}
+
 struct rocketnet_allocation_header_t
 {
     void * base;
@@ -321,7 +342,7 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
-void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
     bool refused;
     {
@@ -334,7 +355,12 @@ void rocketnet_allocator( void * (*malloc_function)( void * context, size_t byte
         }
     }
     if ( refused )
+    {
         rocketnet_error( "allocator replacement requires an uninitialized library with no live allocations" );
+        rocketnet_api_misuse_record();
+        return false;
+    }
+    return true;
 }
 
 void * rocketnet_malloc( void * context, size_t bytes )

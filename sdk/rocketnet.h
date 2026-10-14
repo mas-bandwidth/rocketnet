@@ -313,10 +313,29 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 // ------------------------------------------
 
 // Configure before init, with no outstanding allocations. Invalid or late
-// replacements are refused and logged. Callbacks must be thread-safe and return
-// storage aligned for fundamental types. RocketNet adds alignment/ownership
-// metadata, so callbacks receive larger sizes and their original pointer on free.
-ROCKETNET_EXPORT_FUNC void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+// replacements are refused: the call returns false, logs one line and counts
+// the refusal in rocketnet_api_misuse_count. Refused after init, while
+// transitioning, with live allocations, or with a partial set (either callback
+// NULL). Returns true when both callbacks were taken. Callbacks must be
+// thread-safe and return storage aligned for fundamental types. RocketNet adds
+// alignment/ownership metadata, so callbacks receive larger sizes and their
+// original pointer on free.
+ROCKETNET_EXPORT_FUNC bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+
+// Counts every refused API misuse since the process started: a create before
+// rocketnet_init, a late or partial rocketnet_allocator, and any other call the
+// SDK refuses. A relaxed read; a diagnostic, not a synchronization point.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_api_misuse_count();
+
+// Internal to the SDK. rocketnet_library_initialized reads the lifecycle state
+// once for an entry point that must refuse before init; the create paths call
+// it at entry, never per packet. rocketnet_api_misuse_record increments the
+// count above from any refused misuse. The default allocator callbacks let a
+// caller restore them after taking the allocator.
+bool rocketnet_library_initialized();
+void rocketnet_api_misuse_record();
+void * rocketnet_default_malloc_function( void * context, size_t bytes );
+void rocketnet_default_free_function( void * context, void * p );
 
 #define ROCKETNET_ALLOCATION_ALIGNMENT 64
 

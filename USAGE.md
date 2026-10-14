@@ -6,6 +6,13 @@ free RocketNet allocations before `rocketnet_term`; termination with live
 allocations is refused and logged. Repeated termination is a no-op. Startup,
 shutdown and global configuration must be serialized with application activity.
 Set custom allocator callbacks before initialization, with no live allocations.
+Call `rocketnet_init` first: a create before it —
+`rocketnet_client_transport_create`, `rocketnet_server_transport_create` or
+`rocketnet_frame_sync_create` — returns NULL and allocates nothing. A refused
+`rocketnet_allocator` replacement (late, while transitioning, with live
+allocations, or with either callback NULL) returns false; an accepted
+replacement returns true. Every refused call logs one line and increments
+`rocketnet_api_misuse_count`, the process-wide count of refused API misuse.
 
 Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
 digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.

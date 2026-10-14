@@ -423,6 +423,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                          double time )
 {
+    // the lifecycle state is read once here, before any allocation or socket;
+    // a create before rocketnet_init is refused, logged and counted
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_server_transport_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+
     rocketnet_assert( public_address_string );
 
     (void) time;

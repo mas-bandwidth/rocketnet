@@ -273,6 +273,15 @@ int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, ui
 
 struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate )
 {
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_frame_sync_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+
     if ( !( frame_rate > 0.0 ) || frame_rate > ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE )
     {
         rocketnet_error( "frame sync: invalid frame rate %.1f", frame_rate );
