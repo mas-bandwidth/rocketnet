@@ -8006,6 +8006,16 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_frame_sync_stats( NULL, &frame_stats );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
+    // the contract's debug clause: in a build with asserts on, every refused
+    // NULL above fires rocketnet_assert through the installed hook; in a
+    // release build (ROCKETNET_ASSERTS 0) the hook stays quiet because the
+    // assert compiles out. Either way the hook's tally proves the boundary.
+#if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_null_asserts > 0 );
+#else
+    rocketnet_check( rocketnet_test_null_asserts == 0 );
+#endif
+
     (void) client_index;
 
     rocketnet_assert_function( saved_assert );
