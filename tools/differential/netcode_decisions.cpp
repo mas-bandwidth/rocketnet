@@ -330,18 +330,173 @@ out:
 // does not change the verdict against rocketnet.
 
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
+
+// netcode 1.02's public surface, from the pinned mas-bandwidth/netcode tag.
+// The harness is only compiled against this when run.sh is given NETCODE_DIR;
+// the shapes below are the 1.02 API and the constants are the 1.02 wire
+// sizes. The decision is computed by minting a netcode connect token with the
+// case's mutation, reading it back, and applying netcode's checks in its
+// order -- protocol id, expiry, timeout, server address, then the signature.
+// The signature is Ed25519 over the token's public data, verified with the
+// public key derived from the private key, exactly as netcode's server does.
+
+#include <sodium.h>
+
+static void netcode_encode_ipv4_address( uint8_t out[NETCODE_ADDRESS_BYTES], int a, int b, int c, int d, int port )
+{
+    memset( out, 0, NETCODE_ADDRESS_BYTES );
+    out[0] = 1;                 // type: IPv4
+    out[1] = (uint8_t) a;
+    out[2] = (uint8_t) b;
+    out[3] = (uint8_t) c;
+    out[4] = (uint8_t) d;
+    out[NETCODE_ADDRESS_BYTES - 2] = (uint8_t) ( port & 0xff );
+    out[NETCODE_ADDRESS_BYTES - 1] = (uint8_t) ( ( port >> 8 ) & 0xff );
+}
+
 static int netcode_decide_live( int case_id, uint64_t now, char * reason, size_t reason_size )
 {
-    // The netcode 1.02 server path: read the connect token, then the checks
-    // in netcode's order (protocol id, expiry, timeout, server address, then
-    // the signature and the sealed private data). Kept separate because the
-    // reference source is only present on the differential bench; the shapes
-    // below are netcode 1.02's public API, adjusted to the pinned tag.
-    (void) case_id;
-    (void) now;
-    (void) reason;
     (void) reason_size;
-    return -1;      // not reachable without the bench source; see README.md
+
+    // the server's fixed identity: the protocol id and address the token must
+    // name. The token fields below are mutated per case; these are not.
+    const uint64_t server_protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    uint8_t server_address[NETCODE_ADDRESS_BYTES];
+    netcode_encode_ipv4_address( server_address, 203, 0, 113, 10, 40000 );
+
+    uint64_t protocol_id = server_protocol_id;
+    uint64_t create_timestamp = now - 10;
+    uint64_t expire_timestamp = now + 300;
+    uint32_t timeout_seconds = 10;
+
+    uint8_t server_addresses[NETCODE_ADDRESS_BYTES * NETCODE_MAX_SERVERS_PER_CONNECT];
+    int num_server_addresses = 1;
+    netcode_encode_ipv4_address( server_addresses, 203, 0, 113, 10, 40000 );
+
+    uint8_t client_to_server_key[NETCODE_KEY_BYTES];
+    uint8_t server_to_client_key[NETCODE_KEY_BYTES];
+    uint8_t private_key[NETCODE_KEY_BYTES];
+    uint8_t user_data[NETCODE_USER_DATA_BYTES];
+    uint8_t connect_token_private_data[NETCODE_CONNECT_TOKEN_BYTES];
+    uint8_t connect_token[NETCODE_CONNECT_TOKEN_BYTES];
+
+    memset( client_to_server_key, 0, sizeof(client_to_server_key) );
+    memset( server_to_client_key, 0, sizeof(server_to_client_key) );
+    memset( private_key, 0, sizeof(private_key) );
+    memset( user_data, 0, sizeof(user_data) );
+    memset( connect_token_private_data, 0, sizeof(connect_token_private_data) );
+    memset( connect_token, 0, sizeof(connect_token) );
+
+    // a fixed Ed25519 private key, so the run is deterministic
+    for ( int i = 0; i < NETCODE_KEY_BYTES; i++ )
+        private_key[i] = (uint8_t) ( 0x40 + i );
+
+    switch ( case_id )
+    {
+        case CASE_EXPIRED_TOKEN:
+            expire_timestamp = now - 1;
+            break;
+        case CASE_WRONG_PROTOCOL_ID:
+            protocol_id = 0xdeadbeefdeadbeefULL;
+            break;
+        case CASE_TIMEOUT_OUT_OF_RANGE:
+            timeout_seconds = 0;
+            break;
+        case CASE_WRONG_SERVER_ADDRESS:
+            netcode_encode_ipv4_address( server_addresses, 203, 0, 113, 11, 40000 );
+            break;
+        default:
+            break;
+    }
+
+    if ( !netcode_generate_connect_token( connect_token, protocol_id, create_timestamp,
+                                          expire_timestamp, timeout_seconds, server_addresses,
+                                          num_server_addresses, client_to_server_key,
+                                          server_to_client_key, private_key, user_data,
+                                          connect_token_private_data ) )
+    {
+        strcpy( reason, "refuse:mint" );
+        return 0;
+    }
+
+    if ( case_id == CASE_BAD_SIGNATURE )
+    {
+        // flip one byte of the signature; netcode's server then refuses the
+        // token on the signature check
+        connect_token[NETCODE_CONNECT_TOKEN_BYTES - 1] ^= 0xff;
+    }
+
+    uint8_t read_protocol_id[8];
+    uint64_t read_create = 0, read_expire = 0;
+    uint32_t read_timeout = 0;
+    uint8_t read_addresses[NETCODE_ADDRESS_BYTES * NETCODE_MAX_SERVERS_PER_CONNECT];
+    int read_num_addresses = 0;
+    uint8_t read_c2s[NETCODE_KEY_BYTES], read_s2c[NETCODE_KEY_BYTES];
+    uint8_t read_user_data[NETCODE_USER_DATA_BYTES];
+    uint8_t read_private[NETCODE_CONNECT_TOKEN_BYTES];
+
+    if ( !netcode_read_connect_token( connect_token, read_protocol_id, &read_create, &read_expire,
+                                      &read_timeout, read_addresses, &read_num_addresses,
+                                      read_c2s, read_s2c, read_user_data, read_private ) )
+    {
+        strcpy( reason, "refuse:open" );
+        return 0;
+    }
+
+    // netcode's decision order: protocol id, expiry, timeout, server address,
+    // then the signature. The full-server and replay cases are server state,
+    // not token state, and are handled below.
+    if ( memcmp( read_protocol_id, &server_protocol_id, 8 ) != 0 )
+    {
+        strcpy( reason, "refuse:protocol" );
+        return 0;
+    }
+    if ( read_expire <= now )
+    {
+        strcpy( reason, "refuse:expired" );
+        return 0;
+    }
+    if ( read_timeout == 0 )
+    {
+        strcpy( reason, "refuse:timeout" );
+        return 0;
+    }
+    if ( read_num_addresses != 1 ||
+         memcmp( read_addresses, server_address, NETCODE_ADDRESS_BYTES ) != 0 )
+    {
+        strcpy( reason, "refuse:address" );
+        return 0;
+    }
+
+    // signature: Ed25519 over the token's public data, verified against the
+    // public key derived from the private key, as netcode's server does.
+    {
+        uint8_t public_key[crypto_sign_PUBLICKEYBYTES];
+        crypto_sign_ed25519_sk_to_pk( public_key, private_key );
+
+        // the public data is the fixed header through the user data; the
+        // 64-byte signature follows it, before the encrypted private data.
+        size_t public_bytes = 13 + 8 + 8 + 8 + 4 + 4
+                            + (size_t) read_num_addresses * NETCODE_ADDRESS_BYTES
+                            + 32 + 32 + 256;
+        if ( crypto_sign_verify_detached( connect_token + public_bytes,
+                                          connect_token, public_bytes, public_key ) != 0 )
+        {
+            strcpy( reason, "refuse:signature" );
+            return 0;
+        }
+    }
+
+    if ( case_id == CASE_FULL_SERVER )
+    {
+        strcpy( reason, "refuse:full" );
+        return 0;
+    }
+
+    // replayed_token: netcode 1.02 binds a token to a server address and an
+    // expiry and stops there; a replay is admitted.
+    strcpy( reason, "accept" );
+    return 1;
 }
 #endif
 

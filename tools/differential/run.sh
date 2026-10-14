@@ -29,10 +29,20 @@ fi
 
 CXX="${CXX:-c++}"
 CXXFLAGS="-O2 -ffp-contract=off -std=c++11"
-INCLUDES="-I sdk -I build/generated"
-LIBS="build/librocketnet_dev.a -lbpf -lxdp -lpthread"
+INCLUDES="-I sdk -I build/generated -I sodium"
+
+# Platform libraries. Linux links the XDP dataplane; darwin links the
+# CoreFoundation/SystemConfiguration frameworks the dev library needs. The
+# portable driver needs only pthreads everywhere.
+case "$(uname -s)" in
+    Linux)  PLATFORM_LIBS="-lbpf -lxdp -lpthread" ;;
+    Darwin) PLATFORM_LIBS="-lpthread -framework CoreFoundation -framework SystemConfiguration" ;;
+    *)      PLATFORM_LIBS="-lpthread" ;;
+esac
+LIBS="build/librocketnet_dev.a $PLATFORM_LIBS"
 
 NETCODE_FLAGS=""
+NETCODE_OBJ=""
 if [ -n "$NETCODE_DIR" ]; then
     if [ ! -d "$NETCODE_DIR" ]; then
         echo "run.sh: NETCODE_DIR does not exist: $NETCODE_DIR" >&2
@@ -40,17 +50,17 @@ if [ -n "$NETCODE_DIR" ]; then
     fi
     # netcode 1.02 is a two-file C core (netcode.c/netcode.h) over the same
     # sodium primitive set. Build the core in place and ask it live.
-    NETCODE_OBJ="$(mktemp --tmpdir="$TMPDIR" --suffix=.o)"
+    NETCODE_OBJ="$(mktemp "${TMPDIR:-/tmp}/netcode.XXXXXX.o")"
     NETCODE_FLAGS="-DROCKETNET_DIFFERENTIAL_NETCODE_DIR -I \"$NETCODE_DIR\""
     # shellcheck disable=SC2086
-    "$CXX" -O2 -c "$NETCODE_DIR/netcode.c" -o "$NETCODE_OBJ" -I "$NETCODE_DIR"
+    "$CXX" -O2 -c "$NETCODE_DIR/netcode.c" -o "$NETCODE_OBJ" -I "$NETCODE_DIR" -I sodium
     LIBS="$LIBS $NETCODE_OBJ"
     echo "run.sh: netcode reference live from $NETCODE_DIR"
 else
     echo "run.sh: no NETCODE_DIR; diffing against the cases.tsv reference column"
 fi
 
-BIN="$(mktemp --tmpdir="$TMPDIR" --suffix=.bin)"
+BIN="$(mktemp "${TMPDIR:-/tmp}/netcode_decisions.XXXXXX.bin")"
 # shellcheck disable=SC2086
 "$CXX" $CXXFLAGS $INCLUDES $NETCODE_FLAGS tools/differential/netcode_decisions.cpp -o "$BIN" $LIBS
 
