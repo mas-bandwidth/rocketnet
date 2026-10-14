@@ -1,0 +1,81 @@
+# THE MUTATION NIGHT FOR THE PARSER/REPLAY/ACK/FRAGMENT/MESSAGE CORE.
+#
+# A scheduled (not per-commit) LLVM-IR mutation pass over the five wire-facing
+# files, run by tools/mutation/run_mull.sh and gated on tools/mutation/floor.tsv.
+# It is the R4 instrument (RN-CORRECTNESS 2026-10-14): the hand-written mutant
+# of tools/check_fuzz_oracle.py generalised into a real mutation run, expecting
+# the boundary constants -- 4096, 64, the word counts, the >= and % edges --
+# to be where it hurts.
+#
+# Nightly, not per-commit, because one mutation run recompiles the five files
+# once per mutant, which is slow enough to belong in the tier that does not
+# run on every commit (see nightly.yml's doctrine: an ordinary, bounded,
+# deterministic gate that needs a slow runner). A red night here is a gate
+# that would have gone red on a commit: the suite stopped killing a mutant
+# that the floor had killed, or Mull could not be obtained. It has a commit
+# range and a bisect, and whoever is on the estate that morning owns it.
+
+name: mutation (nightly)
+
+on:
+  schedule:
+    - cron: "50 8 * * *"   # daily at 08:50 UTC, after the other night legs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    name: mutation gate (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-clang
+            cxx: clang++
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+
+      # Mull is the tool the card names. Its prebuilt release bundles its own
+      # LLVM, so it does not have to match the runner's clang. The asset name
+      # follows Mull's release naming for the pinned version and must be kept
+      # in step with MULL_VERSION. curl -f makes a wrong or missing asset a
+      # hard failure, so a machine without Mull can never read as green: the
+      # run_mull.sh below refuses loudly on an absent tool.
+      - name: Install Mull
+        env:
+          MULL_VERSION: "0.23.1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mull"
+          curl -fL --retry 3 \
+            "https://github.com/mull-project/mull/releases/download/${MULL_VERSION}/mull-${MULL_VERSION}-Linux-x86_64.tar.gz" \
+            -o "$RUNNER_TEMP/mull/mull.tar.gz"
+          tar -xzf "$RUNNER_TEMP/mull/mull.tar.gz" -C "$RUNNER_TEMP/mull"
+          echo "$RUNNER_TEMP/mull" >> "$GITHUB_PATH"
+
+      - name: Run the mutation gate
+        run: bash tools/mutation/run_mull.sh
+
+      # A survivor regression must be readable as a diff, not a binary blob.
+      - name: Upload the mutation report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mull-report
+          path: |
+            build-mull/mull-report.txt
+            tools/mutation/floor.tsv
+          if-no-files-found: ignore
