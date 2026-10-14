@@ -180,6 +180,9 @@ static void rocketnet_client_thread_function( void * data );
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
+    if ( !rocketnet_api_null_guard( connect_token ) )
+        return NULL;
+
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )
@@ -414,6 +417,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
     rocketnet_assert( client_transport );
 
     if ( client_transport->thread )
@@ -589,6 +594,8 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
     rocketnet_assert( client_transport );
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
@@ -658,6 +665,10 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
 void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * client_transport, const uint8_t * packet_data, int packet_bytes )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
+    if ( !rocketnet_api_null_guard( packet_data ) )
+        return;
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
@@ -685,6 +696,10 @@ static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_
 
 uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return NULL;
+    if ( !rocketnet_api_null_guard( context ) )
+        return NULL;
     rocketnet_assert( client_transport );
     rocketnet_assert( context );
 
@@ -778,6 +793,12 @@ static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_
 
 uint8_t * rocketnet_client_transport_packet_payload( rocketnet_client_transport_t * transport, const rocketnet_packet_context_t * context, int * capacity )
 {
+    if ( !rocketnet_api_null_guard( transport ) )
+        return NULL;
+    if ( !rocketnet_api_null_guard( context ) )
+        return NULL;
+    if ( !rocketnet_api_null_guard( capacity ) )
+        return NULL;
     if (capacity) *capacity = 0;
     if (!transport || !context || !capacity) return NULL;
     rocketnet_packet_context_t trusted;
@@ -789,6 +810,10 @@ uint8_t * rocketnet_client_transport_packet_payload( rocketnet_client_transport_
 
 void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
+    if ( !rocketnet_api_null_guard( context ) )
+        return;
     if ( !client_transport || !context )
         return;
     rocketnet_packet_context_t trusted;
@@ -941,6 +966,10 @@ static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_
 
 int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( context ) )
+        return 0;
     if ( !client_transport || !context )
         return 0;
     rocketnet_packet_context_t trusted;
@@ -957,6 +986,8 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
 
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
     rocketnet_assert( client_transport );
     client_transport->packet_leases.reset();
 
@@ -991,6 +1022,10 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
 
 int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * client_transport, uint8_t * packet_data, int packet_capacity )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( packet_data ) )
+        return 0;
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_data );
 
@@ -1031,6 +1066,8 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
 
 int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
     rocketnet_assert( client_transport );
     return client_transport->max_payload_bytes;
 }
@@ -1041,12 +1078,18 @@ int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t *
 
 int rocketnet_client_transport_num_payloads( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
     rocketnet_assert( client_transport );
     return client_transport->received_packets.num_packets;
 }
 
 uint8_t * rocketnet_client_transport_payload( rocketnet_client_transport_t * client_transport, int payload_index, int * payload_bytes )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return NULL;
+    if ( !rocketnet_api_null_guard( payload_bytes ) )
+        return NULL;
     rocketnet_assert( client_transport );
     rocketnet_assert( payload_bytes );
 
@@ -1064,6 +1107,12 @@ uint8_t * rocketnet_client_transport_payload( rocketnet_client_transport_t * cli
 
 int rocketnet_client_transport_payloads( rocketnet_client_transport_t * client_transport, uint8_t * const ** payload_data, const int ** payload_bytes )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( payload_data ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( payload_bytes ) )
+        return 0;
     rocketnet_assert( client_transport );
     rocketnet_assert( payload_data );
     rocketnet_assert( payload_bytes );
@@ -1076,6 +1125,8 @@ int rocketnet_client_transport_payloads( rocketnet_client_transport_t * client_t
 
 int rocketnet_client_transport_state( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
     rocketnet_assert( client_transport );
     return client_transport->protocol.state;
 }
@@ -1085,18 +1136,24 @@ int rocketnet_client_transport_state( rocketnet_client_transport_t * client_tran
 
 const char * rocketnet_client_transport_driver( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return NULL;
     rocketnet_assert( client_transport );
     return rocketnet_driver_name( client_transport->driver );
 }
 
 int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
     rocketnet_assert( client_transport );
     return client_transport->protocol.client_index;
 }
 
 void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
     rocketnet_assert( client_transport );
 
     const int state_before = client_transport->protocol.state;
@@ -1127,12 +1184,18 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return NULL;
     rocketnet_assert( client_transport );
     return &client_transport->counters;
 }
 
 int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * client_transport, const uint64_t ** packet_ids )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( packet_ids ) )
+        return 0;
     rocketnet_assert( client_transport );
     rocketnet_assert( packet_ids );
 
@@ -1143,6 +1206,10 @@ int rocketnet_client_transport_acked_packets( rocketnet_client_transport_t * cli
 
 void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats )
 {
+    if ( !rocketnet_api_null_guard( client_transport ) )
+        return;
+    if ( !rocketnet_api_null_guard( stats ) )
+        return;
     rocketnet_assert( client_transport );
     rocketnet_assert( stats );
 
