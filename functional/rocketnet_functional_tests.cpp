@@ -1078,6 +1078,21 @@ void rocketnet_test_transport_stats()
     rocketnet_server_transport_destroy( server );
 }
 
+// the NaN update below is loud in a debug build: the clamp asserts. the hook
+// is non-aborting so the assert is observed rather than trapping the suite,
+// the same pattern the unit tier uses for the clamp.
+
+static int rocketnet_test_update_time_clamped_asserts = 0;
+
+static void rocketnet_test_update_time_clamped_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_test_update_time_clamped_asserts++;
+}
+
 void rocketnet_test_transport_update_time_clamped()
 {
     // RULING 9: a NaN update must not freeze a transport. a connected pair, a
@@ -1122,10 +1137,21 @@ void rocketnet_test_transport_update_time_clamped()
 
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 
-    // one NaN update, clamped and counted
+    // one NaN update, clamped and counted; loud in a debug build, observed
+    // through a non-aborting hook so the suite goes on
+
+    rocketnet_test_update_time_clamped_asserts = 0;
+    rocketnet_assert_function( rocketnet_test_update_time_clamped_assert_hook );
 
     rocketnet_server_transport_update( server, NAN );
+
+    rocketnet_assert_function( NULL );
+
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
+
+#if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_update_time_clamped_asserts == 1 );
+#endif
 
     // the client now goes silent: only the server is updated, and its clock
     // advances past the token's ten second timeout
