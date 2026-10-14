@@ -1,0 +1,48 @@
+# Compiler warning baseline for the sdk.
+#
+# WHO READS THIS: the pull request. A warning that is not in the baseline
+# fails the pull request. A baseline entry the compile no longer produces
+# fails it too: the baseline only shrinks, and the pull request that removes
+# a warning deletes that entry from tools/warnings-baseline.txt in the same
+# change. That deletion is the review point for a warning that goes away.
+#
+# WHAT IT DOES NOT COVER: gcc and MSVC. This job is clang -fsyntax-only on
+# Linux, over each sdk/*.cpp, with the audit warning set and -ffp-contract=off.
+# It does not compile the example programs, and it does not run the test suite.
+
+name: compiler warnings
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+# a superseded commit's run is not a gate on anything -- the gate is the head
+# of the branch -- so it yields its runners to the run that replaced it
+concurrency:
+  group: warnings-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  warnings:
+    name: compiler warnings (clang)
+    # the same fleet runners ci.yml uses; a self-hosted runner comes
+    # provisioned, so the apt step runs only for a hosted fallback
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+
+      - name: Run the warning gate
+        run: python3 tools/check_warnings.py
