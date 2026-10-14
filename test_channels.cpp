@@ -4464,6 +4464,281 @@ static void test_channels_window_lossy_soak()
     test_channels_window_lossy_soak_leg( 50.0f );
 }
 
+// -----------------------------------------
+// Reversed-witness replays (CHANNELS 15, tla/README-RNWindow.md, tla/README-RNRing.md).
+// Each test drives the concrete Layer 3 modules through the exact TLC witness
+// trace with the guarding rule in place, and fails on the named invariant
+// when that one-line rule is removed on the bench.
+
+struct channels_window_witness_rig_t
+{
+    rn_region_t region;
+    rn_send_number_t send_numbers[8];
+    rn_sent_packet_t sent_packets[8];
+    rn_sent_index_t sent_index[16];
+    uint32_t sent_refs[128];
+    rn_resend_link_t resend_fifo[8];
+    uint64_t received_bits[1];
+    rn_receive_descriptor_t receive_descriptors[8];
+    rocketnet_counters_t counters;
+    rn_window_send_t send;
+    rn_window_ack_t ack;
+    rn_window_receive_t receive;
+};
+
+static void channels_window_witness_setup( channels_window_witness_rig_t * rig, uint32_t W, uint32_t B )
+{
+    memset( rig, 0, sizeof( *rig ) );
+    rig->region.window = W;
+    rig->region.ring_bytes = B;
+    rig->region.max_message_bytes = B;
+    rig->region.packets = 8;
+    rig->region.sent_index_entries = 16;
+    rig->region.sent_ref_entries = 128;
+    rig->region.send_numbers = rig->send_numbers;
+    rig->region.sent_packets = rig->sent_packets;
+    rig->region.sent_index = rig->sent_index;
+    rig->region.sent_refs = rig->sent_refs;
+    rig->region.resend_fifo = rig->resend_fifo;
+    rig->region.received_bits = rig->received_bits;
+    rig->region.receive_descriptors = rig->receive_descriptors;
+    rig->region.counters = &rig->counters;
+    for ( uint32_t i = 0; i < 8; i++ )
+    {
+        rig->resend_fifo[i].prev = RN_RESEND_NONE;
+        rig->resend_fifo[i].next = RN_RESEND_NONE;
+    }
+    rn_window_send_init( &rig->send, &rig->region, 0 );
+    rn_window_ack_init( &rig->ack, &rig->send, &rig->region, NULL );
+    rn_window_receive_init( &rig->receive, &rig->region, 0 );
+}
+
+// RNWindow Witness 1 (MCRNWindowBrokenBlockUPrime.cfg, KeepBlockUPrime = FALSE):
+// W = 2, block {1, 2}. Single 0 is numbered, sent, opened, delivered, released
+// at EndUpdate, and acked (U = U' = 1). Block {1, 2} takes numbers 1 and 2;
+// fragment 1 arrives, is accepted at slot 1, and stays held (live) waiting for
+// fragment 2. When the ack for fragment 1 arrives, U advances to 2, but U'
+// must stay at 1 (the block's first number). If U' moved to U = 2, single 3
+// would be numbered (3 < 2 + 2) and collide with held fragment 1 at slot 3 % 2 = 1.
+static void test_channels_window_witness_u_prime_holds_at_a_partial_block()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_witness_rig_t rig;
+    channels_window_witness_setup( &rig, 2, 4 * F );
+
+    // Step 1: number single 0, send in packet 1, receiver accepts and releases at EndUpdate, ack lands.
+    uint64_t n0 = UINT64_MAX, p0 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n0 == 0 && p0 == 0 );
+    rn_window_ack_commit_packet( &rig.ack, 1, &n0, 1, 0.01 );
+
+    rocketnet_message_record_t rec0 = channels_window_record( 0 );
+    uint32_t slot0 = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &rig.receive, &rec0, &slot0 ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( slot0 == 0 && rig.receive.R == 1 );
+    rn_window_receive_release( &rig.receive, 0 ); // EndUpdate releases delivered 0
+    check( !rig.receive_descriptors[0].live );
+
+    check( rn_window_ack_on_ack( &rig.ack, 1, 0.02 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 1 );
+
+    // Step 2: number 2-fragment block {1, 2}; send fragment 1 in packet 2;
+    // receiver accepts fragment 1 at slot 1 and holds it (live = 1) because 2 is missing;
+    // ack for packet 2 lands at sender.
+    uint64_t n1 = UINT64_MAX, p1 = UINT64_MAX;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 16, RN_DESCRIPTOR_NONE, &n1, &p1 ) == 2 );
+    check( n1 == 1 && rig.send.next == 3 );
+    const uint64_t frag1 = 1;
+    rn_window_ack_commit_packet( &rig.ack, 2, &frag1, 1, 0.03 );
+
+    rocketnet_message_record_t rec1 = channels_window_record( 1 );
+    uint32_t slot1 = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &rig.receive, &rec1, &slot1 ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( slot1 == 1 && rig.receive.R == 2 );
+    check( rig.receive_descriptors[1].live == 1 && rig.receive_descriptors[1].number == 1 );
+
+    check( rn_window_ack_on_ack( &rig.ack, 2, 0.04 ) == 1 );
+
+    // Step 3: sender tries to first-write single 3 while fragment 2 is still unacked.
+    uint64_t n3 = UINT64_MAX, p3 = UINT64_MAX;
+    const int step3 = rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n3, &p3 );
+    if ( step3 == RN_WINDOW_SEND_NUMBERED )
+    {
+        rocketnet_message_record_t rec3 = channels_window_record( (uint32_t) n3 );
+        uint32_t slot3 = RN_DESCRIPTOR_NONE;
+        rn_window_receive_accept( &rig.receive, &rec3, &slot3 );
+        check( rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    }
+    check( step3 == RN_WINDOW_SEND_STALL );
+    check( rig.send.U == 2 && rig.send.U_prime == 1 );
+
+    // Once fragment 2 arrives, completes the block, is released and acked, 3 is admitted cleanly.
+    const uint64_t frag2 = 2;
+    rn_window_ack_commit_packet( &rig.ack, 3, &frag2, 1, 0.05 );
+    rocketnet_message_record_t rec2 = channels_window_record( 2 );
+    uint32_t slot2 = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &rig.receive, &rec2, &slot2 ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( slot2 == 0 && rig.receive.R == 3 );
+    rn_window_receive_release( &rig.receive, 1 );
+    rn_window_receive_release( &rig.receive, 2 );
+    check( rn_window_ack_on_ack( &rig.ack, 3, 0.06 ) == 1 );
+    check( rig.send.U == 3 && rig.send.U_prime == 3 );
+
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n3, &p3 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n3 == 3 );
+    rocketnet_message_record_t rec3_ok = channels_window_record( 3 );
+    uint32_t slot3_ok = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &rig.receive, &rec3_ok, &slot3_ok ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( slot3_ok == 1 && rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    rn_window_receive_release( &rig.receive, 3 );
+}
+
+// RNWindow Witness 2 (MCRNWindowBrokenSameUpdateReply.cfg, RequireFixBatch = FALSE):
+// W = 2, single 0 and block {1, 2}. In update j, single 0 is opened and
+// delivered, so receive_descriptors[0] stays live for the duration of update j
+// until EndUpdate releases it. By P6, the ack for 0's packet and the sender's
+// reply carrying fragment 2 (slot 2 % 2 = 0) cannot be opened by the receiver
+// until update j + 1, after EndUpdate has released 0. If the transport stand-in
+// drops P6 (keep_p6 = 0) and opens the reply in update j before EndUpdate,
+// record 2 collides with still-live record 0 at slot 0 (NoSlotCollision).
+static void test_channels_window_witness_reply_opens_next_update()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    channels_window_witness_rig_t rig;
+    channels_window_witness_setup( &rig, 2, 4 * F );
+    const int keep_p6 = 1; // P6 (CHANNELS 2, RNWindow RequireFixBatch): reply opens in update j+1 after EndUpdate
+
+    // Sender numbers single 0 and sends it in packet 1.
+    uint64_t n0 = UINT64_MAX, p0 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n0 == 0 );
+    rn_window_ack_commit_packet( &rig.ack, 1, &n0, 1, 0.01 );
+
+    // Receiver update j: open packet 1 (record 0 is delivered, so slot 0 is live until EndUpdate).
+    rocketnet_message_record_t rec0 = channels_window_record( 0 );
+    uint32_t slot0 = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &rig.receive, &rec0, &slot0 ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( slot0 == 0 && rig.receive_descriptors[0].live == 1 && rig.receive_descriptors[0].number == 0 );
+
+    if ( keep_p6 )
+    {
+        // EndUpdate of update j runs before any reply to update j's ack can be opened in update j+1.
+        rn_window_receive_release( &rig.receive, 0 );
+    }
+
+    // Sender receives the ack for packet 1, numbers block {1, 2}, and sends fragment 2 in packet 2.
+    check( rn_window_ack_on_ack( &rig.ack, 1, 0.02 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 1 );
+    uint64_t n1 = UINT64_MAX, p1 = UINT64_MAX;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F + 16, RN_DESCRIPTOR_NONE, &n1, &p1 ) == 2 );
+    check( n1 == 1 && rig.send.next == 3 );
+    const uint64_t frag2 = 2;
+    rn_window_ack_commit_packet( &rig.ack, 2, &frag2, 1, 0.03 );
+
+    // Receiver opens the reply carrying fragment 2 (slot 2 % 2 = 0).
+    rocketnet_message_record_t rec2 = channels_window_record( 2 );
+    uint32_t slot2 = RN_DESCRIPTOR_NONE;
+    const int answer2 = rn_window_receive_accept( &rig.receive, &rec2, &slot2 );
+    check( rig.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( answer2 == RN_WINDOW_RECEIVE_ACCEPT && slot2 == 0 );
+
+    if ( !keep_p6 )
+        rn_window_receive_release( &rig.receive, 0 );
+    rn_window_receive_release( &rig.receive, 2 );
+}
+
+// RNRing Witness 1 (MCRNRingBrokenFloorAtU.cfg, FloorAtUPrime = FALSE):
+// B = 4*F, W = 8. 2-fragment block {0, 1} takes [0, 2*F), single 2 takes
+// [2*F, 3*F), single 3 takes [3*F, 4*F), so ring_next = 4*F = B. Receiver
+// opens fragment 0, whose span [0, F) stays live in the ring while fragment 1
+// is missing. Sender receives Ack(0), so U = 1 (ring_start = F) and U' = 0
+// (ring_start = 0). When single 4 (16 bytes) wants a span at p = 4*F, the
+// floor at ring_start(U') = 0 stalls it (4*F + 16 - 0 > 4*F). If the floor
+// used ring_start(U) = F instead, single 4 would be placed at p = 4*F (mod B = 0)
+// and overwrite live fragment 0's bytes [0, 16) (LiveSpansDisjoint).
+static void test_channels_window_witness_floor_is_u_prime()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t B = 4 * F;
+    channels_window_witness_rig_t rig;
+    channels_window_witness_setup( &rig, 8, B );
+    uint8_t live[4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    memset( live, 0, sizeof( live ) );
+
+    // Steps 1-6: PlaceBlock {0, 1} at [0, 2*F), PlaceSingle 2 at [2*F, 3*F), PlaceSingle 3 at [3*F, 4*F).
+    uint64_t n0 = UINT64_MAX, p0 = UINT64_MAX;
+    check( rn_window_send_first_write_block( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2 * F, 0, &n0, &p0 ) == 2 );
+    check( n0 == 0 && p0 == 0 && rig.send.ring_next == 2 * F );
+
+    uint64_t n2 = UINT64_MAX, p2 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F, 0, &n2, &p2 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n2 == 2 && p2 == 2 * F && rig.send.ring_next == 3 * F );
+
+    uint64_t n3 = UINT64_MAX, p3 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, F, 0, &n3, &p3 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n3 == 3 && p3 == 3 * F && rig.send.ring_next == B );
+
+    // Step 7: Open(0) at the receiver — fragment 0 claims ring span [0, F) and stays live waiting for fragment 1.
+    for ( uint32_t j = 0; j < F; j++ )
+        live[j] = 1;
+
+    // Step 8: Ack(0) at the sender — U = 1 (ring_start = F), U' = 0 (ring_start = 0).
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 0 );
+
+    // Step 9: WantSingle(16) / PlaceSingle for record 4.
+    uint64_t n4 = UINT64_MAX, p4 = UINT64_MAX;
+    const int step9 = rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n4, &p4 );
+    if ( step9 == RN_WINDOW_SEND_NUMBERED )
+    {
+        const uint32_t start4 = (uint32_t) ( p4 % B );
+        for ( uint32_t j = start4; j < start4 + 16; j++ )
+            check( live[j] == 0 ); // LiveSpansDisjoint
+    }
+    check( step9 == RN_WINDOW_SEND_STALL );
+
+    // Once fragment 1 arrives, block {0, 1} releases [0, 2*F) and Ack(1) advances U' = 2, admitting 4 cleanly.
+    for ( uint32_t j = 0; j < F; j++ )
+        live[j] = 0;
+    check( rn_window_send_mark_acked( &rig.send, 1 ) == 1 );
+    check( rig.send.U == 2 && rig.send.U_prime == 2 );
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, 0, &n4, &p4 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n4 == 4 && p4 == B );
+    const uint32_t start4_ok = (uint32_t) ( p4 % B );
+    check( start4_ok == 0 );
+    for ( uint32_t j = start4_ok; j < start4_ok + 16; j++ )
+        check( live[j] == 0 );
+}
+
+// RNRing Witness 2 (MCRNRingBrokenNoPadding.cfg, PadAtBoundary = FALSE):
+// B = 64, W = 4. Single 0 of 32 bytes is placed at [0, 32), opened, released,
+// and acked (U = U' = 1, ring_next = 32). Single 1 of 48 bytes then asks for a
+// span: [32, 80) would cross the ring boundary B = 64, so padding advances p
+// to 64 and places single 1 at [64, 112), which modulo B = 64 is [0, 48) inside
+// the ring (SpanInsideRing). Without boundary padding, p stays 32 and [32, 80)
+// overhangs B = 64, failing SpanInsideRing (rn_region_ring_span_valid).
+static void test_channels_window_witness_padding_at_the_boundary()
+{
+    const uint32_t B = 64;
+    channels_window_witness_rig_t rig;
+    channels_window_witness_setup( &rig, 4, B );
+
+    // Steps 1-4: WantSingle(32) -> PlaceSingle(0) at [0, 32) -> Open(0) -> Release(0) -> Ack(0).
+    uint64_t n0 = UINT64_MAX, p0 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
+    check( n0 == 0 && p0 == 0 && rig.send.ring_next == 32 );
+    check( rn_region_ring_span_valid( &rig.region, (uint32_t) ( p0 % B ), 32 ) == 1 );
+    check( rn_window_send_mark_acked( &rig.send, 0 ) == 1 );
+    check( rig.send.U == 1 && rig.send.U_prime == 1 );
+
+    // Steps 5-6: WantSingle(48) -> PlaceSingle(1) -> Open(1) checks SpanInsideRing.
+    uint64_t n1 = UINT64_MAX, p1 = UINT64_MAX;
+    check( rn_window_send_first_write( &rig.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 48, 0, &n1, &p1 ) == RN_WINDOW_SEND_NUMBERED );
+    const uint32_t ring_offset = (uint32_t) ( p1 % B );
+    check( rn_region_ring_span_valid( &rig.region, ring_offset, 48 ) == 1 ); // SpanInsideRing
+    check( p1 == 64 && ring_offset == 0 && rig.send.ring_next == 112 );
+}
+
 struct channels_test_t
 {
     const char * name;
@@ -4520,6 +4795,10 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_window_failed_send_marks_due_now", "ChannelsWindowFailedSendMarksDueNow", test_channels_window_failed_send_marks_due_now },
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
     { "test_channels_window_lossy_soak", "ChannelsWindowLossySoak", test_channels_window_lossy_soak },
+    { "test_channels_window_witness_u_prime_holds_at_a_partial_block", "ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock", test_channels_window_witness_u_prime_holds_at_a_partial_block },
+    { "test_channels_window_witness_reply_opens_next_update", "ChannelsWindowWitnessReplyOpensNextUpdate", test_channels_window_witness_reply_opens_next_update },
+    { "test_channels_window_witness_floor_is_u_prime", "ChannelsWindowWitnessFloorIsUPrime", test_channels_window_witness_floor_is_u_prime },
+    { "test_channels_window_witness_padding_at_the_boundary", "ChannelsWindowWitnessPaddingAtTheBoundary", test_channels_window_witness_padding_at_the_boundary },
 };
 
 int rocketnet_channels_test_count()
