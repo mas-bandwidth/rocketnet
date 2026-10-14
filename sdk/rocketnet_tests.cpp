@@ -9,6 +9,7 @@
 #include "rocketnet_platform.h"
 
 #include <limits.h>
+#include <math.h>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include <netinet/in.h>
@@ -210,6 +211,71 @@ void rocketnet_test_time()
     rocketnet_platform_sleep( 0.1 );
     double finish = rocketnet_platform_time();
     rocketnet_check( finish > start );
+}
+
+// the clamp is a pure function: a non-finite time or a step backwards is the
+// last good time, counted and (in a debug build) asserted; a forward step
+// passes through untouched. the hook is non-aborting so the debug build's
+// assert can be observed rather than trapping the suite.
+
+static int rocketnet_test_update_time_clamp_asserts = 0;
+
+static void rocketnet_test_update_time_clamp_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_test_update_time_clamp_asserts++;
+}
+
+void rocketnet_test_update_time_clamp()
+{
+    rocketnet_assert_function( rocketnet_test_update_time_clamp_assert_hook );
+    rocketnet_test_update_time_clamp_asserts = 0;
+
+    const double last_good = 10.0;
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    bool clamped = false;
+
+    rocketnet_check( rocketnet_clamp_update_time( last_good, NAN, &clamped ) == last_good );
+    rocketnet_check( clamped );
+
+    clamped = false;
+    rocketnet_check( rocketnet_clamp_update_time( last_good, INFINITY, &clamped ) == last_good );
+    rocketnet_check( clamped );
+
+    clamped = false;
+    rocketnet_check( rocketnet_clamp_update_time( last_good, -INFINITY, &clamped ) == last_good );
+    rocketnet_check( clamped );
+
+    clamped = false;
+    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good - 0.5, &clamped ) == last_good );
+    rocketnet_check( clamped );
+
+    // a forward step, and an equal one, pass through untouched
+
+    clamped = false;
+    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good + 0.5, &clamped ) == last_good + 0.5 );
+    rocketnet_check( !clamped );
+
+    clamped = false;
+    rocketnet_check( rocketnet_clamp_update_time( last_good, last_good, &clamped ) == last_good );
+    rocketnet_check( !clamped );
+
+    // four clamps, four counted misuses
+
+    rocketnet_check( rocketnet_api_misuse_count() == before + 4 );
+
+#if ROCKETNET_ASSERTS
+    rocketnet_check( rocketnet_test_update_time_clamp_asserts == 4 );
+#endif
+
+    // restore the default (trapping) hook for the rest of the suite
+
+    rocketnet_assert_function( NULL );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -6519,7 +6585,7 @@ void rocketnet_test_dev_keys_refused_in_release()
     memcpy( config.server_secret_key, server_secret, 32 );
     rocketnet_check( memcmp( config.backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0 );
 
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config) == NULL );
 
     // the mirror image: a production backend key with the published
     // development server pair is refused too
@@ -6531,7 +6597,7 @@ void rocketnet_test_dev_keys_refused_in_release()
     memcpy( config.backend_public_key, backend_public, 32 );
     rocketnet_check( memcmp( config.server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 );
 
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40899", &config) == NULL );
 }
 
 
@@ -7274,7 +7340,7 @@ void rocketnet_test_create_before_init_is_refused()
     memset( connect_token, 0, sizeof( connect_token ) );
 
     rocketnet_check( rocketnet_client_transport_create( NULL, connect_token, NULL, 0.0 ) == NULL );
-    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:40000", NULL) == NULL );
     rocketnet_check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
 
     rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
@@ -11573,8 +11639,7 @@ static void rocketnet_test_protocol_id_zero_refused( void )
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(
         NULL,
         "127.0.0.1:0",
-        &config,
-        rocketnet_platform_time() );
+        &config);
 
     rocketnet_check( server == NULL );
 }
@@ -11745,6 +11810,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_token_timeout_clamped", rocketnet_test_token_timeout_clamped },
     { "test_suite_environment", rocketnet_test_suite_environment },
     { "test_time", rocketnet_test_time },
+    { "test_update_time_clamp", rocketnet_test_update_time_clamp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
 #endif
