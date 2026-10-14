@@ -2957,24 +2957,40 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
     sockaddr_storage sockaddr_from;
     socklen_t from_length;
+    uint8_t overflow[65535];
+    WSABUF buffers[2];
+    buffers[0].buf = (char*) packet_data;
+    buffers[0].len = (ULONG) max_packet_size;
+    buffers[1].buf = (char*) overflow;
+    buffers[1].len = sizeof(overflow);
 
     int result;
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
+        DWORD bytes_received = 0;
+        DWORD flags = 0;
 
-        result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
+        int status = WSARecvFrom( socket->handle, buffers, 2, &bytes_received, &flags, (sockaddr*) &sockaddr_from, &from_length, NULL, NULL );
 
-        if ( result == SOCKET_ERROR )
+        if ( status == SOCKET_ERROR )
         {
             int error = WSAGetLastError();
 
+            if ( error == WSAEMSGSIZE )
+            {
+                result = max_packet_size + 1;
+                break;
+            }
+
             if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
             {
-                rocketnet_debug( "recvfrom failed with error %d", error );
+                rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
             return 0;
         }
+
+        result = (int) bytes_received;
 
         if ( result == 0 )
         {
