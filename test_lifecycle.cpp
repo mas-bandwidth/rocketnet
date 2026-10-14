@@ -10,6 +10,13 @@
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_encryption_map.h"
+#include "rocketnet_token_tables.h"
+#include "rocketnet_client_slots.h"
+#include "rocketnet_network_simulator.h"
+#include "rocketnet_allocator.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_frame_sync.h"
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
@@ -356,6 +363,160 @@ static void check_memory_geometry(allocator_state & state)
 #endif
 }
 
+template <typename T, typename CreateFn, typename DestroyFn>
+static int sweep_component_create( allocator_state & state, CreateFn create_fn, DestroyFn destroy_fn, bool hold_live_check = true )
+{
+    const int baseline = state.live;
+    for ( int n = 1; ; ++n )
+    {
+        check( n <= 64 );
+        const int start_calls = state.calls;
+        state.fail_at = start_calls + n;
+        T * instance = create_fn();
+        state.fail_at = 0;
+        const int made = state.calls - start_calls;
+        if ( !instance )
+        {
+            check( made >= n );
+            check( state.live == baseline );
+        }
+        else
+        {
+            const int allocations = n - 1;
+            check( made == allocations );
+            if ( hold_live_check )
+                check( state.live == baseline + allocations );
+            destroy_fn( instance );
+            check( state.live == baseline );
+            return allocations;
+        }
+    }
+}
+
+static void check_component_create_sweeps( allocator_state & state )
+{
+    const int baseline = state.live;
+
+    // 1. rocketnet_encryption_map_create: 6 allocations (fail N=1..6, succeed N=7).
+    check( sweep_component_create<rocketnet_encryption_map_t>(
+        state,
+        [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
+        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 6 );
+
+    // 2. rocketnet_used_token_history_create: 7 allocations (fail N=1..7, succeed N=8).
+    check( sweep_component_create<rocketnet_used_token_history_t>(
+        state,
+        [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
+        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 7 );
+
+    // 3. rocketnet_admitted_token_set_create: 7 allocations (fail N=1..7, succeed N=8).
+    check( sweep_component_create<rocketnet_admitted_token_set_t>(
+        state,
+        [&]() { return rocketnet_admitted_token_set_create( &state, 16 ); },
+        []( rocketnet_admitted_token_set_t * s ) { rocketnet_admitted_token_set_destroy( s ); } ) == 7 );
+
+    // 4. rocketnet_client_slots_create: 8 allocations (fail N=1..8, succeed N=9).
+    check( sweep_component_create<rocketnet_client_slots_t>(
+        state,
+        [&]() { return rocketnet_client_slots_create( &state, 16 ); },
+        []( rocketnet_client_slots_t * s ) { rocketnet_client_slots_destroy( s ); } ) == 8 );
+
+    // 5. rocketnet_reassembly_set_create: 4 allocations (fail N=1..4, succeed N=5).
+    check( sweep_component_create<rocketnet_reassembly_set_t>(
+        state,
+        [&]() { return rocketnet_reassembly_set_create( &state, 4, 8, 16384, 32 ); },
+        []( rocketnet_reassembly_set_t * r ) { rocketnet_reassembly_set_destroy( r ); } ) == 4 );
+
+    // 6. rocketnet_send_arena_create: 2 allocations (fail N=1..2, succeed N=3).
+    check( sweep_component_create<rocketnet_send_arena_t>(
+        state,
+        [&]() { return rocketnet_send_arena_create( &state, 16, 1280 ); },
+        []( rocketnet_send_arena_t * a ) { rocketnet_send_arena_destroy( a ); } ) == 2 );
+
+    // 7. rocketnet_server_acks_create: 4 allocations (fail N=1..4, succeed N=5).
+    {
+        const int before = state.calls;
+        check( !rocketnet_server_acks_create( &state, INT32_MAX / ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1 ) );
+        check( state.calls == before && state.live == baseline );
+    }
+    check( sweep_component_create<rocketnet_server_acks_t>(
+        state,
+        [&]() { return rocketnet_server_acks_create( &state, 16 ); },
+        []( rocketnet_server_acks_t * a ) { rocketnet_server_acks_destroy( a ); } ) == 4 );
+
+    // 8. rocketnet_network_simulator_create: 12 allocations (fail N=1..12, succeed N=13).
+    check( sweep_component_create<rocketnet_network_simulator_t>(
+        state,
+        [&]() { return rocketnet_network_simulator_create( &state, 64, 1 ); },
+        []( rocketnet_network_simulator_t * s ) { rocketnet_network_simulator_destroy( s ); } ) == 12 );
+
+    // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
+    // Refused configs and region counts allocate nothing; in-region carve/send/store allocate nothing.
+    rocketnet_counters_t counters{};
+    rocketnet_message_config_t msg_config{};
+    rocketnet_message_default_config( &msg_config );
+    {
+        const int before = state.calls;
+        check( !rn_arena_create( &state, &msg_config, 0, &counters ) );
+        check( !rn_arena_create( &state, &msg_config, ( 1 << 20 ) + 1, &counters ) );
+        rocketnet_message_config_t bad_config = msg_config;
+        bad_config.num_channels = 0;
+        check( !rn_arena_create( &state, &bad_config, 1, &counters ) );
+        check( state.calls == before && state.live == baseline );
+    }
+    check( sweep_component_create<rn_arena_t>(
+        state,
+        [&]() { return rn_arena_create( &state, NULL, 1, &counters ); },
+        []( rn_arena_t * a ) { rn_arena_destroy( a ); } ) == 1 );
+    check( sweep_component_create<rn_arena_t>(
+        state,
+        [&]() { return rn_arena_create( &state, &msg_config, 2, &counters ); },
+        [&]( rn_arena_t * a ) {
+            const int before = state.calls;
+            state.fail_at = before + 1;
+            for ( int i = 0; i < rn_arena_num_regions( a ); ++i )
+            {
+                rn_region_t * r = rn_arena_region( a, i );
+                check( r != NULL );
+                rn_region_carve( r );
+                uint32_t d = rn_region_send_alloc( r, 256 );
+                check( d != RN_DESCRIPTOR_NONE );
+                rn_region_send_free( r, d );
+                uint32_t c = rn_send_store_alloc( &r->store, 512 );
+                check( c != RN_CHUNK_NONE );
+                check( rn_send_store_free_checked( &r->store, c ) );
+            }
+            state.fail_at = 0;
+            check( state.calls == before );
+            rn_arena_destroy( a );
+        } ) == 1 );
+
+    // 10. rocketnet_frame_sync_create: 1 allocation (fail N=1, succeed N=2).
+    {
+        const int before = state.calls;
+        check( !rocketnet_frame_sync_create( &state, 0.0 ) );
+        check( !rocketnet_frame_sync_create( &state, -60.0 ) );
+        check( !rocketnet_frame_sync_create( &state, ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE + 1.0 ) );
+        check( state.calls == before && state.live == baseline );
+    }
+    check( sweep_component_create<rocketnet_frame_sync_t>(
+        state,
+        [&]() { return rocketnet_frame_sync_create( &state, 60.0 ); },
+        []( rocketnet_frame_sync_t * f ) { rocketnet_frame_sync_destroy( f ); } ) == 1 );
+
+    // 11. rocketnet_platform_thread_create: 2 allocations (fail N=1..2, succeed N=3).
+    check( sweep_component_create<rocketnet_platform_thread_t>(
+        state,
+        [&]() { return rocketnet_platform_thread_create( &state, thread_body, NULL ); },
+        []( rocketnet_platform_thread_t * t ) {
+            rocketnet_platform_thread_join( t );
+            rocketnet_platform_thread_destroy( t );
+        },
+        false ) == 2 );
+
+    check( state.live == baseline );
+}
+
 int main()
 {
     allocator_state state;
@@ -407,6 +568,7 @@ int main()
     check_frame_conservation();
     check_send_handoff();
     check_memory_geometry(state);
+    check_component_create_sweeps( state );
     check( state.live == baseline );
 
     for ( int failure = 1; failure <= 2; ++failure )
@@ -431,6 +593,6 @@ int main()
     check( rocketnet_init( &state ) );
     rocketnet_term();
     check( state.live == 0 );
-    printf( "lifecycle OK: aligned allocator, thread refusal and init/term\n" );
+    printf( "lifecycle OK: aligned allocator, component create sweeps, thread refusal and init/term\n" );
     return 0;
 }
