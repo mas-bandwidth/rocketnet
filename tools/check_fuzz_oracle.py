@@ -73,4 +73,28 @@ int main(int argc, char** argv) {
         raise SystemExit('memory-safe truncation did not fail the exact-field oracle: ' + result.stderr)
     if 'ERROR: AddressSanitizer' in result.stderr or 'runtime error:' in result.stderr:
         raise SystemExit('negative control failed memory safety rather than the property oracle')
+
+    # The message reader's length check: a record with no data must be
+    # refused. Drop the zero-length half of the guard so such a record is
+    # accepted, and require the property oracle to catch the empty record.
+    msg = (ROOT / 'sdk/rocketnet_message.cpp').read_text()
+    msg_guard = '''    if ( length == 0 || length > remaining - header )
+        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;'''
+    if msg.count(msg_guard) != 1:
+        raise SystemExit('message record length guard changed; review the negative control')
+    mutant_msg = work / 'message-length-bypass.cpp'
+    mutant_msg.write_text(msg.replace(msg_guard, '''    if ( length > remaining - header )
+        return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;'''))
+    sources_msg = [str(ROOT / 'fuzz/rocketnet_fuzz_message.cpp'), str(replay)]
+    control_msg = work / 'control_message'
+    subprocess.run(flags + sources_msg + [str(mutant_msg), str(BUILD / 'librocketnet.a')] + libs
+                   + ['-o', str(control_msg)], check=True)
+    trigger = work / 'message-zero-length-record'
+    trigger.write_bytes(bytes([0x00, 0x00, 0x00, 0x00, 0x01]))
+    result = subprocess.run([str(control_msg), str(trigger)], env=env, capture_output=True, text=True)
+    (BUILD / 'fuzz-oracle-message-control.log').write_text(result.stdout + result.stderr)
+    if result.returncode == 0 or 'fuzz oracle failed:' not in result.stderr:
+        raise SystemExit('message length bypass did not fail the property oracle: ' + result.stderr)
+    if 'ERROR: AddressSanitizer' in result.stderr or 'runtime error:' in result.stderr:
+        raise SystemExit('message negative control failed memory safety rather than the property oracle')
 print('test_fuzz_exact_field_oracle')

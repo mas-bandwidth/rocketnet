@@ -590,6 +590,15 @@ jobs:
             -lbpf -lxdp -lpthread \
             -o bin/fuzz
 
+      - name: Build the message harness
+        run: |
+          clang++ -g -O1 -std=c++17 \
+            -ffp-contract=off \
+            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+            -Isdk fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
+            -lbpf -lxdp -lpthread \
+            -o bin/fuzz_message
+
       # THE GATE: each committed input, once, in order. libFuzzer given files
       # rather than a directory runs exactly them and exits -- no mutation, no
       # seeded randomness, no clock.
@@ -598,6 +607,11 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: ./bin/fuzz fuzz/corpus/*
+
+      - name: Replay the message corpus
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: ./bin/fuzz_message fuzz/corpus_message/*
 
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
@@ -626,6 +640,14 @@ jobs:
           cp -r fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
           ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -runs=2000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
+      - name: Bounded message mutation pass (fixed seed, fixed count)
+        timeout-minutes: 5
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cp -r fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
+          ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -runs=1000000 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
+
       - name: Upload crash reproducers
         if: failure()
         uses: actions/upload-artifact@v4
@@ -637,6 +659,59 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+  # THE NDEBUG LEG: the same four fuzzers compiled with -DNDEBUG, so every
+  # assertion in the harnesses is compiled out, and the corpora replayed. The
+  # fuzz oracles deliberately do not rely on assert -- each fires its own
+  # fprintf/abort helper (rocketnet_fuzz_require) -- so a bound that only
+  # held inside an assert would go unguarded here and the replay would miss
+  # it. This leg is what keeps those oracles NDEBUG-proof.
+
+  fuzz-smoke-ndebug:
+    name: fuzz smoke NDEBUG (four fuzzers, corpus replay)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+
+      - name: Configure the instrumented library
+        run: >
+          cmake -B build-fuzz
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+
+      - name: Build the instrumented library
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+
+      - name: Build the four fuzzers with NDEBUG
+        run: |
+          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message; do
+            clang++ -g -O1 -std=c++17 \
+              -ffp-contract=off \
+              -DROCKETNET_DEVELOPMENT=1 -DNDEBUG \
+              -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+              -Isodium -Isdk -Itest "fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
+              -lbpf -lxdp -lpthread \
+              -o "bin/${src}_ndebug"
+          done
+
+      - name: Replay all corpora under NDEBUG
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          ./bin/rocketnet_fuzz_ndebug fuzz/corpus/*
+          ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
+          ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
+          ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
 
   # THE BIG-ENDIAN LEG (#111), and the reason it was built before the bug it
   # was built for (#112).

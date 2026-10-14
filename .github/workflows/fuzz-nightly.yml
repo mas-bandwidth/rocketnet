@@ -54,6 +54,9 @@ jobs:
           - target: rocketnet_fuzz_receive_structured
             source: fuzz/rocketnet_fuzz_receive_structured.cpp
             seeds: fuzz/corpus_receive_structured
+          - target: rocketnet_fuzz_message
+            source: fuzz/rocketnet_fuzz_message.cpp
+            seeds: fuzz/corpus_message
     steps:
 
       - uses: actions/checkout@v4

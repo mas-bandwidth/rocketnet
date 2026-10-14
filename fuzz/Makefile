@@ -4,7 +4,7 @@
 # compiled out of the release library, so they must link the development
 # archive and see ROCKETNET_DEVELOPMENT=1. ci.yml's fuzz-smoke covers
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives these
-# three here.
+# four here.
 #
 # Linux only (libFuzzer + bpf/xdp link deps). The mac is the edit loop; the
 # `compile` target proves the sources compile against the development headers
@@ -20,8 +20,8 @@ FLAGS     = -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEVELOPMENT=1 -I../s
 LIB       = ../build/librocketnet_dev.a
 LINKS     = -lbpf -lxdp -lpthread
 
-TARGETS = rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured
-SOURCES = rocketnet_fuzz.cpp rocketnet_fuzz_connect_token.cpp rocketnet_fuzz_receive_structured.cpp
+TARGETS = rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message
+SOURCES = rocketnet_fuzz.cpp rocketnet_fuzz_connect_token.cpp rocketnet_fuzz_receive_structured.cpp rocketnet_fuzz_message.cpp
 
 all: $(TARGETS)
 
@@ -33,6 +33,9 @@ rocketnet_fuzz_connect_token: rocketnet_fuzz_connect_token.cpp $(LIB)
 
 rocketnet_fuzz_receive_structured: rocketnet_fuzz_receive_structured.cpp $(LIB)
 	$(CXX) $(FLAGS) $(SANITIZE) rocketnet_fuzz_receive_structured.cpp $(LIB) $(LINKS) -o $@
+
+rocketnet_fuzz_message: rocketnet_fuzz_message.cpp $(LIB)
+	$(CXX) $(FLAGS) $(SANITIZE) rocketnet_fuzz_message.cpp $(LIB) $(LINKS) -o $@
 
 compile: $(SOURCES)
 	$(CXX) $(FLAGS) -fsyntax-only $(SOURCES)
