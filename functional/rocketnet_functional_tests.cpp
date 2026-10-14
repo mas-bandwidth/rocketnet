@@ -8,7 +8,17 @@
     through the state machines and the in-memory simulator.
 */
 
+#include "rocketnet.h"
+
+// The shared harness carries one call with the retired create-time argument.
+// The harness itself is outside this card's paths, so the call is routed to the
+// current three-argument entry here, at its only include site: the extra
+// argument is dropped and the call reaches the new signature unchanged.
+
+#define rocketnet_server_transport_create(a, b, c, d) rocketnet_server_transport_create(a, b, c)
 #include "harness.inc"
+#undef rocketnet_server_transport_create
+
 #include "rocketnet_server_protocol.h"
 
 #include <math.h>
