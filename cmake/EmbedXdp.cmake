@@ -92,8 +92,7 @@ if(NOT xxd_result EQUAL 0)
 endif()
 set(ENV{SOURCE_DATE_EPOCH} "0")
 file(ARCHIVE_CREATE OUTPUT "${OUTPUT_DIR}/rocketnet_server_xdp.tar.gz"
-    PATHS "${xdp_tar}.normalized" FORMAT raw COMPRESSION GZip
-    WORKING_DIRECTORY "${OUTPUT_DIR}")
+    PATHS "${xdp_tar}.normalized" FORMAT raw COMPRESSION GZip)
 file(REMOVE "${xdp_tar}" "${xdp_tar}.normalized" "${xdp_tar_hex}")
 
 execute_process(COMMAND "${XXD}" -i -n rocketnet_server_xdp_tar_gz "${OUTPUT_DIR}/rocketnet_server_xdp.tar.gz"
