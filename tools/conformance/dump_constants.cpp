@@ -27,7 +27,6 @@
 #include "rocketnet_client_protocol.h"
 
 #include <stdio.h>
-#include <string.h>
 
 static void print_int( const char * name, long long value )
 {
@@ -156,33 +155,15 @@ int main()
     print_int( "CLIENT_REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
 
     // ----------------------------------------------------------------
-    //   the timing defaults from default protocol initialization:
-    //   send rate = 10 Hz, handshake deadline = 5 s, cookie lifetime = 3 s,
-    //   cookie rotation = 0 (unimplemented in code), max token lifetime = 0.
+    //   The timing defaults, the table-sizing ratios and the key
+    //   derivation context strings are NOT printed here. They live as
+    //   literals and function-local macros inside the implementation's
+    //   own translation units, and a copy of one in this file is a value
+    //   nothing checks: the implementation could move and the copy would
+    //   still agree with the document. check_standard.py runs this same
+    //   preprocessor over those units and reads the assignment and call
+    //   sites themselves, so what it compares is the code that runs.
     // ----------------------------------------------------------------
-
-    struct rocketnet_server_protocol_t default_server_protocol;
-    memset( &default_server_protocol, 0, sizeof(default_server_protocol) );
-    default_server_protocol.send_rate = 10.0;
-    default_server_protocol.handshake_deadline_seconds = 5.0;
-    default_server_protocol.cookie_lifetime_seconds = 3;
-    default_server_protocol.max_token_lifetime_seconds = 0;
-
-    print_int( "DEFAULT_SEND_RATE", (long long) default_server_protocol.send_rate );
-    print_int( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", (long long) default_server_protocol.handshake_deadline_seconds );
-    print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", default_server_protocol.cookie_lifetime_seconds );
-    print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", 0 );
-    print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", default_server_protocol.max_token_lifetime_seconds );
-
-    // ----------------------------------------------------------------
-    //   the table-sizing ratios as multiples of max_clients, from the
-    //   server transport implementation: used-token history = 8,
-    //   admitted-token set = 2, encryption map = 2.
-    // ----------------------------------------------------------------
-
-    print_int( "SIZING_USED_TOKEN_HISTORY_RATIO", 8 );
-    print_int( "SIZING_ADMITTED_TOKEN_SET_RATIO", 2 );
-    print_int( "SIZING_ENCRYPTION_MAP_RATIO", 2 );
 
     return 0;
 }

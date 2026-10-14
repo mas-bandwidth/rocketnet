@@ -11,32 +11,53 @@ with no reference to the source tree -- and compares the rows it NAMES
 below against the same numbers as the COMPILER sees them, taken from
 dump_constants.cpp built through the real headers.
 
-WHAT IT COMPARES: the wire-format rows, and additionally the Timing
-table's rows, the glance table's timing and sizing rows, and the field names
-of the two transport configuration tables. Values read from a header macro,
-a protocol default or a config-table default are compared directly. A row
-the document states and the code cannot produce -- the value is hardcoded
-rather than declared, or the behaviour is absent -- is a mismatch too, and
-a mismatch is tolerated ONLY while its id is listed in known_divergences.tsv.
-A listed divergence whose document and code now agree is stale and also fails,
-so the file must shrink as fixes land.
+WHAT IT COMPARES: the wire-format rows, the Timing table's rows, the glance
+table's timing, sizing and key-derivation rows, and the field names of the
+two transport configuration tables. Every implemented value arrives through
+the toolchain, never as a number written down on this side:
+
+  * the wire constants and the config tables come from dump_constants.cpp,
+    compiled through the real headers, so they are expanded macros and the
+    real X-macro tables;
+  * the timing defaults and the table-sizing ratios come from the server
+    transport's own translation unit, run through that same preprocessor and
+    read at the assignment and the create call -- a default set through a
+    macro arrives as the number the macro holds, and a default that moves in
+    the implementation moves here;
+  * the key derivation context strings come from sdk/rocketnet_keys.cpp the
+    same way, read at the derivation call each one is passed to.
+
+A row the document states and the code cannot produce -- the value is
+hardcoded rather than declared, or the behaviour is absent -- is a mismatch
+too, and a mismatch is tolerated ONLY while its id is listed in
+known_divergences.tsv. A listed divergence whose document and code now agree
+is stale and also fails, so the file must shrink as fixes land.
 
 WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
 the Magic row -- the standard publishes no default magic and the code ships
-none, so there is nothing to compare -- and the KDF context strings row --
-the strings are function-local literals in sdk/rocketnet_keys.cpp rather than
-constants declared in a header this dump can expand. The table-sizing ratio
-for encryption_map (a flat 2 x max_clients against the standard's "far above
-the slot count") and cookie key rotation (unimplemented in code) are listed
-as known divergences. The count printed at the end says how many checks ran.
+none, so there is nothing to compare; the config tables' default VALUES and
+the reassembly slot default -- both are printed from the real declarations,
+but the document publishes no number for either, so there is nothing to
+compare them against (a default a config field carries IS reached, when a
+protocol default is initialised from that field); and the total connect
+deadline and connection timeout rows, which the document states as the
+connect token's own lifetime and timeout rather than as constants. The table
+sizing ratio for encryption_map (a flat multiple of max_clients against the
+standard's "far above the slot count") and cookie key rotation
+(unimplemented in code) are listed as known divergences. The count printed at
+the end says how many checks ran.
 
-That list is a promise and it has already been wrong once: the reader at
-PR #130's gate found Filter epoch missing from it, and missing for the
-worst possible reason -- the epoch IS a wire constant, dump_constants
-already printed it, and this file already compared it through the Test
-title constant's wording, so the value was checked while its own published
-row could say anything at all. It is checked on its own row now. When a row
-is excluded, the exclusion has to be true of it.
+That list is a promise and it has already been wrong twice: the reader at
+PR #130's gate found Filter epoch missing from it, and missing for the worst
+possible reason -- the epoch IS a wire constant, dump_constants already
+printed it, and this file already compared it through the Test title
+constant's wording, so the value was checked while its own published row
+could say anything at all. It is checked on its own row now. The reader at
+attempt 2's gate found the timing and sizing rows compared against literals
+written into dump_constants.cpp instead of against the implementation, so
+mutating the code left the gate green while the header claimed the values
+were read from it. When a row is excluded, the exclusion has to be true of
+it; when a row is checked, the value has to come from the code.
 
 Neither side is allowed to be the only source. A row missing from
 STANDARD.md fails as loudly as a mismatched value, because the failure this
@@ -57,6 +78,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 STANDARD = os.path.join(ROOT, "STANDARD.md")
 DUMP = os.path.join(HERE, "dump_constants.cpp")
+SDK = os.path.join(ROOT, "sdk")
+SERVER_TRANSPORT = os.path.join(SDK, "rocketnet_server_transport.cpp")
+KEYS = os.path.join(SDK, "rocketnet_keys.cpp")
 
 
 def build_and_run_dump():
@@ -78,6 +102,90 @@ def build_and_run_dump():
         name, _, rest = line.partition(" ")
         values[name] = rest.strip()
     return values
+
+
+def preprocess(path):
+    """An implementation translation unit as the compiler sees it.
+
+    Macros expanded, comments gone: what comes back is the code that runs.
+    A default assigned through a macro arrives as the number the macro
+    holds, so nothing on this side of the comparison is a copy of a value
+    that could stay still while the implementation moves.
+    """
+    cxx = os.environ.get("CXX", "c++")
+    return subprocess.run(
+        [cxx, "-std=c++11", "-E", "-P", "-I", SDK, path],
+        check=True, capture_output=True, text=True).stdout
+
+
+def protocol_default(source, field, code):
+    """The value the server transport's create gives protocol->FIELD.
+
+    A literal is that default. `config->name` resolves through the default
+    the real config table carries for that field, which dump_constants
+    prints from the X-macro table. Anything else -- a computed expression,
+    a value this checker would have to guess at -- is refused.
+    """
+    match = re.search(r"protocol->%s\s*=\s*([^;]+);" % re.escape(field), source)
+    if match is None:
+        raise LookupError("the server transport never assigns protocol->%s" % field)
+    expression = " ".join(match.group(1).split())
+    if re.match(r"^-?\d+(\.\d+)?$", expression):
+        return expression
+    configured = re.match(r"^config->(\w+)$", expression)
+    if configured:
+        name = configured.group(1)
+        key = "CFG_SERVER_DEFAULT_%s" % name
+        if key not in code:
+            raise LookupError(
+                "protocol->%s is initialised from config->%s, whose default "
+                "dump_constants does not print" % (field, name))
+        return code[key]
+    raise LookupError(
+        "protocol->%s is initialised from %r, which is neither a literal nor "
+        "a config field: the checker refuses to guess a default" % (field, expression))
+
+
+def sizing_ratio(source, create_function):
+    """The multiple of max_clients a server table is created with."""
+    match = re.search(r"%s\(\s*context,\s*max_clients\s*\*\s*([^,)]+)"
+                      % re.escape(create_function), source)
+    if match is None:
+        raise LookupError(
+            "the server transport creates no %s( context, max_clients * ... )"
+            % create_function)
+    expression = " ".join(match.group(1).split())
+    if not re.match(r"^\d+$", expression):
+        raise LookupError(
+            "%s sizes from %r, not a plain multiple of max_clients"
+            % (create_function, expression))
+    return expression
+
+
+def kdf_context(source, field):
+    """The context string the key derivation for keys->FIELD is called with."""
+    match = re.search(r"rocketnet_derive_key\(\s*keys->%s\b[^;]*?\"([^\"]+)\"\s*\)"
+                      % re.escape(field), source, re.S)
+    if match is None:
+        raise LookupError(
+            "sdk/rocketnet_keys.cpp derives keys->%s with no context string "
+            "this checker can read" % field)
+    return match.group(1)
+
+
+def cookie_rotation_seconds(source):
+    """The period the server rotates its cookie key at: 0 when it never does.
+
+    The search is for any rotation at all in the server transport's unit.
+    When one appears the divergence is fixed and this checker has to read
+    its real period, so the refusal is the point: a rotation period of 0
+    must not survive the fix silently.
+    """
+    if re.search(r"rotat", source, re.IGNORECASE):
+        raise LookupError(
+            "the server transport now mentions key rotation: read its period "
+            "here and drop timing.cookie_rotation from known_divergences.tsv")
+    return "0"
 
 
 def read_table(text, heading, header_cell):
@@ -126,6 +234,8 @@ def main():
         text = handle.read()
 
     code = build_and_run_dump()
+    transport_source = preprocess(SERVER_TRANSPORT)
+    keys_source = preprocess(KEYS)
     failures = []
     checked = 0
 
@@ -133,6 +243,17 @@ def main():
         nonlocal checked
         checked += 1
         if str(published) != str(implemented):
+            failures.append("%s: STANDARD.md says %s, the implementation says %s"
+                            % (what, published, implemented))
+
+    def compare_number(what, published, implemented):
+        nonlocal checked
+        checked += 1
+        try:
+            agrees = float(published) == float(implemented)
+        except (TypeError, ValueError):
+            agrees = str(published) == str(implemented)
+        if not agrees:
             failures.append("%s: STANDARD.md says %s, the implementation says %s"
                             % (what, published, implemented))
 
@@ -355,51 +476,51 @@ def main():
         compare("redundant disconnect packets (client)",
                 ints(cell)[0], code["CLIENT_REDUNDANT_DISCONNECT_PACKETS"])
 
-    # the timing values are compared against the implementation's defaults.
-    # The divergence that send_rate, handshake_deadline and cookie_lifetime
-    # are missing from the transport configuration table is tracked above
-    # by config_field; cookie key rotation is unimplemented in code and
-    # is tracked as a stated divergence against 0.
+    # the timing defaults are read where the server transport assigns them,
+    # in its own translation unit through the same preprocessor. The
+    # divergence that send_rate, handshake_deadline and cookie_lifetime are
+    # missing from the transport configuration table is tracked above by
+    # config_field; cookie key rotation is unimplemented in code and is
+    # tracked as a stated divergence against the 0 that means "never".
+
+    send_rate = protocol_default(transport_source, "send_rate", code)
+    handshake_deadline = protocol_default(transport_source, "handshake_deadline_seconds", code)
+    cookie_lifetime = protocol_default(transport_source, "cookie_lifetime_seconds", code)
+    cookie_rotation = cookie_rotation_seconds(transport_source)
 
     cell = timing_row("Send rate")
     if cell is not None:
-        compare("send rate (timing table)", ints(cell)[0],
-                code["DEFAULT_SEND_RATE"])
+        compare_number("send rate (timing table)", ints(cell)[0], send_rate)
 
     cell = timing_row("Handshake deadline")
     if cell is not None:
-        compare("handshake deadline (timing table)", ints(cell)[0],
-                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
+        compare_number("handshake deadline (timing table)", ints(cell)[0], handshake_deadline)
 
     cell = timing_row("Cookie lifetime")
     if cell is not None:
-        compare("cookie lifetime (timing table)", ints(cell)[0],
-                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
+        compare_number("cookie lifetime (timing table)", ints(cell)[0], cookie_lifetime)
 
     cell = timing_row("Cookie key rotation")
     if cell is not None:
         stated_divergence("timing.cookie_rotation", "cookie key rotation",
-                          ints(cell)[0], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
+                          ints(cell)[0], cookie_rotation)
 
     # ---------------- the glance table's timing and sizing rows ----------------
 
     cell = row("Send rate")
     if cell is not None:
-        compare("send rate (glance table)", ints(cell)[0],
-                code["DEFAULT_SEND_RATE"])
+        compare_number("send rate (glance table)", ints(cell)[0], send_rate)
 
     cell = row("Handshake deadline")
     if cell is not None:
-        compare("handshake deadline (glance table)", ints(cell)[0],
-                code["DEFAULT_HANDSHAKE_DEADLINE_SECONDS"])
+        compare_number("handshake deadline (glance table)", ints(cell)[0], handshake_deadline)
 
     cell = row("Cookie lifetime / key rotation")
     if cell is not None:
         numbers = ints(cell)
-        compare("cookie lifetime (glance table)", numbers[0],
-                code["DEFAULT_COOKIE_LIFETIME_SECONDS"])
+        compare_number("cookie lifetime (glance table)", numbers[0], cookie_lifetime)
         stated_divergence("timing.cookie_rotation", "cookie key rotation (glance table)",
-                          numbers[1], code["DEFAULT_COOKIE_ROTATION_SECONDS"])
+                          numbers[1], cookie_rotation)
 
     cell = row("Redundant disconnects")
     if cell is not None:
@@ -413,23 +534,55 @@ def main():
         compare("replay window bits", ints(cell)[0],
                 code["ROCKETNET_REPLAY_WINDOW_BITS"])
 
+    # the sizing ratios are read where the server transport creates the
+    # tables, so the multiple of max_clients each one holds is the one the
+    # implementation compiles -- a function-local ratio macro arrives here
+    # already expanded to its number.
+
+    used_token_history_ratio = sizing_ratio(transport_source,
+                                            "rocketnet_used_token_history_create")
+    admitted_token_set_ratio = sizing_ratio(transport_source,
+                                            "rocketnet_admitted_token_set_create")
+    encryption_map_ratio = sizing_ratio(transport_source,
+                                        "rocketnet_encryption_map_create")
+
     cell = row("Used-token history")
     if cell is not None:
-        compare("used-token history ratio", ints(cell)[0],
-                code["SIZING_USED_TOKEN_HISTORY_RATIO"])
+        compare_number("used-token history entries per slot", ints(cell)[0],
+                       used_token_history_ratio)
 
     cell = row("Admitted-token set")
     if cell is not None:
-        compare("admitted-token set ratio", ints(cell)[0],
-                code["SIZING_ADMITTED_TOKEN_SET_RATIO"])
+        compare_number("admitted-token set multiple of the slot count",
+                       ints(cell)[0], admitted_token_set_ratio)
 
     # the standard's mapping-table rule: "size the mapping table far above
-    # the slot count", ratio documented by the implementation. The code
-    # holds a flat 2 x max_clients, which is a ratio at the floor rather
-    # than far above it.
+    # the slot count". The implementation's multiple is read above; the
+    # divergence is that a flat small multiple is at the floor of that rule
+    # rather than far above it, and the document states no number to compare.
 
     stated_divergence("sizing.encryption_map", "encryption map sizing",
-                      "far above the slot count", "2 x max_clients")
+                      "far above the slot count",
+                      "%s x max_clients" % encryption_map_ratio)
+
+    # ---------------- the key derivation context strings ----------------
+    #
+    # the strings are literals at the derivation calls in the
+    # implementation's own unit; the row publishes all four, in the order
+    # the standard's derivation sections use them.
+
+    implemented_contexts = [kdf_context(keys_source, field) for field in
+                            ("handshake_client_to_server", "handshake_server_to_client",
+                             "session_client_to_server", "session_server_to_client")]
+
+    cell = row("KDF context strings")
+    if cell is not None:
+        published = re.findall(r"`([^`]+)`", cell)
+        if not published:
+            failures.append("STANDARD.md's KDF context strings row publishes no strings")
+        else:
+            compare("key derivation context strings", " ".join(published),
+                    " ".join(implemented_contexts))
 
     # ---------------- verdict ----------------
 
