@@ -111,9 +111,10 @@ inline void rocketnet_read_bytes( const uint8_t ** p, uint8_t * data, int bytes 
 
 // Bounded readers. Each takes an end pointer one past the last readable byte;
 // it returns 1 when the whole value lies inside [*p, end) and advances *p,
-// and 0 when the read would run past the end, leaving *p unchanged. Callers
-// parsing variable-geometry layouts use these instead of the unbounded
-// readers, so a size check lives beside every parse instead of elsewhere.
+// and 0 when the read would run past the end, leaving *p and the output
+// unchanged. These are a contract for helpers the wire path does not call
+// yet. The live parsers still use the unbounded readers after their own
+// length checks.
 
 inline int rocketnet_read_uint8_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * value )
 {
@@ -164,6 +165,9 @@ inline int rocketnet_read_uint64_bounded( const uint8_t ** p, const uint8_t * en
 
 inline int rocketnet_read_bytes_bounded( const uint8_t ** p, const uint8_t * end, uint8_t * data, int bytes )
 {
+    // a negative count becomes a huge size_t. refuse it before any pointer add.
+    if ( bytes < 0 )
+        return 0;
     if ( *p + bytes > end )
         return 0;
     memcpy( data, *p, (size_t) bytes );

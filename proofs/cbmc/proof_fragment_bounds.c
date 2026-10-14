@@ -4,9 +4,11 @@
 
     CBMC proof of rocketnet_reassembly_process_fragment.
 
-    The leaf below is sdk/rocketnet_fragment.cpp (the header reader, the
-    slot bit helpers, and process_fragment), compiled against
-    sdk/rocketnet_fragment.h. rocketnet_assert is the release form: the
+    The functions below are a copy of the header reader, the slot bit
+    helpers, and process_fragment from sdk/rocketnet_fragment.cpp.
+    CBMC does not parse that file: it includes C++ the frontend rejects.
+    The fragment-bounds recipe diffs this copy against those functions
+    and fails on drift. rocketnet_assert is the release form: the
     runtime refusals are what hold, not the debug asserts. rocketnet_spam
     is ignored.
 
@@ -24,9 +26,13 @@
 
     The stale check subtracts payload ids as uint32. This instance
     proves that subtraction only when the slot is empty or the wire id
-    is at or above the occupant. The rollover half is not proved.
-    Counts whose fragment payload is above 8 bytes, and payload maxima
-    above 16, are not proved.
+    is at or above the occupant. A wire id below the occupant is out of
+    scope. That is the ordinary older-id path and the rollover half.
+    The overflow check stays on. Counts whose fragment payload is above
+    8 bytes, and payload maxima above 16, are not proved. This instance
+    sets the slot arena itself. A regression in slot_arena_bytes =
+    max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES would not
+    be caught.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
@@ -59,7 +65,7 @@ int nondet_int( void );
 #define ARENA      ( PROOF_MAX + PROOF_FRAG )
 #define TYPE_BUF   ( ROCKETNET_FRAGMENT_HEADER_BYTES + PROOF_FRAG )
 
-/* sdk/rocketnet_fragment.cpp lines 27-38 */
+/* copy of sdk/rocketnet_fragment.cpp; the recipe diffs this function */
 void rocketnet_read_fragment_header( const uint8_t * data, uint32_t * payload_id, int * fragment_index, int * fragment_count )
 {
     rocketnet_assert( data );
@@ -73,7 +79,7 @@ void rocketnet_read_fragment_header( const uint8_t * data, uint32_t * payload_id
     *fragment_count = rocketnet_read_uint8( &p ) + 1;
 }
 
-/* sdk/rocketnet_fragment.cpp lines 181-197 */
+/* copy of sdk/rocketnet_fragment.cpp; the recipe diffs these helpers */
 static void rocketnet_reassembly_clear_slot( struct rocketnet_reassembly_slot_t * slot )
 {
     memset( slot, 0, sizeof(struct rocketnet_reassembly_slot_t) );
@@ -92,7 +98,7 @@ static void rocketnet_reassembly_set_bit( struct rocketnet_reassembly_slot_t * s
     slot->num_received++;
 }
 
-/* sdk/rocketnet_fragment.cpp lines 199-469 */
+/* copy of sdk/rocketnet_fragment.cpp; the recipe diffs this function */
 int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * set,
                                            int connection_index,
                                            const uint8_t * type_data,
@@ -364,7 +370,6 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     }
 
     return 1;
-
 }
 static int slot_unchanged( const struct rocketnet_reassembly_slot_t * slot,
                            const struct rocketnet_reassembly_slot_t * before )
@@ -483,7 +488,8 @@ int main( void )
        occupant wraps, which is defined and is how rollover stays ordered;
        --unsigned-overflow-check rejects that wrap. This instance keeps the
        difference representable: an empty slot, or a wire id at or above
-       the occupant. The rollover half is not proved. */
+       the occupant. The ordinary older-id path and the rollover half are
+       not proved. */
     {
         const uint32_t wire_id = (uint32_t) type_data[0]
                                | ( (uint32_t) type_data[1] << 8 )

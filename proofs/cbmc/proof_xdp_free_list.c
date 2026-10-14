@@ -4,23 +4,29 @@
 
     CBMC proof of the XDP free list.
 
-    Push is rocketnet_xdp_free_list_push in sdk/rocketnet_xdp_free_list.h.
-    Pop is the alloc_send_frame / alloc_receive_frame pattern: if the
+    The proof covers push. Push is rocketnet_xdp_free_list_push in
+    sdk/rocketnet_xdp_free_list.h.
+    Pop is a transcription of static alloc_send_frame and
+    alloc_receive_frame in sdk/rocketnet_server_socket_linux.cpp.
+    Those functions stay static. This file does not compile them. If the
     count is positive, decrement it, take that slot, and store an invalid
     frame there. Otherwise return the invalid frame and leave the count
     at zero.
 
     Capacity is 3. The region is the first 3 frames of 4096 bytes, so the
     only aligned in-region frames are 0, 4096, and 8192. Four symbolic
-    steps, each a push of a symbolic frame or a pop. After every step the
-    list is exactly the frames that were pushed and not yet popped, the
-    count stays inside 0..capacity, and a refused push leaves the slots
+    steps, each a push of a symbolic frame or a pop. Frames start invalid.
+    After every step the whole array matches the model.
+    Held slots are the frames pushed and not yet popped, and every other
+    slot is invalid.
+    The count stays inside 0..capacity, and a refused push leaves the slots
     unchanged.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
            --unwinding-assertions
-    Unwinding: 5. The step loop runs 4 times; the slot compare runs 3.
+    Unwinding: 5. The step loop runs 4 times. The init and the slot
+    compare run 3.
 */
 
 #include <stdint.h>
@@ -65,6 +71,12 @@ int main( void )
     int model_n = 0;
     const uint64_t region_begin = 0;
     const uint64_t region_end = (uint64_t) CAP * ROCKETNET_XDP_FRAME_SIZE;
+
+    for ( int i = 0; i < CAP; i++ )
+    {
+        frames[i] = INVALID;
+        model[i] = INVALID;
+    }
 
     for ( int step = 0; step < STEPS; step++ )
     {
@@ -114,16 +126,14 @@ int main( void )
                 __CPROVER_assert( frames[count] == INVALID, "pop clears the vacated slot" );
                 __CPROVER_assert( model_n > 0 && got == model[model_n - 1], "pop conserves the frame" );
                 model_n--;
+                model[model_n] = INVALID;
             }
         }
 
         __CPROVER_assert( count == model_n, "count matches the frames still held" );
         __CPROVER_assert( count >= 0 && count <= CAP, "count stays inside capacity" );
         for ( int i = 0; i < CAP; i++ )
-        {
-            if ( i < count )
-                __CPROVER_assert( frames[i] == model[i], "held prefix matches the push order" );
-        }
+            __CPROVER_assert( frames[i] == model[i], "every slot matches the frames pushed and not yet popped" );
     }
     return 0;
 }

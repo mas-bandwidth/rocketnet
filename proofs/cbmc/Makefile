@@ -49,23 +49,36 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 #                      buffers of 8 bytes. Writers and readers round-trip;
 #                      the bounded readers, including the variable-length
 #                      byte reader, refuse a read past the end pointer and
-#                      leave the cursor alone. rocketnet_copy_string with
-#                      dest_size 0 writes nothing and returns 0; a positive
-#                      dest_size up to 8 keeps the copy inside the buffer
-#                      and terminates it. The backing object for a bounded
-#                      read is 8 bytes of slack past the end pointer, so the
-#                      guard's pointer add stays inside the object.
+#                      leave the cursor alone. A negative byte count is
+#                      refused and writes nothing. These readers are a
+#                      contract for helpers the wire path does not call yet.
+#                      rocketnet_copy_string with dest_size 0 writes nothing
+#                      and returns 0; a positive dest_size up to 8 keeps the
+#                      copy inside the buffer and terminates it. The backing
+#                      object for a bounded read is 8 bytes of slack past the
+#                      end pointer. The proof shows no dereference past that
+#                      end. It does not show that the guard's pointer add
+#                      stays inside a caller's object that ends at the end
+#                      pointer.
 #   fragment-bounds    proved: proof_fragment_bounds.c, unwind 64, one
 #                      connection and one slot. Fragment payloads are
 #                      symbolic up to 8 bytes, or outside the legal size
 #                      window (refused, no read). max_payload_bytes is
 #                      symbolic from 1 to 16. A reconstructed total above
-#                      that maximum is refused with no eviction and no
-#                      payload write. A final that arrives while the stride
-#                      is 0 is staged, and the payload region is untouched.
-#                      Counts above 8-byte fragments, payload maxima above
-#                      16, and the uint32 id-rollover half of the stale
-#                      check, are not proved.
+#                      that maximum is refused and does not write the arena.
+#                      It does not evict a different payload. The same
+#                      payload id clears the slot. A final that arrives
+#                      while the stride is 0 is staged, and the payload
+#                      region is untouched. Counts above 8-byte fragments
+#                      and payload maxima above 16 are not proved. Any wire
+#                      id below the slot occupant is out of scope too: the
+#                      ordinary older-id path and the uint32 rollover half
+#                      of the stale check. The overflow check stays on. A
+#                      regression in slot_arena_bytes = max_payload_bytes +
+#                      ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES would not be
+#                      caught. The recipe diffs the copied functions against
+#                      sdk/rocketnet_fragment.cpp. CBMC does not parse that
+#                      file.
 #   message-read       proved: proof_message_read.c, unwind 8, payloads of
 #                      24 bytes. rocketnet_message_reader_begin / next read
 #                      no byte past the given length. An accepted holdable
@@ -74,12 +87,15 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 #                      record. The fixed-size config body reader refuses a
 #                      short buffer.
 #   xdp-free-list      proved: proof_xdp_free_list.c, unwind 5, capacity 3,
-#                      four push/pop steps. Push refuses a full list, a
+#                      four push/pop steps. The proof covers push, the real
+#                      header function. Pop is a transcription of the static
+#                      alloc_send_frame / alloc_receive_frame pattern, not
+#                      those functions compiled. Push refuses a full list, a
 #                      frame outside the region, and a frame not aligned to
-#                      the 4096-byte XDP frame. Pop is the alloc-frame
-#                      pattern (decrement, take the slot, store invalid).
-#                      The list is exactly the frames pushed and not yet
-#                      popped.
+#                      the 4096-byte XDP frame. Pop decrements, takes the
+#                      slot, and stores invalid. The whole array is the
+#                      frames pushed and not yet popped, and every other
+#                      slot is invalid.
 
 .PHONY: all replay-delta-1-3 replay-far reconstruct \
         read-write fragment-bounds message-read xdp-free-list \
@@ -130,7 +146,8 @@ SDK = ../../sdk
 read-write: proof_read_write.c
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
 
-fragment-bounds: proof_fragment_bounds.c
+fragment-bounds: proof_fragment_bounds.c check_fragment_copy.py $(SDK)/rocketnet_fragment.cpp
+	python3 check_fragment_copy.py
 	$(CBMC) $(CBMC_FLAGS) --unwind 64 -I$(SDK) proof_fragment_bounds.c
 
 message-read: proof_message_read.c

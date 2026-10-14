@@ -7,16 +7,18 @@
 
     The readers and writers are the inline leaves in sdk/rocketnet_read_write.h.
     rocketnet_copy_string is the leaf in sdk/rocketnet.cpp; its body is
-    copied here because that file is C++. The bounded readers are what
-    variable-geometry parses call: a read that would pass the end pointer
-    returns 0 and leaves the cursor and the output alone. dest_size 0
-    returns 0 and writes nothing, which is the underflow the size check
-    closes (a size of 0 used to make dest_size - 1 wrap).
+    copied here because that file is C++. The bounded readers are a contract
+    for helpers the wire path does not call yet. A read that would pass the
+    end pointer returns 0 and leaves the cursor and the output alone. A
+    negative byte count is refused the same way. dest_size 0 returns 0 and
+    writes nothing, which is the underflow the size check closes (a size of
+    0 used to make dest_size - 1 wrap).
 
     Buffers are 8 bytes. A bounded read's backing object has 8 further
-    bytes past the end pointer so the guard's pointer add stays inside
-    the object; the end pointer is still the caller's length. Values,
-    lengths, and cursors inside that window are symbolic.
+    bytes past the end pointer. The proof shows no dereference past that
+    end. It does not show that the guard's pointer add stays inside a
+    caller's object that ends at the end pointer. Values, lengths, and
+    cursors inside that window are symbolic.
 
     Flags: --bounds-check --pointer-check --signed-overflow-check
            --unsigned-overflow-check --div-by-zero-check
@@ -232,6 +234,15 @@ static void harness_bounded( void )
         for ( int i = 0; i < LOG; i++ )
             __CPROVER_assert( out[i] == 0x5a, "variable bounded refusal writes nothing" );
     }
+
+    p = raw + off;
+    uint8_t neg_out[LOG];
+    memset( neg_out, 0x5a, sizeof( neg_out ) );
+    int rc_neg = rocketnet_read_bytes_bounded( &p, end, neg_out, -1 );
+    __CPROVER_assert( rc_neg == 0, "negative byte count is refused" );
+    __CPROVER_assert( p == raw + off, "negative byte count leaves the cursor" );
+    for ( int i = 0; i < LOG; i++ )
+        __CPROVER_assert( neg_out[i] == 0x5a, "negative byte count writes nothing" );
 }
 
 static void harness_copy_string( void )
