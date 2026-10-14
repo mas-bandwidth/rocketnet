@@ -25,3 +25,15 @@ and stays green while the fix card is open.
   the idle clock and the replay high-water mark. The fix card moves the
   already-connected check ahead of the idle-clock refresh and verifies this
   input no longer fires.
+
+## Campaigns while the findings are open
+
+The refusal-immutability finding is shallow: a `-seed=1` campaign from
+`fuzz/corpus_receive_structured` reaches it within the first hundred
+executions, so a campaign on the current source stops on it rather than
+running its count. A campaign's crashes are attributed by replaying each one
+against a scratch copy of the library with both findings patched: an input
+that goes green there is one of the two findings above, and an input that
+still fires is a new finding that gets its own file here. The 1,000,000-run
+`-seed=1` campaign is run against that patched copy until the fix cards land,
+and against the library itself once they have.
