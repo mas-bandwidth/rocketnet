@@ -11401,6 +11401,31 @@ void rocketnet_test_config_validation()
 
 }
 
+void rocketnet_test_handshake_deadline_is_configured()
+{
+    int num_fields = 0;
+    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    // the default is 5 seconds, and the range 1..60 refuses, never clamps
+
+    rocketnet_check( config.handshake_deadline_seconds == 5 );
+
+    config.handshake_deadline_seconds = 0;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    config.handshake_deadline_seconds = 61;
+    rocketnet_check( !rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    config.handshake_deadline_seconds = 1;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+
+    config.handshake_deadline_seconds = 60;
+    rocketnet_check( rocketnet_config_validate( "server", &config, fields, num_fields ) );
+}
+
 void rocketnet_test_driver_ladder_parse()
 {
     const int linux_server[] = { ROCKETNET_DRIVER_XDP, ROCKETNET_DRIVER_GSO, ROCKETNET_DRIVER_PORTABLE };
@@ -12620,6 +12645,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_config_validation", rocketnet_test_config_validation },
+    { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },
     { "test_driver_ladder_parse", rocketnet_test_driver_ladder_parse },
     { "test_server_port_zero_needs_a_discovering_driver", rocketnet_test_server_port_zero_needs_a_discovering_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

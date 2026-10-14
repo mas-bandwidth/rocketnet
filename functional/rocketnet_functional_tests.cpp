@@ -2516,6 +2516,74 @@ void rocketnet_test_config_precedence()
     rocketnet_test_env_restore( &payload_guard );
 }
 
+void rocketnet_test_server_handshake_deadline_from_config()
+{
+    // the half-open mapping's deadline is the config's handshake_deadline_seconds,
+    // fixed when the challenge creates the mapping and never refreshed: with the
+    // field set to 2 a mapping created at the challenge is gone -- counted
+    // MAPPING_HANDSHAKE_DEADLINE_EXPIRED -- at 2 seconds and not before. a
+    // retransmitted request is answered from the stored challenge and never
+    // extends the mapping (pinned in the unit suite's request-path tests), so
+    // the client here stops after the challenge and the mapping still dies on
+    // the deadline the create fixed.
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.handshake_deadline_seconds = 2;
+    snprintf( server_config.driver, sizeof(server_config.driver), "%s", "portable" );
+
+    const double start_time = rocketnet_platform_time();
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
+    rocketnet_check( server );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, start_time );
+    rocketnet_check( client );
+
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+
+    // drive the handshake on a simulated clock until the challenge creates the
+    // mapping; the client never sends its response, so the mapping stays
+    // half-open for the deadline to reclaim
+
+    double now = start_time;
+    double created_at = -1.0;
+    for ( int i = 0; i < 200 && created_at < 0.0; i++ )
+    {
+        rocketnet_client_transport_update( client, now );
+        rocketnet_server_transport_update( server, now );
+        if ( counters->values[ROCKETNET_COUNTER_MAPPING_CREATED] == 1 )
+            created_at = now;
+        now += 0.1;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( created_at >= 0.0 );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+
+    // the client stops after the challenge; its half-open mapping dies at the
+    // fixed deadline, not before
+
+    rocketnet_client_transport_destroy( client );
+
+    rocketnet_server_transport_update( server, created_at + 1.0 );
+    rocketnet_check( counters->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
+
+    rocketnet_server_transport_update( server, created_at + 2.0 );
+    rocketnet_check( counters->values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );
+
+    rocketnet_server_transport_destroy( server );
+    rocketnet_test_env_restore( &driver_guard );
+}
+
 // the rung-forcing exchange: pin a driver list on the server, expect the
 // named grant, and pass real payloads both ways through it -- the matrix
 // doctrine's runtime form. the pin rides the struct, so ROCKETNET_DRIVER
@@ -3992,6 +4060,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
     { "test_config_precedence", rocketnet_test_config_precedence },
+    { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
