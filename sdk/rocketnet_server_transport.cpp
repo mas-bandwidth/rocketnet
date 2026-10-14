@@ -1,3 +1,21 @@
+// Protocol defaults and table-sizing ratios the create path assigns.
+// One declaration: rocketnet_server_transport_create uses these macros, and
+// the conformance dump includes this file under
+// ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones. Cookie key
+// rotation has no macro: the implementation does not declare a period.
+
+#define ROCKETNET_DEFAULT_SEND_RATE                    10.0
+#define ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS   5.0
+#define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
+#define ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS   0
+#define ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT       0
+
+#define ROCKETNET_ENCRYPTION_MAP_RATIO                 2
+#define ROCKETNET_USED_TOKEN_HISTORY_RATIO             8
+#define ROCKETNET_ADMITTED_TOKEN_SET_RATIO             2
+
+#ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+
 #include <new>
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_stats_window.h"
@@ -418,8 +436,8 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
         config->num_xdp_queues < 0 || config->num_xdp_queues > 1024) return false;
 
     plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t)});
-    for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * 2),
-        rocketnet_token_table_allocation_bytes(clients * 8), rocketnet_token_table_allocation_bytes(clients * 2),
+    for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * ROCKETNET_ENCRYPTION_MAP_RATIO),
+        rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO), rocketnet_token_table_allocation_bytes(clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO),
         rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients)})
     {
         if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
@@ -800,7 +818,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = config->protocol_id;
-    protocol->send_rate = 10.0;
+    protocol->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
     memcpy( protocol->filter_value, config->filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
@@ -812,15 +830,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         protocol->advertised_ipv6 = public_address;
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
-    protocol->cookie_lifetime_seconds = 3;
-    protocol->max_token_lifetime_seconds = 0;
-    protocol->handshake_deadline_seconds = 5.0;
+    protocol->cookie_lifetime_seconds = ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS;
+    protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
+    protocol->handshake_deadline_seconds = ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
-    protocol->allow_negative_timeout = 0;
-
-#define ROCKETNET_ENCRYPTION_MAP_RATIO 2
-#define ROCKETNET_USED_TOKEN_HISTORY_RATIO 8
-#define ROCKETNET_ADMITTED_TOKEN_SET_RATIO 2
+    protocol->allow_negative_timeout = ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
@@ -1918,3 +1932,5 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     stats->bandwidth_received_kbps = endpoint->bandwidth_received_kbps;
     stats->bandwidth_acked_kbps = endpoint->bandwidth_acked_kbps;
 }
+
+#endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY

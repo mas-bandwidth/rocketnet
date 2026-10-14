@@ -26,12 +26,35 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 
+// Timing defaults, sizing ratios and KDF context strings are macros in the
+// translation unit that assigns or passes them. Including that unit under
+// this guard expands the same declaration the implementation uses, and
+// nothing else. A macro the implementation does not declare -- cookie key
+// rotation has none -- is not printed.
+
+#define ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+#include "rocketnet_server_transport.cpp"
+#include "rocketnet_keys.cpp"
+#undef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+
 #include <stdio.h>
-#include <string.h>
 
 static void print_int( const char * name, long long value )
 {
     printf( "%s %lld\n", name, value );
+}
+
+static void print_real( const char * name, double value )
+{
+    if ( value == (double) (long long) value )
+        printf( "%s %lld\n", name, (long long) value );
+    else
+        printf( "%s %.17g\n", name, value );
+}
+
+static void print_text( const char * name, const char * value )
+{
+    printf( "%s %s\n", name, value );
 }
 
 // The transport config table, expanded to the field names the table
@@ -155,34 +178,27 @@ int main()
     print_int( "REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     print_int( "CLIENT_REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
 
-    // ----------------------------------------------------------------
-    //   the timing defaults from default protocol initialization:
-    //   send rate = 10 Hz, handshake deadline = 5 s, cookie lifetime = 3 s,
-    //   cookie rotation = 0 (unimplemented in code), max token lifetime = 0.
-    // ----------------------------------------------------------------
+    // Timing defaults and sizing ratios: the macros rocketnet_server_transport_create
+    // assigns. Cookie key rotation is not printed: the implementation declares
+    // no period, so a zero here would be a literal this dump invented.
 
-    struct rocketnet_server_protocol_t default_server_protocol;
-    memset( &default_server_protocol, 0, sizeof(default_server_protocol) );
-    default_server_protocol.send_rate = 10.0;
-    default_server_protocol.handshake_deadline_seconds = 5.0;
-    default_server_protocol.cookie_lifetime_seconds = 3;
-    default_server_protocol.max_token_lifetime_seconds = 0;
+    print_real( "DEFAULT_SEND_RATE", ROCKETNET_DEFAULT_SEND_RATE );
+    print_real( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );
+    print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS );
+    print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS );
+    print_int( "DEFAULT_ALLOW_NEGATIVE_TIMEOUT", ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT );
+#ifdef ROCKETNET_COOKIE_ROTATION_SECONDS
+    print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", ROCKETNET_COOKIE_ROTATION_SECONDS );
+#endif
 
-    print_int( "DEFAULT_SEND_RATE", (long long) default_server_protocol.send_rate );
-    print_int( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", (long long) default_server_protocol.handshake_deadline_seconds );
-    print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", default_server_protocol.cookie_lifetime_seconds );
-    print_int( "DEFAULT_COOKIE_ROTATION_SECONDS", 0 );
-    print_int( "DEFAULT_MAX_TOKEN_LIFETIME_SECONDS", default_server_protocol.max_token_lifetime_seconds );
+    print_int( "SIZING_USED_TOKEN_HISTORY_RATIO", ROCKETNET_USED_TOKEN_HISTORY_RATIO );
+    print_int( "SIZING_ADMITTED_TOKEN_SET_RATIO", ROCKETNET_ADMITTED_TOKEN_SET_RATIO );
+    print_int( "SIZING_ENCRYPTION_MAP_RATIO", ROCKETNET_ENCRYPTION_MAP_RATIO );
 
-    // ----------------------------------------------------------------
-    //   the table-sizing ratios as multiples of max_clients, from the
-    //   server transport implementation: used-token history = 8,
-    //   admitted-token set = 2, encryption map = 2.
-    // ----------------------------------------------------------------
-
-    print_int( "SIZING_USED_TOKEN_HISTORY_RATIO", 8 );
-    print_int( "SIZING_ADMITTED_TOKEN_SET_RATIO", 2 );
-    print_int( "SIZING_ENCRYPTION_MAP_RATIO", 2 );
+    print_text( "KDF_CONTEXT_HANDSHAKE_C2S", ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S );
+    print_text( "KDF_CONTEXT_HANDSHAKE_S2C", ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C );
+    print_text( "KDF_CONTEXT_SESSION_C2S", ROCKETNET_KDF_CONTEXT_SESSION_C2S );
+    print_text( "KDF_CONTEXT_SESSION_S2C", ROCKETNET_KDF_CONTEXT_SESSION_S2C );
 
     return 0;
 }
