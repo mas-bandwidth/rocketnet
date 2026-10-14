@@ -177,14 +177,15 @@ All figures below for the co-located sidecar gateway are `[ESTIMATED]` with expl
   2. **Passing the token to the Gateway to authorize UDP port allocation:**
      * **Crucial insight (`[SOURCED: STANDARD.md:824-893]`):** How does a gateway verify that a connecting browser holds a valid, unexpired Connect Token for this server **without** sharing a secret with the backend or the game server?
      * **Answer from `STANDARD.md:824-893`:** The first **640 bytes** of the 768-byte Connect Token (and bytes `70..710` of a 710-byte `Type 0 Connection Request` packet, `[SOURCED: STANDARD.md:1204-1225]`) consist of the **576-byte `signed connect data`** in the clear followed by the **64-byte `Ed25519 signature`** (`crypto_sign_verify_detached`)!
-     * Inside that 576-byte `signed connect data`, the following fields are **in the clear at fixed offsets** (`[SOURCED: STANDARD.md:826-872]`):
-       * `0..13`: `"ROCKETNET V1.0"` (`14 B`)
-       * `14..18`: `version_info = 0x4E7C1A93` (`4 B`)
-       * `18..26`: `protocol_id` (`u64`)
-       * `26..34`: `create_timestamp` (`u64`)
-       * `34..42`: `expire_timestamp` (`u64`, Unix seconds)
-       * `47..53` / `53..71`: `ipv4_address` (`6 B`) and `ipv6_address` (`18 B`) of the target game server
-       * `71..103`: `server_public_key` (`32 B`)
+     * Inside that 576-byte `signed connect data`, the following fields are **in the clear at fixed offsets** (`[SOURCED: STANDARD.md:830-866]`):
+       * `0..4`: `version = 0x4E7C1A93` (`uint32`, `4 B` opaque constant — no ASCII banner, `[SOURCED: STANDARD.md:831, 858]`)
+       * `4..12`: `protocol_id` (`uint64`, `8 B`)
+       * `12..20`: `create_timestamp` (`uint64`, `8 B`)
+       * `20..28`: `expire_timestamp` (`uint64`, `8 B`, Unix seconds)
+       * `28..32`: `timeout_seconds` (`int32`, `4 B`)
+       * `32..33`: `address_flags` (`uint8`, `1 B`: bit 0 = has IPv4, bit 1 = has IPv6)
+       * `33..39` / `39..57`: `ipv4_address` (`6 B`) and `ipv6_address` (`18 B`) of the target game server
+       * `57..89`: `server_public_key` (`32 B`, followed by `89..521` `sealed_private_block` `432 B` and `521..576` `55 B` zero pad, `[SOURCED: STANDARD.md:842-844, 866]`)
      * Therefore, the gateway only needs the **public** `backend_public_key` (`32 B`, public knowledge!) and the target `server_public_key` / address! When a browser opens a WebTransport, WebRTC, or WebSocket session (or sends its first 710-byte `Type 0 Connection Request` datagram), the gateway checks `expire_timestamp >= now`, verifies the 64-byte Ed25519 signature over the 576-byte signed block using `crypto_sign_verify_detached` (`~60–100 us`), checks a small sliding bloom/LRU filter of `BLAKE2b-128(signed_data)` to prevent token flooding, and only then allocates the local UDP socket `udp_fd[i]`! **Zero shared secrets are required!**
 
 ### 3.3 Cookie Exchange, 3-RTT Handshake, and Handshake Compression
@@ -260,7 +261,7 @@ Reading `sdk/rocketnet_client_transport.cpp` and `sdk/rocketnet_driver.h` uncove
      * `receive_buffer[2][1024][2048]` = $2 \times 1024 \times 2048 = 4{,}194{,}304\text{ bytes}$ (`4.0 MiB`) (`[ESTIMATED]`)
      * `received_packets[1024][2048]` = $1024 \times 2048 = 2{,}097{,}152\text{ bytes}$ (`2.0 MiB`) (`[ESTIMATED]`)
      * `payload_ring[256]` = $256 \times 1456 = 372{,}736\text{ bytes}$ (`364 KiB`) (`[ESTIMATED]`)
-   * And `rocketnet_reassembly_set_create` (`sdk/rocketnet_fragment.cpp:103-141`, called from `sdk/rocketnet_client_transport.cpp:228`) allocates `set->delivered` (`512 * 16384` = $8{,}388{,}608\text{ bytes}$, `8.0 MiB`) plus `set->arena` (`8 * (16384 + 1387)` = $142{,}168\text{ bytes}$) (`[SOURCED: STANDARD.md:1883-2000, sdk/rocketnet_fragment.cpp:103-141]`).
+   * And `rocketnet_reassembly_set_create` (`sdk/rocketnet_fragment.cpp:103-141`, called from `sdk/rocketnet_client_transport.cpp:228` with `delivered_capacity = 512` and default `max_payload_bytes = 16384` from `sdk/rocketnet.h:433, 527-528`, `[SOURCED: STANDARD.md:1883-2000, sdk/rocketnet_client_transport.cpp:228, sdk/rocketnet_fragment.cpp:103-141, sdk/rocketnet.h:433, 527-528]`) allocates `set->delivered` (`512 * max_payload_bytes` = `512 * 16384` = $8{,}388{,}608\text{ bytes}$, `8.0 MiB`, `[ESTIMATED]`) plus `set->arena` (`8 * (16384 + 1387)` = $142{,}168\text{ bytes}$, `[ESTIMATED]`).
    * In single-threaded WASM (where `receive_buffer[2]` double-buffering between the background thread and main thread is unnecessary), reducing `ROCKETNET_NUM_CLIENT_PACKETS` from `1024` to `128` for browser builds and hashing delivered payloads (or sizing the delivered ring to `64` entries on the client) shrinks the WASM client heap from **~15.2 MiB to ~1.5 MiB** (`[ESTIMATED]`).
 
 ### 4.3 Cryptographic Primitives in the Browser: `libsodium` WASM vs. `WebCrypto` (`SubtleCrypto`)
@@ -272,7 +273,7 @@ We verified the current status of the W3C Web Cryptography API (`[SOURCED: S20, 
 | **`ChaCha20-Poly1305` IETF** (`crypto_aead_chacha20poly1305_ietf`, `[S46, RFC 7539]`) | Encrypts & authenticates every session and handshake packet (`60 Hz`) | **NO** (`0` occurrences in WebCrypto Level 2 `[SOURCED: S53]`) | **None** (`NotSupportedError` in all browsers) `[SOURCED: S53, S57]` | **Must use WASM (`sodium/sodium.c` or `libsodium.js`)**; synchronous, ~1.8 $\mu\text{s}$/packet, zero heap allocations `[OPINION]` |
 | **`BLAKE2b-256` / `BLAKE2b-128`** (`crypto_generichash_blake2b`, `[S47, RFC 7693]`) | Derives the 4 directional keys (`RKTNHNDC`, `RKTNHNDS`, `RKTNSESC`, `RKTNSESS`) + token history hash | **NO** (`0` occurrences in WebCrypto Level 2 `[SOURCED: S53]`) | **None** (WebCrypto only has SHA-1/256/384/512, HKDF, PBKDF2) `[SOURCED: S53, S57]` | **Must use WASM (`sodium/sodium.c` or `libsodium.js`)** `[OPINION]` |
 | **`X25519`** (`crypto_kx` / `crypto_scalarmult`, `[S49, RFC 7748]`) | Ephemeral handshake key exchange for forward secrecy | **YES** (`§26 X25519` in WebCrypto Level 2 `[SOURCED: S53]`) | **Chrome 133+, Edge 133+, Firefox 130+, Safari 17+, iOS 17+** (`[SOURCED: S57]`) | Since WASM `libsodium` is already loaded for ChaCha20-Poly1305 and BLAKE2b, using `libsodium`'s synchronous X25519 avoids `Promise` async state machines and works on Chrome $< 133$ `[OPINION]` |
-| **`Ed25519`** (`crypto_sign_verify_detached`, `[S48, RFC 8032]`) | Server/gateway verifies Connect Token signature (**client never calls Ed25519**, `[SOURCED: STANDARD.md:180-185, 762-789]`) | **YES** (`§25 Ed25519` in WebCrypto Level 2 `[SOURCED: S53]`) | **Chrome 137+, Edge 137+, Firefox 129+, Safari 17+, iOS 17+** (`[SOURCED: S57]`) | Note: Disagrees with the brief's parenthetical that Ed25519 is missing from WebCrypto in current browsers (all 3 engines now ship it as of Chrome 137 / Firefox 129 / Safari 17 `[SOURCED: S57]`), and the RocketNet client does not verify Ed25519 signatures anyway (`[SOURCED: STANDARD.md:180-185, 762-789]`). |
+| **`Ed25519`** (`crypto_sign_verify_detached`, `[S48, RFC 8032]`) | Server/gateway verifies Connect Token signature (**client never calls Ed25519**, `[SOURCED: STANDARD.md:180-185, 890-893]`) | **YES** (`§25 Ed25519` in WebCrypto Level 2 `[SOURCED: S53]`) | **Chrome 137+, Edge 137+, Firefox 129+, Safari 17+, iOS 17+** (`[SOURCED: S57]`) | Note: Disagrees with the brief's parenthetical that Ed25519 is missing from WebCrypto in current browsers (all 3 engines now ship it as of Chrome 137 / Firefox 129 / Safari 17 `[SOURCED: S57]`), and the RocketNet client does not verify Ed25519 signatures anyway (`[SOURCED: STANDARD.md:892]`). |
 | **`SipHash-2-4`** (`crypto_shorthash_siphash24`) | Fast internal hash tables | **NO** (`[SOURCED: S53]`) | **None** (`[SOURCED: S53]`) | Included in `sodium/sodium.c` / `libsodium.js` (`~1 KB` WASM) `[OPINION]` |
 
 ### 4.4 Mapping `sdk/rocketnet.h` and `rocketnet_client_driver_operations_t` to JavaScript
