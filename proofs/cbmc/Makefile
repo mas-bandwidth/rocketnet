@@ -11,8 +11,7 @@
 #   ack run       4096  (one pass over the real sent window)
 # REPLAY_DELTA_BOUND and ACK_RUN_BOUND shrink a proof to that many steps
 # when the complete bound does not fit in the five-minute budget. The
-# replay near unwind stays at least 64, because the word-mask reference
-# runs once per word.
+# replay near unwind stays at least 65 to initialize all 64 symbolic words.
 
 CBMC ?= cbmc
 
