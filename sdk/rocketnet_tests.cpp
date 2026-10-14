@@ -3982,6 +3982,54 @@ static void rocketnet_test_handshake_to_challenge( struct rocketnet_test_server_
     rocketnet_test_client_derive_from_challenge( response, response_bytes, client_keys );
 }
 
+void rocketnet_test_slotless_session_packet_leaves_window()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // a request through to the challenge leaves a mapping with no slot: the
+    // response that would assign one has not arrived
+    struct rocketnet_connection_keys_t client_keys;
+    rocketnet_test_handshake_to_challenge( &test, 0x51A17E55ULL, &client_keys );
+
+    int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    rocketnet_check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
+    rocketnet_check( mapping->client_index == -1 );
+
+    // a keep-alive at session sequence 1, sealed under the mapping's own
+    // session key: it opens, then must be ignored for having no slot
+    uint8_t keep_alive_data[8];
+    uint8_t * ka = keep_alive_data;
+    rocketnet_write_uint32( &ka, 0 );
+    rocketnet_write_uint32( &ka, 4 );
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = rocketnet_test_write_session_packet_salted( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1,
+                                                                   keep_alive_data, 8,
+                                                                   mapping->connection_salt,
+                                                                   mapping->keys.session_client_to_server );
+    rocketnet_check( packet_bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+
+    // the session window before the packet: the slotless packet must leave it
+    // byte-identical (NoAdvanceBeforeConnect)
+    struct rocketnet_replay_protection_t replay_before = mapping->replay_session;
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload_out[ROCKETNET_RECEIVE_CEILING];
+    int payload_out_bytes = 0;
+    int payload_client_index = -1;
+
+    uint64_t not_connected_before = test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED];
+
+    rocketnet_check( rocketnet_test_process_packet( &test, packet, packet_bytes, response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == not_connected_before + 1 );
+    rocketnet_check( memcmp( &mapping->replay_session, &replay_before, sizeof(replay_before) ) == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_server_full_connect()
 {
     struct rocketnet_test_server_t test;
@@ -11724,6 +11772,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_admission_hook_drops_before_verify", rocketnet_test_admission_hook_drops_before_verify },
     { "test_request_path_config_branches", rocketnet_test_request_path_config_branches },
     { "test_replay_protection", rocketnet_test_replay_protection },
+    { "test_slotless_session_packet_leaves_window", rocketnet_test_slotless_session_packet_leaves_window },
     { "test_client_slots", rocketnet_test_client_slots },
     { "test_client_slots_free_list", rocketnet_test_client_slots_free_list },
     { "test_table_creates_refuse_overflowing_capacity", rocketnet_test_table_creates_refuse_overflowing_capacity },
