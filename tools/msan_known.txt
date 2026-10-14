@@ -1,0 +1,11 @@
+# tools/msan_known.txt: the known MemorySanitizer findings for the portable
+# unit suite. Each line names one finding by the signature the gate derives
+# from its top stack frame: the function name and source location of the
+# "#0" frame in the warning (e.g. `foo /path/file.cpp:42:3`). A finding that
+# appears in the run but is absent here fails the `bash tools/run_msan.sh`
+# gate; the gate passes when the run is clean or every finding is listed.
+#
+# This file starts empty: no finding has been observed at BASE. When the leg
+# first runs on a Linux bench and reports a finding, list it here with the
+# trace the gate printed, so the finding is known and the gate stays green
+# for it alone.

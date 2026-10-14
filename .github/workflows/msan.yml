@@ -1,0 +1,28 @@
+# The MemorySanitizer leg: the portable (non-XDP, no io_uring) unit suite,
+# built with clang -fsanitize=memory and origin tracking, with the vendored
+# sodium compiled the same way (sodium/ is part of the build; the default
+# config uses it, so every linked object is instrumented). tools/run_msan.sh
+# is the one command. The script fails only on a finding that is not listed
+# in tools/msan_known.txt; a clean run prints "MSan: clean".
+name: msan
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  msan:
+    name: MemorySanitizer
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+
+      - name: Run the MSan gate
+        run: bash tools/run_msan.sh
