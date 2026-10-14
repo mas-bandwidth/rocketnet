@@ -5,6 +5,7 @@
 
 #include "rocketnet_tests.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include "rocketnet_platform.h"
 
@@ -3233,6 +3234,71 @@ void rocketnet_test_request_path_slots_and_denial()
             expected++;
         rocketnet_check( test.counters.values[i] == expected );
     }
+
+    rocketnet_test_server_teardown( &test );
+}
+
+
+void rocketnet_test_full_server_refuses_before_keypair()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( dummy_user_data, 0, sizeof(dummy_user_data) );
+    for ( int i = 0; i < 4; i++ )
+        rocketnet_check( rocketnet_client_slots_assign( test.server.client_slots, 0xD000 + (uint64_t) i, -1, dummy_user_data ) == i );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_test_build_request( request, 0x5555666677778888ULL, rocketnet_test_salt );
+    rocketnet_test_pass_cookie_gate( &test, request );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    struct rocketnet_counters_t before = test.counters;
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    int result = rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes );
+    rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_seal == 1 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_request_path_cheap_refusals_spend_no_crypto()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
+
+    // wrong version: refused at the version rung, before any cryptography
+    rocketnet_test_build_request( request, 0x0B0B, rocketnet_test_salt );
+    request[signed_offset + ROCKETNET_SIGNED_OFFSET_VERSION] ^= 1;
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_seal == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+
+    // no cookie: refused at the cookie gate, before any cryptography
+    rocketnet_test_build_request( request, 0x0A0A, rocketnet_test_salt );
+    memset( &rocketnet_crypto_tally, 0, sizeof(rocketnet_crypto_tally) );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_seal == 0 );
+    rocketnet_check( rocketnet_crypto_tally.aead_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -9937,17 +10003,17 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
     // a 16-byte buffer with a trailing canary is refused before anything is
     // written: the canary and the payload bytes beside it are untouched
 
-    struct { uint8_t buffer[16]; uint8_t canary[8]; } small;
-    memset( &small, 0xA5, sizeof(small) );
+    struct { uint8_t buffer[16]; uint8_t canary[8]; } short_buffer;
+    memset( &short_buffer, 0xA5, sizeof(short_buffer) );
     int payload_bytes = 12345;
 
     const uint64_t too_small_before = counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, packet, packet_bytes, pair.time,
-                                                              small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+                                                              short_buffer.buffer, (int) sizeof(short_buffer.buffer), &payload_bytes ) == 0 );
     rocketnet_check( payload_bytes == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small_before + 1 );
-    for ( int i = 0; i < (int) sizeof(small); i++ )
-        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+    for ( int i = 0; i < (int) sizeof(short_buffer); i++ )
+        rocketnet_check( ( (uint8_t *) &short_buffer )[i] == 0xA5 );
 
     // the refusal precedes any read of the packet: a packet that would not
     // survive the prefilter is refused here instead, only the capacity
@@ -9961,14 +10027,14 @@ void rocketnet_test_client_protocol_refuses_a_small_capacity()
 
     payload_bytes = 12345;
     rocketnet_check( rocketnet_client_protocol_process_packet( &pair.client, one_byte, (int) sizeof(one_byte), pair.time,
-                                                               small.buffer, (int) sizeof(small.buffer), &payload_bytes ) == 0 );
+                                                               short_buffer.buffer, (int) sizeof(short_buffer.buffer), &payload_bytes ) == 0 );
     rocketnet_check( payload_bytes == 0 );
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
         rocketnet_check( counters[i] == counters_before[i] + ( i == ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL ? 1 : 0 ) );
     rocketnet_check( pair.client.state == state_before );
     rocketnet_check( pair.client.received_session_sequence == received_sequence_before );
-    for ( int i = 0; i < (int) sizeof(small); i++ )
-        rocketnet_check( ( (uint8_t *) &small )[i] == 0xA5 );
+    for ( int i = 0; i < (int) sizeof(short_buffer); i++ )
+        rocketnet_check( ( (uint8_t *) &short_buffer )[i] == 0xA5 );
 
     // the same packet, untouched by the refused call, is accepted whole into a
     // full buffer and lands byte-exact
@@ -12736,6 +12802,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_request_path_crypto_refusals", rocketnet_test_request_path_crypto_refusals },
     { "test_request_path_state_refusals", rocketnet_test_request_path_state_refusals },
     { "test_request_path_slots_and_denial", rocketnet_test_request_path_slots_and_denial },
+    { "test_full_server_refuses_before_keypair", rocketnet_test_full_server_refuses_before_keypair },
+    { "test_request_path_cheap_refusals_spend_no_crypto", rocketnet_test_request_path_cheap_refusals_spend_no_crypto },
     { "test_server_full_connect", rocketnet_test_server_full_connect },
     { "test_server_response_denials", rocketnet_test_server_response_denials },
     { "test_server_receive_refusals", rocketnet_test_server_receive_refusals },

@@ -10,6 +10,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -529,32 +530,18 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
-        uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
-        crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
+        // Cheap refusals come before cryptography (STANDARD.md, Reading
+        // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // no ephemeral pair, so derive them alone and check the slots before
+        // any keypair or scalar multiplication. A full server seals the same
+        // denial as before (same packet, sequence one, nonce in the clear).
 
         struct rocketnet_connection_keys_t keys;
-        if ( !rocketnet_derive_connection_keys( &keys,
-                                                private_data->client_to_server_key,
-                                                private_data->server_to_client_key,
-                                                connection_salt,
-                                                session_nonce,
-                                                server_ephemeral_secret_key,
-                                                client_ephemeral_public_key,
-                                                client_ephemeral_public_key,
-                                                server_ephemeral_public_key ) )
-        {
-            sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
-            rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
-            return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
-
-        sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
-
-        // no slots: denied, sealed under the handshake keys just derived,
-        // carrying the session nonce in the clear. no mapping is created, so
-        // a retransmitted request runs this path again and is denied again.
+        rocketnet_derive_handshake_keys( &keys,
+                                         private_data->client_to_server_key,
+                                         private_data->server_to_client_key,
+                                         connection_salt,
+                                         session_nonce );
 
         if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
@@ -575,6 +562,30 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
         }
+
+        uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
+        uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
+        rocketnet_crypto_tally.keypair++;
+        crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
+
+        if ( !rocketnet_derive_connection_keys( &keys,
+                                                private_data->client_to_server_key,
+                                                private_data->server_to_client_key,
+                                                connection_salt,
+                                                session_nonce,
+                                                server_ephemeral_secret_key,
+                                                client_ephemeral_public_key,
+                                                client_ephemeral_public_key,
+                                                server_ephemeral_public_key ) )
+        {
+            sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
+            sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
+        sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
 
         int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
         if ( index == -1 )

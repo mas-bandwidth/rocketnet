@@ -1397,13 +1397,63 @@ void rocketnet_test_platform_socket()
 #endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+static void rocketnet_test_darwin_oversize_receive( const char * pump )
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_t local_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_address_parse( &local_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024*1024, 1024*1024, pump );
+    rocketnet_check( socket != NULL );
+    rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+    local_address.port = bind_address.port;
+
+    uint8_t send_data[8192];
+    for ( int i = 0; i < (int) sizeof(send_data); ++i )
+        send_data[i] = (uint8_t) i;
+    const int sizes[] = { ROCKETNET_RECEIVE_CEILING, ROCKETNET_RECEIVE_CEILING + 1, (int) sizeof(send_data) };
+    for ( int i = 0; i < 3; ++i )
+    {
+        rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizes[i] );
+        struct
+        {
+            uint8_t before[16];
+            uint8_t data[ROCKETNET_RECEIVE_CEILING];
+            uint8_t after[16];
+        } receive;
+        memset( &receive, 0xA5, sizeof(receive) );
+        rocketnet_address_t from;
+        int packet_bytes = 0;
+        const double start_time = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start_time < 5.0 )
+        {
+            if ( rocketnet_platform_socket_receive_packets( socket, &from, receive.data, sizeof(receive.data), &packet_bytes, 1 ) > 0 )
+                break;
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( packet_bytes == sizes[i] );
+        rocketnet_check( rocketnet_address_equal( &from, &local_address ) );
+        rocketnet_check( memcmp( receive.data, send_data, sizeof(receive.data) ) == 0 );
+        for ( int j = 0; j < 16; ++j )
+        {
+            rocketnet_check( receive.before[j] == 0xA5 );
+            rocketnet_check( receive.after[j] == 0xA5 );
+        }
+        rocketnet_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+    }
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 void rocketnet_test_receive_drops_oversize_datagram()
 {
-    // The portable receive path hands the kernel exactly
-    // ROCKETNET_RECEIVE_CEILING bytes, so without MSG_TRUNC a datagram one
-    // byte past the ceiling is truncated into a valid-looking packet and
-    // processed instead of dropped. That truncation happens in the kernel, so
-    // this needs a real socket, which is why it lives here rather than over
+    // The caller provides exactly ROCKETNET_RECEIVE_CEILING bytes, but
+    // a larger datagram must retain its original length rather than appear
+    // to be a valid packet truncated to the ceiling. Truncation happens in
+    // the kernel, so this needs a real socket and lives here rather than over
     // the unit suite's in-memory simulator.
 
     rocketnet_address_t bind_address;
@@ -1457,6 +1507,11 @@ void rocketnet_test_receive_drops_oversize_datagram()
     rocketnet_check( counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 1 );
 
     rocketnet_platform_socket_destroy( socket );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    rocketnet_test_darwin_oversize_receive( "msgx" );
+    rocketnet_test_darwin_oversize_receive( "portable" );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
 // the batch pump seam (#100): every platform serves it -- portable loops

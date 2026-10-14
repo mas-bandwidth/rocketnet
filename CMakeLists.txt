@@ -346,10 +346,8 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(transport_fill bench/transport_fill.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
-    foreach(tool keygen transport_memory)
-        target_link_libraries(${tool} PRIVATE rocketnet)
-    endforeach()
-    foreach(tool soak soak_sim transport_fill lease_cost)
+    target_link_libraries(keygen PRIVATE rocketnet)
+    foreach(tool soak soak_sim transport_memory transport_fill lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
@@ -362,7 +360,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES sdk/rocketnet.h sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
-    sdk/rocketnet_platform.h sdk/rocketnet_counters.h
+    sdk/rocketnet_platform.h sdk/rocketnet_counters.h sdk/rocketnet_route.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)
