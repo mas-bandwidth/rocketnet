@@ -46,3 +46,4 @@ MCRNWindowBrokenSameUpdateReply.cfg	MCRNWindow.tla	invariant	NoSlotCollision	che
 MCRNWindowBrokenHalfRange.cfg	MCRNWindow.tla	invariant	WireNumberReconstructs	check	rnwindow	required	-
 MCRNWindowBrokenHoldOrdered.cfg	MCRNWindow.tla	invariant	OrderedDeliveredInOrder	check	rnwindow	required	-
 MCRNWindowBrokenDropDuplicates.cfg	MCRNWindow.tla	invariant	DeliveredOnce	check	rnwindow	required	-
+MCClientConnectionBrokenEarlyFragment.cfg	MCClientConnection.tla	invariant	FragmentOnlyWhenConnected	ignore-terminal	clientconnection	required	-

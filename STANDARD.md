@@ -1904,6 +1904,17 @@ payload**, the counters make it visible, and anything smarter is a policy for
 the tier above, built on the delivery notifications the transport already
 provides.
 
+**Handshake and control packets are never fragmented, and fragmentation of
+large payloads is allowed only once the connection is fully established and
+verified.** A fragment (type 9) is accepted only on a connected slot: at the
+server, a fragment for a mapping without a slot is dropped and counted
+(`FRAGMENT_NOT_CONNECTED`) before it touches any reassembly state; at the
+client, a fragment in any state other than connected is refused
+(`CLIENT_FRAGMENT_WRONG_STATE`) before the open and before any reassembly
+call. Only the payload send path reaches the fragment splitter, every control
+type is written by its fixed-size writer, and a reassembled payload is
+delivered only as payload bytes, never dispatched by its first byte.
+
 The fragment header sits inside the seal, after the ack block, per _Sealed
 packets_: a uint32 payload id, a fragment index byte, and a fragment count − 1
 byte. The packet type is what distinguishes a fragment from an ordinary

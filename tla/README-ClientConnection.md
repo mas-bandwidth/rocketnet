@@ -200,6 +200,15 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -deadlock -lncheck 
      -config MCClientConnection.cfg MCClientConnection
 ```
 
+**Fragments** are modelled at the receive step: `ClientFragmentReceive` creates
+client reassembly state (`cReasm`) only in state 4 (connected), and
+`ServerFragmentReceive` creates server reassembly state (`sReasm`) only for a
+mapping holding its slot. The invariant `FragmentOnlyWhenConnected` states
+that reassembly state changes only while connected, on both sides.
+`MCClientConnectionBrokenEarlyFragment.cfg` is its reversed witness: it adds
+`ClientFragmentReceiveEarly`, the pre-fix acceptance in sending-connection-response
+(state 3), and must fail `FragmentOnlyWhenConnected`.
+
 `MCClientConnection.cfg` is the committed run: the hang check under "the first packet
 of every kind is dropped" (`KindLoss = "firstkind"`), the code's keep-alive behaviour,
 deadlines and timeouts off, payloads on, no disconnects, checking every safety property
