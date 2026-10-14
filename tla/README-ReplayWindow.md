@@ -152,9 +152,9 @@ The F1 fix clears the whole ring; OV-34 belongs to its separate fix card.
 
 ### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
 
-`w-longskip-window`, `ClearedWords = 4` of 6 (`W = 12`). With four workers TLC prints one
-of several equivalent short traces (which small sequences open before the jump varies;
-the jump and the end state do not). The recorded run's, five states:
+`w-longskip-window`, `ClearedWords = 4` of 6 (`W = 12`). An earlier four-worker run
+produced the following five-state trace. Exploration order can yield a shorter trace;
+the current measured witness below has four states.
 
 | State | Step | `highest` | bits set | `received` |
 |---|---|---|---|---|
@@ -239,10 +239,13 @@ _Processing session packets at the server_ agrees (the STANDARD.md change is PR 
 the code fix is the card `rnfix-replay-advanced-after-connect-check-r2`, which needs that
 PR merged first). `GateBeforeAdvance = TRUE`, the committed run, is that rule.
 
-## RUNS.tsv
+## Recorded and historical runs
 
-Six models landed in parallel; this PR does not edit `tla/RUNS.tsv`. The rows it owes,
-tab-separated, bench hetzner2, 2026-10-13:
+The current case definitions are `MCReplayWindow.cfg` and
+`MCReplayWindowBrokenLongSkip.cfg` in `tla/CASES.tsv`; their measured 19-column
+receipts are in `tla/RUNS.tsv`. The seven-column rows below are the original
+pre-migration model write-up's proposed records. They were never added to that
+ledger and are historical context, not current receipts or case definitions:
 
 ```
 MCReplayWindow	MCReplayWindow.cfg (ClearedWords 6, GateBeforeAdvance TRUE); checks all invariants, Monotone	958503	53249	pass	hetzner2	2026-10-13
