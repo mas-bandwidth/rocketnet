@@ -1,0 +1,170 @@
+# RNReceipts
+
+`RNReceipts.tla` models receipt generation for types 5, 6 and 7. It is a
+standalone module over transport packet events, with no dependency on
+`RNChannel`. The channel draft is not on origin at staging; the interface
+names are aligned with the local draft for later composition. This is a
+model of the design in `docs/CHANNELS.md` 7.4, not a claim that the message
+layer implementation exists.
+
+## Interface and state
+
+- `Send(t)` issues a serial before any packet write. All five nonreceipt
+  types use the same receipt-state transition, so their `t` values coalesce
+  in the state graph. A nonreceipt send is followed by two single-record receipt sends or one
+  two-fragment receipt block.
+- `WritePacket(n,pid)` associates a number/fragment with a transport packet.
+  `smap` contains bounded `[id, nums, unrel]` entries, matching the channel
+  draft. Reliable numbers remain in `Unacked` after map eviction or loss.
+  Reliable retransmission is an abstract choice of any unacked number;
+  scheduling/backoff is outside this model. Unreliable records write once.
+- `OpenPacket(pid)` is a peer transport open. `ReceiveAck(pid)` consumes
+  the transport's acked-packet-id event, and only that event updates
+  `acked`. `PacketLost(pid)` supplies the transport lost-id event. A late
+  ACK may follow loss; no message-level ACK or second ACK channel exists.
+  ACKs of evicted map entries acknowledge no numbers. Duplicate/unknown
+  events with no live transport slot are stuttering inputs.
+- `Tick` ages sent, unacked numbers. `SweepLoss` scans eligible type-5
+  descriptors after their one-RTO deadline or map eviction. Its retained
+  outcome suppresses a late ACK. `Disconnect` represents the documented
+  `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
+  reaches its first-send deadline, even if other traffic progresses.
+- `EmitAck` emits a reliable receipt only when every number of the message
+  is acked. Type 7 has the same receipt rule as type 6; receiver ordering
+  is a channel responsibility. A two-fragment type-5 send promotes to
+  effective type 6 and therefore never emits LOSS.
+- `outcomes` is a ghost history of generated events, separate from `ring`.
+  A full ring drops its oldest event and increments `ringDropped`, as
+  CHANNELS specifies. Draining or overflowing the ring does not allow a
+  second outcome. Progress refers to generation or connection end, not a
+  guarantee that an application which ignores a full ring reads every event.
+
+Payload bytes are opaque. A record is represented by its serial and fragment
+index, not by a message class, serializer or factory. All live structures have
+fixed bounds. This does not prove an allocator implementation, region sizing,
+pointer identity, bandwidth charging or the exhaustion disconnect path;
+those are obligations of the implementation and other models. The receipt
+ring's explicitly specified oldest-drop rule is not a payload-memory
+exhaustion policy.
+
+## Checked scope and properties
+
+The fixed configuration explores types 5, 6 and 7, each with one and two
+fragments. Single-record workloads use three API serials and two receipt
+messages; block workloads use two serials and one receipt block. There is one transport-ID
+slot, one sent-map entry and one ring entry. The reusable module exposes
+packet/map/ring capacities as constants. One slot still permits the last
+fragment to be acked before its predecessor, map eviction followed by a late
+ACK, retransmission, serial isolation and receipt-ring overflow.
+
+Each packet contains one number. Mixed reliable/unreliable packet loads,
+several simultaneously live packet IDs, simultaneous receipt blocks,
+nonreceipt packet traffic and
+receiver application delivery are outside this measured bound. Serial 1
+exercises issuance for all five nonreceipt types but has no transport write
+in this receipt projection. Arbitrary `EvictMap` steps overapproximate map
+pressure from other channel traffic. Only eviction needed to unblock a
+new send/retransmission is weakly fair.
+The one-slot environment may retain an evicted packet until its late ACK or
+lost-packet retirement, and reuses an ID only when both map and transport
+release it. There is no uint32 receipt-serial or uint64 packet-ID wrap proof,
+and no claim about stale events across connection generations.
+
+Exploratory two-ID runs and a one-ID run with two simultaneous blocks
+exceed the 110-second budget. They are
+retained as incomplete experiments, not accepted proofs. The committed
+one-ID configuration checks the same properties without a state constraint
+that prunes transitions or hides violations.
+
+- `ExactlyOneOutcomePerReceiptSerial`: at most one generated outcome, only
+  for an issued receipt serial. `ReceiptProgress` supplies the eventual half.
+- `LossOnlyForUnreliableReceipt`: only effective type 5 emits LOSS; large
+  type 5 is reliable and excluded.
+- `AckedMeansPacketOpened`: acknowledged numbers were transport-opened, and
+  an unreliable ACKED receipt has a matched transport packet ACK.
+- `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation waits
+  for all fragment numbers, independently of their index/arrival order.
+- `ReceiptRingBounded`: receipt queue length never exceeds its capacity.
+- `UnreliableNeverResent`: effective type 5 is written at most once.
+- `ReceiptProgress`: every issued receipt send eventually generates an
+  outcome or its connection ends. Fairness requires eventual transport-slot completion, allowing either
+  packet ACK or loss/retirement; it never forces a lost packet to open or
+  any packet to be ACKED. Persistent loss is included, so this condition
+  is weaker than fair Link delivery. Fairness also applies to packet writes,
+  eviction under actual send pressure, update ticks,
+  receipt processing and timeout handling. No safety property relies on
+  fairness. The reliable timeout is part of the design, not a spontaneous
+  end transition added solely to satisfy liveness.
+
+## Reversed witnesses
+
+The witness configurations enable exactly one fault and check its named
+property, plus `TypeOK`. They must exit 12 and identify that property.
+
+- `BrokenLastIndexAck`: the seven-state trace chooses a two-fragment type-5
+  message, promoted to effective type 6. After the two API sends, packet 0
+  carries fragment `<<2,1>>`; open and packet ACK leave only that last index
+  in `acked`. `EmitAck(2)` then violates
+  `BlockAckedOnlyWhenAllFragmentsAcked`, with `<<2,0>>` still unacked.
+- `BrokenTwoOutcomes`: the nine-state trace chooses single-record type 5.
+  The sends and packet write are followed by `Tick` to RTO 1, transport
+  open, then `SweepLoss(2)`. Its late transport ACK matches the retained
+  map entry. `EmitAck(2)` appends ACKED after LOSS, violating
+  `ExactlyOneOutcomePerReceiptSerial` even though the full one-entry ring
+  now contains only ACKED. Generation history catches what the ring hides.
+- `BrokenReliableLoss`: the six-state trace chooses a two-fragment type-5
+  message promoted to effective type 6. Fragment `<<2,0>>` is written;
+  `Tick` reaches RTO 1. The broken `SweepLoss(2)` emits LOSS for this reliable
+  block, violating `LossOnlyForUnreliableReceipt` before its reliable timeout
+  at 2. Actual types 6 and 7 share this checked rule; the enumerated witness
+  selects the promoted type first.
+
+The measured traces and their exact state counts are recorded with the run
+records and the task's raw TLC evidence. No witness uses an unrelated type
+error or a different safety violation as a substitute for its named property.
+
+## Reference behavior and differences
+
+The reference study is `docs/RAKNET-RELIABILITY.md` 7.3, 7.4, 10 and I9-I12.
+Both designs allocate a serial at API send, use packet ACKs rather than
+application-consumption reports, never retransmit an unreliable receipt
+record, and never emit reliable LOSS. Types 5/6/7 dispatch as base wire types
+0/2/3; receipt bookkeeping does not introduce a wire ACK protocol. Large type
+5 promotes to reliable, matching the reference.
+
+The deliberate receipt differences are:
+
+1. A block waits for all fragment numbers, rather than firing on the
+   highest-index fragment alone (study 7.3).
+2. Sent-map eviction explicitly produces unreliable LOSS in addition to
+   the RTO sweep; the reference receipt history is separate from its
+   datagram history (study 6.1 and 7.3).
+3. The fixed receipt ring drops/counts its oldest event when full. The
+   reference puts five-byte notification messages on its output queue;
+   this model exposes structured `(serial,status)` events instead.
+4. Receipt identity uses the send descriptor's issued serial. The reference
+   loopback path reads the global counter and may report the wrong serial
+   (study 7.4). Loopback itself is not modeled here.
+5. The transport owns packet IDs, loss detection and ack production. This
+   module does not recreate the reference reliability layer's datagram
+   ACK/NAK machinery. Reliable first-send timeout maps to the documented
+   endpoint error/disconnect path.
+
+Ordering, sequencing, wire encoding, bandwidth scheduling, allocator and
+zero-copy implementation differences remain in their own design/model cards.
+This receipt module does not claim to validate those unrelated semantics.
+
+## Reproduction
+
+Use the exact runner and JAR pin in `tla/README.md`, on a Linux bench. The
+four registered cases belong to `rnreceipts`. Run shards 0 through 3 with
+`--shards 4 --shard N --workers 2 --timeout 110s`, each in a private output
+directory; witnesses use one worker automatically. Merge their measured
+records with `tlacheck merge --keep tla/RUNS.tsv`, then require
+`tlacheck groups --root . --stale` to print `[]`. Keep superseded records
+verbatim in `RUNS-HISTORY.tsv`; never edit fingerprints or measurements.
+
+Measured final outcomes (generated/distinct, elapsed seconds): fixed
+72,559/25,028, 10.274; last-index 421/250, 0.988; two-outcomes 1,599/755,
+1.073; reliable-loss 155/96, 0.970. The fixed run completes temporal checking;
+the three witnesses each exit 12 with precisely their declared invariant.
