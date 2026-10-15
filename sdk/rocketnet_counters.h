@@ -388,6 +388,22 @@ enum
     ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED,
     ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS,
 
+    // RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a wire
+    // violation, counted once per record, and each ends the connection with
+    // ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION. A record whose channel is at
+    // or past this end's count; a block fragment whose count or index
+    // disagrees with the block's first-seen count, or whose count is above
+    // ceil(max_message_bytes / F), or whose length is not F (or 1 to F for the
+    // last); a record whose span lies outside the receive ring; an ordering
+    // index a window or more ahead of the channel's read index; and the total
+    // of every violation that ended a connection. appended: indices are the
+    // contract.
+    ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL,
+    ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK,
+    ROCKETNET_COUNTER_MESSAGE_BAD_RING,
+    ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD,
+    ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION,
+
     ROCKETNET_NUM_COUNTERS
 };
 

@@ -235,6 +235,11 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL:                      return "MESSAGE_RECEIPT_RING_FULL";
         case ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED:                          return "MESSAGE_RECEIPT_ACKED";
         case ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS:                           return "MESSAGE_RECEIPT_LOSS";
+        case ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL:                            return "MESSAGE_BAD_CHANNEL";
+        case ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK:                              return "MESSAGE_BAD_BLOCK";
+        case ROCKETNET_COUNTER_MESSAGE_BAD_RING:                               return "MESSAGE_BAD_RING";
+        case ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD:                         return "MESSAGE_ORDERING_AHEAD";
+        case ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION:                     return "MESSAGE_PROTOCOL_VIOLATION";
         default:
             rocketnet_assert( 0 );
             return "???";

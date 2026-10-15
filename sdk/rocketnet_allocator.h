@@ -111,11 +111,17 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint8_t reliability;
     uint8_t priority;
     uint8_t in_use;
-    uint8_t flags;
+    uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[22];               // layers 3 to 6's per-send state lands here, inside the pinned 64
+    uint8_t reserved[10];               // layer 3's first_send (8 bytes, then its flag byte) lands here, inside the pinned 64
+    uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
+    uint32_t span_prev, span_next;      // RN_SEND_FLAG_SPAN: the live spans, oldest first (RN_DESCRIPTOR_NONE ends)
 };
+
+// a send descriptor's flags
+
+#define RN_SEND_FLAG_SPAN       0x01    // the message lives in one contiguous span of the send spans, not in store chunks
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
@@ -147,7 +153,7 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
     uint8_t code;
     uint8_t pad;
     uint32_t serial;
-    uint32_t pad2;
+    uint32_t descriptor;                // the receive descriptor slot to release when the update ends, or RN_DESCRIPTOR_NONE (7.2, 8)
 };
 
 struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
@@ -196,6 +202,7 @@ enum
     RN_PART_SEQUENCED_HOLDS,            // 1432 Ru
     RN_PART_RECEIPTS,                   // 16 Rq
     RN_PART_RESEND_FIFO,                // 8 W
+    RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
 };
 
@@ -320,6 +327,11 @@ struct rn_region_t
     uint8_t * store_memory;
     uint64_t store_bytes;
     rn_send_store_t store;
+    uint8_t * send_spans;               // the contiguous spans of messages above one store chunk (4)
+    uint32_t span_bytes;                // SR, the spans' size
+    uint32_t span_head;                 // the byte offset of the oldest live span's start
+    uint32_t span_tail;                 // the byte offset the next span is placed at
+    uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -373,6 +385,31 @@ int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_M
 int rn_connection_memory_decide( const rn_region_t * region );
 
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
+
+// The largest message that takes a store chunk is one block stride, 1152 bytes.
+// A message above it takes a contiguous span (rn_region_send_alloc_span): the
+// application writes it once, in place, and every fragment is copied from it
+// into a frame (4, 8).
+#define RN_SPAN_MIN_BYTES       ( RN_STORE_LARGE_BYTES + 1 )
+
+// One send's descriptor and a contiguous span of the send spans, both or
+// neither, for a message of 1 to max_message_bytes bytes. The span is placed
+// as RNRing places a holdable record (tla/RNRing.tla, PlaceSingle): at the
+// tail, or at the start of the ring when the tail leaves too little room
+// before the end, and admitted only when it stays clear of the oldest live
+// span's start. Spans are freed in any order; the head moves to the oldest
+// live span. A refusal counts MESSAGE_SEND_STORE_FULL (or QUEUE_FULL) and
+// exhausts the region like rn_region_send_alloc (R5). The descriptor index, or
+// RN_DESCRIPTOR_NONE.
+uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
+
+// The bytes of fragment `fragment` of a send, and their length: from the span
+// at fragment * F, or from the single store chunk. NULL for a descriptor not in
+// use or a fragment outside the send.
+const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t descriptor, uint32_t fragment, uint32_t * out_bytes );
+
+// The writable start of a send's bytes: the span's start, or the store chunk.
+uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t descriptor );
 
 // frees one fragment's store chunk from an in-use send descriptor's chain,
 // and returns the descriptor itself to Q when its last fragment is acked (6.4).

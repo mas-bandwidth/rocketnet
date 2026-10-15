@@ -2182,8 +2182,10 @@ and no check reads outside `[payload, payload + L)`.
    broke the size rule above. `MESSAGE_BAD_SIZE`.
 10. The window (_CHANNELS 6.5_): `MESSAGE_NUMBER_OUTSIDE_WINDOW`,
     `MESSAGE_SLOT_COLLISION`.
-11. A code 3 record whose ordering is behind the channel's next ordering index:
-    `MESSAGE_ORDERING_BEHIND`.
+11. A code 3 record whose ordering is behind the channel's next ordering index,
+    or `W` or more ahead of it, both read modulo 2^24 (the ordering index is 24
+    bits): `MESSAGE_ORDERING_BEHIND`, `MESSAGE_ORDERING_AHEAD`. A sender numbers
+    fewer than `W` records at once, so no correct sender is `W` ahead.
 12. A CONTROL record that is malformed or of an unknown kind:
     `MESSAGE_BAD_CONTROL`.
 
@@ -2245,7 +2247,7 @@ RECORDS, fragment 1 of 3 of a RELIABLE_ORDERED block, number 9, ring 72, orderin
                                              1b 80 04 09 00 00 48 00 07 00 00 2c 01 01 00 02 00 <1152 data bytes> 01
 CONFIG, defaults, number 0:
                                              22 1c 00 00 00 00 01 01 09 00 20 00 00 00 00 04 00 00
-                                             00 00 01 00 00 80 00 00 80 04 00 00 00 00 00 00 01
+                                             00 00 04 00 00 00 04 00 80 04 00 00 00 00 00 00 01
 ```
 
 The block vector, field by field: flags `0x1b` (code 3, BLOCK, WIDE); length
@@ -2253,7 +2255,7 @@ The block vector, field by field: flags `0x1b` (code 3, BLOCK, WIDE); length
 fragment 1 of a block based at 0; ordering 7; channel 300 as `2c 01`; fragment
 1; fragments − 1, 2. The CONFIG vector: flags `0x22` (code 2 with CONTROL);
 length 28; number 0; kind 1, version 1; enabled `0x09` (types 0 and 3); 32
-channels, `W` 1024, `B` 65536, max 32768, F 1152. The reference implementation
+channels, `W` 1024, `B` 262144, max 262144, F 1152. The reference implementation
 regenerates every vector from its codec and compares it byte for byte
 (`test_channels_message_record_vectors`).
 

@@ -64,12 +64,20 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED:
             record->number = item->number == ROCKETNET_PACKET_NUMBER_NONE ? 0 : (uint32_t) ( item->number & ROCKETNET_MESSAGE_U24_MASK );
+            record->ring = item->ring;
             record->channel = item->channel;
             record->ordering = item->ordering;
+            if ( item->block )
+            {
+                record->block = 1;                                      // one fragment of a block: its index and the count - 1 (CHANNELS.md 8)
+                record->fragment = item->fragment;
+                record->fragments = item->fragments;
+            }
             break;
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED:
             record->number = item->number == ROCKETNET_PACKET_NUMBER_NONE ? 0 : (uint32_t) ( item->number & ROCKETNET_MESSAGE_U24_MASK );
+            record->ring = item->ring;
             record->channel = item->channel;
             record->ordering = item->ordering;
             record->sequencing = item->sequencing;
@@ -129,7 +137,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         uint32_t count = 0;
         uint32_t records = 0;
         int packet_class = -1;
-        int taken[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
+        int taken[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
 
         // 9.3: fill in the budget's class order. Within a class, channels take
         // turns one item each (round robin), so one chatty channel cannot
@@ -141,6 +149,18 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 const int i = rn_builder_next_in_class( builder, items, num_items, send_class );
                 if ( i < 0 )
                     break;
+
+                // a packet tracks at most MAX_RECORDS records, and at most
+                // MAX_NUMBERS reliable numbers, so every number it carries is
+                // committed; the next record starts the next packet.
+                if ( records >= ROCKETNET_PACKET_BUILDER_MAX_RECORDS ||
+                     ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count >= ROCKETNET_PACKET_BUILDER_MAX_NUMBERS ) )
+                    goto packet_done;
+
+                // an item that travels alone starts a packet and ends it
+                // (tla/RNChannel.tla: a chunk travels alone)
+                if ( items[i].alone && records > 0 )
+                    goto packet_done;
 
                 struct rocketnet_message_record_t record;
                 rn_builder_record( &items[i], &record );
@@ -154,8 +174,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                 }
 
                 items[i].taken = 1;
-                if ( records < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS )
-                    taken[records] = i;
+                taken[records] = i;
                 records++;
 
                 if ( packet_class < 0 )
@@ -166,6 +185,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                     numbers[count++] = items[i].number;
 
                 builder->round_robin = items[i].channel;
+
+                if ( items[i].alone )
+                    goto packet_done;
             }
         }
 
@@ -190,12 +212,12 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             // reliable one waits for the next update and is never dropped, an
             // unreliable one is dropped and counted. Either way nothing after
             // it spends the bucket this update.
-            for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS; r++ )
+            for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; r++ )
                 items[taken[r]].taken = 0;
 
             if ( packet_class == ROCKETNET_SEND_CLASS_UNRELIABLE )
             {
-                for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS; r++ )
+                for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; r++ )
                 {
                     builder->unreliable_dropped++;
                     rn_builder_count( builder->region->counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
