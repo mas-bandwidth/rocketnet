@@ -100,3 +100,6 @@ MCRNChannelTypesReset.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchannelt
 MCRNChannelTypesHold.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesUnordered.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
+MCXdpHardwareBench.cfg	MCXdpHardwareBench.tla	pass	-	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenNoRestore.cfg	MCXdpHardwareBench.tla	invariant	FreeMeansRestored	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenTwoRuns.cfg	MCXdpHardwareBench.tla	invariant	OneRunAtATime	check	xdphardwarebench	required	-
