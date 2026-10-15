@@ -20,6 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"(test_[a-z0-9_]+)"\s*,')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
+EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_]+)(?:\\n)?"')
 
 
 def _table_names(path):
@@ -59,14 +60,16 @@ def registered_functional_names():
     return _table_names(REPO / "functional" / "rocketnet_functional_tests.cpp")
 
 
-def known_functional_names():
-    # the functional binary also runs the sibling exec binaries and prints the
-    # skip_lines functional/main.cpp declares; their names may appear in the
-    # output without being registered in functional/'s own registry, so they
-    # are known names, not unknown ones.
-    names = registered_functional_names()
+def exec_functional_names():
+    # The functional binary also runs the sibling exec binaries (test_xdp,
+    # test_transport_control and each platform's analogue), whose tests print
+    # their own names (e.g. test_xdp_inactive_generation). Those names appear
+    # in the output without being registered in functional/'s own registry, so
+    # they are known names, not unknown ones. Only the name-shaped string
+    # literals the exec sources print are known -- not every identifier in the
+    # file, which would turn the whole vocabulary into "known" names.
+    names = set()
     for rel in (
-        "functional/main.cpp",
         "test_serialize.cpp",
         "test_transport_control.cpp",
         "test_msgx.cpp",
@@ -77,7 +80,7 @@ def known_functional_names():
             text = (REPO / rel).read_text()
         except OSError:
             continue
-        names |= set(NAME_RE.findall(text))
+        names |= {m.group(1) for m in EXEC_TEST_NAME_RE.finditer(text)}
     return names
 
 
@@ -90,9 +93,11 @@ def printed_names(lines):
     return names
 
 
-def assert_name_set(printed, registered, label):
+def assert_name_set(printed, registered, label, known=None):
+    if known is None:
+        known = registered
     missing = sorted(registered - printed)
-    unknown = sorted(printed - registered)
+    unknown = sorted(printed - known)
     if missing or unknown:
         parts = []
         if missing:
@@ -129,7 +134,8 @@ def main():
         if result.returncode:
             sys.exit("functional suite failed: %s" % result.returncode)
         printed = printed_names(result.stdout.splitlines())
-        assert_name_set(printed, known_functional_names(), "functional")
+        assert_name_set(printed, registered_functional_names(), "functional",
+                        known=registered_functional_names() | exec_functional_names())
         return
 
     # Preserve any caller's explicit ROCKETNET_DRIVER pin. Other values exercise
