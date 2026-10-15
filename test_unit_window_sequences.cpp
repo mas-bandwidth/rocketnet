@@ -577,6 +577,9 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
         *descriptor = w->mint++;
         return 1;
     }
+    // rn_region_send_alloc now refuses while exhausted (RNConnectionMemory.tla);
+    // caller treats NONE as no more room for this action; no post-exhaust
+    // alloc expected (confirmed by grep of listed callers).
     *descriptor = rn_region_send_alloc( w->region, (int) bytes );
     return *descriptor != RN_DESCRIPTOR_NONE;
 }

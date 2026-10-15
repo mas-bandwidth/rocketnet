@@ -1426,17 +1426,26 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free );
 
-    // a free returns the descriptor and its chunk
-
+    // a free returns the descriptor and its chunk, but with guard an exhausted
+    // region refuses the next alloc (RNConnectionMemory.tla: Exhaust then only
+    // to Kick; carve or reset before next Use succeeds)
     rn_region_send_free( region, descriptors[5] );
     check( region->descriptors_free == 1 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free + 1 );
-    check( rn_region_send_alloc( region, 10 ) == descriptors[5] );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 2 );
+    rn_region_carve( region );
+    check( region->descriptors_free == 16 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free + 16 );
+    uint32_t da = rn_region_send_alloc( region, 10 );
+    check( da != RN_DESCRIPTOR_NONE );
+    rn_region_send_free( region, da );
+    check( region->descriptors_free == 16 );
 
     // a store refusal takes no descriptor, and is counted as itself
+    // (carve above left all descriptors free; old ids not used to avoid
+    // assert on in_use after reset)
 
-    for ( int i = 0; i < 16; i++ )
-        rn_region_send_free( region, descriptors[i] );
     check( region->descriptors_free == 16 );
     check( rn_region_send_alloc( region, config.max_message_bytes + 1 ) == RN_DESCRIPTOR_NONE );   // too large is a refusal, never a store attempt
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
@@ -4215,7 +4224,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     config.receive_ring_bytes = (int) B;
     config.max_message_bytes = (int) ( 3 * F );
     config.send_buffer_bytes = 65536;
-    config.send_queue_messages = 64;
+    config.send_queue_messages = 256; // bound sends (queue > total) so lossy soak never exhausts descriptors (exhaust now terminal per RNConnectionMemory until reset; this soak tests lossy window/ack not exhaustion)
     config.packets_in_flight = (int) P;
     config.rto_min_ms = 20;
     config.rto_initial_ms = 50;

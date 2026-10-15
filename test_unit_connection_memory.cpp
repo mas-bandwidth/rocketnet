@@ -234,10 +234,12 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
     // sticky: a later refusal does not clear it or count it again
+    // (now counts QUEUE_FULL via guard, since reuse of existing counter for post-exhaust send)
     check( rn_region_send_alloc( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
     for ( int update = 0; update < 3; update++ )
         check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
 
@@ -249,7 +251,7 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( small );
     rn_region_t * q = rn_arena_region( small, 0 );
     check( cm_fill( q, 10, NULL, 0 ) == 16 );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
     check( rn_connection_memory_decide( q ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
@@ -441,8 +443,56 @@ static void no_allocation_after_create()
     cm_restore();
 }
 
+// RNConnectionMemory ExhaustionOnlyLeadsToDisconnect: after exhaust (descriptor
+// pool), a free returns room to pools but send still refuses (guard); only
+// reset (model Reuse) grants again. Counts reuse existing queue counter.
+static void exhausted_region_refuses_sends_until_reset()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    uint32_t d[16];
+    for ( int i = 0; i < 16; i++ )
+    {
+        d[i] = rn_region_send_alloc( region, 10 );
+        check( d[i] != RN_DESCRIPTOR_NONE );
+    }
+    check( region->descriptors_free == 0 );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    rn_region_send_free( region, d[5] );
+    check( region->descriptors_free == 1 );
+    // guard: free gave room but exhausted refuses, counts again, takes none
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    // reset (the model's after Kick) clears
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    const uint32_t d2 = rn_region_send_alloc( region, 10 );
+    check( d2 != RN_DESCRIPTOR_NONE );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
 REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );

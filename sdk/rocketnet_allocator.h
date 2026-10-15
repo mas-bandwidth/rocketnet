@@ -349,8 +349,10 @@ void rn_region_reset( rn_region_t * region );
 // one send's descriptor and store chunks, both or neither. The descriptor
 // index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
 // a full store MESSAGE_SEND_STORE_FULL, and either exhausts the region
-// (rn_region_exhaust). bytes outside 1..max_message_bytes is the caller's
-// refusal to count, takes nothing here and is not exhaustion.
+// (rn_region_exhaust). An exhausted region refuses until rn_region_reset
+// (RNConnectionMemory.tla Exhaust/Reset/ExhaustionOnlyLeadsToDisconnect),
+// counting with best existing counter, taking nothing. bytes outside
+// 1..max is caller's refusal, not exhaustion.
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
 
 // RNConnectionMemory Exhaust: an operation of this region's connection found

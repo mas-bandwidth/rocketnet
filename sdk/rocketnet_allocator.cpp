@@ -498,6 +498,15 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
     if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
         return RN_DESCRIPTOR_NONE;
 
+    if ( rn_region_exhausted( region ) )
+    {
+        // RNConnectionMemory.tla Exhaust: sticky; only next for connected is Kick
+        // (ExhaustionOnlyLeadsToDisconnect). Reset (Reuse) clears for next Use.
+        // Refuse at top, count with existing, take from neither pool.
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+        return RN_DESCRIPTOR_NONE;
+    }
+
     // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
     // taken from either pool when one of them refuses. It is also the end of
     // the connection: the region is exhausted (tla/RNConnectionMemory.tla,
