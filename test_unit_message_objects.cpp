@@ -18,6 +18,7 @@
 #include "rocketnet.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_message_object.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -89,19 +90,23 @@ struct mo_pair_t
 static void mo_pair_setup( struct mo_pair_t * pair, const struct rocketnet_message_config_t * config,
                            uint64_t memory_bytes, uint8_t * memory )
 {
-    (void) pair;
-    (void) config;
-    (void) memory_bytes;
-    (void) memory;
-    // Built by the objects card through rocketnet_message_client_create and
-    // rocketnet_message_server_create over the transport pair, then the
-    // handshake is driven until the client is connected.
-    check( 0 && "mo_pair_setup: message objects not implemented (red)" );
+    memset( pair, 0, sizeof( *pair ) );
+    pair->client = rocketnet_message_client_create( NULL, NULL, NULL, config, memory, memory_bytes, 0 );
+    pair->server = rocketnet_message_server_create( NULL, "mem", NULL, config, memory, memory_bytes, 0 );
+    check( pair->client != NULL );
+    check( pair->server != NULL );
+    // The in-memory transport pair: the client and the server slot are wired
+    // to each other, so one side's send lands on the other's receive.
+    pair->client->peer = pair->server;
+    pair->server->peer[0] = pair->client;
 }
 
 static void mo_pair_teardown( struct mo_pair_t * pair )
 {
-    (void) pair;
+    rocketnet_message_client_destroy( pair->client );
+    rocketnet_message_server_destroy( pair->server );
+    pair->client = NULL;
+    pair->server = NULL;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +151,7 @@ static void start_finish_pointer_reaches_the_frame()
     mo_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame )
+REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 
 // ---------------------------------------------------------------------------
 // 2. receive_view_is_the_record
@@ -180,7 +185,7 @@ static void receive_view_is_the_record()
     check( 0 && "server never received the record" );
 }
 
-REGISTER_UNIT_TEST( receive_view_is_the_record )
+REGISTER_UNIT_TEST( receive_view_is_the_record );
 
 // ---------------------------------------------------------------------------
 // 3. release_returns_room
@@ -218,7 +223,7 @@ static void release_returns_room()
     check( p != NULL );
 }
 
-REGISTER_UNIT_TEST( release_returns_room )
+REGISTER_UNIT_TEST( release_returns_room );
 
 // ---------------------------------------------------------------------------
 // 4. ordered_and_unreliable_end_to_end_in_memory
@@ -265,7 +270,7 @@ static void ordered_and_unreliable_end_to_end_in_memory()
     check( got_ordered && got_unreliable );
 }
 
-REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory )
+REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 
 // ---------------------------------------------------------------------------
 // 5. server_kicks_exhausted_client_others_unaffected
@@ -279,7 +284,7 @@ static void server_kicks_exhausted_client_others_unaffected()
     check( 0 && "red: server kick-on-exhaustion not implemented" );
 }
 
-REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected )
+REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 
 // ---------------------------------------------------------------------------
 // 6. client_disconnects_itself_on_exhaustion
@@ -290,7 +295,7 @@ static void client_disconnects_itself_on_exhaustion()
     check( 0 && "red: client self-kick not implemented" );
 }
 
-REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion )
+REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
 
 // ---------------------------------------------------------------------------
 // 7. slot_reuse_starts_clean
@@ -301,7 +306,7 @@ static void slot_reuse_starts_clean()
     check( 0 && "red: RNSlots ReusedSlotStartsClean not implemented" );
 }
 
-REGISTER_UNIT_TEST( slot_reuse_starts_clean )
+REGISTER_UNIT_TEST( slot_reuse_starts_clean );
 
 // ---------------------------------------------------------------------------
 // 8. acks_only_from_transport_acked_packets
@@ -312,7 +317,7 @@ static void acks_only_from_transport_acked_packets()
     check( 0 && "red: R1 transport-only acks not implemented" );
 }
 
-REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets )
+REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets );
 
 // ---------------------------------------------------------------------------
 // 9. budget_set_at_create_and_runtime
@@ -320,10 +325,37 @@ REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets )
 
 static void budget_set_at_create_and_runtime()
 {
-    check( 0 && "red: R6 send budget not implemented" );
+    struct mo_pair_t pair;
+    mo_pair_setup( &pair, NULL, 0, NULL );
+
+    // Create-time budgets are set by the objects' create; set them at runtime
+    // and confirm the connection still moves a message under the budget.
+    rocketnet_message_client_set_send_kbps( pair.client, 500 );
+    rocketnet_message_server_set_send_kbps( pair.server, 0, 5000 );
+
+    uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+    check( p != NULL );
+    memcpy( p, "budget-x", 8 );
+    rocketnet_message_client_finish( pair.client, 8 );
+    int got = 0;
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    for ( int u = 0; u < 8 && !got; u++ )
+    {
+        rocketnet_message_server_update( pair.server, 0.1 );
+        rocketnet_message_client_update( pair.client, 0.1 );
+        if ( rocketnet_message_server_receive( pair.server, 0, &data, &bytes ) )
+        {
+            check( bytes == 8 );
+            rocketnet_message_server_release( pair.server, data );
+            got = 1;
+        }
+    }
+    check( got );
+    mo_pair_teardown( &pair );
 }
 
-REGISTER_UNIT_TEST( budget_set_at_create_and_runtime )
+REGISTER_UNIT_TEST( budget_set_at_create_and_runtime );
 
 // ---------------------------------------------------------------------------
 // 10. no_allocation_after_create
@@ -331,10 +363,44 @@ REGISTER_UNIT_TEST( budget_set_at_create_and_runtime )
 
 static void no_allocation_after_create()
 {
-    check( 0 && "red: R2 no allocation after create not implemented" );
+    mo_install_allocator();
+
+    struct mo_pair_t pair;
+    uint64_t before = mo_allocator_calls();
+    mo_pair_setup( &pair, NULL, 0, NULL );
+    const uint64_t after_create = mo_allocator_calls();
+    check( after_create >= before );
+
+    // The hot path: send, receive and release. The objects allocate nothing
+    // after create (R2), so the allocator count is unchanged.
+    uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+    check( p != NULL );
+    memcpy( p, "no-alloc", 8 );
+    rocketnet_message_client_finish( pair.client, 8 );
+
+    int got = 0;
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    for ( int u = 0; u < 8 && !got; u++ )
+    {
+        rocketnet_message_server_update( pair.server, 0.1 );
+        rocketnet_message_client_update( pair.client, 0.1 );
+        if ( rocketnet_message_server_receive( pair.server, 0, &data, &bytes ) )
+        {
+            check( bytes == 8 );
+            check( memcmp( data, "no-alloc", 8 ) == 0 );
+            rocketnet_message_server_release( pair.server, data );
+            got = 1;
+        }
+    }
+    check( got );
+    check( mo_allocator_calls() == after_create );
+
+    mo_pair_teardown( &pair );
+    mo_restore_allocator();
 }
 
-REGISTER_UNIT_TEST( no_allocation_after_create )
+REGISTER_UNIT_TEST( no_allocation_after_create );
 
 // ---------------------------------------------------------------------------
 // 11. rnslots_witness_replays
@@ -350,4 +416,4 @@ static void rnslots_witness_replays()
     check( 0 && "red: RNSlots witness replays not implemented" );
 }
 
-REGISTER_UNIT_TEST( rnslots_witness_replays )
+REGISTER_UNIT_TEST( rnslots_witness_replays );

@@ -123,7 +123,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 100
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 123
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -1389,6 +1389,60 @@ ROCKETNET_EXPORT_FUNC int rocketnet_num_counters();
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_counter_value( const struct rocketnet_counters_t * counters, int counter );
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
+
+// -----------------------------------------
+
+// The message objects and their C API (docs/CHANNELS.md 10 to 12). The objects
+// wrap the transports, the per-connection regions and the channel path; the
+// send side mirrors the transport's start_packet/finish_packet. The client and
+// server objects are opaque; the struct names are stable for the C ABI.
+
+#define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS             1000
+#define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS  10000
+
+// MESSAGE_MEMORY_EXHAUSTED: the reason a connection ends when its region is
+// exhausted (R5), readable per client.
+#define MESSAGE_MEMORY_EXHAUSTED (1)
+
+// The named error update returns in release builds when a received message is
+// still held unreleased (the release rule).
+#define ROCKETNET_ERROR_MESSAGE_NOT_RELEASED (-800)
+
+struct rocketnet_message_client_t;
+struct rocketnet_message_server_t;
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create(
+    void * context, const uint8_t * connect_token,
+    const struct rocketnet_transport_config_t * transport_config,
+    const struct rocketnet_message_config_t * message_config,
+    void * memory, uint64_t memory_bytes, uint32_t send_kbps );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_abort( struct rocketnet_message_client_t * client );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_disconnect_reason( const struct rocketnet_message_client_t * client );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps );
+
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create(
+    void * context, const char * address,
+    const struct rocketnet_transport_config_t * transport_config,
+    const struct rocketnet_message_config_t * message_config,
+    void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server );
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive_any( struct rocketnet_message_server_t * server, int * channel, const uint8_t ** data, int * bytes );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_message_server_t * server, const uint8_t * data );
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_disconnect_reason( const struct rocketnet_message_server_t * server, int client_index );
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps );
 
 // -----------------------------------------
 
