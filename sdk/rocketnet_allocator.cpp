@@ -492,11 +492,23 @@ int rn_connection_memory_decide( const rn_region_t * region )
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
     // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
+    // ExhaustionOnlyLeadsToDisconnect: once exhausted, the only next step is
+    // Kick (disconnect) and Reset (Reuse). No further Use or Release.
     rocketnet_assert( region );
 
     // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
     if ( bytes <= 0 || (uint32_t) bytes > region->max_message_bytes )
         return RN_DESCRIPTOR_NONE;
+
+    // sticky exhaustion: once exhausted, every send is refused until reset
+    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted).
+    // The refusal is counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names
+    // this refusal, on every refused send, not just at the transition to exhausted.
+    if ( region->exhausted )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+        return RN_DESCRIPTOR_NONE;
+    }
 
     // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
     // taken from either pool when one of them refuses. It is also the end of
