@@ -318,6 +318,11 @@ Cold, on a fresh box, as root:
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
     #    auto ladder falls to gso with the reason named where it is not.
+    #    An IPv6 server needs no extra provisioning step (no accept_ra, no
+    #    forwarding): its global address is on the interface, and the gateway
+    #    MAC is read from the default route's next hop in `ip -6 neigh`, or
+    #    given with ROCKETNET_GATEWAY_ETHERNET_ADDRESS. One server serves one
+    #    family; run one per family for both.
 
     # 5. AFTER A CRASH (a server that died without destroy): each instance
     #    leaves a bpffs pin root named for the instance --
