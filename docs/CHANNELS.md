@@ -1694,9 +1694,11 @@ chunks, one maximal block):
 | 24·1280 | 30,720 |
 | 1432·16 | 22,912 |
 | 16·256 | 4,096 |
-| 8·1024 (resend FIFO links) | 8,192 |
 | SR | 262,144 |
 | **total** | **1,588,480** bytes, 1.51 MiB |
+
+`104.125W` already holds the resend FIFO links (`8·W`). Listing them again
+would put the sum 8,192 above the region.
 
 The 460,800 bytes of the first version (`B` 65,536, `S` 131,072, no spans) become
 1,588,480. That is about 1.48 GiB for a 1000-client server, on top of the
