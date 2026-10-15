@@ -340,6 +340,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // Receives precede the transport sweep. Rotate before verifying or
+    // issuing cookies so a delayed update cannot immediately discard a
+    // cookie that this receive just issued.
+    rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
+
     // the cookie gate: address validation before any asymmetric work. a
     // request that fails it is answered with a cookie packet -- the one
     // response on a rejection path, and every arrival re-provokes it, so a
@@ -376,6 +381,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                     mac_matches = 1;
                 }
                 else if ( server->has_previous_cookie_key &&
+                          current_time < server->previous_cookie_key_expire_time &&
                           rocketnet_server_request_cookie_mac( expected_mac, from, connection_salt, cookie_expire, server->previous_cookie_key ) &&
                           sodium_memcmp( expected_mac, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 )
                 {
@@ -1204,6 +1210,40 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                                    out_payload, out_payload_bytes, out_payload_client_index );
 }
 
+// Cookie key rotation: modelled by Tick, LiveGens, PreviousBoundedToOnePeriod
+// and InFlightCookieSurvivesRotation in tla/RNSecurityTables.tla.
+
+void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server_protocol_t * server,
+                                                         double current_time )
+{
+    rocketnet_assert( server );
+
+    if ( server->cookie_rotation_seconds <= 0 )
+        return;
+
+    if ( current_time < server->cookie_key_rotation_time )
+        return;
+
+    const double period = (double) server->cookie_rotation_seconds;
+    if ( current_time < server->cookie_key_rotation_time + period )
+    {
+        memcpy( server->previous_cookie_key, server->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+        server->previous_cookie_key_expire_time = server->cookie_key_rotation_time + period;
+        server->has_previous_cookie_key = 1;
+        server->cookie_key_rotation_time += period;
+    }
+    else
+    {
+        sodium_memzero( server->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+        server->previous_cookie_key_expire_time = 0.0;
+        server->has_previous_cookie_key = 0;
+        server->cookie_key_rotation_time = current_time + period;
+    }
+
+    randombytes_buf( server->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    rocketnet_debug( "server rotated connection cookie secret" );
+}
+
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time )
 {
@@ -1211,6 +1251,8 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_assert( server->encryption_map );
     rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
+
+    rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
     // reset this server's per-update handshake budget for the next update
     server->counters->handshakes_processed_this_update = 0;

@@ -26,11 +26,17 @@ presents any token under any cookie generation it has seen.
   (`rocketnet_admitted_token_set_add`, `select_slot(..., 0)`).
 - **The cookie gate and rotation.** A mapping is created only under a
   cookie of a live generation: the current key, or the previous one
-  while it is held. The key rotates on its period and the previous key
-  is kept for one window. In the code the key is drawn once at create
-  and never rotated (F2 in the inventory); the previous-key branch in
-  the gate is reachable only from a test. The model states the window
-  the rotation code is written against.
+  while `clock < prevUntil` (`sdk/rocketnet_server_protocol.cpp:377`,
+  `server->has_previous_cookie_key && current_time < server->previous_cookie_key_expire_time`).
+  The key is initialised at create (`sdk/rocketnet_server_transport.cpp:832-838`)
+  and rotated on its period by `rocketnet_server_protocol_rotate_cookie_key_if_due`,
+  called before the request cookie gate and from `rocketnet_server_protocol_update`.
+  The receive path rotates before both verification and issuance because the
+  transport drains receives before its sweep. An on-time rotation
+  copies the outgoing key to `previous_cookie_key` and sets `prevUntil`
+  (`previous_cookie_key_expire_time`) to the rotation instant plus
+  `RotatePeriod`; a stall past a whole window zeroes the previous key
+  and clears `has_previous_cookie_key`.
 - **The verify budget.** Requests past the gate spend from a per-update
   budget (`verifies`, reset by the tick): the handshake work budget
   (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE`, checked in the request
@@ -51,6 +57,14 @@ presents any token under any cookie generation it has seen.
   expiry has passed (the ghost `lateAdmit` never fires).
 - **`RotationWindow`** (action property): a mapping is created only
   under a cookie generation that is live at that step.
+- **`PreviousBoundedToOnePeriod`** (action property): a mapping is
+  created under a non-current generation only while `clock < prevUntil`,
+  and `prevUntil` never exceeds the instant the generation stopped
+  being current plus `RotatePeriod`.
+- **`InFlightCookieSurvivesRotation`** (action property): with
+  `CookieLife < RotatePeriod`, a cookie issued under the current
+  generation and presented within `CookieLife` is accepted across one
+  rotation.
 - **`VerifyBudgetRespected`**: verifies in one update never pass the
   budget, while the cap switch is in its code position.
 - **`TablesBounded`**: neither table passes its capacity, and slots
@@ -65,25 +79,24 @@ presents any token under any cookie generation it has seen.
 | `EvictLiveHistory` | `TRUE`: recording evicts the oldest, live or not | `FALSE`: it leaves a live entry in place |
 | `DeniedConsumesToken` | `FALSE`: a denied adds nothing | mutant `TRUE` guards the ordering |
 | `CapVerifyBudget` | `TRUE`: the per-update budget caps verifies | mutant `FALSE` guards the cap |
+| `AcceptPrevious` | `TRUE`: previous generation accepted while `clock < prevUntil` | reversed witness `FALSE` drops the previous-key window |
+| `PreviousOutlivesWindow` | `FALSE`: a stall past the window drops the previous generation | mutant `TRUE` keeps the previous generation across a stall |
 
 ## Findings
 
-Each finding is verified by hand against the code at the base of this
-change (`abd8bdc`). The model lists them; it does not fix them.
+Each finding is verified by hand against the code. The model lists the
+token-table findings; cookie key rotation (F2) is implemented and
+guarded by its two reversed witnesses.
 
-| Invariant | Trace | Code | Hand verification |
+| Invariant / Property | Trace | Code | Hand verification |
 |---|---|---|---|
-| `OneConnectionPerToken` | 13 states | `sdk/rocketnet_token_tables.cpp`, `rocketnet_admitted_token_set_add` (find returns success when present); response rung in `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_process_connection_response`) | Two mappings for one shared token exist after the history flush evicts the first binding; the first response admits, the slot is released, the second response finds the client id free and the add succeeds because the entry is present, so the token admits a second connection. |
-| `ExpiredNeverAdmitted` | 7 states | request rung expiry check in `rocketnet_server_protocol_process_connection_request`; no expiry check in `rocketnet_server_process_connection_response` | A token presented before expiry whose response arrives after expiry is admitted: the request path refuses an expired token at its top, the response path checks only the client id, the slots and the admitted set. Bounded by the handshake deadline. |
+| `OneConnectionPerToken` | 11 states | `sdk/rocketnet_token_tables.cpp`, `rocketnet_admitted_token_set_add` (find returns success when present); response rung in `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_process_connection_response`) | Two mappings for one shared token exist after the history flush evicts the first binding; the first response admits, the slot is released, the second response finds the client id free and the add succeeds because the entry is present, so the token admits a second connection. |
+| `ExpiredNeverAdmitted` | 5 states | request rung expiry check in `rocketnet_server_protocol_process_connection_request`; no expiry check in `rocketnet_server_process_connection_response` | A token presented before expiry whose response arrives after expiry is admitted: the request path refuses an expired token at its top, the response path checks only the client id, the slots and the admitted set. Bounded by the handshake deadline. |
 | `NoLiveHistoryEviction` | 6 states | `rocketnet_used_token_history_record` and `rocketnet_token_table_select_slot(..., 1)` in `sdk/rocketnet_token_tables.cpp` | At capacity with no expired entry, recording a new token unlinks and reuses the oldest slot even while its entry is unexpired. This is the documented flush bound; it is what lets the first finding's second binding pass the history check. |
 | `DeniedTokenStaysUsable` | 5 states (mutant) | slots check before the admitted add in `rocketnet_server_process_connection_response`; request-rung denied creates no mapping | The code holds this invariant: a denied for a full server is sent before the set takes its entry, at both rungs. The reversed witness is a mutant that consumes the token on a denied; TLC rejects it, which guards the ordering against a future edit. |
-| `VerifyBudgetRespected` | 7 states (mutant) | handshake budget check in the request path (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE` in `sdk/rocketnet_counters.h`); 64-slot failed-verify table in `sdk/rocketnet_server.h` | The code holds this invariant: past the cookie gate, verifies per update are counted and capped before asymmetric work runs. The reversed witness removes the cap; TLC rejects it. |
-
-Cookie rotation (F2) is a specification finding, not a TLC witness:
-the gate's previous-key branch exists, the rotation that would make it
-reachable does not. `RotationWindow` passes in the fixed run with
-`Rotation = TRUE`; turning `AcceptPrevious` off removes the window and
-is the reversed witness the rotation code is written against.
+| `TypeOK` verify bound | 7 states (mutant) | handshake budget check in the request path (`ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE` in `sdk/rocketnet_counters.h`); 64-slot failed-verify table in `sdk/rocketnet_server.h` | The code holds this invariant: past the cookie gate, verifies per update are counted and capped before asymmetric work runs. The reversed witness removes the cap; TLC rejects `SafetyInvariants` through the `TypeOK` bound when `verifies = 4` with `VerifyBudget = 2`. `VerifyBudgetRespected` itself is conditional on `CapVerifyBudget`, so it does not reject the disabled-cap mutant. |
+| `InFlightCookieSurvivesRotation` | 3 states (`AcceptPrevious = FALSE`) | `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_protocol_rotate_cookie_key_if_due` and the previous-key branch of the cookie gate at `:377`) | An on-time rotation moves the outgoing key to `previous_cookie_key` with `previous_cookie_key_expire_time = cookie_key_rotation_time + period`, so a cookie minted before the rotation is accepted across it while `current_time < previous_cookie_key_expire_time`. Turning `AcceptPrevious` off drops the outgoing generation at the rotation tick (`clock = 1 -> 2`) and fails `InFlightCookieSurvivesRotation`. |
+| `PreviousBoundedToOnePeriod` | 2 states (mutant `PreviousOutlivesWindow = TRUE`) | `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_protocol_rotate_cookie_key_if_due`, stall branch when `current_time >= cookie_key_rotation_time + period`, and the gate check `current_time < server->previous_cookie_key_expire_time`) | When `update` stalls past an entire rotation window (`clock = 0 -> 4`), the outgoing key's acceptance window `[2, 4)` has already elapsed, so the code zeroes `previous_cookie_key` and clears `has_previous_cookie_key`. The mutant `PreviousOutlivesWindow = TRUE` keeps the outgoing key until `current_time + period` (`prevUntil = 6 > 4`), which TLC rejects on the stall step. |
 
 ## How to run it
 
@@ -93,8 +106,23 @@ On a Linux bench holding `/opt/tla/tla2tools.jar`, from `tla/`:
 java -XX:+UseParallelGC -cp /opt/tla/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNSecurityTables.cfg MCRNSecurityTables
 ```
 
-Each reversed witness is the same command with one switch edited in a
-copy of the config, as `tla/RUNS.tsv` records per row.
+Each reversed witness has a committed configuration registered in
+`tla/CASES.tsv`, in group `rnsecuritytables`:
+
+| Configuration suffix after `MCRNSecurityTables` | Reversed switch | Expected failure |
+|---|---|---|
+| `NoRefuseAdmitted.cfg` | `RefuseAdmittedAtResponse = FALSE` | `SafetyInvariants` (`OneConnectionPerToken`) |
+| `AdmitExpired.cfg` | `AdmitExpiredAtResponse = TRUE` | `SafetyInvariants` (`ExpiredNeverAdmitted`) |
+| `EvictLiveHistory.cfg` | `EvictLiveHistory = TRUE` | `SafetyInvariants` (`NoLiveHistoryEviction`) |
+| `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` | `DeniedTokenStaysUsable` |
+| `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`TypeOK` verify bound) |
+| `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
+| `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+
+Refresh all eight cases through the pinned `tlacheck` runner and merge with
+`--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
+one row per configuration; earlier seven-column records remain in
+`RUNS-HISTORY.tsv`.
 
 The small instance:
 
@@ -103,16 +131,24 @@ The small instance:
 | `Addrs` | `{"A", "B"}` |
 | `Tokens` | `{"th", "te", "tf"}` (`te` expires at tick 3) |
 | `MaxClock` | 4 |
+| `CookieLife` / `RotatePeriod` | 1 / 2 |
 | `HistoryCap` / `AdmittedCap` | 2 / 2 |
 | `MaxClients` | 2 |
 | `VerifyBudget` | 2 per update |
 | `HandshakeDeadline` | 4 ticks |
 
-The fixed-code run generates 1,025,308 states and finds 249,679
+The fixed-code run generates 1,145,905 states and finds 279,674
 distinct states, with no error: the invariants hold and
-`DeniedTokenStaysUsable` and `RotationWindow` hold as properties.
+`DeniedTokenStaysUsable`, `RotationWindow`,
+`PreviousBoundedToOnePeriod` and `InFlightCookieSurvivesRotation` hold
+as properties.
 
 ## What the model leaves out
+
+- `Tick` advances the clock and rotates atomically. It does not represent
+  the transport receive-before-sweep ordering. Unit regressions exercise
+  cookies issued before a delayed sweep, both near a rotation deadline and
+  after a full-window stall, plus refusal of the outgoing key after a stall.
 
 - Packets, the link, the replay window and the session keys stay in
   the held draft; a response here is a packet that has already opened

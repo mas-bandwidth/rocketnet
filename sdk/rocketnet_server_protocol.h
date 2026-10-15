@@ -50,6 +50,9 @@ struct rocketnet_server_protocol_t
     uint8_t previous_cookie_key[ROCKETNET_COOKIE_KEY_BYTES];
     int has_previous_cookie_key;
     int cookie_lifetime_seconds;                            // default 3
+    int cookie_rotation_seconds;                            // default 60; 0 means no rotation
+    double cookie_key_rotation_time;                        // when the current key is next replaced
+    double previous_cookie_key_expire_time;                 // when the previous key stops being accepted
     int max_token_lifetime_seconds;                         // 0 means no limit
 
     double handshake_deadline_seconds;                      // default 5
@@ -106,12 +109,20 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
                                      int * out_payload_bytes,
                                      int * out_payload_client_index );
 
-// The server's per-frame update: the sweep. Call once per frame with the
-// mocked or real clocks -- nothing in here reads a clock. An unestablished
-// mapping past its handshake deadline is removed; an established one idle
-// past its timeout releases its slot -- the client timed out -- and its
-// mapping with it. The sweep lives here rather than in the map because the
-// decision touches the slots.
+// Rotates the connection cookie key when current_time has reached
+// cookie_key_rotation_time. With an on-time rotation the outgoing key is kept
+// as previous_cookie_key until cookie_key_rotation_time + period; after a
+// stall past the whole window the previous key is zeroed and cleared.
+
+void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server_protocol_t * server,
+                                                         double current_time );
+
+// The server's per-frame update: cookie key rotation and the sweep. Call once
+// per frame with the mocked or real clocks -- nothing in here reads a clock.
+// An unestablished mapping past its handshake deadline is removed; an
+// established one idle past its timeout releases its slot -- the client timed
+// out -- and its mapping with it. The sweep lives here rather than in the map
+// because the decision touches the slots.
 
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time );
