@@ -298,6 +298,38 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
+    # compiled unchanged with the BPF build's defines behind a shadow include
+    # directory of minimal kernel and libbpf headers, so the unit suite judges
+    # its decisions with no kernel, no root and no BPF syscall
+    # (test_unit_xdp_filter_host.cpp). The shim directory is on this one C
+    # target's include path only. The filter is GNU C and the shim models a
+    # little-endian host, so the target is built for GCC or Clang on a
+    # little-endian, non-Windows host; elsewhere the cases print SKIPPED.
+    # ROCKETNET_XDP_FILTER_HOST_SOURCE names the filter source to compile; the
+    # default is the shipped file, and another value is for reproducing a
+    # historical filter.
+    set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c" CACHE FILEPATH
+        "XDP filter source the host-C unit target compiles")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN" AND NOT WIN32)
+        get_filename_component(ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH "${ROCKETNET_XDP_FILTER_HOST_SOURCE}" ABSOLUTE)
+        add_library(rocketnet_xdp_filter_host STATIC test/xdp_host/server_xdp_host.c)
+        set_source_files_properties(test/xdp_host/server_xdp_host.c PROPERTIES
+            OBJECT_DEPENDS "${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}")
+        target_include_directories(rocketnet_xdp_filter_host BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        target_compile_definitions(rocketnet_xdp_filter_host PRIVATE __linux__ __BPF__
+            "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\"")
+        target_compile_options(rocketnet_xdp_filter_host PRIVATE -ffreestanding -ffp-contract=off)
+        target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
+        target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # xdp_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
+        # own source for the counters and the cases that name them.
+        set_property( SOURCE test_unit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+            "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    else()
+        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
+    endif()
     # test_dev_token_minting_absent_in_release probes the shared release
     # library, so the test target must build it: CI legs build `test` alone,
     # and without this the shared library is missing and the probe goes red.
