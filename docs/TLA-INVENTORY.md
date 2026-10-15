@@ -1028,6 +1028,24 @@ anything.
 - Reversed witness: `stop` skips the mutex barrier. That must fail `NoPostAfterCancel`.
 - Cite from: `rocketnet_server_iocp_stop`, `rocketnet_server_transport_update`.
 
+### 11. `RNConnectionMemory` (the message layer's per-connection memory)
+
+Added after the inventory, with the message layer (docs/CHANNELS.md 4). Written,
+run and recorded: `tla/RNConnectionMemory.tla`, `tla/README-RNConnectionMemory.md`.
+
+- CONSTANTS `Slots = {s1, s2, s3}`, `Clients = {c1, c2, c3, c4}`, `Capacity = 3`.
+- VARIABLES: per slot `state` (Free, Connected, Disconnected), `owner`, `used`,
+  `exhausted`, `reason`, `records`.
+- Actions: `Connect`, `Use`, `Release`, `Exhaust`, `Kick`, `Leave`, `Reuse`.
+- Properties: `ExhaustionOnlyLeadsToDisconnect`, `ReusedSlotStartsClean`,
+  `NoCrossSlotEffect`, `ExhaustedReasonNamed`, `UsedBounded`; LIVE
+  `ExhaustedEventuallyFree`.
+- Reversed witnesses: `BrokenNoReset` must fail `ReusedSlotStartsClean`;
+  `BrokenCarryOn` must fail `ExhaustionOnlyLeadsToDisconnect`.
+- Cite from: `rn_region_send_alloc`, `rn_region_send_free`,
+  `rn_region_send_free_fragment`, `rn_region_exhaust`,
+  `rn_connection_memory_decide`, `rn_region_reset`.
+
 Modules 1 to 5 are what the request names: client and server connection and security,
 with the ack layer under the keep-alive rule. Module 1 goes first because modules 3 to 5
 read its received state and F1 lives in it. M15 and M16 get no module; their reasons are

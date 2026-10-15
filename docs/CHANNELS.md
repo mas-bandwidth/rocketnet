@@ -31,7 +31,10 @@ Each layer section says how it keeps these rules, and section 15 checks them.
   (`sdk/rocketnet.h:319-329`), or a transport frame or batch. When a bounded
   thing is full, the rule depends on what it holds. Reliable data stalls the
   sender, and `send_message` refuses (returns 0, counted). Unreliable data is
-  dropped and counted. The design never grows anything.
+  dropped and counted. The design never grows anything. When the region
+  itself is exhausted (no store chunk or send descriptor for a send, no room
+  for an admissible record), the connection ends with the reason
+  `MESSAGE_MEMORY_EXHAUSTED` (section 4, "Exhaustion kicks").
 - **R2. Reliability is per send.** Every send names a reliability (RakNet's
   eight values and numbering, study §2), a priority (RakNet's four) and an
   ordering channel. The channel is a number from 0 to `num_channels - 1`.
@@ -109,7 +112,7 @@ starts.
 
 | L | Layer | Owns | Guarantees | Checked by |
 |---|---|---|---|---|
-| 1 | **Region** (the allocator) | One block per connection: fixed tables, the send store (three slab classes) and the receive ring | No allocation after create. Every pointer it hands out stays inside the region. A slab allocates and frees in O(1). It refuses when full. | unit tests, including every refusal |
+| 1 | **Region** (the allocator) | One block per connection: fixed tables, the send store (three slab classes) and the receive ring | No allocation after create. Every pointer it hands out stays inside the region. A slab allocates and frees in O(1). It refuses when full, and exhaustion ends that connection only. | unit tests, including every refusal; `RNConnectionMemory` |
 | 2 | **Records** (the wire) | The packet forms SINGLE and RECORDS, the record codec, and the receiver's checks in order | Encoding then decoding is the identity. Every malformed input maps to exactly one violation counter. SINGLE costs one byte. | known-answer vectors (section 13.6); a fuzz target |
 | 3 | **Reliable window** | Connection-wide message numbers, the window `W`, the ring floor, the sent-packet map, RTO and resend, and the receiver's bitset and descriptors | Every reliable record is delivered once (given P2 and P6). The receiver never needs room it does not have. Its slot and ring writes never touch a live message. | `RNWindow`, `RNRing` |
 | 4 | **Channels and dispatch** | Four counters per channel on each side, the dispatch of all eight reliabilities, held ordered messages, the newest held sequenced message | Ordered delivery is exactly-once and in order. Sequenced delivery never goes backwards. The receipt types are their base types plus bookkeeping. | `RNChannel`, `RNReceipts` |
@@ -231,6 +234,56 @@ the design these points:
     when it lands. The two size macros (`ROCKETNET_MESSAGE_SINGLE_BYTES`,
     `ROCKETNET_MESSAGE_FRAGMENT_BYTES`) are defined once in `sdk/rocketnet.h`;
     the codec header uses those.
+
+**Who owns each region, and exhaustion kicks** (`tla/RNConnectionMemory.tla`,
+`tla/README-RNConnectionMemory.md`; `test_unit_connection_memory.cpp`).
+
+- **One block per side, made once at create.** A client owns one region, for
+  its one connection. A server owns one region per client slot, all carved
+  from one block: `rn_arena_create` with `num_regions = max_clients`. The
+  caller may supply the block instead (`rn_arena_create_in_block`, a pointer
+  and a byte count). The block must be 64-byte aligned and at least
+  `rn_arena_required_bytes` for the configuration and slot count; a short,
+  misaligned or missing block is refused, never truncated, and destroy leaves
+  it to the caller. With no block, the create takes it once through
+  `rocketnet_malloc` with the caller's context. Nothing is allocated after
+  create.
+- **Each region belongs to one connection.** Slot `i`'s region is used only
+  by the client on slot `i`, under the one-writer-per-connection rule (16.1).
+  No operation on one region reads or writes another; the counters are the
+  one thing the regions share, and they add atomically.
+- **Exhaustion kicks.** An operation that cannot get room sets the region's
+  sticky exhausted state with the reason
+  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED` (`rn_region_exhaust`),
+  and counts `MESSAGE_MEMORY_EXHAUSTED` once beside the refusal's own counter.
+  `rn_region_send_alloc` does this on both of its refusals (store and
+  descriptor pool). The owner reads `rn_connection_memory_decide` every
+  update: a pure function of the region that returns the reason to end the
+  connection with, or `ROCKETNET_MESSAGE_ERROR_NONE`. On the server the owner
+  then disconnects that slot (`rocketnet_server_transport_disconnect_client`),
+  records the reason, frees the slot and resets the region. A client
+  disconnects itself (`rocketnet_client_transport_disconnect`) with the same
+  reason. Nothing else follows from exhaustion: no partial delivery, no
+  dropped reliable message, and no error code a caller could ignore.
+- **A slot's region is reset before reuse.** `rn_region_reset` is the carve,
+  run when the slot's client leaves and before its next client connects. A
+  reused slot then starts exactly as a fresh one: every table, the store's and
+  the descriptor pool's free lists, the exhausted state, the delivery list and
+  the held index. Nothing of the previous client is reachable through the
+  bookkeeping; the payload bytes the carve leaves in place are written before
+  they are read.
+- **What this departs from.** Section 1 (R1) and this section's guarantees
+  described a refusal as the whole outcome of a full region: the caller saw a
+  counted refusal and the connection went on. A full region now ends its
+  connection. Section 14's sizing is unchanged; its one `rocketnet_malloc`
+  per object becomes one block per object, which the caller may supply.
+- **What the region leaves to its callers.** The region keeps answering
+  after exhaustion: a free followed by a send succeeds, as the layer 1 tests
+  that free and refill after a refusal require. The guarantee that an
+  exhausted connection does nothing but get kicked
+  (`ExhaustionOnlyLeadsToDisconnect`) is kept by the objects, which read the
+  decision before any other work of the update. The receive side's
+  no-room sites call `rn_region_exhaust` when the objects card wires them.
 
 ## 5. Layer 2: records in a packet
 
@@ -1085,6 +1138,7 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
 #define ROCKETNET_MESSAGE_ERROR_VIOLATION                               2   // the peer broke the wire; see counters
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH                         3
 #define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT                        4
+#define ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED                5   // the connection's region had no room (4)
 
 // the largest message start_message writes into a real wire frame, zero copy:
 // the payload capacity less the one form byte
@@ -1246,7 +1300,8 @@ counters this document names are `MESSAGE_SEND_STORE_FULL`,
 `MESSAGE_SEQUENCED_STALE`, `MESSAGE_SEQUENCED_SUPERSEDED`,
 `MESSAGE_SEQUENCED_HOLD_FULL`, `MESSAGE_UNRELIABLE_DELIVERY_FULL`,
 `MESSAGE_SENT_MAP_EVICTED`, `MESSAGE_RECEIPT_RING_FULL`,
-`MESSAGE_RESENT`, `MESSAGE_DELIVERED`, `MESSAGE_WINDOW_STALL`, plus one
+`MESSAGE_RESENT`, `MESSAGE_DELIVERED`, `MESSAGE_WINDOW_STALL`,
+`MESSAGE_MEMORY_EXHAUSTED`, plus one
 counter for each violation in section 13.3.
 
 **The C# shim.** The study's §13 is provisional until the shim arrives. This

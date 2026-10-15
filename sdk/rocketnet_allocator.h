@@ -17,14 +17,22 @@
 // Layer 1 of the message layer: the region (docs/CHANNELS.md 4, sized by 14).
 //
 // One fixed region per connection: per server slot, and the client's one.
-// An arena is the one rocketnet_malloc an object makes at create, holding
-// its regions (max_clients for a server, 1 for a client); nothing in it is
-// allocated, freed or grown again until destroy. A region is carved at
-// connect -- every table reset, every free list threaded -- in its own
-// memory, allocating nothing. Every queue, window, buffer and block the
-// channel layers need is a typed carve-out of the region, sized from the
-// connection's config by section 14's formula. Exhaustion is a counted
-// refusal (MESSAGE_SEND_STORE_FULL, MESSAGE_SEND_QUEUE_FULL), never growth.
+// An arena is the one block an object holds from create, with its regions
+// (max_clients for a server, 1 for a client): the one rocketnet_malloc the
+// create makes, or a block the caller supplies. Nothing in it is allocated,
+// freed or grown again until destroy. A region is carved at connect -- every
+// table reset, every free list threaded -- in its own memory, allocating
+// nothing. Every queue, window, buffer and block the channel layers need is
+// a typed carve-out of the region, sized from the connection's config by
+// section 14's formula.
+//
+// Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
+// MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
+// region takes a sticky exhausted state with the reason
+// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
+// rn_connection_memory_decide and disconnects that connection (a server
+// kicks the slot, a client disconnects itself), and rn_region_reset gives
+// the slot's next client a fresh region (tla/RNConnectionMemory.tla).
 //
 // A region is one connection's, under the one-writer-per-connection rule
 // (16.1): nothing here locks. The counters it refuses into are its owner's,
@@ -322,18 +330,47 @@ struct rn_region_t
 
     uint32_t descriptors_free_head;
     uint32_t descriptors_free;
+
+    uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
+    int32_t exhausted_reason;           // ROCKETNET_MESSAGE_ERROR_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 };
 
-// at connect: every table back to its empty state and every free list
-// threaded, in the region's own memory. Allocates nothing. The ring's and the
-// store's bytes are not cleared: nothing reads them before writing them.
+// at connect: every table back to its empty state, every free list
+// threaded and the exhausted state cleared, in the region's own memory.
+// Allocates nothing. The ring's and the store's bytes are not cleared:
+// nothing reads them before writing them.
 void rn_region_carve( rn_region_t * region );
+
+// the slot's region when its connection ends and before the slot is reused
+// (RNConnectionMemory Reuse): the carve, so a reused slot starts exactly as
+// a fresh one and nothing of the previous client is reachable.
+void rn_region_reset( rn_region_t * region );
 
 // one send's descriptor and store chunks, both or neither. The descriptor
 // index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
-// a full store MESSAGE_SEND_STORE_FULL. bytes outside 1..max_message_bytes
-// is the caller's refusal to count, and takes nothing here.
+// a full store MESSAGE_SEND_STORE_FULL, and either exhausts the region
+// (rn_region_exhaust). bytes outside 1..max_message_bytes is the caller's
+// refusal to count, takes nothing here and is not exhaustion.
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
+
+// RNConnectionMemory Exhaust: an operation of this region's connection found
+// no room for something it must not drop (a send, a receive ring placement,
+// a hold). Sticky until rn_region_reset; the first call counts
+// MESSAGE_MEMORY_EXHAUSTED on the owner's counters, later calls nothing.
+void rn_region_exhaust( rn_region_t * region );
+
+bool rn_region_exhausted( const rn_region_t * region );
+
+int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_MESSAGE_ERROR_*
+
+// RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
+// owner every update. ROCKETNET_MESSAGE_ERROR_NONE, or the reason to end
+// this connection with: a server disconnects the slot
+// (rocketnet_server_transport_disconnect_client) and resets its region; a
+// client disconnects itself (rocketnet_client_transport_disconnect). An
+// exhausted connection does nothing else: no further send, delivery or
+// release is taken from its region before the kick.
+int rn_connection_memory_decide( const rn_region_t * region );
 
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
 
@@ -352,9 +389,20 @@ bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uin
 
 struct rn_arena_t;
 
-// the one allocation: num_regions regions, each laid out and pointed but not
-// yet carved. NULL (allocating nothing) for a refused config or count.
+// the one allocation: num_regions regions, each laid out, pointed and
+// carved. NULL (allocating nothing) for a refused config or count.
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
+
+// the exact bytes of an arena of num_regions regions at config: its header,
+// its region structs and its regions. 0 for a refused config or count.
+uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int num_regions );
+
+// the same arena in the caller's block, allocating nothing: block must be
+// ROCKETNET_ALLOCATION_ALIGNMENT-aligned and block_bytes at least
+// rn_arena_required_bytes. A short, misaligned or NULL block is refused
+// (NULL), never truncated. Destroy then frees nothing; the block stays the
+// caller's, and must outlive the arena.
+rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
 
 void rn_arena_destroy( rn_arena_t * arena );
 
@@ -362,6 +410,6 @@ int rn_arena_num_regions( const rn_arena_t * arena );
 
 rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 
-uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the one allocation's size
+uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
 
 #endif // #ifndef ROCKETNET_ALLOCATOR_H
