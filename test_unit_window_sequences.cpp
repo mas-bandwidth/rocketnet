@@ -1000,6 +1000,17 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
         else
             action = 5;
         world_apply( w, action );
+        // An exhausted region refuses every further send until reset (sticky,
+        // tla/RNConnectionMemory.tla ExhaustionOnlyLeadsToDisconnect). Reset it
+        // (the model's Reuse) so the walk keeps exercising live window state;
+        // without this the guard stops all writes for the rest of the walk.
+        if ( rn_region_exhausted( region ) )
+        {
+            const uint64_t cont = w->ref.next;
+            rn_region_carve( region );
+            world_bind( w, region, 1, cont );
+            action_begin();
+        }
     }
     world_check( w );
     if ( expect_slide )
