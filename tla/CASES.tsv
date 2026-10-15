@@ -103,3 +103,6 @@ MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchann
 MCRNSentHistory.cfg	MCRNSentHistory.tla	pass	-	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenCountEveryUnacked.cfg	MCRNSentHistory.tla	invariant	NoOverflowUnderBoundedLoss	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverRefused	check	rnsenthistory	required	-
+MCXdpHardwareBench.cfg	MCXdpHardwareBench.tla	pass	-	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenNoRestore.cfg	MCXdpHardwareBench.tla	invariant	FreeMeansRestored	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenTwoRuns.cfg	MCXdpHardwareBench.tla	invariant	OneRunAtATime	check	xdphardwarebench	required	-

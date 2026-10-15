@@ -345,6 +345,11 @@ Cold, on a fresh box, as root:
     #  removes. CI runs it on every push, so neither the matcher halves nor
     #  the enforcement paths can drift silently.)
 
+The hardware test tier for this path — a dedicated machine held one run at a
+time, its cold bring-up, the rows it prints, the tolerance its NIC counters
+are judged within, and what to do after a crash — is
+[bench/xdp_hardware/RUNBOOK.md](bench/xdp_hardware/RUNBOOK.md).
+
 This configuration — isolated cores 1-15, seven queues, per-queue IRQ pinning,
 the busy-poll pair — is the 10 Gbps point, as measured on the game's Linux
 server; the magnitude belongs to that machine, and the claim attaches to a
@@ -364,10 +369,18 @@ nothing-to-pin — and drivers that add a misc interrupt carrying the bare
 interface name (ixgbe-class) count one line beyond the queue count, so size the
 isolated range for queues plus one there.
 
-Honest labels: the committing xdp path (BPF program build/load/attach, AF_XDP
-binds) is exercised by no CI leg and no test — CI is unprivileged and the suite
-installs a commit barrier by design — so that tier's claims rest on a provisioned
-server, where this configuration was measured. The pre-flight
+Honest labels: no CI leg exercises the committing xdp path (BPF program
+build/load/attach, AF_XDP binds) — CI is unprivileged and the suite installs a
+commit barrier by design. The hardware tier, `bench/xdp_hardware/`, exercises it
+on one dedicated, held machine with a two-port ixgbe, i40e or ice NIC cabled
+port to port (or a second machine on a direct cable): native attach,
+zero-copy binds on every queue, IRQ and worker pinning, a stepped throughput
+sweep judged by exact in-process conservation and the NIC's own `ethtool -S`
+counters, and a software-timestamped latency probe, with the machine verified
+before and restored and diffed after every run. Its claims attach to that
+machine, NIC, driver and kernel, and to no other, and only once a full pass is
+recorded there; until then the committing path's claims rest on the
+provisioned server where this configuration was measured. The pre-flight
 also sets the tree's libbpf floor at 1.0 — `bpf_xdp_query_id` plus the uniform
 negative-errno error convention the pre-flight's error reporting assumes
 (pre-1.0 libbpf returned -1 with errno set and would misreport there); Ubuntu
