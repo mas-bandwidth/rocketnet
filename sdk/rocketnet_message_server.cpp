@@ -29,6 +29,11 @@ struct rocketnet_message_server_t * rocketnet_message_server_create(
     server->context = context;
 
     const uint32_t kbps = per_client_send_kbps ? per_client_send_kbps : ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS;
+    server->kbps = kbps;
+    if ( message_config )
+        server->cfg = *message_config;
+    else
+        rocketnet_message_default_config( &server->cfg );
     rn_message_node_t * n = &server->slots[0];
     n->budgeted = 1;
     if ( memory )
@@ -108,9 +113,45 @@ void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * 
     (void) server;
 }
 
+// Bring up a slot on first use: one region from the arena, carved and wired to
+// the ordered channel with the server's budget (RNConnectionMemory's fresh
+// region, the same shape slot 0 gets at create). Returns 1 once the slot is
+// ready, 0 on a refused config or an out-of-memory create.
+static int rn_server_slot_ensure( struct rocketnet_message_server_t * server, int client_index )
+{
+    if ( server->used[client_index] )
+        return 1;
+    rn_message_node_t * n = &server->slots[client_index];
+    if ( n->arena )
+    {
+        rn_arena_destroy( n->arena );
+        n->arena = NULL;
+    }
+    memset( n, 0, sizeof( *n ) );         // a reused slot starts exactly as a fresh one
+    n->budgeted = 1;
+    n->arena = rn_arena_create( NULL, &server->cfg, 1, &n->counters );
+    if ( !n->arena )
+        return 0;
+    n->region = rn_arena_region( n->arena, 0 );
+    if ( n->region )
+        rn_region_carve( n->region );
+    if ( !rn_message_node_ordered_setup( n, &server->cfg, 4, 1, server->kbps, 0.0 ) )
+    {
+        rn_arena_destroy( n->arena );
+        n->arena = NULL;
+        return 0;
+    }
+    n->next_packet_id = 1;
+    server->used[client_index] = 1;
+    server->connected_count++;
+    return 1;
+}
+
 uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes )
 {
-    if ( !server || client_index < 0 || client_index >= RN_MESSAGE_SERVER_MAX_SLOTS || !server->used[client_index] || bytes < 0 )
+    if ( !server || client_index < 0 || client_index >= RN_MESSAGE_SERVER_MAX_SLOTS || bytes < 0 )
+        return NULL;
+    if ( !rn_server_slot_ensure( server, client_index ) )
         return NULL;
     int type;
     if ( reliability == ROCKETNET_UNRELIABLE )

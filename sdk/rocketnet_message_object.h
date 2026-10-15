@@ -194,6 +194,8 @@ struct rocketnet_message_server_t
     int used[RN_MESSAGE_SERVER_MAX_SLOTS];
     struct rocketnet_message_client_t * peer[RN_MESSAGE_SERVER_MAX_SLOTS];
     int connected_count;
+    struct rocketnet_message_config_t cfg;     // the slot config, for lazy slot bring-up
+    uint32_t kbps;                            // the per-client send budget
 };
 
 #endif // #ifndef ROCKETNET_MESSAGE_OBJECT_H

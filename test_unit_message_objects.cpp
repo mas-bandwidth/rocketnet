@@ -278,10 +278,43 @@ REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 
 static void server_kicks_exhausted_client_others_unaffected()
 {
-    // A server slot whose per-client region is exhausted disconnects only
-    // that client with MESSAGE_MEMORY_EXHAUSTED and resets the slot; other
-    // clients keep their messages. Built in the implementation card.
-    check( 0 && "red: server kick-on-exhaustion not implemented" );
+    // R5: when a server slot's per-client region is exhausted, that client is
+    // disconnected with MESSAGE_MEMORY_EXHAUSTED; other clients keep theirs.
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 1;
+    config.window_messages = 64;
+    config.receive_ring_bytes = 32768;
+    config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+    config.send_buffer_bytes = 400000;
+    config.send_queue_messages = 16;
+    config.packets_in_flight = 16;
+    config.unreliable_deliveries = 1;
+
+    struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "mem", NULL, &config, NULL, 0, 0 );
+    check( server != NULL );
+
+    int nulls = 0;
+    for ( int i = 0; i < 10000; i++ )
+    {
+        uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 16 );
+        if ( !p )
+        {
+            nulls++;
+            break;
+        }
+        memcpy( p, "kick-slot-x", 11 );
+        rocketnet_message_server_finish( server, 0, 16 );
+    }
+    check( nulls == 1 );
+    check( rocketnet_message_server_disconnect_reason( server, 0 ) == MESSAGE_MEMORY_EXHAUSTED );
+
+    // The other client keeps its messages: slot 1 still accepts a send.
+    uint8_t * q = rocketnet_message_server_start( server, 1, 0, ROCKETNET_RELIABLE_ORDERED, 16 );
+    check( q != NULL );
+    rocketnet_message_server_finish( server, 1, 16 );
+
+    rocketnet_message_server_destroy( server );
 }
 
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
@@ -335,7 +368,42 @@ REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
 
 static void slot_reuse_starts_clean()
 {
-    check( 0 && "red: RNSlots ReusedSlotStartsClean not implemented" );
+    // RNSlots ReusedSlotStartsClean: a slot reused after its client was kicked
+    // starts exactly as a fresh one, with no trace of the previous client.
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 1;
+    config.window_messages = 64;
+    config.receive_ring_bytes = 32768;
+    config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+    config.send_buffer_bytes = 400000;
+    config.send_queue_messages = 16;
+    config.packets_in_flight = 16;
+    config.unreliable_deliveries = 1;
+
+    struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "mem", NULL, &config, NULL, 0, 0 );
+    check( server != NULL );
+
+    int nulls = 0;
+    for ( int i = 0; i < 10000; i++ )
+    {
+        uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 16 );
+        if ( !p )
+        {
+            nulls++;
+            break;
+        }
+        memcpy( p, "used-slot-x", 11 );
+        rocketnet_message_server_finish( server, 0, 16 );
+    }
+    check( nulls == 1 );
+
+    // Reuse slot 0: a fresh start succeeds, and the reason is clean again.
+    uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 16 );
+    check( p != NULL );
+    check( rocketnet_message_server_disconnect_reason( server, 0 ) == 0 );
+
+    rocketnet_message_server_destroy( server );
 }
 
 REGISTER_UNIT_TEST( slot_reuse_starts_clean );
