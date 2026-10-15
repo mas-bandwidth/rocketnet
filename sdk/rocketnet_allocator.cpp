@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <stddef.h>
 
 // Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
 // send store checked by the section 4 tests.
@@ -30,6 +31,7 @@ static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
 static_assert( sizeof(rn_sequenced_hold_t) == 16 + ROCKETNET_MAX_PAYLOAD_BYTES, "a sequenced hold is 16 bytes and one payload capacity, 1432 bytes (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
 static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
+static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 9, "layer 3 keeps its first_send and its flag byte in reserved (6.4)" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
 static uint64_t rn_align64( uint64_t value )
@@ -67,11 +69,12 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
     "sequenced holds",
     "receipt ring",
     "resend FIFO",
+    "send spans",
 };
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] =
 {
-    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W",
+    "32C", "16C", "32W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1432Ru", "16Rq", "8W", "B",
 };
 
 const char * rn_region_part_name( int part )
@@ -129,6 +132,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_SEQUENCED_HOLDS] = sizeof(rn_sequenced_hold_t) * Ru;
     layout->bytes[RN_PART_RECEIPTS] = sizeof(rn_receipt_t) * Rq;
     layout->bytes[RN_PART_RESEND_FIFO] = sizeof(rn_resend_link_t) * W;
+    layout->bytes[RN_PART_SEND_SPANS] = B;                                          // SR = B: a span is placed as the receiver's ring places it (4)
 
     uint64_t offset = 0;
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
@@ -379,6 +383,8 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->sequenced_holds = (rn_sequenced_hold_t*) ( base + layout->offset[RN_PART_SEQUENCED_HOLDS] );
     region->receipts = (rn_receipt_t*) ( base + layout->offset[RN_PART_RECEIPTS] );
     region->resend_fifo = (rn_resend_link_t*) ( base + layout->offset[RN_PART_RESEND_FIFO] );
+    region->send_spans = base + layout->offset[RN_PART_SEND_SPANS];
+    region->span_bytes = (uint32_t) layout->bytes[RN_PART_SEND_SPANS];
 
     // the store's memory is S at its offset; its class tables live in the region struct
     region->store_memory = base + layout->offset[RN_PART_SEND_STORE];
@@ -425,6 +431,12 @@ void rn_region_carve( rn_region_t * region )
 
     // the store's free lists, rethreaded in place
     rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
+
+    // the send spans: empty, nothing live
+    region->span_head = 0;
+    region->span_tail = 0;
+    region->span_first = RN_DESCRIPTOR_NONE;
+    region->span_last = RN_DESCRIPTOR_NONE;
 
     memset( region->sent_packets, 0, sizeof(rn_sent_packet_t) * region->packets );
     memset( region->sent_index, 0, sizeof(rn_sent_index_t) * region->sent_index_entries );
@@ -534,6 +546,206 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
     return d;
 }
 
+// ----------------------------------------------------------------
+//                          the send spans
+// ----------------------------------------------------------------
+
+// The spans are one ring of SR bytes with RNRing's placement rules for the
+// sender's side (tla/RNRing.tla, Pos and PlaceSingle): the next span goes at
+// the tail; when it would cross the end of the ring it goes to the start,
+// leaving the skipped bytes as padding; it is admitted only when it ends at or
+// before the oldest live span's start (the floor). The live spans are a list,
+// oldest first, so the floor is the first node's start. A span is freed when
+// its message is fully acked, in any order; the floor moves only when the
+// oldest one goes, and the bytes of a younger freed span wait for it.
+
+static uint64_t rn_span_round16( uint64_t bytes )
+{
+    return ( bytes + 15 ) & ~(uint64_t) 15;
+}
+
+static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t * out_start )
+{
+    const uint64_t SR = region->span_bytes;
+    if ( len16 == 0 || len16 > SR )
+        return false;
+
+    if ( region->span_first == RN_DESCRIPTOR_NONE )
+    {
+        *out_start = 0;                                     // nothing live: the ring starts over
+        return true;
+    }
+
+    const uint64_t head = region->span_head;
+    const uint64_t tail = region->span_tail;
+    if ( tail > head )
+    {
+        if ( len16 <= SR - tail )
+        {
+            *out_start = (uint32_t) tail;
+            return true;
+        }
+        if ( len16 <= head )                                // wrap: pad to the end, place at the start
+        {
+            *out_start = 0;
+            return true;
+        }
+        return false;
+    }
+
+    // the tail has wrapped behind the head (or met it: full)
+    if ( len16 <= head - tail )
+    {
+        *out_start = (uint32_t) tail;
+        return true;
+    }
+    return false;
+}
+
+static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint64_t len16 )
+{
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    descriptor->flags |= RN_SEND_FLAG_SPAN;
+    descriptor->span_start = start;
+    descriptor->span_prev = region->span_last;
+    descriptor->span_next = RN_DESCRIPTOR_NONE;
+    if ( region->span_last != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[region->span_last].span_next = d;
+    else
+    {
+        region->span_first = d;
+        region->span_head = start;
+    }
+    region->span_last = d;
+
+    const uint64_t end = (uint64_t) start + len16;
+    region->span_tail = end == region->span_bytes ? 0 : (uint32_t) end;
+}
+
+static void rn_span_unlink( rn_region_t * region, uint32_t d )
+{
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    rocketnet_assert( descriptor->flags & RN_SEND_FLAG_SPAN );
+    if ( !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
+        return;
+
+    const uint32_t prev = descriptor->span_prev;
+    const uint32_t next = descriptor->span_next;
+    if ( prev != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[prev].span_next = next;
+    else
+        region->span_first = next;
+    if ( next != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[next].span_prev = prev;
+    else
+        region->span_last = prev;
+
+    if ( region->span_first == RN_DESCRIPTOR_NONE )
+    {
+        region->span_head = 0;                              // empty: the floor is the start
+        region->span_tail = 0;
+    }
+    else if ( prev == RN_DESCRIPTOR_NONE )
+    {
+        region->span_head = region->send_descriptors[region->span_first].span_start;
+    }
+
+    descriptor->flags &= (uint8_t) ~RN_SEND_FLAG_SPAN;
+    descriptor->span_prev = RN_DESCRIPTOR_NONE;
+    descriptor->span_next = RN_DESCRIPTOR_NONE;
+}
+
+uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
+{
+    // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none); the span
+    // is tla/RNRing.tla's PlaceSingle on the sender's side
+    rocketnet_assert( region );
+
+    if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
+        return RN_DESCRIPTOR_NONE;
+
+    if ( region->descriptors_free == 0 )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+        rn_region_exhaust( region );
+        return RN_DESCRIPTOR_NONE;
+    }
+
+    const uint64_t len16 = rn_span_round16( (uint64_t) bytes );
+    uint32_t start = 0;
+    if ( !rn_span_place( region, len16, &start ) )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        rn_region_exhaust( region );
+        return RN_DESCRIPTOR_NONE;
+    }
+
+    const uint32_t d = region->descriptors_free_head;
+    rocketnet_assert( d < region->queue );
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    rocketnet_assert( !descriptor->in_use );
+    region->descriptors_free_head = descriptor->next;
+    region->descriptors_free--;
+
+    memset( descriptor, 0, sizeof(*descriptor) );
+    descriptor->chunk = RN_CHUNK_NONE;
+    descriptor->bytes = (uint32_t) bytes;
+    descriptor->next = RN_DESCRIPTOR_NONE;
+    descriptor->fragments = (uint16_t) rn_send_store_chunks_needed( bytes );
+    descriptor->in_use = 1;
+    rn_span_link( region, d, start, len16 );
+    return d;
+}
+
+const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uint32_t fragment, uint32_t * out_bytes )
+{
+    rocketnet_assert( region );
+    if ( out_bytes )
+        *out_bytes = 0;
+    if ( d >= region->queue )
+        return NULL;
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    if ( !descriptor->in_use )
+        return NULL;
+
+    const uint32_t F = RN_STORE_LARGE_BYTES;
+    const bool block = descriptor->fragments > 1;
+    if ( ( !block && fragment != 0 ) || ( block && fragment >= descriptor->fragments ) )
+        return NULL;
+
+    const uint8_t * data = NULL;
+    if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+    {
+        data = region->send_spans + descriptor->span_start + (uint64_t) fragment * F;
+    }
+    else
+    {
+        if ( descriptor->chunk == RN_CHUNK_NONE || block )
+            return NULL;
+        data = rn_send_store_chunk_data( &region->store, descriptor->chunk );
+    }
+
+    if ( out_bytes )
+    {
+        const uint32_t offset = fragment * F;
+        *out_bytes = block ? ( descriptor->bytes - offset < F ? descriptor->bytes - offset : F ) : descriptor->bytes;
+    }
+    return data;
+}
+
+uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
+{
+    rocketnet_assert( region );
+    if ( d >= region->queue || !region->send_descriptors[d].in_use )
+        return NULL;
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+        return region->send_spans + descriptor->span_start;
+    if ( descriptor->chunk == RN_CHUNK_NONE )
+        return NULL;
+    return rn_send_store_chunk_data( &region->store, descriptor->chunk );
+}
+
 void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
     // tla/RNConnectionMemory.tla, Release
@@ -543,6 +755,8 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
     rocketnet_assert( descriptor->in_use );
     if ( d >= region->queue || !descriptor->in_use )
         return;
+    if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+        rn_span_unlink( region, d );
     if ( descriptor->chunk != RN_CHUNK_NONE )
         rn_send_store_free( &region->store, descriptor->chunk );
     descriptor->in_use = 0;
@@ -564,7 +778,7 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
     if ( !descriptor->in_use )
         return;
 
-    if ( descriptor->chunk != RN_CHUNK_NONE )
+    if ( descriptor->chunk != RN_CHUNK_NONE && !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
     {
         const int c = rn_send_store_chunk_class( descriptor->chunk );
         rocketnet_assert( c >= 0 && c < RN_STORE_NUM_CLASSES );
@@ -610,6 +824,8 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t ch
     descriptor->fragments_acked++;
     if ( descriptor->fragments_acked >= total )
     {
+        if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+            rn_span_unlink( region, d );
         if ( descriptor->chunk != RN_CHUNK_NONE )
             rn_send_store_free( &region->store, descriptor->chunk );
         descriptor->in_use = 0;
@@ -865,7 +1081,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq\n" );
+    rn_text_append( &text, "connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR, SR = B\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->window_messages, config->receive_ring_bytes, config->send_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_deliveries,
