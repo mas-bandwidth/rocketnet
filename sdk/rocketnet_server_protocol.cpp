@@ -1376,10 +1376,9 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     if ( server->acks && client_index >= 0 )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        if ( !rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, 0, current_time ) )
-        {
-            rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
-        }
+        rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, 0, current_time ),
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
         endpoint->ack_debt = 0;
     }
 
@@ -1621,10 +1620,9 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        if ( !rocketnet_ack_endpoint_record_sent( endpoint, sequence, wire_bytes, packet_id, 1, 0, current_time ) )
-        {
-            rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
-        }
+        rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, wire_bytes, packet_id, 1, 0, current_time ),
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
         rocketnet_platform_atomic_store_u64( &endpoint->ack_debt, 0 );      // fill-phase threads reset concurrently
     }
 
@@ -1673,10 +1671,9 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        if ( !rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, 0, current_time ) )
-        {
-            rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
-        }
+        rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, 0, current_time ),
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
         endpoint->ack_debt = 0;
     }
 
@@ -1796,10 +1793,9 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
-        if ( !rocketnet_ack_endpoint_record_sent( endpoint, sequence, bytes, 0, 0, aggregate_id, current_time ) )
-        {
-            rocketnet_platform_atomic_add_u64( &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW], 1 );
-        }
+        rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, bytes, 0, 0, aggregate_id, current_time ),
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
+                                          &server->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
         rocketnet_platform_atomic_store_u64( &endpoint->ack_debt, 0 );      // fill-phase threads reset concurrently
     }
 

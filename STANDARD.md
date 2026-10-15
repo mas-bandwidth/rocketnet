@@ -1622,7 +1622,12 @@ memory and bounded processing work for a deeper burst/reordering history.
 
 Finite history cannot promise delivery notifications after an unlimited number
 of later packets. Implementations MUST make that resource limit explicit and
-count overwritten unacknowledged send records. ACK generation and processing
+count overwritten unacknowledged send records. The count may be split by what
+the sender knows of the overwritten record's fate: lost, when the peer has
+acknowledged a sequence at least a fixed packet threshold above it (the packet
+threshold of RFC 9002 section 6.1.1, 3, is sequence based and needs no clock),
+and unknown otherwise. The sum of the parts is the count this paragraph
+names. ACK generation and processing
 MUST work for a full retained window arriving in one batch; they MUST NOT assume
 one ACK per frame, per fixed number of sends, or per interval of time.
 

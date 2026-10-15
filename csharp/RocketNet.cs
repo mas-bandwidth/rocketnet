@@ -327,6 +327,7 @@ public static unsafe partial class RocketNet
         SendArenaFull,
         ReceiveCursorTooSmall,
         SendHistoryOverflow,
+        SendHistoryLost,
         SendLeaseFull,
         IntegrityLimitReached,
         ClientCookieWrongSize,

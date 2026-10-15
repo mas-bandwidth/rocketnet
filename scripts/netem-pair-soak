@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+#
+# netem-pair-soak: the functional run for the sent history on a lossy, long path.
+#
+# Two network namespaces joined by a veth pair, netem on both ends (the delay
+# and the loss given), bin/server in one and N bin/client in the other for a
+# number of seconds. The server prints every counter at stop
+# (ROCKETNET_SERVER_PRINT_COUNTERS=1); the run exits 0 only when
+# SEND_HISTORY_OVERFLOW is 0 and every client connected and received payloads.
+# SEND_HISTORY_LOST is printed beside it: on a lossy path it is above 0, and it
+# is an outcome (packets the path lost), not a failure.
+#
+#   sudo -n scripts/netem-pair-soak --clients 64 --seconds 600 --delay-ms 78 --loss 1%
+#   sudo -n scripts/netem-pair-soak --clients 64 --seconds 600 --delay-ms 78 --loss 1% --burst
+#
+# 78 ms each way is a 156 ms round trip. --burst adds a 25% loss correlation, so
+# losses arrive in runs rather than singly.
+#
+# Linux only, and root (namespaces and tc need it). It runs nothing outside its
+# own two namespaces, creates only the namespaces and logs it names below,
+# deletes only what it created, and kills only the processes it started. The
+# driver is pinned to portable by default (no XDP attach); --driver names another.
+#
+# Options:
+#   --clients N       clients to run (default 64)
+#   --seconds S       seconds to run once every client has started (default 60)
+#   --delay-ms D      one-way delay on each end of the pair, in ms (default 78)
+#   --loss P          one-way loss on each end, as a percentage such as 1% (default 1%)
+#   --burst           correlated loss: runs of lost packets (25% correlation)
+#   --driver NAME     the driver pinned on the server and the clients (default portable)
+#   --port PORT       the server's port inside its namespace (default 40000)
+#   --bin-dir DIR     where bin/server and bin/client are (default: ../bin of this script)
+#   --keep-logs       keep the log directory and print its path
+#   --evaluate DIR    do not run anything: judge the logs a previous --keep-logs
+#                     run left in DIR (server.log, client-N.log), with --clients N
+#
+# Exit status: 0 only when the run passed; 1 names the failed check.
+
+set -u
+
+NAME=netem-pair-soak
+CLIENTS=64
+SECONDS_TO_RUN=60
+DELAY_MS=78
+LOSS=1%
+BURST=0
+PORT=40000
+DRIVER=portable
+KEEP_LOGS=0
+EVALUATE_DIR=
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+BIN_DIR="$SCRIPT_DIR/../bin"
+
+fail()
+{
+    echo "$NAME: check failed: $*" >&2
+    exit 1
+}
+
+usage()
+{
+    sed -n '2,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --clients)    [ $# -ge 2 ] || fail "--clients needs a value"; CLIENTS=$2; shift 2 ;;
+        --seconds)    [ $# -ge 2 ] || fail "--seconds needs a value"; SECONDS_TO_RUN=$2; shift 2 ;;
+        --delay-ms)   [ $# -ge 2 ] || fail "--delay-ms needs a value"; DELAY_MS=$2; shift 2 ;;
+        --loss)       [ $# -ge 2 ] || fail "--loss needs a value"; LOSS=$2; shift 2 ;;
+        --burst)      BURST=1; shift ;;
+        --driver)     [ $# -ge 2 ] || fail "--driver needs a value"; DRIVER=$2; shift 2 ;;
+        --port)       [ $# -ge 2 ] || fail "--port needs a value"; PORT=$2; shift 2 ;;
+        --bin-dir)    [ $# -ge 2 ] || fail "--bin-dir needs a value"; BIN_DIR=$2; shift 2 ;;
+        --keep-logs)  KEEP_LOGS=1; shift ;;
+        --evaluate)   [ $# -ge 2 ] || fail "--evaluate needs a directory"; EVALUATE_DIR=$2; shift 2 ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            fail "unknown option $1 (see --help)" ;;
+    esac
+done
+
+case "$CLIENTS" in ''|*[!0-9]*) fail "--clients must be a positive integer" ;; esac
+case "$SECONDS_TO_RUN" in ''|*[!0-9]*) fail "--seconds must be a positive integer" ;; esac
+case "$DELAY_MS" in ''|*[!0-9]*) fail "--delay-ms must be a non-negative integer" ;; esac
+case "$PORT" in ''|*[!0-9]*) fail "--port must be a positive integer" ;; esac
+[ "$CLIENTS" -ge 1 ] || fail "--clients must be at least 1"
+[ "$SECONDS_TO_RUN" -ge 1 ] || fail "--seconds must be at least 1"
+printf '%s' "$LOSS" | grep -Eq '^[0-9]+(\.[0-9]+)?%$' || fail "--loss must be a percentage such as 1%"
+
+# ------------------------------------------------------------------------
+# judging a run: read the logs in a directory and decide
+# ------------------------------------------------------------------------
+
+counter_value()
+{
+    # $1 = log, $2 = counter name; prints the value, or nothing when absent
+    awk -v name="$2" '$1 == "rocketnet" && $2 == "counter" && $3 == name { v = $4 } END { if (v != "") print v }' "$1"
+}
+
+evaluate()
+{
+    local dir=$1 connected=0 receiving=0 i log received sent
+    local server_log="$dir/server.log"
+
+    [ -f "$server_log" ] || fail "no server log in $dir"
+
+    echo "---- server counters ($server_log)"
+    awk '$1 == "rocketnet" && $2 == "counter" && ($3 ~ /^SEND_HISTORY_/ || $4 != 0) { print }' "$server_log"
+
+    local overflow lost
+    overflow=$(counter_value "$server_log" SEND_HISTORY_OVERFLOW)
+    lost=$(counter_value "$server_log" SEND_HISTORY_LOST)
+
+    echo "---- clients"
+    for i in $(seq 1 "$CLIENTS"); do
+        log="$dir/client-$i.log"
+        if [ ! -f "$log" ]; then
+            echo "client $i: no log"
+            continue
+        fi
+        if grep -q '^client state: connected$' "$log"; then
+            connected=$((connected + 1))
+            local is_connected=yes
+        else
+            local is_connected=no
+        fi
+        # the client prints "client sent S and received R payloads" every 100 received
+        received=$(awk '/^client sent [0-9]+ and received [0-9]+ payloads$/ { r = $6; s = $3 } END { if (r != "") print r }' "$log")
+        sent=$(awk '/^client sent [0-9]+ and received [0-9]+ payloads$/ { r = $6; s = $3 } END { if (s != "") print s }' "$log")
+        received=${received:-0}
+        sent=${sent:-0}
+        if [ "$is_connected" = yes ] && [ "$received" -gt 0 ]; then
+            receiving=$((receiving + 1))
+        fi
+        echo "client $i: connected=$is_connected sent=$sent received=$received"
+    done
+
+    echo "---- result"
+    echo "clients connected $connected of $CLIENTS"
+    echo "clients receiving $receiving of $CLIENTS"
+    echo "SEND_HISTORY_OVERFLOW ${overflow:-missing}"
+    echo "SEND_HISTORY_LOST ${lost:-missing}"
+
+    [ -n "$overflow" ] || fail "no SEND_HISTORY_OVERFLOW counter line in the server log (did the server stop and print?)"
+    [ -n "$lost" ] || fail "no SEND_HISTORY_LOST counter line in the server log"
+    [ "$connected" -eq "$CLIENTS" ] || fail "only $connected of $CLIENTS clients connected"
+    [ "$receiving" -eq "$CLIENTS" ] || fail "only $receiving of $CLIENTS clients received payloads"
+    [ "$overflow" -eq 0 ] || fail "SEND_HISTORY_OVERFLOW is $overflow, not 0"
+
+    echo "$NAME: PASS (SEND_HISTORY_OVERFLOW 0, SEND_HISTORY_LOST $lost, $CLIENTS of $CLIENTS clients connected and receiving)"
+    return 0
+}
+
+if [ -n "$EVALUATE_DIR" ]; then
+    [ -d "$EVALUATE_DIR" ] || fail "--evaluate: no directory $EVALUATE_DIR"
+    evaluate "$EVALUATE_DIR"
+    exit $?
+fi
+
+# ------------------------------------------------------------------------
+# the run
+# ------------------------------------------------------------------------
+
+[ "$(uname -s)" = Linux ] || fail "this host is $(uname -s): the run needs Linux network namespaces and tc netem"
+[ "$(id -u)" -eq 0 ] || fail "needs root for network namespaces and tc (run it with sudo -n)"
+command -v ip >/dev/null 2>&1 || fail "ip (iproute2) not found"
+command -v tc >/dev/null 2>&1 || fail "tc (iproute2) not found"
+[ -x "$BIN_DIR/server" ] || fail "no executable $BIN_DIR/server (run make)"
+[ -x "$BIN_DIR/client" ] || fail "no executable $BIN_DIR/client (run make)"
+
+TAG="rnsoak$$"
+NS_SERVER="${TAG}s"
+NS_CLIENT="${TAG}c"
+VETH_SERVER="rns$$a"
+VETH_CLIENT="rns$$b"
+SERVER_ADDRESS=10.77.0.1
+CLIENT_ADDRESS=10.77.0.2
+
+LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${NAME}.XXXXXX") || fail "cannot create a log directory"
+
+CREATED_NS_SERVER=0
+CREATED_NS_CLIENT=0
+SERVER_PID=
+CLIENT_PIDS=()
+
+cleanup()
+{
+    local pid
+    # stop only what this run started
+    for pid in "${CLIENT_PIDS[@]:-}"; do
+        [ -n "$pid" ] && kill -INT "$pid" 2>/dev/null
+    done
+    for pid in "${CLIENT_PIDS[@]:-}"; do
+        [ -n "$pid" ] && wait "$pid" 2>/dev/null
+    done
+    if [ -n "$SERVER_PID" ]; then
+        kill -INT "$SERVER_PID" 2>/dev/null
+        local waited=0
+        while kill -0 "$SERVER_PID" 2>/dev/null && [ "$waited" -lt 30 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        kill -0 "$SERVER_PID" 2>/dev/null && kill -KILL "$SERVER_PID" 2>/dev/null
+        wait "$SERVER_PID" 2>/dev/null
+    fi
+    # delete only the namespaces this run created (their veth ends go with them)
+    [ "$CREATED_NS_CLIENT" -eq 1 ] && ip netns del "$NS_CLIENT" 2>/dev/null
+    [ "$CREATED_NS_SERVER" -eq 1 ] && ip netns del "$NS_SERVER" 2>/dev/null
+    if [ "$KEEP_LOGS" -eq 1 ]; then
+        echo "$NAME: logs kept in $LOG_DIR" >&2
+    else
+        rm -rf "$LOG_DIR"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+ip netns add "$NS_SERVER" || fail "ip netns add $NS_SERVER"
+CREATED_NS_SERVER=1
+ip netns add "$NS_CLIENT" || fail "ip netns add $NS_CLIENT"
+CREATED_NS_CLIENT=1
+
+ip link add "$VETH_SERVER" type veth peer name "$VETH_CLIENT" || fail "ip link add veth pair"
+ip link set "$VETH_SERVER" netns "$NS_SERVER" || fail "move $VETH_SERVER into $NS_SERVER"
+ip link set "$VETH_CLIENT" netns "$NS_CLIENT" || fail "move $VETH_CLIENT into $NS_CLIENT"
+
+ip netns exec "$NS_SERVER" ip addr add "$SERVER_ADDRESS/24" dev "$VETH_SERVER" || fail "address the server end"
+ip netns exec "$NS_CLIENT" ip addr add "$CLIENT_ADDRESS/24" dev "$VETH_CLIENT" || fail "address the client end"
+ip netns exec "$NS_SERVER" ip link set lo up || fail "bring up lo in $NS_SERVER"
+ip netns exec "$NS_CLIENT" ip link set lo up || fail "bring up lo in $NS_CLIENT"
+ip netns exec "$NS_SERVER" ip link set "$VETH_SERVER" up || fail "bring up $VETH_SERVER"
+ip netns exec "$NS_CLIENT" ip link set "$VETH_CLIENT" up || fail "bring up $VETH_CLIENT"
+
+# netem on both ends: DELAY_MS each way, LOSS each way. the queue limit is
+# raised so a long delay at a high packet rate is carried by the delay line and
+# not tail-dropped by the default 1000-packet limit.
+LOSS_ARGS=(loss "$LOSS")
+[ "$BURST" -eq 1 ] && LOSS_ARGS=(loss "$LOSS" 25%)
+ip netns exec "$NS_SERVER" tc qdisc add dev "$VETH_SERVER" root netem limit 100000 delay "${DELAY_MS}ms" "${LOSS_ARGS[@]}" \
+    || fail "tc qdisc add netem on the server end (is sch_netem available?)"
+ip netns exec "$NS_CLIENT" tc qdisc add dev "$VETH_CLIENT" root netem limit 100000 delay "${DELAY_MS}ms" "${LOSS_ARGS[@]}" \
+    || fail "tc qdisc add netem on the client end"
+
+echo "$NAME: clients=$CLIENTS seconds=$SECONDS_TO_RUN delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) burst=$BURST driver=$DRIVER"
+ip netns exec "$NS_SERVER" tc qdisc show dev "$VETH_SERVER"
+ip netns exec "$NS_CLIENT" tc qdisc show dev "$VETH_CLIENT"
+if command -v ping >/dev/null 2>&1; then
+    ip netns exec "$NS_CLIENT" ping -c 3 -W 2 "$SERVER_ADDRESS" | tail -2
+fi
+
+ip netns exec "$NS_SERVER" env -u ROCKETNET_DRIVER ROCKETNET_SERVER_PRINT_COUNTERS=1 ROCKETNET_SERVER_DRIVER="$DRIVER" \
+    "$BIN_DIR/server" "$SERVER_ADDRESS:$PORT" > "$LOG_DIR/server.log" 2>&1 &
+SERVER_PID=$!
+sleep 2
+kill -0 "$SERVER_PID" 2>/dev/null || { cat "$LOG_DIR/server.log" >&2; fail "the server exited at start"; }
+
+for i in $(seq 1 "$CLIENTS"); do
+    ip netns exec "$NS_CLIENT" env -u ROCKETNET_DRIVER ROCKETNET_CLIENT_DRIVER="$DRIVER" ROCKETNET_CLIENT_CONNECT_ADDRESS="$SERVER_ADDRESS:$PORT" \
+        "$BIN_DIR/client" > "$LOG_DIR/client-$i.log" 2>&1 &
+    CLIENT_PIDS+=("$!")
+    sleep 0.05
+done
+
+echo "$NAME: $CLIENTS clients started, running $SECONDS_TO_RUN s"
+sleep "$SECONDS_TO_RUN"
+
+# stop the clients, then the server (SIGINT: the server prints its counters at stop)
+for pid in "${CLIENT_PIDS[@]}"; do
+    kill -INT "$pid" 2>/dev/null
+done
+for pid in "${CLIENT_PIDS[@]}"; do
+    wait "$pid" 2>/dev/null
+done
+CLIENT_PIDS=()
+
+kill -INT "$SERVER_PID" 2>/dev/null
+waited=0
+while kill -0 "$SERVER_PID" 2>/dev/null && [ "$waited" -lt 60 ]; do
+    sleep 1
+    waited=$((waited + 1))
+done
+if kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill -KILL "$SERVER_PID" 2>/dev/null
+    wait "$SERVER_PID" 2>/dev/null
+    SERVER_PID=
+    fail "the server did not stop within 60 s of SIGINT"
+fi
+wait "$SERVER_PID" 2>/dev/null
+SERVER_PID=
+
+evaluate "$LOG_DIR"
+exit $?

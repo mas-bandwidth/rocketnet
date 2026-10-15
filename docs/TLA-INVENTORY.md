@@ -570,7 +570,7 @@ lap. Per aggregate (a ring of 2048): `(id, packet_id, remaining)`. Per endpoint:
 
 | Event | Effect | Code |
 |---|---|---|
-| session send | record; overwriting an unacked record returns false → `SEND_HISTORY_OVERFLOW`; a stale sequence is refused | `ack.cpp:228-265` |
+| session send | record; overwriting an unacked record is classified: known lost (a later ack at least `ROCKETNET_LOSS_PACKET_THRESHOLD` above it) → `SEND_HISTORY_LOST`, unknown fate → `SEND_HISTORY_OVERFLOW`; a stale sequence is refused → `SEND_HISTORY_OVERFLOW`; the packet is always sent | `ack.cpp:228-265` |
 | fragmented send | aggregate opened with `remaining = count` (it can lap) | `:280-298` |
 | _Recv_ block | named, retained, unacked record → Acked; its id surfaces; aggregate decremented, id surfaces at 0 | `:318-425, 427-467` |
 | batch full | a record with an id or aggregate stays unacked (deferred), counted | `:371-374` |
@@ -591,6 +591,13 @@ lap. Per aggregate (a ring of 2048): `(id, packet_id, remaining)`. Per endpoint:
 **Verdict: model it**, after M7, with the peer's received state supplied by module 1's
 representation. It checks deferral under a full batch, aggregate counting under
 reordered and partial acks, and the termination argument.
+
+**Modelled: the sent-record slice.** `tla/RNSentHistory.tla` (`tla/README-RNSentHistory.md`)
+models the sent history under loss, reordering and ack delay: the ring, the eviction
+classification (lost, overflow), `largestAcked`, and the never-refuse rule, with the
+reversed witnesses `MCRNSentHistoryBrokenCountEveryUnacked.cfg` and
+`MCRNSentHistoryBrokenRefuseWhenFull.cfg`. Aggregates, ack debt and the batch remain
+the rest of this module's row.
 
 ## M9. Fragment reassembly
 
