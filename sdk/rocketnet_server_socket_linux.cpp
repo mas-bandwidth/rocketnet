@@ -26,6 +26,7 @@
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <linux/if_link.h>
 #include <linux/if_ether.h>
 #include <linux/if_xdp.h>
@@ -203,41 +204,32 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server );
 
 static std::atomic<rocketnet_server_socket_t*> rocketnet_server_socket_live{ nullptr };
 
-static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address ) 
+// the interface's MAC, asked of the kernel with SIOCGIFHWADDR on a socket
+// opened in the calling thread's network namespace. sysfs is not used:
+// /sys/class/net is the view of the namespace that mounted /sys, so after a
+// setns into another network namespace it does not show that namespace's
+// interfaces, while the ioctl answers for the namespace the thread is in.
+
+static bool get_interface_mac_address( const char * interface_name, uint8_t * mac_address )
 {
-    char path[256];
-    snprintf( path, sizeof(path), "/sys/class/net/%s/address", interface_name );
-    FILE * file = fopen(path, "r");
-    if ( !file )
-    {
+    if ( !interface_name || strlen( interface_name ) >= IFNAMSIZ )
         return false;
-    }
 
-    // xx.xx.xx.xx.xx.xx
-
-    char mac_address_string[18];
-
-    if ( fgets( mac_address_string, sizeof(mac_address_string), file ) == NULL ) 
-    {
-        fclose( file );
+    const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
+    if ( fd < 0 )
         return false;
-    }
 
-    mac_address_string[2] = 0;
-    mac_address_string[5] = 0;
-    mac_address_string[8] = 0;
-    mac_address_string[11] = 0;
-    mac_address_string[14] = 0;
-    mac_address_string[17] = 0;
+    struct ifreq request;
+    memset( &request, 0, sizeof(request) );
+    memcpy( request.ifr_name, interface_name, strlen( interface_name ) );
 
-    mac_address[0] = (uint8_t) strtol( mac_address_string + 0, NULL, 16 );
-    mac_address[1] = (uint8_t) strtol( mac_address_string + 3, NULL, 16 );
-    mac_address[2] = (uint8_t) strtol( mac_address_string + 6, NULL, 16 );
-    mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
-    mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
-    mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
+    const int result = ioctl( fd, SIOCGIFHWADDR, &request );
+    close( fd );
 
-    fclose( file );
+    if ( result != 0 || request.ifr_hwaddr.sa_family != ARPHRD_ETHER )
+        return false;
+
+    memcpy( mac_address, request.ifr_hwaddr.sa_data, 6 );
 
     return true;
 }
