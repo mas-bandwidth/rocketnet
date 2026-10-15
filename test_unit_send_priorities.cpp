@@ -18,6 +18,7 @@
 
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
+#include "sdk/rocketnet_channel.h"
 #include "sdk/rocketnet_counters.h"
 #include "sdk/rocketnet_message.h"
 #include "sdk/rocketnet_packet_builder.h"

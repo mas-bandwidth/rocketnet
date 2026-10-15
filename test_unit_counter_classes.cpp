@@ -279,6 +279,11 @@ static const char * const counters_appended_names[] =
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
     "CONNECTION_REQUEST_MAPPING_SALT_MISMATCH",
     "SEND_HISTORY_LOST",
+    "MESSAGE_BAD_CHANNEL",
+    "MESSAGE_BAD_BLOCK",
+    "MESSAGE_BAD_RING",
+    "MESSAGE_ORDERING_AHEAD",
+    "MESSAGE_PROTOCOL_VIOLATION",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
