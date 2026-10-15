@@ -91,6 +91,15 @@ Structural checks, the Packet sizes table) through the judge in
 `ROCKETNET_WIRE_SERVER_PACKET_VALID`, so the manifest judges the program
 rather than copying it.
 
+The judge applies the standard to the address families the program
+receives. `server_xdp.c` receives IPv4 only, so every IPv6 frame, the
+well-formed ones included, is `XDP_PASS` with no counter: it is the kernel
+stack's business. `run.sh` builds the judge with `RECEIVE_IPV6=1` once
+`server_xdp.c` tests for the IPv6 ethertype, crafts the corpus again into the
+run directory, and boots nothing when the committed captures or the
+manifest's crafted rows differ from that output; the fix is to regenerate
+them with `xdp_vm_replay craft test/xdp_pcaps`.
+
 - `crafted_ipv4.pcap`, `crafted_ipv6.pcap`, `crafted_other.pcap`: one or more
   frames per counter and per pass branch (other port, wrong address, IPv4
   options, not UDP, IPv6 extension headers and fragment, ICMPv6, VLAN, ARP,

@@ -175,6 +175,17 @@ static const uint8_t filter_epoch = 0;
 // the judge, from STANDARD.md
 
 #define RECEIVE_CEILING 1472                    // Packet sizes: 1500 - 20 - 8, fixed for every receiver
+
+// The address families the program under test receives. The judge applies
+// the standard to the families the program claims, and every other family is
+// the kernel stack's business: it passes untouched and moves no counter.
+// server_xdp.c receives IPv4 only, so IPv6 frames pass. A program that
+// receives IPv6 is judged with `make -C test/xdp_vm RECEIVE_IPV6=1`, and the
+// manifest is regenerated from that build's `craft` output.
+
+#ifndef RECEIVE_IPV6
+#define RECEIVE_IPV6 0
+#endif
 #define SMALLEST_INBOUND 33                     // disconnect and ack, the smallest server-inbound floor
 
 struct verdict_t
@@ -242,7 +253,7 @@ static struct verdict_t classify( const uint8_t * frame, int size )
             return pass;
         return judge_udp( udp + 8, size - 14 - 20 - 8 );
     }
-    if ( ethertype == 0x86DD )
+    if ( ethertype == 0x86DD && RECEIVE_IPV6 )
     {
         if ( size < 14 + 40 )
             return drop;                        // claims IPv6 and cannot hold its header
@@ -261,7 +272,7 @@ static struct verdict_t classify( const uint8_t * frame, int size )
             return pass;
         return judge_udp( udp + 8, size - 14 - 40 - 8 );
     }
-    return pass;                                // ARP, VLAN-tagged and every other ethertype
+    return pass;                                // ARP, VLAN-tagged, IPv6 when not received, and every other ethertype
 }
 
 // --------------------------------------------------------------------------

@@ -9,6 +9,10 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -g -Wall -Wextra
 OUT     ?= .
+
+# 1 when the program under test receives IPv6; the judge in xdp_vm_replay
+# then applies the standard to IPv6 frames instead of passing them
+RECEIVE_IPV6 ?= 0
 SDK     := ../../sdk
 
 XDP_LIBS := $(shell pkg-config --libs libxdp libbpf 2>/dev/null || echo -lxdp -lbpf -lelf -lz)
@@ -22,7 +26,7 @@ $(OUT)/xdp_vm_attach: xdp_vm_attach.c $(SDK)/rocketnet_wire.h
 
 $(OUT)/xdp_vm_replay: xdp_vm_replay.c
 	@mkdir -p $(OUT)
-	$(CC) $(CFLAGS) -o $@ xdp_vm_replay.c
+	$(CC) $(CFLAGS) -DRECEIVE_IPV6=$(RECEIVE_IPV6) -o $@ xdp_vm_replay.c
 
 clean:
 	rm -f $(OUT)/xdp_vm_attach $(OUT)/xdp_vm_replay

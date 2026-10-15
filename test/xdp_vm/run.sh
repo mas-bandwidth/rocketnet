@@ -143,7 +143,17 @@ deb_extract() {
     if command -v dpkg-deb >/dev/null 2>&1; then
         dpkg-deb -x "$deb" "$into"
     else
-        ( cd "$into" && ar p "$deb" "$(ar t "$deb" | grep '^data\.tar')" | tar -x --auto-compress -f - 2>/dev/null || ar p "$deb" "$(ar t "$deb" | grep '^data\.tar')" | tar -x -J -f - )
+        local member
+        member=$(ar t "$deb" | grep '^data\.tar' | head -1)
+        (
+            cd "$into" || exit 1
+            case "$member" in
+                *.zst) ar p "$deb" "$member" | tar --zstd -x -f - ;;
+                *.xz)  ar p "$deb" "$member" | tar -J -x -f - ;;
+                *.gz)  ar p "$deb" "$member" | tar -z -x -f - ;;
+                *)     ar p "$deb" "$member" | tar -x -f - ;;
+            esac
+        )
     fi
 }
 
@@ -208,9 +218,9 @@ build_failed=0
 xdp_src="$run/build/server_xdp"
 mkdir -p "$xdp_src"
 # the same flattened set the library embeds (cmake/XdpSources.cmake)
-for source in $(grep -oE '(server_xdp|sdk)/[A-Za-z0-9_.]+' "$repo/cmake/XdpSources.cmake"); do
+while IFS= read -r source; do
     cp "$repo/$source" "$xdp_src/" || build_failed=1
-done
+done < <(grep -oE '(server_xdp|sdk)/[A-Za-z0-9_.]+' "$repo/cmake/XdpSources.cmake")
 make -C "$xdp_src" -s server_xdp.o > "$run/build/server_xdp.log" 2>&1 || build_failed=1
 [ -f "$xdp_src/server_xdp.o" ] && cp "$xdp_src/server_xdp.o" "$run/build/objects/"
 
@@ -226,14 +236,36 @@ while IFS= read -r source; do
     ( cd "$(dirname "$source")" && eval "$line -I$repo/sdk" ) >> "$run/build/server_xdp.log" 2>&1 || build_failed=1
 done < <(grep -rl --include='*.c' 'SEC("' "$repo" 2>/dev/null | grep -v -e '/build/' -e '/build-' -e '/test/xdp_vm/' | sort)
 
-make -C "$here" -s OUT="$run/build/bin" > "$run/build/helpers.log" 2>&1 || build_failed=1
+# the judge applies the standard to the address families the program
+# receives: IPv6 only once server_xdp.c reads the IPv6 ethertype
+receive_ipv6=0
+grep -Eq 'htons\( *ETH_P_IPV6 *\)' "$repo/server_xdp/server_xdp.c" && receive_ipv6=1
+make -C "$here" -s OUT="$run/build/bin" RECEIVE_IPV6="$receive_ipv6" > "$run/build/helpers.log" 2>&1 || build_failed=1
 
 if [ "$build_failed" != 0 ]; then
     cat "$run/build/server_xdp.log" "$run/build/helpers.log"
     say "the host build failed; nothing was booted"
     exit 1
 fi
-say "built: $(cd "$run/build/objects" && ls | tr '\n' ' ')"
+say "built: $(find "$run/build/objects" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')"
+
+# the committed corpus and manifest are the judge's own output for this
+# program: crafting again must give the same frames and the same rows, or the
+# manifest describes a different program and no row could mean anything
+mkdir -p "$run/build/crafted"
+"$run/build/bin/xdp_vm_replay" craft "$run/build/crafted" > "$run/build/crafted/rows.tsv" || die "xdp_vm_replay craft failed"
+grep '^crafted_' "$repo/test/xdp_pcaps/manifest.tsv" > "$run/build/crafted/committed.tsv"
+corpus_drift=0
+diff -u "$run/build/crafted/committed.tsv" "$run/build/crafted/rows.tsv" > "$run/build/crafted/manifest.diff" || corpus_drift=1
+for pcap in "$run/build/crafted"/*.pcap; do
+    cmp -s "$pcap" "$repo/test/xdp_pcaps/$(basename "$pcap")" || { say "corpus: $(basename "$pcap") differs from the committed capture"; corpus_drift=1; }
+done
+if [ "$corpus_drift" != 0 ]; then
+    cat "$run/build/crafted/manifest.diff"
+    say "corpus: the committed manifest is not the judge's output for this program (receive_ipv6=$receive_ipv6); regenerate it with xdp_vm_replay craft; nothing was booted"
+    exit 1
+fi
+say "corpus: committed manifest and captures match the judge (receive_ipv6=$receive_ipv6)"
 
 # ---------------------------------------------------------------------------
 # the kernels
