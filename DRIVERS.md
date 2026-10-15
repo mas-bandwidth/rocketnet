@@ -108,13 +108,14 @@ Dispatch measurements and their limits are recorded in
 
 ## The XDP receive filter
 
-`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
-before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
-UDP directly behind it. Both families then run one shared function: the
-destination port and address against the config map, the wire size bounds, the
-filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
-into the XSKMAP for the receive queue. The counters are the same for both
-families. The IPv6 destination is `public_address_ipv6` in
+`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as a
+20-byte header with UDP behind it. IPv6 is parsed as the fixed 40-byte header
+with UDP directly behind it. Both families then run one shared function: the
+destination port and address against the config map, then the userspace
+refusal ladder in its order (the prefilter's too short, too large, wrong epoch
+and wrong value; then a reserved type, a server-to-client type, and the type's
+wire size by `ROCKETNET_WIRE_SERVER_PACKET_VALID`), and the redirect into the
+XSKMAP for the receive queue. The counters are the same for both families. The IPv6 destination is `public_address_ipv6` in
 `rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
 `public_address` does for IPv4.
 
@@ -126,15 +127,55 @@ an extension chain and never drops one, so IPv6 fragments pass. Every other
 non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
 as non-UDP IPv4 does.
 
+Every verdict is counted. `sdk/rocketnet_wire.h` defines the counters
+(`ROCKETNET_SERVER_XDP_COUNTER_*`) and `ROCKETNET_SERVER_XDP_COUNTER_TABLE`,
+one row per counter with its name and class. The program looks up the per-CPU
+stats entry once per frame and raises `RECEIVED` on entry; every exit then
+raises exactly one more counter, so
+
+    RECEIVED == REDIRECTED + every DROPPED_* + every prefilter and type counter + every PASSED_*
+
+holds by construction. The exits and their counters:
+
+| exit | verdict | counter |
+|---|---|---|
+| frame shorter than an Ethernet header | pass | `PASSED_SHORT_ETHERNET` |
+| ethertype neither IPv4 nor IPv6 | pass | `PASSED_NOT_IP` |
+| IPv4 header truncated | drop | `DROPPED_IPV4_SHORT_HEADER` |
+| IPv4 header with options, or protocol not UDP | pass | `PASSED_IPV4_NOT_PLAIN_UDP` |
+| IPv6 header truncated | drop | `DROPPED_IPV6_SHORT_HEADER` |
+| IPv6 extension header | pass | `PASSED_IPV6_EXTENSION` |
+| IPv6 next header neither UDP nor an extension | pass | `PASSED_IPV6_NOT_UDP` |
+| UDP header truncated | pass | `PASSED_UDP_SHORT_HEADER` |
+| filter not configured | pass | `PASSED_NOT_CONFIGURED` |
+| another destination port or address | pass | `PASSED_OTHER_DESTINATION` |
+| packet shorter than the 6-byte prefilter header | drop | `PREFILTER_TOO_SHORT` |
+| packet above the receive ceiling | drop | `PREFILTER_TOO_LARGE` |
+| filter epoch not the configured one | drop | `PREFILTER_WRONG_EPOCH` |
+| filter value not the configured one | drop | `PREFILTER_WRONG_VALUE` |
+| type above 9 | drop | `RESERVED_TYPE` |
+| denied, challenge or cookie | drop | `WRONG_DIRECTION` |
+| server-inbound type outside its wire size | drop | `<TYPE>_WRONG_SIZE` |
+| redirect into the queue's socket | redirect | `REDIRECTED` |
+| no socket for the queue | drop | `DROPPED_REDIRECT_NO_SOCKET` |
+
+The prefilter and type counters carry the names of the userspace counters
+for the same refusal (STANDARD.md, the prefilter's four reasons), so the
+kernel filter and the userspace ladder report in the same shape.
+
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
 returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
 DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
-reads the stats map back after each frame. It needs root, or CAP_BPF and
-CAP_NET_ADMIN; `-v` prints the verifier's last log line:
+reads the stats map back after each frame: each frame raises `RECEIVED` and
+exactly one other counter. It sweeps every type at the boundary sizes against
+the userspace ladder's counter names, and with `--base` it runs the same sweep
+through an object built from an earlier `server_xdp.c` and requires the same
+verdict for every frame. It needs root, or CAP_BPF and CAP_NET_ADMIN; `-v`
+prints the verifier's last log line:
 
 ```sh
-sudo ./bin/test_xdp_filter -v
+sudo ./bin/test_xdp_filter -v --base base_server_xdp.o
 ```
 
 ## Embedded XDP source maintenance
