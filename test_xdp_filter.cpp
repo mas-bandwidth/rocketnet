@@ -487,6 +487,45 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
     return ok;
 }
 
+// Run one frame the kernel's test-run refuses before the program sees it:
+// bpf_prog_test_run_opts fails with EINVAL, there is no verdict, and no
+// counter moves, RECEIVED included.
+
+static bool run_refused( filter_t * filter, const char * label, const spec_t & spec )
+{
+    uint64_t before[NUM_COUNTER_SLOTS];
+    read_counters( filter, before );
+
+    const int verdict = run_verdict( filter, spec );
+    const int error = errno;
+
+    uint64_t after[NUM_COUNTER_SLOTS];
+    read_counters( filter, after );
+
+    bool ok = true;
+    if ( verdict >= 0 )
+    {
+        printf( "  FAIL %s: verdict %s, wanted the kernel to refuse the run with EINVAL\n", label, verdict_name( verdict ) );
+        ok = false;
+    }
+    else if ( error != EINVAL )
+    {
+        printf( "  FAIL %s: test_run failed with %s, wanted EINVAL\n", label, strerror( error ) );
+        ok = false;
+    }
+
+    for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
+    {
+        if ( after[i] != before[i] )
+        {
+            printf( "  FAIL %s: %s moved by %llu on a refused run, wanted 0\n", label, counter_name( i ),
+                    (unsigned long long) ( after[i] - before[i] ) );
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 static bool write_config_unconfigured( filter_t * filter )
 {
     struct rocketnet_server_xdp_config_t config;
@@ -713,7 +752,11 @@ static bool every_verdict_is_counted( filter_t * filter )
 
     spec_t ethernet_short = spec_default( false );
     ethernet_short.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES - 1;
-    ok &= run_frame( filter, "frame shorter than an ethernet header", ethernet_short, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_SHORT_ETHERNET );
+    // BPF_PROG_TEST_RUN refuses an XDP frame shorter than an Ethernet header
+    // with EINVAL before the program runs, so this row expects that refusal
+    // and no counter moving. PASSED_SHORT_ETHERNET stays in the program for a
+    // driver that hands it such a frame; test_run cannot drive that exit.
+    ok &= run_refused( filter, "frame shorter than an ethernet header", ethernet_short );
 
     spec_t arp = spec_default( false );
     arp.ethertype = 0x0806;
