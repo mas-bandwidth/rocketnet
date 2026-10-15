@@ -415,11 +415,11 @@ static void check_component_create_sweeps( allocator_state & state )
         [&]() { return rocketnet_admitted_token_set_create( &state, 16 ); },
         []( rocketnet_admitted_token_set_t * s ) { rocketnet_admitted_token_set_destroy( s ); } ) == 7 );
 
-    // 4. rocketnet_client_slots_create: 8 allocations (fail N=1..8, succeed N=9).
+    // 4. rocketnet_client_slots_create: 9 allocations (fail N=1..9, succeed N=10).
     check( sweep_component_create<rocketnet_client_slots_t>(
         state,
         [&]() { return rocketnet_client_slots_create( &state, 16 ); },
-        []( rocketnet_client_slots_t * s ) { rocketnet_client_slots_destroy( s ); } ) == 8 );
+        []( rocketnet_client_slots_t * s ) { rocketnet_client_slots_destroy( s ); } ) == 9 );
 
     // 5. rocketnet_reassembly_set_create: 4 allocations (fail N=1..4, succeed N=5).
     check( sweep_component_create<rocketnet_reassembly_set_t>(

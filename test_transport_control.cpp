@@ -36,6 +36,9 @@ struct control_fixture_t
     int responses;
     int payloads;
     int aborts;
+    int disconnects;
+    int pending_disconnects;
+    bool staged;
     int keep_alives[ROCKETNET_MAX_CLIENTS];
     int acks[ROCKETNET_MAX_CLIENTS];
     int capacity;
@@ -53,6 +56,11 @@ static void record(control_fixture_t * f, const rocketnet_address_t * to, const 
     if (packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET) ++f->keep_alives[client];
     else if (packet[0] == ROCKETNET_CONNECTION_ACK_PACKET) ++f->acks[client];
     else if (packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET) ++f->payloads;
+    else if (packet[0] == ROCKETNET_CONNECTION_DISCONNECT_PACKET)
+    {
+        if (f->staged) ++f->pending_disconnects;
+        else ++f->disconnects;
+    }
     else CHECK(false);
 }
 static void fixture_destroy(void *) {}
@@ -87,18 +95,25 @@ static void finish_packet(void * p, uint64_t, uint8_t * frame, int)
     record(f, &f->reserved_to, frame + ROCKETNET_FRAME_WIRE_OFFSET); ++f->used;
 }
 static void abort_packet(void * p, uint64_t, uint8_t *) { ++((control_fixture_t*)p)->aborts; }
-static void flush(void * p) { ((control_fixture_t*)p)->used = 0; }
+static void flush(void * p)
+{
+    auto * f = (control_fixture_t*)p;
+    f->disconnects += f->pending_disconnects;
+    f->pending_disconnects = 0;
+    f->used = 0;
+}
 static rocketnet_server_socket_process_packets_t * receive(void * p) { return &((control_fixture_t*)p)->received; }
 
 static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_driver_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
 {
+    f->staged = staged;
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config(&config);
     config.max_clients = clients;
     config.max_payload_bytes = payload_limit;
     config.num_reassembly_slots = 1;
     strcpy(config.driver, "portable");
-    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, 0.0);
+    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server);
     rocketnet_server_driver_close(&server->io);
     *operations = {};
@@ -169,6 +184,28 @@ static void test_buffered_control_pressure(int clients = 300)
         clients, clients * 6, elapsed_ms);
 }
 
+static void test_disconnect_burst_next_send(bool staged)
+{
+    auto * f = new control_fixture_t(); f->capacity = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS + 1;
+    rocketnet_server_driver_operations_t operations;
+    auto * server = make_server(f, &operations, 1, staged);
+    rocketnet_server_transport_update(server, 1.0);
+    const int stats_index = server->current_stats_index;
+    const uint64_t before = server->stats_frames[stats_index].packets_sent;
+
+    rocketnet_server_transport_disconnect_client(server, 0);
+    CHECK(rocketnet_server_transport_num_connected_clients(server) == 0);
+    CHECK(f->disconnects == 0);
+    CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+
+    rocketnet_server_transport_send_packets(server);
+    CHECK(f->disconnects == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+    CHECK(server->stats_frames[stats_index].packets_sent == before + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+
+    rocketnet_server_transport_destroy(server); delete f;
+    printf("test_disconnect_burst_next_send staged=%d disconnects=%d\n", staged, ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+}
+
 static void test_staged_control_fairness()
 {
     auto * f = new control_fixture_t(); f->capacity = 2;
@@ -222,13 +259,24 @@ static void test_single_frame_arena()
     printf("test_single_frame_arena_seal_and_abort\n");
 }
 
-int main()
+int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
     CHECK(rocketnet_init());
     rocketnet_forbid_xdp_commit();
+    if (argc == 2)
+    {
+        if (strcmp(argv[1], "disconnect-burst-portable") == 0) test_disconnect_burst_next_send(false);
+        else if (strcmp(argv[1], "disconnect-burst-staged") == 0) test_disconnect_burst_next_send(true);
+        else CHECK(false);
+        rocketnet_term();
+        return 0;
+    }
+    CHECK(argc == 1);
     test_buffered_control_pressure();
     test_buffered_control_pressure(1000);
+    test_disconnect_burst_next_send(false);
+    test_disconnect_burst_next_send(true);
     test_staged_control_fairness();
     test_single_frame_arena();
     rocketnet_term();

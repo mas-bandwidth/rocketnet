@@ -110,7 +110,7 @@ public static unsafe partial class RocketNet
     public const int ServerTransportStopped = 2;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 199;
+    public const int NumCounters = 200;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -151,6 +151,7 @@ public static unsafe partial class RocketNet
         ConnectionRequestSentChallenge,
         ConnectionRequestInternalError,
         ConnectionResponseReceived,
+        ConnectionResponseWrongSize,
         ConnectionResponseNoMapping,
         ConnectionResponseZeroSequence,
         ConnectionResponseDidNotOpen,
@@ -415,6 +416,14 @@ public static unsafe partial class RocketNet
         /// <see cref="GetPublicAddress"/> / <see cref="SetPublicAddress"/>.</summary>
         public fixed byte PublicAddress[AddressStringLength];
 
+        /// <summary>Upper bound, in seconds, on a connect token's timeout. A request above
+        /// this is clamped. Default 60; the native range is 1 to 3600.</summary>
+        public int MaxTimeoutSeconds;
+
+        /// <summary>Half-open handshake deadline in seconds, fixed at the challenge, never
+        /// refreshed, and discharged on connect. Default 5; the native range is 1 to 60.</summary>
+        public int HandshakeDeadlineSeconds;
+
         /// <summary>Reads the driver candidate list as a string.</summary>
         public string GetDriver() { fixed ( byte * driver = Driver ) return Marshal.PtrToStringUTF8( (IntPtr) driver ) ?? string.Empty; }
 
@@ -563,6 +572,10 @@ public static unsafe partial class RocketNet
     /// <summary>Shuts the library down. Call after every client and server is destroyed.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_term", CallingConvention = CallingConvention.Cdecl )]
     public static extern void Term();
+
+    /// <summary>Counts every refused API misuse since the process started.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_api_misuse_count", CallingConvention = CallingConvention.Cdecl )]
+    public static extern ulong ApiMisuseCount();
 
     /// <summary>Suppresses all library logging when true.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_quiet", CallingConvention = CallingConvention.Cdecl )]
@@ -719,8 +732,10 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_destroy", CallingConvention = CallingConvention.Cdecl )]
     internal static extern void ClientTransportDestroyNative( IntPtr client );
 
-    /// <summary>Advances the client one frame at the given game time.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_update", CallingConvention = CallingConvention.Cdecl )]
     internal static extern void ClientTransportUpdateNative( ClientTransportHandle client, double time );
+
+    /// <summary>Advances the client one frame at the given game time.</summary>
     public static void ClientTransportUpdate( ClientTransportHandle client, double time )
     {
         client.updateEpoch++;
@@ -785,11 +800,15 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_client_transport_payload", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ClientTransportPayload( ClientTransportHandle client, int payloadIndex, out int payloadBytes );
 
-    /// <summary>One delivered payload by index as a span. Valid until the next update.</summary>
-    public static ReadOnlySpan<byte> ClientTransportPayloadSpan( ClientTransportHandle client, int payloadIndex )
+    /// <summary>One delivered payload by index as a checked view (see
+    /// <see cref="ReceivedPayload"/>). Valid until the next update; reading it after the next
+    /// update throws <see cref="StalePayloadException"/>.</summary>
+    public static ReceivedPayload ClientTransportPayloadSpan( ClientTransportHandle client, int payloadIndex )
     {
+        int epoch = client.updateEpoch;
         IntPtr data = ClientTransportPayload( client, payloadIndex, out int bytes );
-        return data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
+        ReadOnlySpan<byte> span = data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
+        return new ReceivedPayload( span, client, epoch );
     }
 
     /// <summary>The whole receive batch as parallel arrays in one call — the zero-per-item
@@ -802,8 +821,11 @@ public static unsafe partial class RocketNet
     public static ClientTransportPayloadBatch ClientTransportPayloads( ClientTransportHandle client )
     {
         int count = ClientTransportPayloads( client, out byte** data, out int* bytes );
-        return new ClientTransportPayloadBatch( count, data, bytes );
+        return new ClientTransportPayloadBatch( client, client.updateEpoch, count, data, bytes );
     }
+
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
+    internal static extern IntPtr ClientTransportStartPacketNative( ClientTransportHandle client, int requestBytes, ref PacketContext context );
 
     /// <summary>Acquires a packet to fill, declaring the capacity the caller needs; see the
     /// send family contract on <see cref="ServerTransportStartPacket"/>. A request above
@@ -811,7 +833,6 @@ public static unsafe partial class RocketNet
     /// context's PayloadCapacity reports the frame's real capacity -- the wire capacity or
     /// the configured maximum, never the request itself. Returns the frame, or IntPtr.Zero
     /// when no packet is available (ring or arena full, not connected, request out of range).</summary>
-    internal static extern IntPtr ClientTransportStartPacketNative( ClientTransportHandle client, int requestBytes, ref PacketContext context );
     public static IntPtr ClientTransportStartPacket( ClientTransportHandle client, int requestBytes, ref PacketContext context )
     {
         IntPtr result = ClientTransportStartPacketNative( client, requestBytes, ref context );
@@ -820,18 +841,22 @@ public static unsafe partial class RocketNet
         return result;
     }
 
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
+    internal static extern int ClientTransportFinishPacketNative( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
+
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    internal static extern int ClientTransportFinishPacketNative( ClientTransportHandle client, ref PacketContext context, int payloadBytes );
     public static int ClientTransportFinishPacket( ClientTransportHandle client, ref PacketContext context, int payloadBytes )
     {
         context.updateEpoch = -1;
         return ClientTransportFinishPacketNative( client, ref context, payloadBytes );
     }
 
-    /// <summary>Releases an acquired packet without sending it.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_client_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
     internal static extern void ClientTransportAbortPacketNative( ClientTransportHandle client, ref PacketContext context );
+
+    /// <summary>Releases an acquired packet without sending it.</summary>
     public static void ClientTransportAbortPacket( ClientTransportHandle client, ref PacketContext context )
     {
         context.updateEpoch = -1;
@@ -911,7 +936,7 @@ public static unsafe partial class RocketNet
     /// <summary>Creates a server on the public address clients dial, e.g. "127.0.0.1:40000".
     /// On refusal the returned handle has IsInvalid true.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern ServerTransportHandle ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config, double time );
+    public static extern ServerTransportHandle ServerTransportCreate( IntPtr context, [MarshalAs( UnmanagedType.LPUTF8Str )] string publicAddress, ref ServerTransportConfig config );
 
     /// <summary>Destroys the server. Stop and wait for stopped first. Destroy runs exactly
     /// once; a second call, or any use after destroy, throws before native code.</summary>
@@ -954,8 +979,10 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_port", CallingConvention = CallingConvention.Cdecl )]
     public static extern ushort ServerTransportPort( ServerTransportHandle server );
 
-    /// <summary>Advances the server one frame at the given game time.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_update", CallingConvention = CallingConvention.Cdecl )]
     internal static extern void ServerTransportUpdateNative( ServerTransportHandle server, double time );
+
+    /// <summary>Advances the server one frame at the given game time.</summary>
     public static void ServerTransportUpdate( ServerTransportHandle server, double time )
     {
         server.updateEpoch++;
@@ -970,11 +997,15 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_server_transport_payload", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr ServerTransportPayload( ServerTransportHandle server, int payloadIndex, out int clientIndex, out int payloadBytes );
 
-    /// <summary>One delivered payload by index as a span, with its sender. Valid until the next update.</summary>
-    public static ReadOnlySpan<byte> ServerTransportPayloadSpan( ServerTransportHandle server, int payloadIndex, out int clientIndex )
+    /// <summary>One delivered payload by index as a checked view (see
+    /// <see cref="ReceivedPayload"/>), with its sender. Valid until the next update; reading it
+    /// after the next update throws <see cref="StalePayloadException"/>.</summary>
+    public static ReceivedPayload ServerTransportPayloadSpan( ServerTransportHandle server, int payloadIndex, out int clientIndex )
     {
+        int epoch = server.updateEpoch;
         IntPtr data = ServerTransportPayload( server, payloadIndex, out clientIndex, out int bytes );
-        return data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
+        ReadOnlySpan<byte> span = data == IntPtr.Zero ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>( (void*) data, bytes );
+        return new ReceivedPayload( span, server, epoch );
     }
 
     /// <summary>The whole receive batch as parallel arrays in one call — the zero-per-item
@@ -987,7 +1018,7 @@ public static unsafe partial class RocketNet
     public static ServerTransportPayloadBatch ServerTransportPayloads( ServerTransportHandle server )
     {
         int count = ServerTransportPayloads( server, out int* clientIndex, out byte** data, out int* bytes );
-        return new ServerTransportPayloadBatch( count, clientIndex, data, bytes );
+        return new ServerTransportPayloadBatch( server, server.updateEpoch, count, clientIndex, data, bytes );
     }
 
     // The send surface is acquire, write, commit: StartPacket hands back a 16-aligned
@@ -1004,6 +1035,9 @@ public static unsafe partial class RocketNet
     // Update: packets are never sent without it. Calling it again in the same frame is a
     // no-op. The fields of the context are read-only to the caller.
 
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_start_packet", CallingConvention = CallingConvention.Cdecl )]
+    internal static extern IntPtr ServerTransportStartPacketNative( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context );
+
     /// <summary>Acquires a packet to fill for one client, declaring the capacity the caller
     /// needs; the threading contract is in the comment above. A request above
     /// <see cref="MaxPayloadBytes"/> routes to the arena and fragments at finish -- the
@@ -1011,7 +1045,6 @@ public static unsafe partial class RocketNet
     /// acknowledged, and its PayloadCapacity reports the frame's real capacity (the wire
     /// capacity or the configured maximum), never the request itself. Returns the frame, or
     /// IntPtr.Zero when no packet is available.</summary>
-    internal static extern IntPtr ServerTransportStartPacketNative( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context );
     public static IntPtr ServerTransportStartPacket( ServerTransportHandle server, int clientIndex, int requestBytes, ref PacketContext context )
     {
         IntPtr result = ServerTransportStartPacketNative( server, clientIndex, requestBytes, ref context );
@@ -1020,18 +1053,22 @@ public static unsafe partial class RocketNet
         return result;
     }
 
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_finish_packet", CallingConvention = CallingConvention.Cdecl )]
+    internal static extern int ServerTransportFinishPacketNative( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
+
     /// <summary>Seals and stages the filled packet in place. Returns the sealed wire size, or
     /// zero when the packet was dropped instead (payload out of range, or the connection
     /// gone) — the sequence is burned either way, which the replay window tolerates.</summary>
-    internal static extern int ServerTransportFinishPacketNative( ServerTransportHandle server, ref PacketContext context, int payloadBytes );
     public static int ServerTransportFinishPacket( ServerTransportHandle server, ref PacketContext context, int payloadBytes )
     {
         context.updateEpoch = -1;
         return ServerTransportFinishPacketNative( server, ref context, payloadBytes );
     }
 
-    /// <summary>Releases an acquired packet without sending it.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_server_transport_abort_packet", CallingConvention = CallingConvention.Cdecl )]
     internal static extern void ServerTransportAbortPacketNative( ServerTransportHandle server, ref PacketContext context );
+
+    /// <summary>Releases an acquired packet without sending it.</summary>
     public static void ServerTransportAbortPacket( ServerTransportHandle server, ref PacketContext context )
     {
         context.updateEpoch = -1;
@@ -1117,21 +1154,37 @@ public static unsafe partial class RocketNet
     //                              frame sync
     // -----------------------------------------
 
-    /// <summary>Creates a frame sync pegging a headless loop to real time at the frame rate.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_frame_sync_create", CallingConvention = CallingConvention.Cdecl )]
-    public static extern IntPtr FrameSyncCreate( IntPtr context, double frameRate );
+    static extern FrameSyncHandle FrameSyncCreateNative( IntPtr context, double frameRate );
 
-    /// <summary>Destroys the frame sync.</summary>
+    /// <summary>Creates a frame sync pegging a headless loop to real time at the frame rate. The
+    /// returned <see cref="FrameSyncHandle"/> owns the native frame sync; dispose it (or call
+    /// <see cref="FrameSyncDestroy"/>) exactly once, and any use after that throws
+    /// <see cref="ObjectDisposedException"/> before native code.</summary>
+    public static FrameSyncHandle FrameSyncCreate( IntPtr context, double frameRate ) => FrameSyncCreateNative( context, frameRate );
+
     [DllImport( Lib, EntryPoint = "rocketnet_frame_sync_destroy", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void FrameSyncDestroy( IntPtr frameSync );
+    internal static extern void FrameSyncDestroyNative( IntPtr frameSync );
 
-    /// <summary>Waits until the frame boundary. Call once per loop iteration.</summary>
+    /// <summary>Destroys the frame sync. Destroy runs exactly once; a second call, or any use
+    /// after destroy, throws before native code.</summary>
+    public static void FrameSyncDestroy( FrameSyncHandle frameSync )
+    {
+        ArgumentNullException.ThrowIfNull( frameSync );
+        if ( frameSync.IsClosed )
+            throw new ObjectDisposedException( nameof( FrameSyncHandle ) );
+        frameSync.Dispose();
+    }
+
+    /// <summary>Waits until the frame boundary. Call once per loop iteration. Throws
+    /// <see cref="ObjectDisposedException"/> after destroy.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_frame_sync_wait", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void FrameSyncWait( IntPtr frameSync );
+    public static extern void FrameSyncWait( FrameSyncHandle frameSync );
 
-    /// <summary>Reads the frame sync stats (rocketnet_frame_sync_stats).</summary>
+    /// <summary>Reads the frame sync stats (rocketnet_frame_sync_stats). Throws
+    /// <see cref="ObjectDisposedException"/> after destroy.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_frame_sync_stats", CallingConvention = CallingConvention.Cdecl )]
-    public static extern void FrameSyncGetStats( IntPtr frameSync, out FrameSyncStats stats );
+    public static extern void FrameSyncGetStats( FrameSyncHandle frameSync, out FrameSyncStats stats );
 
     // -----------------------------------------
     //                            span helpers
@@ -1181,31 +1234,85 @@ public static unsafe partial class RocketNet
             : new ReadOnlySpan<ulong>( (void*) counters, CounterCount() );
     }
 
-    /// <summary>A client receive batch: zero-copy spans over the library's payload storage.
-    /// Valid until the next update.</summary>
+    /// <summary>A received payload view over transport-owned memory. It is valid only until its
+    /// owner's next update: it captures the owner's update epoch at creation and checks it on
+    /// every read, so reading it after the next update throws <see cref="StalePayloadException"/>
+    /// instead of handing back memory the library has since reused. Read it within the update
+    /// that delivered it and never retain the <see cref="Span"/> across one.</summary>
+    public readonly ref struct ReceivedPayload
+    {
+        readonly ReadOnlySpan<byte> span;
+        readonly ClientTransportHandle? client;
+        readonly ServerTransportHandle? server;
+        readonly int epoch;
+
+        internal ReceivedPayload( ReadOnlySpan<byte> span, ClientTransportHandle client, int epoch )
+        {
+            this.span = span;
+            this.client = client;
+            this.server = null;
+            this.epoch = epoch;
+        }
+
+        internal ReceivedPayload( ReadOnlySpan<byte> span, ServerTransportHandle server, int epoch )
+        {
+            this.span = span;
+            this.client = null;
+            this.server = server;
+            this.epoch = epoch;
+        }
+
+        void EnsureFresh()
+        {
+            int current = client is not null ? client.updateEpoch : server!.updateEpoch;
+            if ( current != epoch )
+                throw new StalePayloadException();
+        }
+
+        /// <summary>Nonzero when the payload holds no bytes.</summary>
+        public bool IsEmpty { get { EnsureFresh(); return span.IsEmpty; } }
+
+        /// <summary>The payload's byte length.</summary>
+        public int Length { get { EnsureFresh(); return span.Length; } }
+
+        /// <summary>The payload bytes. The returned span inherits this view's lifetime and must
+        /// not be retained past the owner's next update.</summary>
+        public ReadOnlySpan<byte> Span { get { EnsureFresh(); return span; } }
+
+        /// <summary>One payload byte.</summary>
+        public byte this[int index] { get { EnsureFresh(); return span[index]; } }
+    }
+
+    /// <summary>A client receive batch: zero-copy checked views over the library's payload
+    /// storage (see <see cref="ReceivedPayload"/>). Valid until the next update.</summary>
     public readonly ref struct ClientTransportPayloadBatch
     {
+        readonly ClientTransportHandle? owner;
+        readonly int epoch;
         readonly byte** data;
         readonly int* bytes;
 
         /// <summary>Number of payloads in the batch.</summary>
         public readonly int Count;
 
-        internal ClientTransportPayloadBatch( int count, byte** data, int* bytes )
+        internal ClientTransportPayloadBatch( ClientTransportHandle owner, int epoch, int count, byte** data, int* bytes )
         {
+            this.owner = owner;
+            this.epoch = epoch;
             Count = count;
             this.data = data;
             this.bytes = bytes;
         }
 
-        /// <summary>One payload of the batch.</summary>
-        public ReadOnlySpan<byte> this[int index]
+        /// <summary>One payload of the batch as a checked view. Reading it after the owner's next
+        /// update throws <see cref="StalePayloadException"/>.</summary>
+        public ReceivedPayload this[int index]
         {
             get
             {
                 if ( (uint) index >= (uint) Count )
                     throw new IndexOutOfRangeException();
-                return new ReadOnlySpan<byte>( data[index], bytes[index] );
+                return new ReceivedPayload( new ReadOnlySpan<byte>( data[index], bytes[index] ), owner!, epoch );
             }
         }
     }
@@ -1244,10 +1351,13 @@ public static unsafe partial class RocketNet
         }
     }
 
-    /// <summary>A server receive batch: zero-copy spans over the library's payload storage,
-    /// with each payload's sender. Valid until the next update.</summary>
+    /// <summary>A server receive batch: zero-copy checked views over the library's payload
+    /// storage (see <see cref="ReceivedPayload"/>), with each payload's sender. Valid until the
+    /// next update.</summary>
     public readonly ref struct ServerTransportPayloadBatch
     {
+        readonly ServerTransportHandle? owner;
+        readonly int epoch;
         readonly int* clientIndex;
         readonly byte** data;
         readonly int* bytes;
@@ -1255,22 +1365,25 @@ public static unsafe partial class RocketNet
         /// <summary>Number of payloads in the batch.</summary>
         public readonly int Count;
 
-        internal ServerTransportPayloadBatch( int count, int* clientIndex, byte** data, int* bytes )
+        internal ServerTransportPayloadBatch( ServerTransportHandle owner, int epoch, int count, int* clientIndex, byte** data, int* bytes )
         {
+            this.owner = owner;
+            this.epoch = epoch;
             Count = count;
             this.clientIndex = clientIndex;
             this.data = data;
             this.bytes = bytes;
         }
 
-        /// <summary>One payload of the batch.</summary>
-        public ReadOnlySpan<byte> this[int index]
+        /// <summary>One payload of the batch as a checked view. Reading it after the owner's next
+        /// update throws <see cref="StalePayloadException"/>.</summary>
+        public ReceivedPayload this[int index]
         {
             get
             {
                 if ( (uint) index >= (uint) Count )
                     throw new IndexOutOfRangeException();
-                return new ReadOnlySpan<byte>( data[index], bytes[index] );
+                return new ReceivedPayload( new ReadOnlySpan<byte>( data[index], bytes[index] ), owner!, epoch );
             }
         }
 
@@ -1326,4 +1439,33 @@ public sealed class ServerTransportHandle : SafeHandleZeroOrMinusOneIsInvalid
         RocketNet.ServerTransportDestroyNative( handle );
         return true;
     }
+}
+
+/// <summary>Owns one native frame sync. It is the managed half of the raw
+/// rocketnet_frame_sync_t* the P/Invoke calls marshal: the runtime add-refs it around every
+/// call and throws ObjectDisposedException for a closed one, so a wait or a stats read after
+/// destroy never reaches native code. ReleaseHandle runs the native destroy exactly once, from
+/// the finalizer or Dispose.</summary>
+public sealed class FrameSyncHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    /// <summary>Constructs the handle with ownership. The P/Invoke marshaller uses it to
+    /// receive the native pointer <see cref="RocketNet.FrameSyncCreate"/> returns.</summary>
+    public FrameSyncHandle() : base( true ) { }
+
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        RocketNet.FrameSyncDestroyNative( handle );
+        return true;
+    }
+}
+
+/// <summary>Thrown when a received-payload view (see <see cref="RocketNet.ReceivedPayload"/>)
+/// is read after the transport's next update reused the memory it points at. Re-read the
+/// payload from the transport within the update that delivered it.</summary>
+public sealed class StalePayloadException : Exception
+{
+    /// <summary>Constructs the exception with the standard message.</summary>
+    public StalePayloadException()
+        : base( "The received payload was invalidated by a subsequent transport update; re-read it from the transport before the next update." ) { }
 }

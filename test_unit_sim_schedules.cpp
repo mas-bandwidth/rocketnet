@@ -703,7 +703,4 @@ REGISTER_UNIT_TEST( TestSimScheduleBatchCap );
 REGISTER_UNIT_TEST( TestSimScheduleSameTickSlotReuse );
 REGISTER_UNIT_TEST( TestSimScheduleSequenceWrap );
 REGISTER_UNIT_TEST( TestSimScheduleUnreliableAggregation );
-// the ClearedWords defect (rnfix-replay-long-skip-clears-window-r2) is still
-// open at BASE: a long skip clears only window[0..3], so the model's
-// accept/refuse projection above does not hold yet.
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestSimScheduleLongSkipStragglers, "rnfix-replay-long-skip-clears-window-r2" );
+REGISTER_UNIT_TEST( TestSimScheduleLongSkipStragglers );

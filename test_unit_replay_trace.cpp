@@ -253,7 +253,7 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
 static void TestReplayWindowModelTrace()
 {
     replay_window_ref_t model;
-    model.reset( /* ClearedWords */ 4, /* GateBeforeAdvance */ 0 );
+    model.reset( /* ClearedWords */ k_model_words, /* GateBeforeAdvance */ 0 );
 
     struct rocketnet_replay_protection_t real;
     memset( &real, 0, sizeof(real) );
@@ -371,5 +371,5 @@ static void TestSlotlessPacketNeverMovesTheSessionWindow()
 }
 
 REGISTER_UNIT_TEST( TestReplayWindowModelTrace );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestReplayLongSkipClearsTheWholeWindow, "rnfix-replay-long-skip-clears-window-r2" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestSlotlessPacketNeverMovesTheSessionWindow, "rnfix-replay-advanced-after-connect-check-r2" );
+REGISTER_UNIT_TEST( TestReplayLongSkipClearsTheWholeWindow );
+REGISTER_UNIT_TEST( TestSlotlessPacketNeverMovesTheSessionWindow );

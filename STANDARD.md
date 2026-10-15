@@ -983,6 +983,18 @@ id already connected to this server is refused, per _Processing Connection
 Requests_. That is the same rule at the scope one server can see. The backend
 widens the scope from one server to the fleet; it does not introduce the idea.
 
+**A live client id holds its slot until that slot ends.** A connection request
+or response naming a client id already connected to this server is refused and
+counted, and every retry is refused the same way, with no response, until the
+slot is gone. A slot ends at once when its client disconnects cleanly, or, if
+the client goes silent, when the connection's idle timeout releases it. That
+timeout is the token's `timeout seconds`, chosen by whoever mints the token:
+the library's own minting writes 10 seconds, so that is the default, and the
+server's `max_timeout_seconds` (60) is a ceiling on the field, not a default. A
+retry therefore proceeds as soon as the slot ends — immediately after a clean
+disconnect, and otherwise after a short timeout. Who may connect after that is
+the backend's rule, per the connected set above.
+
 *A deployment without a backend connected set has a weaker property, and should
 know which one it has: tokens are transferable between players, and the only
 cost to a sharer is that they cannot both be on the same server.*
@@ -1400,6 +1412,8 @@ as a little-endian value. Post sealing:
     [sealed per-packet type data] (per-packet data + 16-byte tag)
 
 ## Reading packets
+
+On every receive path, every refusal that can be decided without cryptography (size, type, version, timestamps, slot availability, table lookups) is made before any keypair generation, scalar multiplication, AEAD operation, signature verification or sealed-box open.
 
 In this exact order:
 
@@ -1892,6 +1906,17 @@ nothing. **Unreliable semantics stand: a lost fragment loses the whole
 payload**, the counters make it visible, and anything smarter is a policy for
 the tier above, built on the delivery notifications the transport already
 provides.
+
+**Handshake and control packets are never fragmented, and fragmentation of
+large payloads is allowed only once the connection is fully established and
+verified.** A fragment (type 9) is accepted only on a connected slot: at the
+server, a fragment for a mapping without a slot is dropped and counted
+(`FRAGMENT_NOT_CONNECTED`) before it touches any reassembly state; at the
+client, a fragment in any state other than connected is refused
+(`CLIENT_FRAGMENT_WRONG_STATE`) before the open and before any reassembly
+call. Only the payload send path reaches the fragment splitter, every control
+type is written by its fixed-size writer, and a reassembled payload is
+delivered only as payload bytes, never dispatched by its first byte.
 
 The fragment header sits inside the seal, after the ack block, per _Sealed
 packets_: a uint32 payload id, a fragment index byte, and a fragment count − 1
@@ -2387,6 +2412,13 @@ every other state.
 * Do not send anything in response; the next scheduled request carries the
   cookie. (_Connection cookie packet_ gives the amplification reason this is a
   MUST.)
+* The cookie is unauthenticated to the client: an observer who sees the salt in
+  the clear can replace a stored cookie with a junk one. This layer accepts that
+  risk, because it needs an on-path observer, who could drop packets anyway, and
+  it is not expected in practice.
+* A client reconnecting with the same client id presents a fresh token, and the
+  server refuses the attempt until the previous slot ends, per _Connect token
+  sharing, and the connected set_.
 
 ### Processing a connection challenge packet
 
@@ -2672,6 +2704,16 @@ In this exact order, on a _connection request packet_:
 * **Generate a fresh random 64-bit session nonce for this mapping.** It is
   never reused, and because it is chosen here rather than at cookie time, no
   replayed cookie can cause a key to recur.
+* Derive the two handshake keys from the token keys, the salt and the session
+  nonce just generated. The handshake keys need no ephemeral pair, so they
+  exist before any keypair work.
+* If no client slots are available, respond with a _connection denied packet_ —
+  sealed under the handshake server-to-client key just derived, at sequence
+  one, carrying the session nonce in the clear — and stop. No mapping is
+  created, so a retransmitted request runs this path again and is denied again.
+  *The slot check stands here, ahead of the keypair and small-order steps,
+  because the handshake keys that seal the denial need no ephemeral pair: a
+  full server denies without paying for a keypair on every denial.*
 * **Obtain the server ephemeral keypair**: generate a fresh X25519 keypair for
   this mapping, or take the current one when reusing across a short rotation
   window per _Per-connection keys_. Nothing before this step needs it.
@@ -2681,18 +2723,11 @@ In this exact order, on a _connection request packet_:
   before any mapping is created — so that a client offering such a point never
   obtains a mapping. This is the third asymmetric operation on this path and it
   is deliberately after both the cookie and the signature verification.
-* Derive the four per-connection keys: the two handshake keys from the token
-  keys, the salt and the session nonce just generated; the two session keys from
-  those plus the
-  shared secret and both ephemeral public keys.
+* Derive the two session keys from the handshake material plus the
+  shared secret and both ephemeral public keys, completing the four
+  per-connection keys.
 * **Erase the shared secret**, and the server's ephemeral secret if it is not
   being reused across a rotation window, as soon as the four keys exist.
-* If no client slots are available, respond with a _connection denied packet_ —
-  sealed under the handshake server-to-client key just derived, at sequence
-  one, carrying the session nonce in the clear — and stop. No mapping is
-  created, so a retransmitted request runs this path again and is denied again.
-  *The slot check is placed here rather than earlier because a denied packet is
-  sealed, and before this point no keys exist to seal it with.*
 
 * Add an encryption mapping for the source address and port, holding the four
   derived keys, the connection salt, the session nonce, the server ephemeral
@@ -2757,8 +2792,8 @@ every mapping they hold, bought with nothing. The handshake deadline is a
 server-side configuration value, in seconds, and it is not carried in the token,
 because it protects the server and nothing the client presents should set it.
 
-**It has a sensible default and it is tunable per game.** The default SHOULD be
-five seconds: a client retransmitting at the send rate gets tens of attempts
+**It has a sensible default and it is tunable per game.** The server config field `handshake_deadline_seconds` defaults to
+five seconds (range 1 to 60): a client retransmitting at the send rate gets tens of attempts
 inside it, which covers ordinary loss and a poor round trip with room to spare,
 while cutting an attacker's hold time to a fraction of a gameplay timeout. But
 five seconds is a judgement about a population of players, not a property of the

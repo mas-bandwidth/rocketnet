@@ -5,8 +5,8 @@ by `sdk/rocketnet_client_transport.cpp`'s update cycle), checked over two instan
 the shared lossy link `tla/Link.tla`: `C2S` carries what the client sends, `S2C` what
 the server sends. The server is modelled as the environment the client talks to, only
 as far as it drives the client. `tla/MCClientConnection.tla` and
-`tla/MCClientConnection.cfg` are the small instance; every TLC run is a row in
-`tla/RUNS.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
+`tla/MCClientConnection.cfg` are the small instance; current measured cases are in
+`tla/RUNS.tsv`, with earlier records retained in `tla/RUNS-HISTORY.tsv`. The inventory this card worked from is `docs/TLA-INVENTORY.md`, M1.
 
 ## What the model covers
 
@@ -200,6 +200,15 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -deadlock -lncheck 
      -config MCClientConnection.cfg MCClientConnection
 ```
 
+**Fragments** are modelled at the receive step: `ClientFragmentReceive` creates
+client reassembly state (`cReasm`) only in state 4 (connected), and
+`ServerFragmentReceive` creates server reassembly state (`sReasm`) only for a
+mapping holding its slot. The invariant `FragmentOnlyWhenConnected` states
+that reassembly state changes only while connected, on both sides.
+`MCClientConnectionBrokenEarlyFragment.cfg` is its reversed witness: it adds
+`ClientFragmentReceiveEarly`, the pre-fix acceptance in sending-connection-response
+(state 3), and must fail `FragmentOnlyWhenConnected`.
+
 `MCClientConnection.cfg` is the committed run: the hang check under "the first packet
 of every kind is dropped" (`KindLoss = "firstkind"`), the code's keep-alive behaviour,
 deadlines and timeouts off, payloads on, no disconnects, checking every safety property
@@ -364,3 +373,36 @@ If every copy is lost the peer waits for its idle timeout, which S:2918-2924 sta
 the design ("losing all ten costs only a peer that waits for the timeout"). In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.
+
+## Reproducible case files
+
+The original seven-column records are preserved unchanged in
+[`RUNS-HISTORY.tsv`](RUNS-HISTORY.tsv). Current measurements use the runner
+and refresh procedure in [`README.md`](README.md). Each historical row now
+has its own committed configuration; no edit to a shared file is needed.
+The table follows the original ledger order. A declared debt retains its
+original parameters and is not a completed proof.
+
+| Historical row | Committed configuration | Declared outcome |
+|---|---|---|
+| 12 | `MCClientConnection.cfg` | pass |
+| 13 | `MCClientConnectionLNone.cfg` | pass |
+| 14 | `MCClientConnectionLFirst.cfg` | pass |
+| 15 | `MCClientConnectionLAlternate.cfg` | pass |
+| 16 | `MCClientConnectionLBurst.cfg` | pass |
+| 17 | `MCClientConnectionLArbitrary.cfg` | pass; debt: arbitrary-loss-liveness-over-budget |
+| 18 | `MCClientConnectionWOnceFirstkind.cfg` | temporal / Connects |
+| 19 | `MCClientConnectionWOnceAlternate.cfg` | temporal / Connects |
+| 20 | `MCClientConnectionWAnysend.cfg` | temporal / Connects |
+| 21 | `MCClientConnectionLSilent.cfg` | pass |
+| 22 | `MCClientConnectionLCrash.cfg` | pass; debt: crash-timeout-liveness-over-budget |
+| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget |
+| 24 | `MCClientConnectionSFirst.cfg` | pass; debt: first-loss-full-environment-safety-over-budget |
+| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget |
+| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget |
+| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget |
+| 28 | `MCClientConnectionSFirstkind.cfg` | pass; debt: first-kind-latency-safety-over-budget |
+| 29 | `MCClientConnectionSDelay.cfg` | pass; debt: delayed-first-loss-safety-over-budget |
+| 30 | `MCClientConnectionF4Ephemeral.cfg` | invariant / EphemeralErasedOutsideHandshake |
+| 31 | `MCClientConnectionF8Terminal.cfg` | action / TerminalAbsorbing |
+| 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
