@@ -4850,10 +4850,20 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     uint64_t driver_counters[ROCKETNET_SERVER_SOCKET_NUM_COUNTERS];
     rocketnet_check( rocketnet_server_socket_live_counters( xdp_counters, driver_counters ) );
 
-    static const char * xdp_counter_names[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-        { "redirected", "dropped_too_small", "dropped_too_large", "dropped_wrong_filter", "dropped_invalid_type", "dropped_wrong_epoch", "passed_ipv6_extension" };
-    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp stats map %s = %llu", case_name, xdp_counter_names[i], (unsigned long long) xdp_counters[i] );
+    // the stats map, every row by the table's name and class; a refusal is
+    // a drop in the kernel, so every refusal row must read zero
+
+    struct xdp_counter_row_t { int index; const char * name; const char * kind; };
+#define ROCKETNET_XDP_VETH_COUNTER_ROW( define, name, kind ) { define, name, kind },
+    static const xdp_counter_row_t xdp_counter_rows[] = { ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_XDP_VETH_COUNTER_ROW ) };
+#undef ROCKETNET_XDP_VETH_COUNTER_ROW
+    int xdp_refusals = 0;
+    for ( const xdp_counter_row_t & row : xdp_counter_rows )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp stats map %s (%s) = %llu", case_name, row.name, row.kind, (unsigned long long) xdp_counters[row.index] );
+        if ( strcmp( row.kind, "refusal" ) == 0 && xdp_counters[row.index] != 0 )
+            xdp_refusals++;
+    }
     for ( int i = 0; i < ROCKETNET_SERVER_SOCKET_NUM_COUNTERS; i++ )
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp driver %s = %llu", case_name, rocketnet_server_socket_counter_name( i ), (unsigned long long) driver_counters[i] );
     const struct rocketnet_counters_t * transport_counters = rocketnet_server_transport_counters( server );
@@ -4871,11 +4881,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED] >= (uint64_t) count );
     rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED] == packets_received );
     rocketnet_check( driver_counters[ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVED] == packets_received );
-    rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL] == 0 );
-    rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE] == 0 );
-    rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER] == 0 );
-    rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE] == 0 );
-    rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH] == 0 );
+    rocketnet_check( xdp_refusals == 0 );
     rocketnet_check( xdp_counters[ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION] == 0 );
     rocketnet_check( driver_counters[ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVE_REFUSED_PARSE] == 0 );
     rocketnet_check( driver_counters[ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVE_REFUSED_FAMILY] == 0 );
