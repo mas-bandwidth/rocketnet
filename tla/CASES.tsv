@@ -72,3 +72,11 @@ MCRNReceipts.cfg	MCRNReceipts.tla	pass	-	ignore-terminal	rnreceipts	required	-
 MCRNReceiptsBrokenLastIndexAck.cfg	MCRNReceipts.tla	invariant	BlockAckedOnlyWhenAllFragmentsAcked	ignore-terminal	rnreceipts	required	-
 MCRNReceiptsBrokenTwoOutcomes.cfg	MCRNReceipts.tla	invariant	ExactlyOneOutcomePerReceiptSerial	ignore-terminal	rnreceipts	required	-
 MCRNReceiptsBrokenReliableLoss.cfg	MCRNReceipts.tla	invariant	LossOnlyForUnreliableReceipt	ignore-terminal	rnreceipts	required	-
+MCRNChannel.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
+MCRNChannelSafety.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenOutOfOrder.cfg	MCRNChannel.tla	invariant	OrderedExactlyOnceInOrder	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenTwice.cfg	MCRNChannel.tla	invariant	OrderedExactlyOnceInOrder	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenDropOnRetransmit.cfg	MCRNChannel.tla	temporal	EveryOrderedMessageDelivered	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenPartialChunk.cfg	MCRNChannel.tla	invariant	WholeMessagesOnly	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenChunkBlocksSmall.cfg	MCRNChannel.tla	temporal	NoHeadOfLineDeadlock	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenNoSequencedReset.cfg	MCRNChannel.tla	invariant	OrderedTraceUnchangedBySequenced	ignore-terminal	rnchannel	required	-
