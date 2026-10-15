@@ -43,6 +43,7 @@ cmake -S . -B "$build_dir" \
 cmake --build "$build_dir" --target test --parallel
 
 test_bin="$abs_build/bin/test"
+TMPDIR="${TMPDIR:-/tmp}"
 log="$TMPDIR/msan.log"
 reports="$TMPDIR/msan-reports"
 known_file=tools/msan_known.txt
