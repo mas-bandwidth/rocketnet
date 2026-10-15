@@ -126,7 +126,7 @@ inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_by
 {
     if ( ack_block_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || ack_block_bytes > ROCKETNET_ACK_BLOCK_MAX_BYTES )
         return 0;
-    if ( payload_bytes < 1 || ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes > ROCKETNET_SEND_BUDGET )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ack_block_bytes )
         return 0;
     return ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes;
 }
@@ -139,7 +139,7 @@ inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_by
 
 inline int rocketnet_send_budget_max_wire_bytes( int payload_bytes )
 {
-    if ( payload_bytes < 1 || ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + payload_bytes > ROCKETNET_SEND_BUDGET )
+    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES )
         return 0;
     int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
     if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
