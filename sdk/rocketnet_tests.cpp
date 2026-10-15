@@ -7581,6 +7581,38 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_num_counters",
     "rocketnet_counter_value",
     "rocketnet_counter_name",
+    "rocketnet_message_client_required_memory",
+    "rocketnet_message_client_create",
+    "rocketnet_message_client_destroy",
+    "rocketnet_message_client_transport",
+    "rocketnet_message_client_state",
+    "rocketnet_message_client_update",
+    "rocketnet_message_client_send_packets",
+    "rocketnet_message_client_start",
+    "rocketnet_message_client_finish",
+    "rocketnet_message_client_abort",
+    "rocketnet_message_client_send",
+    "rocketnet_message_client_receive",
+    "rocketnet_message_client_release",
+    "rocketnet_message_client_set_send_kbps",
+    "rocketnet_message_client_disconnect_reason",
+    "rocketnet_message_client_counters",
+    "rocketnet_message_server_required_memory",
+    "rocketnet_message_server_create",
+    "rocketnet_message_server_destroy",
+    "rocketnet_message_server_transport",
+    "rocketnet_message_server_update",
+    "rocketnet_message_server_send_packets",
+    "rocketnet_message_server_start",
+    "rocketnet_message_server_finish",
+    "rocketnet_message_server_abort",
+    "rocketnet_message_server_send",
+    "rocketnet_message_server_receive",
+    "rocketnet_message_server_release",
+    "rocketnet_message_server_set_send_kbps",
+    "rocketnet_message_server_disconnect_reason",
+    "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_counters",
 };
 
 // the entry points this suite gives a NULL case (a misuse that increments the
@@ -7657,6 +7689,36 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_counter_value",
+    "rocketnet_message_client_create",
+    "rocketnet_message_client_destroy",
+    "rocketnet_message_client_transport",
+    "rocketnet_message_client_state",
+    "rocketnet_message_client_update",
+    "rocketnet_message_client_send_packets",
+    "rocketnet_message_client_start",
+    "rocketnet_message_client_finish",
+    "rocketnet_message_client_abort",
+    "rocketnet_message_client_send",
+    "rocketnet_message_client_receive",
+    "rocketnet_message_client_release",
+    "rocketnet_message_client_set_send_kbps",
+    "rocketnet_message_client_disconnect_reason",
+    "rocketnet_message_client_counters",
+    "rocketnet_message_server_create",
+    "rocketnet_message_server_destroy",
+    "rocketnet_message_server_transport",
+    "rocketnet_message_server_update",
+    "rocketnet_message_server_send_packets",
+    "rocketnet_message_server_start",
+    "rocketnet_message_server_finish",
+    "rocketnet_message_server_abort",
+    "rocketnet_message_server_send",
+    "rocketnet_message_server_receive",
+    "rocketnet_message_server_release",
+    "rocketnet_message_server_set_send_kbps",
+    "rocketnet_message_server_disconnect_reason",
+    "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_counters",
 };
 
 static const char * rocketnet_test_null_exempt_exports[] =
@@ -7692,6 +7754,8 @@ static const char * rocketnet_test_null_exempt_exports[] =
     "rocketnet_message_print_connection_sizing",
     "rocketnet_num_counters",
     "rocketnet_counter_name",
+    "rocketnet_message_client_required_memory",
+    "rocketnet_message_server_required_memory",
 };
 
 static_assert( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) == ROCKETNET_NUM_EXPORTED_FUNCTIONS, "rocketnet_test_exports drifted from sdk/rocketnet.h" );
@@ -8030,6 +8094,55 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_message_connection_sizing( NULL, 1, NULL, 0 );
     rocketnet_message_print_connection_sizing( NULL, 1 );
     rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // the message objects
+
+    {
+        const uint8_t * view = NULL;
+        int view_bytes = 0;
+
+        before = rocketnet_api_misuse_count();
+        rocketnet_check( rocketnet_message_client_create( NULL, NULL, NULL, NULL, NULL, 0, 0, 0.0 ) == NULL );
+        rocketnet_message_client_destroy( NULL );
+        rocketnet_check( rocketnet_message_client_transport( NULL ) == NULL );
+        rocketnet_check( rocketnet_message_client_state( NULL ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+        rocketnet_check( rocketnet_message_client_update( NULL, 0.0 ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_client_send_packets( NULL );
+        rocketnet_check( rocketnet_message_client_start( NULL, 0, ROCKETNET_RELIABLE_ORDERED, 4 ) == NULL );
+        rocketnet_check( rocketnet_message_client_finish( NULL, 4 ) == 0 );
+        rocketnet_message_client_abort( NULL );
+        rocketnet_check( rocketnet_message_client_send( NULL, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
+        rocketnet_check( rocketnet_message_client_receive( NULL, 0, &view, &view_bytes ) == 0 );
+        rocketnet_message_client_release( NULL, packet );
+        rocketnet_check( rocketnet_message_client_set_send_kbps( NULL, 1000 ) == 0 );
+        rocketnet_check( rocketnet_message_client_disconnect_reason( NULL ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        rocketnet_check( rocketnet_message_client_counters( NULL ) == NULL );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 15 );
+
+        before = rocketnet_api_misuse_count();
+        rocketnet_check( rocketnet_message_server_create( NULL, NULL, NULL, NULL, NULL, 0, 0 ) == NULL );
+        rocketnet_message_server_destroy( NULL );
+        rocketnet_check( rocketnet_message_server_transport( NULL ) == NULL );
+        rocketnet_check( rocketnet_message_server_update( NULL, 0.0 ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_server_send_packets( NULL );
+        rocketnet_check( rocketnet_message_server_start( NULL, 0, 0, ROCKETNET_RELIABLE_ORDERED, 4 ) == NULL );
+        rocketnet_check( rocketnet_message_server_finish( NULL, 0, 4 ) == 0 );
+        rocketnet_message_server_abort( NULL, 0 );
+        rocketnet_check( rocketnet_message_server_send( NULL, 0, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
+        rocketnet_check( rocketnet_message_server_receive( NULL, 0, 0, &view, &view_bytes ) == 0 );
+        rocketnet_message_server_release( NULL, 0, packet );
+        rocketnet_check( rocketnet_message_server_set_send_kbps( NULL, 0, 1000 ) == 0 );
+        rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 15 );
+
+        // the sizing calls take NULL configs as the defaults: not a misuse
+        before = rocketnet_api_misuse_count();
+        rocketnet_check( rocketnet_message_client_required_memory( NULL ) > 0 );
+        rocketnet_check( rocketnet_message_server_required_memory( NULL, NULL ) > 0 );
+        rocketnet_check( rocketnet_api_misuse_count() == before );
+    }
 
     // the export audit: every ROCKETNET_EXPORT_FUNC entry point is either
     // exercised in this suite with a NULL case or exempt (no NULL-able pointer, or NULL

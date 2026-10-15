@@ -128,7 +128,7 @@ public static unsafe partial class RocketNet
     public const int MessageErrorMessageMemoryExhausted = 5;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 220;
+    public const int NumCounters = 223;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -356,6 +356,9 @@ public static unsafe partial class RocketNet
         MessageBadRing,
         MessageOrderingAhead,
         MessageProtocolViolation,
+        MessageSendRefused,
+        MessageStaleConnectionEntry,
+        MessageNotReleased,
     }
 #pragma warning restore 1591
 
