@@ -38,8 +38,11 @@ rocketnet_client_transport_state_name
 rocketnet_client_transport_stats
 rocketnet_client_transport_update
 rocketnet_copy_string
+rocketnet_counter_class
+rocketnet_counter_class_name
 rocketnet_counter_name
 rocketnet_counter_value
+rocketnet_counters_conserved
 rocketnet_debug
 rocketnet_error
 rocketnet_forbid_xdp_commit

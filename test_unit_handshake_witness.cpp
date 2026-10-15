@@ -52,6 +52,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 // ---------------------------------------------------------------------------
 // The shared fixture: a server with the two token tables, one slot table and
 // a small map, and the client driven through a perfect wire with mocked time.
@@ -139,6 +142,7 @@ static void rocketnet_handshake_server_setup( struct rocketnet_handshake_server_
 
 static void rocketnet_handshake_server_teardown( struct rocketnet_handshake_server_t * test )
 {
+    rocketnet_counters_assert_conserved( &test->counters );
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
@@ -509,6 +513,7 @@ static void TestClientEphemeralErasedOutsideHandshake()
         rocketnet_handshake_prepare_terminal( &client, &counters, failure_states[i] );
         if ( rocketnet_handshake_ephemeral_and_token_scratch_zero( &client ) )
             zeroed++;
+        rocketnet_counters_assert_conserved( &counters );
     }
 
     rocketnet_unit_check( zeroed == 4 );
@@ -541,6 +546,7 @@ static void TestDisconnectAbsorbsTerminalState()
         rocketnet_handshake_prepare_terminal( &client, &counters, terminal_states[i] );
         if ( rocketnet_handshake_disconnect_preserves( &client ) )
             absorbing++;
+        rocketnet_counters_assert_conserved( &counters );
     }
 
     rocketnet_unit_check( absorbing == 7 );
