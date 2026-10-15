@@ -7,6 +7,8 @@ land. The milestone view is issue #28; this file is the live ordering.
 
 ## DONE
 
+- The sodium re-vendor: gutted two-file vendor (sodium/sodium.c,
+  sodium/manifest.json) with Ed25519 and sealed box families.
 - The connection standard merged: two cold reads, verdict yes, vectors and
   assembled packets frozen (#26). 1.0 endpoints are IP only (#27). Packets
   byte aligned, written plainly (#29).
@@ -348,8 +350,6 @@ land. The milestone view is issue #28; this file is the live ordering.
   ladder — polite and garbage traffic, counters asserted while running,
   past 2^32 packets on one connection so sequence reconstruction's wrap is
   routine.
-- The sodium re-vendor: the gutted two-file flatten with Ed25519 and sealed
-  boxes, replacing brew libsodium before anything ships.
 - The public C API surface (#22): the outside-in C API design, an input to
   the top-layer client/server objects.
 - Step 3 (after transports): reliability, flows, broadcast.

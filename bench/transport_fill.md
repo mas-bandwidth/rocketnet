@@ -18,7 +18,7 @@ same compiler, flags and dependencies. For example on macOS with pkg-config:
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
-  bench/transport_fill.cpp build/librocketnet.a $(pkg-config --libs libsodium) \
+  bench/transport_fill.cpp build/librocketnet.a \
   -framework CoreFoundation -framework SystemConfiguration -o fill
 ./fill portable 64 2000
 ./fill portable 1192 2000

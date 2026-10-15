@@ -88,8 +88,8 @@ the first driver that grants wins, and the transport MUST report which. The
 value `auto` (and the empty value) MUST expand to the implementation's
 recommended order for that endpoint on that platform, kept in one table (in
 the RocketNet library — servers: linux `xdp,gso,portable`, macOS
-`msgx,portable`, everywhere else `portable`; clients: `portable`
-everywhere, with `msgx` ahead of it on macOS). An explicit list is exactly
+`msgx,portable`, Windows `portable,iocp`, everywhere else `portable`; clients:
+`portable` everywhere, with `msgx` ahead of it on macOS). An explicit list is exactly
 that list, in exactly that order — nothing is appended, no implicit floor
 exists, and an applicable one-element list is a **pin**: that driver or
 loud create failure, never a silent fall. `auto` falls; pins refuse. A
