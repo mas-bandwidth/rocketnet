@@ -24,6 +24,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 static const double ROCKETNET_ROTATION_TEST_START_TIME = 100.0;
 static const int ROCKETNET_ROTATION_TEST_PERIOD_SECONDS = 60;
 
@@ -96,6 +99,7 @@ static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t 
 
 static void rocketnet_rotation_server_teardown( struct rocketnet_rotation_server_t * test )
 {
+    rocketnet_counters_assert_conserved( &test->counters );
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );

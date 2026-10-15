@@ -231,6 +231,56 @@ seal failure. Those you have to know you caused.
 flushes the ring inline, which makes it main-thread only and never valid during
 an open fill; it is the simple form, not a fill-phase participant.
 
+## Counters
+
+Every transport owns a counters block, read through
+`rocketnet_client_transport_counters` and `rocketnet_server_transport_counters`
+and indexed by the `ROCKETNET_COUNTER_*` enum in `sdk/rocketnet_counters.h`.
+Counters are monotonic and never reset; rates are differences of snapshots.
+`rocketnet_num_counters`, `rocketnet_counter_name` and `rocketnet_counter_value`
+read the list and a block without assuming its length.
+
+**Every counter has a class**, what a clean run shows of it, and
+`rocketnet_counter_class` returns it (`rocketnet_counter_class_name` spells it:
+`"refusal"`, `"expected"`, `"path_loss"`, `"arrival"`):
+
+- `refusal` reads 0 on a clean path at any round trip. A packet refused for a
+  reason is a refusal, and so is a resource exhaustion (`SEND_RING_FULL`,
+  `MESSAGE_SEND_STORE_FULL`, `SEND_HISTORY_OVERFLOW`).
+- `expected` moves on a clean path by design: success outcomes, lifecycle
+  counters, and side counters such as `ACK_UNKNOWN_SEQUENCE`,
+  `CONNECTION_REQUEST_NO_COOKIE` (the first leg of the cookie exchange),
+  `DISCONNECT_NO_MAPPING` (the redundant disconnect burst), the
+  `ALREADY_CONNECTED` duplicates a round trip above 100 ms leaves, and the
+  session-end race (a session that ends with the other end's packets in flight
+  sends them to an end that is gone).
+- `path_loss` moves only when the path loses or reorders packets
+  (`MESSAGE_RESENT`, `FRAGMENT_PAYLOAD_ABANDONED`).
+- `arrival` is a `RECEIVED` counter: a packet of the type arrived.
+
+A load gate or a soak computes its zero-list from the classes: after a clean
+run every `refusal` reads 0, and a run that injects a fault lists the refusals
+the fault explains. No script keeps its own list of counter names.
+
+**Every packet type is conserved.** A `RECEIVED` counter is incremented once on
+entry, and then exactly one outcome counter is. `rocketnet_counters_conserved`
+checks that for every type at once: it returns 1 when each `RECEIVED` counter
+equals the sum of the outcomes that name it as their family, and otherwise 0,
+with the first unbalanced family written to the report buffer as
+`<RECEIVED name> received=<n> outcomes=<m>`. Call it on a block read at a
+quiescent point, on the thread that owns it (after an update returns, when every
+arrival has taken its outcome). Side counters (`ACK_UNKNOWN_SEQUENCE`, the
+fragment payload counters) and the packet entry's `PACKETS_RECEIVED` sit outside
+every family. An outcome belongs to one family only: the connection response
+ladder's internal error is `CONNECTION_RESPONSE_INTERNAL_ERROR`, not the request
+ladder's.
+
+```c
+char report[256];
+if ( !rocketnet_counters_conserved( rocketnet_server_transport_counters( server ), report, sizeof(report) ) )
+    printf( "counters out of balance: %s\n", report );
+```
+
 ## Connection quality
 
 `rocketnet_client_transport_stats` and

@@ -1390,6 +1390,38 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_counter_value( const struct rocketnet_c
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 
+// What a clean run shows of a counter. Every counter has exactly one class.
+//   refusal    reads 0 on a clean path at any round trip (a resource
+//              exhaustion is a refusal)
+//   expected   moves on a clean path by design (success outcomes, lifecycle
+//              and side counters)
+//   path_loss  moves only when the path loses or reorders packets
+//   arrival    a RECEIVED counter: a packet of the type arrived
+enum
+{
+    ROCKETNET_COUNTER_CLASS_REFUSAL = 0,
+    ROCKETNET_COUNTER_CLASS_EXPECTED,
+    ROCKETNET_COUNTER_CLASS_PATH_LOSS,
+    ROCKETNET_COUNTER_CLASS_ARRIVAL,
+    ROCKETNET_NUM_COUNTER_CLASSES
+};
+
+// The class of a counter, one of the ROCKETNET_COUNTER_CLASS_ values, or -1 for
+// an index outside the counter list. Allocation-free; callable before init.
+ROCKETNET_EXPORT_FUNC int rocketnet_counter_class( int counter );
+
+// "refusal", "expected", "path_loss" or "arrival"; NULL for a value that is not a class.
+ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_class_name( int counter_class );
+
+// 1 when every counter family balances: for each RECEIVED counter, its value
+// equals the sum of the outcomes that name it as their family. Otherwise 0,
+// with the first unbalanced family (in counter order) written to report as
+// "<RECEIVED name> received=<n> outcomes=<m>"; report may be NULL. Read the
+// block at a quiescent point, on the thread that owns it: after an update
+// returns, when every packet counted as arrived has taken its outcome. A NULL
+// counters is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes );
+
 // -----------------------------------------
 
 #endif // #ifndef ROCKETNET_H

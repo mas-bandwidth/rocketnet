@@ -41,6 +41,35 @@ static int verify_payload( const uint8_t * payload_data, int payload_bytes )
     return 1;
 }
 
+// The counter discipline, computed from the counter list. Conservation: every
+// family balances, RECEIVED == the sum of its outcomes. Clean run: this is
+// loopback with no injected fault, so every REFUSAL counter reads 0. Returns
+// the number of violations, each printed by counter name.
+
+static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters )
+{
+    int violations = 0;
+
+    char report[256];
+    if ( !rocketnet_counters_conserved( counters, report, sizeof(report) ) )
+    {
+        printf( "soak: CONSERVATION FAILED at %s: %s\n", name, report );
+        violations++;
+    }
+
+    for ( int i = 0; i < rocketnet_num_counters(); i++ )
+    {
+        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && rocketnet_counter_value( counters, i ) != 0 )
+        {
+            printf( "soak: REFUSAL on a clean run at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
+                    (unsigned long long) rocketnet_counter_value( counters, i ) );
+            violations++;
+        }
+    }
+
+    return violations;
+}
+
 int main( int argc, char ** argv )
 {
     uint64_t max_iterations = 0;
@@ -102,6 +131,7 @@ int main( int argc, char ** argv )
     uint64_t server_verified = 0;
     uint64_t client_verified = 0;
     uint64_t failures = 0;
+    int counter_violations = 0;
     int connected = 0;
     int payload_size = 1;
     double last_report_time = rocketnet_time();
@@ -120,6 +150,7 @@ int main( int argc, char ** argv )
                 rocketnet_client_transport_disconnect( client );
                 rocketnet_sleep( 0.05 );
                 rocketnet_server_transport_update( server, rocketnet_time() );
+                counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
                 rocketnet_client_transport_destroy( client );
                 client = NULL;
             }
@@ -222,16 +253,29 @@ int main( int argc, char ** argv )
         failures++;
     }
 
-    printf( "\nsoak finished: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
-            (unsigned long long) iteration, (unsigned long long) connects,
-            (unsigned long long) payloads_verified, (unsigned long long) failures );
+    // the discipline at the end of the run, on both ends. the server has
+    // processed everything it was handed and the client is idle, so every
+    // arrival has taken its outcome
 
     if ( client )
     {
         rocketnet_client_transport_disconnect( client );
         rocketnet_sleep( 0.05 );
-        rocketnet_client_transport_destroy( client );
+        rocketnet_server_transport_update( server, rocketnet_time() );
+        counter_violations += soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
     }
+    counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
+    if ( counter_violations )
+        failures += (uint64_t) counter_violations;
+    else
+        printf( "soak: conservation ok (server and every client)\n" );
+
+    printf( "\nsoak finished: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
+            (unsigned long long) iteration, (unsigned long long) connects,
+            (unsigned long long) payloads_verified, (unsigned long long) failures );
+
+    if ( client )
+        rocketnet_client_transport_destroy( client );
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_time() );
     rocketnet_server_transport_destroy( server );

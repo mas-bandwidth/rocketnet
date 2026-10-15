@@ -49,6 +49,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 // ---------------------------------------------------------------------------
 // The schedule runner. The simulator is the wire; this is the hand that
 // scripts it. Drop, duplicate and reorder are composed into the prepared list
@@ -569,6 +572,7 @@ static void TestSimScheduleSameTickSlotReuse()
     sim_schedule_end( &sched );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_encryption_map_destroy( server.encryption_map );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +698,7 @@ static void TestSimScheduleUnreliableAggregation()
 
     sim_schedule_end( &sched );
     rn_arena_destroy( arena );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // ---------------------------------------------------------------------------
