@@ -11,12 +11,30 @@
 
 // Layer 6's packet builder (docs/CHANNELS.md 9.3). tla/RNChannel.tla's
 // WritePacket is the packet, tla/RNSendBudget.tla's Send, Wait and Drop are
-// the budget's answers; each function names the action it implements.
+// the budget's answers, tla/RNScheduler.tla's Write is the order items are
+// taken in; each function names the action it implements.
 
 static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
         rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
+}
+
+// RakNet's per-level stride and seed (docs/RAKNET-RELIABILITY.md 5.3,
+// RL.cpp:3926-3949): stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
+// tla/RNScheduler.tla's Stride and Seed.
+
+static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
+static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
+
+// RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
+// the seeds, so the interleave describes a backlog and nothing else.
+
+static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
+{
+    for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
+        builder->level_clock[p] = rn_builder_seed[p];
+    builder->clock_base = 0;
 }
 
 bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity )
@@ -35,6 +53,8 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
     builder->payload_capacity = payload_capacity;
     builder->max_packets_per_update = max_packets_per_update < 1 ? 1 : ( max_packets_per_update > ROCKETNET_PACKET_BUILDER_MAX_PACKETS ? ROCKETNET_PACKET_BUILDER_MAX_PACKETS : max_packets_per_update );
     builder->num_channels = region->num_channels;
+    builder->round_robin = builder->num_channels > 0 ? builder->num_channels - 1 : 0;     // the first turn is channel 0's
+    rn_builder_reset_clocks( builder );
 
     return true;
 }
@@ -80,28 +100,93 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
     }
 }
 
-// the next item of this class, round robin across channels from the cursor
-// (17.3 item 4). returns the item's index, or -1 when the class is spent.
+// an item the builder may take at all: bytes to write, a priority in range
 
-static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder, const struct rn_packet_item_t * items, int num_items, int send_class )
+static bool rn_builder_writable( const struct rn_packet_item_t * item )
+{
+    return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
+}
+
+// RNScheduler!Pick inside one class. Returns the item's index, or -1 when the
+// class is spent; *out_level is the level it was taken at.
+//
+// 1. Channel FIFO: only a channel's head (its first writable item of this
+//    class, in the caller's order, which is the order the application
+//    queued) is offered, at the best priority among the channel's writable
+//    items of this class: per-send priority boosts the whole channel (17.3
+//    item 3, RNScheduler!Boost and IsHead).
+// 2. The level: the smallest clock among the levels offered, a clock behind
+//    clock_base counting as clock_base (RakNet's pull-forward); a tie goes to
+//    the more urgent level (RNScheduler!PickLevel).
+// 3. The channel: round robin from the channel after the last one taken, one
+//    item per turn (17.3 item 4, RNScheduler!PickIn).
+//
+// The plan is a few dozen items per update at most, so the scan is quadratic
+// in it and keeps no table: the builder owns no memory (R2).
+
+static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * builder, int level )
+{
+    const uint64_t clock = builder->level_clock[level];
+    return clock > builder->clock_base ? clock : builder->clock_base;
+}
+
+static int rn_builder_next_in_class( const struct rn_packet_builder_t * builder, const struct rn_packet_item_t * items, int num_items, int send_class, int * out_level )
 {
     const uint32_t channels = builder->num_channels > 0 ? builder->num_channels : 1;
 
-    for ( uint32_t step = 0; step < channels; step++ )
-    {
-        const uint32_t channel = ( builder->round_robin + 1 + step ) % channels;
+    int best = -1;
+    int best_level = 0;
+    uint64_t best_clock = 0;
+    uint32_t best_distance = 0;
 
-        for ( int i = 0; i < num_items; i++ )
+    for ( int i = 0; i < num_items; i++ )
+    {
+        if ( items[i].send_class != (uint8_t) send_class || !rn_builder_writable( &items[i] ) )
+            continue;
+
+        // the channel's head, and the channel's boost
+        bool head = true;
+        int level = items[i].priority;
+        for ( int j = 0; j < num_items; j++ )
         {
-            if ( items[i].taken || items[i].send_class != (uint8_t) send_class || items[i].channel != channel )
+            if ( j == i || items[j].channel != items[i].channel || items[j].send_class != (uint8_t) send_class || !rn_builder_writable( &items[j] ) )
                 continue;
-            if ( items[i].bytes < 1 || !items[i].data )
-                continue;
-            return i;
+            if ( j < i )
+            {
+                head = false;
+                break;
+            }
+            if ( items[j].priority < level )
+                level = items[j].priority;
+        }
+        if ( !head )
+            continue;
+
+        const uint64_t clock = rn_builder_effective_clock( builder, level );
+        const uint32_t distance = ( items[i].channel % channels + channels - builder->round_robin % channels - 1 ) % channels;
+
+        if ( best < 0 || clock < best_clock || ( clock == best_clock && level < best_level ) ||
+             ( clock == best_clock && level == best_level && distance < best_distance ) )
+        {
+            best = i;
+            best_level = level;
+            best_clock = clock;
+            best_distance = distance;
         }
     }
 
-    return -1;
+    *out_level = best_level;
+    return best;
+}
+
+// RNScheduler!Write's clock step: the level taken becomes the origin and its
+// clock advances by its stride.
+
+static void rn_builder_take_level( struct rn_packet_builder_t * builder, int level )
+{
+    const uint64_t clock = rn_builder_effective_clock( builder, level );
+    builder->clock_base = clock;
+    builder->level_clock[level] = clock + rn_builder_stride[level];
 }
 
 int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads )
@@ -125,20 +210,31 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         struct rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, payloads[p], builder->payload_capacity );
 
+        // the scheduler's state at the packet's start: a packet the budget
+        // refuses is not written, so its takes are undone
+        uint64_t clock_snapshot[ROCKETNET_PACKET_BUILDER_LEVELS];
+        for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+            clock_snapshot[l] = builder->level_clock[l];
+        const uint64_t base_snapshot = builder->clock_base;
+        const uint32_t round_robin_snapshot = builder->round_robin;
+
         uint64_t numbers[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
         uint32_t count = 0;
         uint32_t records = 0;
         int packet_class = -1;
         int taken[ROCKETNET_PACKET_BUILDER_MAX_NUMBERS];
 
-        // 9.3: fill in the budget's class order. Within a class, channels take
-        // turns one item each (round robin), so one chatty channel cannot
-        // starve the others.
+        // 9.3 and RNScheduler!Write: fill in the budget's class order, the
+        // outer rule (RNScheduler ClassOrderBeforePriority). Within a class,
+        // RakNet's four priority levels by their clocks; within a level,
+        // channels take turns one item each, so one chatty channel cannot
+        // starve the others; within a channel, FIFO.
         for ( int send_class = ROCKETNET_SEND_CLASS_RETRANSMIT; send_class <= ROCKETNET_SEND_CLASS_UNRELIABLE; send_class++ )
         {
             for ( ;; )
             {
-                const int i = rn_builder_next_in_class( builder, items, num_items, send_class );
+                int level = 0;
+                const int i = rn_builder_next_in_class( builder, items, num_items, send_class, &level );
                 if ( i < 0 )
                     break;
 
@@ -166,6 +262,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                     numbers[count++] = items[i].number;
 
                 builder->round_robin = items[i].channel;
+                rn_builder_take_level( builder, level );
             }
         }
 
@@ -193,6 +290,11 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
             for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS; r++ )
                 items[taken[r]].taken = 0;
 
+            for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+                builder->level_clock[l] = clock_snapshot[l];
+            builder->clock_base = base_snapshot;
+            builder->round_robin = round_robin_snapshot;
+
             if ( packet_class == ROCKETNET_SEND_CLASS_UNRELIABLE )
             {
                 for ( uint32_t r = 0; r < records && r < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS; r++ )
@@ -216,6 +318,15 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         builder->packets++;
     }
+
+    // RNScheduler!Tick's reset: every item taken, nothing queued, the clocks
+    // go back to the seeds
+    bool drained = true;
+    for ( int i = 0; i < num_items && drained; i++ )
+        if ( rn_builder_writable( &items[i] ) )
+            drained = false;
+    if ( drained )
+        rn_builder_reset_clocks( builder );
 
     return (int) builder->packets;
 }

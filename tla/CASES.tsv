@@ -100,3 +100,6 @@ MCRNChannelTypesReset.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchannelt
 MCRNChannelTypesHold.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesUnordered.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
+MCRNScheduler.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
+MCRNSchedulerBrokenPerMessagePriority.cfg	MCRNScheduler.tla	invariant	FirstWriteInOrderPerChannel	check	rnscheduler	required	-
+MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
