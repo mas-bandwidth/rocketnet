@@ -1735,16 +1735,20 @@ static void rn_soak_send( rn_soak_side_t * side )
         {
             const uint64_t store_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
             const uint64_t queue_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-            // If the region is exhausted, the refusal doesn't increment a counter.
-            // Reset the region (carve) to clear exhaustion and continue sending.
-            if ( rn_region_exhausted( region ) )
-            {
-                rn_region_carve( region );
-                continue;
-            }
-            check( ( store_now - store_full ) + ( queue_now - queue_full ) == 1 );       // exactly one reason, counted once
-            side->refused_store += store_now - store_full;
-            side->refused_queue += queue_now - queue_full;
+            const uint64_t ds = store_now - store_full;
+            const uint64_t dq = queue_now - queue_full;
+            // A region already exhausted (sticky) refuses every send without
+            // counting a pool counter; that is terminal for this send loop, so
+            // stop here. Do not carve mid-send: carve clears the sticky flag and
+            // frees every descriptor, so the next alloc would succeed, re-exhaust,
+            // and carve again forever. The harness resets the region at the next
+            // reconnect. A refusal that *becomes* exhausted is counted above and
+            // is the normal one-pool refusal guarded below.
+            if ( rn_region_exhausted( region ) && ( ds + dq ) == 0 )
+                break;
+            check( ds + dq == 1 );       // exactly one reason, counted once
+            side->refused_store += ds;
+            side->refused_queue += dq;
             break;
         }
 
@@ -2125,9 +2129,21 @@ static void test_channels_allocator_no_live_allocation()
             rn_trap_phase = "reconnect";
             for ( int s = 0; s < num_slots; s++ )
             {
+                rn_region_t * ends[2] = { rn_arena_region( server, s ), rn_arena_region( clients[s], 0 ) };
+                // A region left exhausted from the previous epoch refuses every
+                // send until reset (sticky). Reset it now -- the disconnect the
+                // model's ExhaustionOnlyLeadsToDisconnect requires -- before the
+                // reconnect's sends are queued.
+                for ( int e = 0; e < 2; e++ )
+                {
+                    if ( rn_region_exhausted( ends[e] ) )
+                    {
+                        rn_region_carve( ends[e] );
+                        rn_soak_reset( &sides[2 * s + e] );
+                    }
+                }
                 rn_soak_send( &sides[2 * s] );
                 rn_soak_send( &sides[2 * s + 1] );
-                rn_region_t * ends[2] = { rn_arena_region( server, s ), rn_arena_region( clients[s], 0 ) };
                 for ( int e = 0; e < 2; e++ )
                 {
                     check( ends[e]->descriptors_free < ends[e]->queue );

@@ -970,13 +970,8 @@ static uint64_t next_random()
 
 static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, int expect_slide )
 {
-    // Use a large store to avoid exhaustion during the 200000-step walk.
-    // The walk sends many messages; with the default 128KB store, the peak
-    // concurrent messages (window=1024) can exhaust it. A 16MB store gives
-    // ample headroom so the sticky exhaustion guard is never triggered.
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.send_buffer_bytes = 16 * 1024 * 1024;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -1005,6 +1000,17 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
         else
             action = 5;
         world_apply( w, action );
+        // An exhausted region refuses every further send until reset (sticky,
+        // tla/RNConnectionMemory.tla ExhaustionOnlyLeadsToDisconnect). Reset it
+        // (the model's Reuse) so the walk keeps exercising live window state;
+        // without this the guard stops all writes for the rest of the walk.
+        if ( rn_region_exhausted( region ) )
+        {
+            const uint64_t cont = w->ref.next;
+            rn_region_carve( region );
+            world_bind( w, region, 1, cont );
+            action_begin();
+        }
     }
     world_check( w );
     if ( expect_slide )

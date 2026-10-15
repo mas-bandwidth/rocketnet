@@ -192,9 +192,10 @@ static void memory_isolation_between_slots()
     check( rn_region_send_alloc( b, 1000 ) != RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( b ) );
 
-    // A's exhaustion is a kick for A only, counted once
+    // A's exhaustion is a kick for A only: the exhaustion step counts once, and
+    // the refusal above (a send after exhaustion) also counts, so it is 2
     check( rn_connection_memory_decide( a ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
     free( b_memory );
     rn_arena_destroy( arena );
@@ -233,11 +234,13 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
-    // sticky: a later refusal does not clear it or count it again
+    // sticky: a later refusal does not clear it; each refused send counts the
+    // exhaustion counter (the send above plus the explicit exhaust call both
+    // see an already-exhausted region, so only the send above counts again)
     check( rn_region_send_alloc( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
     for ( int update = 0; update < 3; update++ )
         check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
 
@@ -251,7 +254,7 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( cm_fill( q, 10, NULL, 0 ) == 16 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
     check( rn_connection_memory_decide( q ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
 
     // the kick resets the region for the slot's next client
     rn_region_reset( region );
@@ -477,10 +480,11 @@ static void exhausted_region_refuses_sends_until_reset()
     rn_region_send_free( region, descriptors[3] );
     check( region->descriptors_free == 1 );
 
-    // Send is refused because region is exhausted (sticky flag)
+    // Send is refused because region is exhausted (sticky flag); the refusal is
+    // counted under MESSAGE_MEMORY_EXHAUSTED and takes nothing from either pool
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
     check( region->descriptors_free == 1 );  // nothing taken
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );  // not counted again
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
     // Kick decision says disconnect
     check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );

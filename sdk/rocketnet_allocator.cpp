@@ -501,9 +501,14 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
         return RN_DESCRIPTOR_NONE;
 
     // sticky exhaustion: once exhausted, every send is refused until reset
-    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
+    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted).
+    // The refusal is counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names
+    // this refusal, on every refused send, not just at the transition to exhausted.
     if ( region->exhausted )
+    {
+        rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
         return RN_DESCRIPTOR_NONE;
+    }
 
     // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
     // taken from either pool when one of them refuses. It is also the end of
