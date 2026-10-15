@@ -441,8 +441,69 @@ static void no_allocation_after_create()
     cm_restore();
 }
 
+// RNConnectionMemory ExhaustionOnlyLeadsToDisconnect: once a region is
+// exhausted, every send is refused until the region is reset (the model's
+// Reuse). The old code allowed a free + alloc to succeed after exhaustion.
+static void exhausted_region_refuses_sends_until_reset()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    // Use a small queue to exhaust quickly (min is 16)
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    // Fill the descriptor pool completely
+    uint32_t descriptors[16];
+    for ( int i = 0; i < 16; i++ )
+    {
+        descriptors[i] = rn_region_send_alloc( region, 10 );
+        check( descriptors[i] != RN_DESCRIPTOR_NONE );
+    }
+    check( region->descriptors_free == 0 );
+
+    // Next alloc exhausts the region (queue full)
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
+
+    // Free one descriptor - but region is still exhausted
+    rn_region_send_free( region, descriptors[3] );
+    check( region->descriptors_free == 1 );
+
+    // Send is refused because region is exhausted (sticky flag)
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 1 );  // nothing taken
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );  // not counted again
+
+    // Kick decision says disconnect
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+
+    // Reset the region (Reuse in the model)
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    // Now send succeeds
+    const uint32_t d = rn_region_send_alloc( region, 10 );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 15 );
+
+    rn_region_send_free( region, d );
+    check( region->descriptors_free == 16 );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
 REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );

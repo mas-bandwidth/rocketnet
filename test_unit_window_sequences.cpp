@@ -970,8 +970,13 @@ static uint64_t next_random()
 
 static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, int expect_slide )
 {
+    // Use a large store to avoid exhaustion during the 200000-step walk.
+    // The walk sends many messages; with the default 128KB store, the peak
+    // concurrent messages (window=1024) can exhaust it. A 16MB store gives
+    // ample headroom so the sticky exhaustion guard is never triggered.
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+    config.send_buffer_bytes = 16 * 1024 * 1024;
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );

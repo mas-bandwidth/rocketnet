@@ -1425,13 +1425,22 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) == 1 );
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free );
+    check( rn_region_exhausted( region ) );
 
-    // a free returns the descriptor and its chunk
-
+    // a free returns the descriptor and its chunk to the pools,
+    // but the region is exhausted (sticky) so alloc is still refused
     rn_region_send_free( region, descriptors[5] );
     check( region->descriptors_free == 1 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free + 1 );
-    check( rn_region_send_alloc( region, 10 ) == descriptors[5] );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 1 );  // nothing taken
+
+    // carve (reset) clears exhaustion, then alloc succeeds
+    rn_region_carve( region );
+    check( !rn_region_exhausted( region ) );
+    const uint32_t d = rn_region_send_alloc( region, 10 );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->descriptors_free == 15 );
 
     // a store refusal takes no descriptor, and is counted as itself
 
@@ -1726,6 +1735,13 @@ static void rn_soak_send( rn_soak_side_t * side )
         {
             const uint64_t store_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
             const uint64_t queue_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+            // If the region is exhausted, the refusal doesn't increment a counter.
+            // Reset the region (carve) to clear exhaustion and continue sending.
+            if ( rn_region_exhausted( region ) )
+            {
+                rn_region_carve( region );
+                continue;
+            }
             check( ( store_now - store_full ) + ( queue_now - queue_full ) == 1 );       // exactly one reason, counted once
             side->refused_store += store_now - store_full;
             side->refused_queue += queue_now - queue_full;
@@ -4313,7 +4329,19 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
 
             const uint32_t d = rn_region_send_alloc( source, msg_bytes );
             if ( d == RN_DESCRIPTOR_NONE )
+            {
+                // If the region is exhausted, reset it (carve) and retry this message.
+                if ( rn_region_exhausted( source ) )
+                {
+                    rn_region_carve( source );
+                    // Also need to reset the window send/ack state since the region was carved.
+                    rn_window_send_init( &send, source, 0 );
+                    rn_window_ack_init( &ack, &send, source, &config );
+                    step--;  // retry this message
+                    continue;
+                }
                 break;
+            }
 
             uint64_t first = 0, ring_pos = 0;
             uint32_t count = 0;
