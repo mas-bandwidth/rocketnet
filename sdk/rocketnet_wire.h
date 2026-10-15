@@ -155,25 +155,114 @@ _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) 
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #endif // #ifdef __cplusplus
 
-// The kernel filter's counters, incremented in the XDP program per verdict
-// and read back by userspace -- the same counter discipline as the rest of
-// the library, running through the kernel. The map is per-CPU; userspace
-// sums across CPUs. For packets on the server's port,
-// received == redirected + the five drop reasons. PASSED_IPV6_EXTENSION
-// counts the IPv6 frames the program hands to the kernel stack because their
-// next header is an extension header (hop-by-hop, routing, fragment,
-// destination options, AH, ESP): the program never walks that chain, so it
-// cannot say whether such a frame was for this server, and it counts them on
-// any port.
+// The kernel filter's counters, read back by userspace -- the same counter
+// discipline as the rest of the library, running through the kernel. The map
+// is per-CPU; userspace sums across CPUs.
+//
+// RECEIVED counts every frame the program sees, on entry. Every exit of the
+// program then raises exactly one other counter: REDIRECTED, a DROPPED_*
+// reason, a prefilter or type reason, or a PASSED_* reason. So, by
+// construction,
+//
+//     RECEIVED == REDIRECTED + every DROPPED_* + every prefilter and type
+//                 counter + every PASSED_*
+//
+// and a frame never leaves the program uncounted.
+//
+// Frames that are not for this server pass to the kernel stack, each under
+// the condition the program observed: a frame shorter than an Ethernet header,
+// an ethertype that is not IP, an IPv4 header with options or a protocol that
+// is not UDP, a truncated UDP header, a filter that is not configured, a
+// destination port or address that is not the server's, an IPv6 next header
+// that is an extension header (the program never walks that chain, so it
+// cannot say whether such a frame was for this server, and counts it on any
+// port), and an IPv6 next header that is neither UDP nor an extension. A
+// truncated IPv4 or IPv6 header drops.
+//
+// Frames for the server's port and address run the userspace refusal ladder,
+// in its order and under its names (STANDARD.md, _Counters_, the prefilter's
+// four reasons; and _Reading packets_ for the order): PREFILTER_TOO_SHORT
+// below the 6-byte prefilter header, PREFILTER_TOO_LARGE above the receive
+// ceiling, PREFILTER_WRONG_EPOCH, PREFILTER_WRONG_VALUE, then RESERVED_TYPE
+// for a type above 9, WRONG_DIRECTION for denied, challenge and cookie, and
+// then the type's own WRONG_SIZE counter for a server-inbound type outside
+// its wire size. A frame that passes the ladder redirects into the AF_XDP
+// socket for its queue (REDIRECTED), or drops with DROPPED_REDIRECT_NO_SOCKET
+// when that queue has no socket.
 
-#define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE          2
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER       3
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE       4
-#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
-#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION      6
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       7
+#define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                         0
+#define ROCKETNET_SERVER_XDP_COUNTER_RECEIVED                           1
+#define ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_TOO_SHORT                2
+#define ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_TOO_LARGE                3
+#define ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_WRONG_EPOCH              4
+#define ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_WRONG_VALUE              5
+#define ROCKETNET_SERVER_XDP_COUNTER_RESERVED_TYPE                      6
+#define ROCKETNET_SERVER_XDP_COUNTER_WRONG_DIRECTION                    7
+#define ROCKETNET_SERVER_XDP_COUNTER_CONNECTION_REQUEST_WRONG_SIZE      8
+#define ROCKETNET_SERVER_XDP_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE     9
+#define ROCKETNET_SERVER_XDP_COUNTER_KEEP_ALIVE_WRONG_SIZE              10
+#define ROCKETNET_SERVER_XDP_COUNTER_PAYLOAD_WRONG_SIZE                 11
+#define ROCKETNET_SERVER_XDP_COUNTER_DISCONNECT_WRONG_SIZE              12
+#define ROCKETNET_SERVER_XDP_COUNTER_ACK_WRONG_SIZE                     13
+#define ROCKETNET_SERVER_XDP_COUNTER_FRAGMENT_WRONG_SIZE                14
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IPV4_SHORT_HEADER          15
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IPV6_SHORT_HEADER          16
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REDIRECT_NO_SOCKET         17
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_SHORT_ETHERNET              18
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_NOT_IP                      19
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV4_NOT_PLAIN_UDP          20
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_UDP_SHORT_HEADER            21
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_NOT_CONFIGURED              22
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_OTHER_DESTINATION           23
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION              24
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_NOT_UDP                25
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                               26
+
+// One row per counter, in index order: the define, the name, and the class.
+// "arrival" is RECEIVED, "refusal" is every drop, "expected" is REDIRECTED and
+// every pass. The prefilter and type rows carry the userspace counter's own
+// name, so the two report in the same shape. Host builds only; the kernel
+// program has no use for strings.
+
+#if !defined(__BPF__)
+
+#define ROCKETNET_SERVER_XDP_COUNTER_TABLE( X )                                                                     \
+    X( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED,                       "REDIRECTED",                       "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_RECEIVED,                         "RECEIVED",                         "arrival"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_TOO_SHORT,              "PREFILTER_TOO_SHORT",              "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_TOO_LARGE,              "PREFILTER_TOO_LARGE",              "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_WRONG_EPOCH,            "PREFILTER_WRONG_EPOCH",            "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PREFILTER_WRONG_VALUE,            "PREFILTER_WRONG_VALUE",            "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_RESERVED_TYPE,                    "RESERVED_TYPE",                    "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_WRONG_DIRECTION,                  "WRONG_DIRECTION",                  "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_CONNECTION_REQUEST_WRONG_SIZE,    "CONNECTION_REQUEST_WRONG_SIZE",    "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE,   "CONNECTION_RESPONSE_WRONG_SIZE",   "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_KEEP_ALIVE_WRONG_SIZE,            "KEEP_ALIVE_WRONG_SIZE",            "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PAYLOAD_WRONG_SIZE,               "PAYLOAD_WRONG_SIZE",               "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_DISCONNECT_WRONG_SIZE,            "DISCONNECT_WRONG_SIZE",            "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_ACK_WRONG_SIZE,                   "ACK_WRONG_SIZE",                   "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_FRAGMENT_WRONG_SIZE,              "FRAGMENT_WRONG_SIZE",              "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IPV4_SHORT_HEADER,        "DROPPED_IPV4_SHORT_HEADER",        "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IPV6_SHORT_HEADER,        "DROPPED_IPV6_SHORT_HEADER",        "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REDIRECT_NO_SOCKET,       "DROPPED_REDIRECT_NO_SOCKET",       "refusal"  ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_SHORT_ETHERNET,            "PASSED_SHORT_ETHERNET",            "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_NOT_IP,                    "PASSED_NOT_IP",                    "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV4_NOT_PLAIN_UDP,        "PASSED_IPV4_NOT_PLAIN_UDP",        "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_UDP_SHORT_HEADER,          "PASSED_UDP_SHORT_HEADER",          "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_NOT_CONFIGURED,            "PASSED_NOT_CONFIGURED",            "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_OTHER_DESTINATION,         "PASSED_OTHER_DESTINATION",         "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION,            "PASSED_IPV6_EXTENSION",            "expected" ) \
+    X( ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_NOT_UDP,              "PASSED_IPV6_NOT_UDP",              "expected" )
+
+#define ROCKETNET_SERVER_XDP_COUNTER_TABLE_ROW_COUNT( define, name, kind ) + 1
+
+#ifdef __cplusplus
+static_assert( 0 ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_SERVER_XDP_COUNTER_TABLE_ROW_COUNT ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS, "the XDP counter table has one row per counter" );
+#else // #ifdef __cplusplus
+_Static_assert( 0 ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_SERVER_XDP_COUNTER_TABLE_ROW_COUNT ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS, "the XDP counter table has one row per counter" );
+#endif // #ifdef __cplusplus
+
+#endif // #if !defined(__BPF__)
 
 struct rocketnet_server_xdp_stats_t
 {
