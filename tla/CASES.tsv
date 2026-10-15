@@ -65,3 +65,6 @@ MCRNSecurityTablesPreviousOutlivesWindow.cfg	MCRNSecurityTables.tla	action	Previ
 MCRNConnectionMemory.cfg	MCRNConnectionMemory.tla	pass	-	check	rnconnectionmemory	required	-
 MCRNConnectionMemoryBrokenNoReset.cfg	MCRNConnectionMemory.tla	invariant	ReusedSlotStartsClean	check	rnconnectionmemory	required	-
 MCRNConnectionMemoryBrokenCarryOn.cfg	MCRNConnectionMemory.tla	action	ExhaustionOnlyLeadsToDisconnect	check	rnconnectionmemory	required	-
+MCRNSendBudget.cfg	MCRNSendBudget.tla	pass	-	check	rnsendbudget	required	-
+MCRNSendBudgetBrokenOverspend.cfg	MCRNSendBudget.tla	invariant	NeverOverspend	check	rnsendbudget	required	-
+MCRNSendBudgetBrokenUnreliableFirst.cfg	MCRNSendBudget.tla	temporal	EveryReliableEventuallySent	check	rnsendbudget	required	-
