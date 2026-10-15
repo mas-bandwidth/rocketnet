@@ -655,6 +655,65 @@ static bool rocketnet_server_socket_read_sysfs( const char * path, char * value,
     return true;
 }
 
+// THE VETH WAIVER (R5, R7). A veth has no hardware queues: no NAPI
+// busy-poll pair a provisioning step tunes (R5) and no combined channel
+// count (R7; the veth driver answers the channel query with combined 0).
+// The pre-flight recognises a veth by its kernel driver name, read with
+// ETHTOOL_GDRVINFO, and waives exactly those two conditions for it. Every
+// other driver name -- a real NIC, an unreadable name, an empty one -- is
+// held to R5 and R7 unchanged. Each verdict is a pure function of what the
+// pre-flight read, so the unit floor checks the waiver without a NIC.
+
+bool rocketnet_server_socket_preflight_driver_is_veth( const char * driver_name )
+{
+    return driver_name != NULL && strcmp( driver_name, "veth" ) == 0;
+}
+
+bool rocketnet_server_socket_preflight_r5_met( const char * driver_name, const char * napi_defer_hard_irqs, const char * gro_flush_timeout )
+{
+    if ( rocketnet_server_socket_preflight_driver_is_veth( driver_name ) )
+        return true;
+    // an absent knob (NULL) passes, as it always has
+    if ( napi_defer_hard_irqs != NULL && strcmp( napi_defer_hard_irqs, "2" ) != 0 )
+        return false;
+    if ( gro_flush_timeout != NULL && strcmp( gro_flush_timeout, "200000" ) != 0 )
+        return false;
+    return true;
+}
+
+bool rocketnet_server_socket_preflight_r7_met( const char * driver_name, unsigned int combined_count, int num_queues )
+{
+    if ( rocketnet_server_socket_preflight_driver_is_veth( driver_name ) )
+        return true;
+    return (int) combined_count == num_queues;
+}
+
+// the interface's kernel driver name via ETHTOOL_GDRVINFO; false (and an
+// empty name) when the query is refused, so an unknown driver is never
+// mistaken for a veth
+
+static bool rocketnet_server_socket_read_driver_name( const char * interface_name, char * driver_name, size_t driver_name_size )
+{
+    driver_name[0] = '\0';
+    int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+    if ( probe_fd < 0 )
+        return false;
+    struct ethtool_drvinfo drvinfo;
+    memset( &drvinfo, 0, sizeof(drvinfo) );
+    drvinfo.cmd = ETHTOOL_GDRVINFO;
+    struct ifreq ifr;
+    memset( &ifr, 0, sizeof(ifr) );
+    strncpy( ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1 );
+    ifr.ifr_data = (char*) &drvinfo;
+    const bool read = ioctl( probe_fd, SIOCETHTOOL, &ifr ) == 0;
+    close( probe_fd );
+    if ( !read )
+        return false;
+    drvinfo.driver[sizeof(drvinfo.driver) - 1] = '\0';
+    snprintf( driver_name, driver_name_size, "%s", drvinfo.driver );
+    return true;
+}
+
 // THE COMMIT BARRIER: a process that must never commit an XDP data plane
 // -- the test suite installs this once, structurally, for every present
 // and future test -- forbids the committing create outright. the
@@ -1096,26 +1155,44 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
         }
     }
 
+    // the interface's driver, read once: a veth waives R5 and R7 (see the
+    // waiver's comment above); every other driver is held to both
+
+    char driver_name[64];
+    if ( !rocketnet_server_socket_read_driver_name( interface_name, driver_name, sizeof(driver_name) ) )
+        driver_name[0] = '\0';
+    const bool veth = rocketnet_server_socket_preflight_driver_is_veth( driver_name );
+    if ( veth )
+        rocketnet_info( "xdp pre-flight: %s is a veth (driver veth): R5 and R7 are waived -- a veth has no NAPI busy-poll pair to tune and no combined channel count", interface_name );
+
     // R5: the busy-poll pair (absent knobs pass)
 
     char path[2048];
-    snprintf( path, sizeof(path), "/sys/class/net/%s/napi_defer_hard_irqs", interface_name );
-    if ( rocketnet_server_socket_read_sysfs( path, value, sizeof(value) ) && strcmp( value, "2" ) != 0 )
+    if ( !veth )
     {
-        rocketnet_warn( "xdp pre-flight: napi_defer_hard_irqs is %s, want 2 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
-        provisioned = false;
-    }
+        char napi_value[64];
+        snprintf( path, sizeof(path), "/sys/class/net/%s/napi_defer_hard_irqs", interface_name );
+        const bool have_napi = rocketnet_server_socket_read_sysfs( path, napi_value, sizeof(napi_value) );
+        if ( !rocketnet_server_socket_preflight_r5_met( driver_name, have_napi ? napi_value : NULL, NULL ) )
+        {
+            rocketnet_warn( "xdp pre-flight: napi_defer_hard_irqs is %s, want 2 (R5): run scripts/rocketnet-provision %s %d", napi_value, interface_name, num_queues );
+            provisioned = false;
+        }
 
-    snprintf( path, sizeof(path), "/sys/class/net/%s/gro_flush_timeout", interface_name );
-    if ( rocketnet_server_socket_read_sysfs( path, value, sizeof(value) ) && strcmp( value, "200000" ) != 0 )
-    {
-        rocketnet_warn( "xdp pre-flight: gro_flush_timeout is %s, want 200000 (R5): run scripts/rocketnet-provision %s %d", value, interface_name, num_queues );
-        provisioned = false;
+        char gro_value[64];
+        snprintf( path, sizeof(path), "/sys/class/net/%s/gro_flush_timeout", interface_name );
+        const bool have_gro = rocketnet_server_socket_read_sysfs( path, gro_value, sizeof(gro_value) );
+        if ( !rocketnet_server_socket_preflight_r5_met( driver_name, NULL, have_gro ? gro_value : NULL ) )
+        {
+            rocketnet_warn( "xdp pre-flight: gro_flush_timeout is %s, want 200000 (R5): run scripts/rocketnet-provision %s %d", gro_value, interface_name, num_queues );
+            provisioned = false;
+        }
     }
 
     // R7: the NIC's combined channel count equals the configured queue
-    // count (a NIC without channel support passes)
+    // count (a NIC without channel support passes; a veth is waived)
 
+    if ( !veth )
     {
         int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
         if ( probe_fd < 0 )
@@ -1152,7 +1229,7 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
             }
             else
             {
-                if ( (int) channels.combined_count != num_queues )
+                if ( !rocketnet_server_socket_preflight_r7_met( driver_name, channels.combined_count, num_queues ) )
                 {
                     rocketnet_warn( "xdp pre-flight: combined queue count is %u, want %d (R7): run scripts/rocketnet-provision %s %d", channels.combined_count, num_queues, interface_name, num_queues );
                     provisioned = false;

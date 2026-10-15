@@ -4678,12 +4678,19 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         const std::vector<std::string> verify = rocketnet_xdp_veth_lines( "ip netns exec " ROCKETNET_XDP_VETH_SERVER_NETNS " scripts/rocketnet-provision veth-s 1 verify 2>&1" );
         for ( const std::string & line : verify )
             printf( "provision verify: %s\n", line.c_str() );
+        printf( "provision verify: kept for the record; on a veth its R5 and R7 lines do not apply (no NAPI busy-poll pair, no combined channels) -- the library pre-flight below is the gate, and it waives exactly those two for a veth\n" );
     }
 
+    // the library pre-flight at info level, so its every line (the veth
+    // waiver included) is in the case's output
+
     rocketnet_xdp_veth_enter( server_netns );
-    if ( !rocketnet_server_socket_preflight( server_address, 1 ) )
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    const bool preflight_met = rocketnet_server_socket_preflight( server_address, 1 );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    if ( !preflight_met )
     {
-        printf( "%s: the xdp pre-flight is unmet on %s; every unmet condition follows\n", case_name, hostname );
+        printf( "%s: the xdp pre-flight is unmet on %s; every unmet condition is above\n", case_name, hostname );
         rocketnet_check( !"xdp pre-flight unmet" );
     }
 
@@ -4951,8 +4958,51 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
     rocketnet_xdp_max_size_both_ways( true, "xdp_max_size_both_ways_ipv6" );
 }
 
+// THE VETH WAIVER, checked as pure verdicts (no root, no NIC, no socket):
+// a veth waives R5 and R7, and nothing else does -- a real NIC's driver
+// name, a name that merely starts with "veth", an empty name and an
+// unreadable (NULL) name are all held to both conditions unchanged.
+
+void rocketnet_test_xdp_preflight_veth_waiver()
+{
+    // the classifier: exactly "veth"
+    rocketnet_check( rocketnet_server_socket_preflight_driver_is_veth( "veth" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( "i40e" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( "mlx5_core" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( "veth0" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( "Veth" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( "" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_driver_is_veth( NULL ) );
+
+    // R5 on a veth: the unset pair a veth reports is waived
+    rocketnet_check( rocketnet_server_socket_preflight_r5_met( "veth", "0", "0" ) );
+
+    // R5 on a real NIC: unset refuses, each knob on its own; set passes;
+    // absent knobs pass, as before
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( "i40e", "0", "200000" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( "i40e", "2", "0" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( "i40e", "0", NULL ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( NULL, NULL, "0" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( "", "0", "0" ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r5_met( "veth0", "0", "0" ) );
+    rocketnet_check( rocketnet_server_socket_preflight_r5_met( "i40e", "2", "200000" ) );
+    rocketnet_check( rocketnet_server_socket_preflight_r5_met( "i40e", NULL, NULL ) );
+
+    // R7 on a veth: the combined count of 0 a veth reports is waived
+    rocketnet_check( rocketnet_server_socket_preflight_r7_met( "veth", 0, 1 ) );
+
+    // R7 on a real NIC: the count must equal the queue count
+    rocketnet_check( !rocketnet_server_socket_preflight_r7_met( "i40e", 0, 1 ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r7_met( "i40e", 8, 1 ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r7_met( NULL, 0, 1 ) );
+    rocketnet_check( !rocketnet_server_socket_preflight_r7_met( "veth0", 0, 1 ) );
+    rocketnet_check( rocketnet_server_socket_preflight_r7_met( "i40e", 1, 1 ) );
+    rocketnet_check( rocketnet_server_socket_preflight_r7_met( "i40e", 4, 4 ) );
+}
+
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_preflight_veth_waiver, "xdp_preflight_veth_waiver", "linux only: the xdp driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_max_size_both_ways_ipv4, "xdp_max_size_both_ways_ipv4", "linux only: the xdp driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_test_xdp_max_size_both_ways_ipv6, "xdp_max_size_both_ways_ipv6", "linux only: the xdp driver is not built on this platform" )
 
@@ -5015,6 +5065,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4 },
     { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
+    { "xdp_preflight_veth_waiver", rocketnet_test_xdp_preflight_veth_waiver },
     { "xdp_max_size_both_ways_ipv4", rocketnet_test_xdp_max_size_both_ways_ipv4 },
     { "xdp_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6 },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },

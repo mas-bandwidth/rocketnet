@@ -32,6 +32,15 @@ struct rocketnet_server_socket_t;
 
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues );
 
+// The veth waiver inside the pre-flight, as pure verdicts of what it read: a
+// veth (kernel driver name exactly "veth") has no NAPI busy-poll pair (R5)
+// and no combined channel count (R7), so both are waived for it and for no
+// other driver. A NULL knob value is an absent knob, which passes.
+
+bool rocketnet_server_socket_preflight_driver_is_veth( const char * driver_name );
+bool rocketnet_server_socket_preflight_r5_met( const char * driver_name, const char * napi_defer_hard_irqs, const char * gro_flush_timeout );
+bool rocketnet_server_socket_preflight_r7_met( const char * driver_name, unsigned int combined_count, int num_queues );
+
 // The commit barrier: a process that must never commit an XDP data plane
 // forbids the committing create outright -- the test suite installs this
 // once at its start, structurally, so every present and future test is

@@ -173,12 +173,22 @@ way. Then they read the stats map, the driver counters and the transport
 counters, and print one `tcpdump -vv` line per direction from a capture on the
 client end. They change the machine, so they run only as root with
 `ROCKETNET_TEST_XDP_VETH=1` on an XDP-provisioned machine, and print a named
-skip otherwise:
+skip otherwise. The two cases share their namespaces, so they run one at a
+time: a case name given to `./bin/functional` (bare, or after `--run`) runs
+that one case and nothing else, and an unknown name exits 2 by name.
 
 ```sh
-sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional xdp_max_size_both_ways_ipv4
-sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional xdp_max_size_both_ways_ipv6
+sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional --run xdp_max_size_both_ways_ipv4
+sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional --run xdp_max_size_both_ways_ipv6
 ```
+
+The library pre-flight recognises a veth by its kernel driver name (`veth`,
+read with `ETHTOOL_GDRVINFO`) and waives R5 and R7 for it: a veth has no NAPI
+busy-poll pair to tune and reports no combined channel count. Every other
+driver is held to both unchanged; `xdp_preflight_veth_waiver` checks the
+verdicts. `scripts/rocketnet-provision veth-s 1 verify` does not waive them,
+so on a veth its R5 and R7 lines print as unmet; the cases keep that output
+for the record and gate on the library pre-flight.
 
 ## Embedded XDP source maintenance
 
