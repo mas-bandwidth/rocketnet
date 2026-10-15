@@ -51,16 +51,31 @@
 
 #define ROCKETNET_TEST_FILTER_VALUE             { 0xb7, 0x59, 0x01, 0x00 }
 
-// the receive ceiling: fixed for every receiver, whatever its send budget
+// The packet size, from the one number it derives from: the MTU of a plain
+// 1500-byte link, less the IP header and the 8-byte UDP header. The two
+// address families give two sizes (RFC 8200 section 5 forbids in-transit
+// fragmentation on IPv6; RFC 8085 section 3.2 asks a UDP sender to stay
+// inside the path MTU), and each limit takes the one its job needs.
 
-#define ROCKETNET_RECEIVE_CEILING               1426
+#define ROCKETNET_LINK_MTU_BYTES                1500
+#define ROCKETNET_ETHERNET_HEADER_BYTES         14
+#define ROCKETNET_IPV4_HEADER_BYTES             20
+#define ROCKETNET_IPV6_HEADER_BYTES             40
+#define ROCKETNET_UDP_HEADER_BYTES              8
 
-// the send budget: a sender never emits a packet larger than this. 1232 is
-// the only value safe with no knowledge of the network (IPv6 minimum MTU
-// less headers); the standard lets a deployment that knows its paths raise
-// it, to at most the receive ceiling.
+// the receive ceiling: fixed for every receiver, whatever its send budget --
+// anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
 
-#define ROCKETNET_SEND_BUDGET                   1232
+#define ROCKETNET_RECEIVE_CEILING               ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV4_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
+
+// the send budget: a sender never emits a packet larger than this. It is the
+// smaller family's packet, the IPv6 UDP payload of a 1500-byte MTU, 1452
+// bytes, so one budget serves both families: a maximum packet crosses a
+// 1500-MTU path over IPv4 with 20 bytes spare and over IPv6 exactly at the
+// limit. A path below MTU 1500 (an IPv6 tunnel at the 1280 minimum, PPPoE at
+// 1492) drops a maximum-size IPv6 packet.
+
+#define ROCKETNET_SEND_BUDGET                   ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV6_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
 
 // The ack block, at the front of every session type's sealed plaintext:
 // largest received (u32) + range count (1 byte) + first range length (u16)

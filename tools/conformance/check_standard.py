@@ -245,6 +245,49 @@ def main():
     if cell is not None:
         compare("receive ceiling", ints(cell)[0], code["ROCKETNET_RECEIVE_CEILING"])
 
+    # the packet size and its derivations: the document's numbers against the
+    # compiler's, and each document number against the arithmetic the
+    # standard states for it, so neither side can drift from the one MTU
+
+    def floor8(value):
+        return value - value % 8
+
+    cell = row("Packet size")
+    if cell is not None:
+        published = ints(cell)
+        compare("link MTU", published[0], code["ROCKETNET_LINK_MTU_BYTES"])
+        compare("IPv4 packet size", published[1], code["ROCKETNET_MAX_PACKET_BYTES"])
+        compare("IPv6 packet size", published[2], code["ROCKETNET_MAX_PACKET_BYTES_IPV6"])
+        compare("IPv4 packet size is the MTU less 20 and 8", published[1], published[0] - 20 - 8)
+        compare("IPv6 packet size is the MTU less 40 and 8", published[2], published[0] - 40 - 8)
+        budget = row("Send budget")
+        ceiling = row("Receive ceiling")
+        if budget is not None:
+            compare("send budget is the IPv6 packet size", ints(budget)[0], published[2])
+        if ceiling is not None:
+            compare("receive ceiling is the IPv4 packet size", ints(ceiling)[0], published[1])
+
+    cell = row("Payload capacity")
+    if cell is not None:
+        published = ints(cell)
+        compare("payload capacity", published[0], code["ROCKETNET_MAX_PAYLOAD_BYTES"])
+        compare("receive payload", published[1], code["ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES"])
+        overhead = int(code["ROCKETNET_PACKET_OVERHEAD_BYTES"]) + int(code["ROCKETNET_ACK_BLOCK_MIN_BYTES"])
+        compare("payload capacity is the budget less overhead and block, floored to eight",
+                published[0], floor8(int(code["ROCKETNET_SEND_BUDGET"]) - overhead))
+        compare("receive payload is the ceiling less overhead and block",
+                published[1], int(code["ROCKETNET_RECEIVE_CEILING"]) - overhead)
+
+    cell = row("SINGLE message")
+    if cell is not None:
+        compare("SINGLE message bytes", ints(cell)[0], code["ROCKETNET_MESSAGE_SINGLE_BYTES"])
+
+    cell = row("Fragment stride")
+    if cell is not None:
+        published = ints(cell)
+        compare("fragment stride sent", published[0], code["ROCKETNET_MAX_FRAGMENT_BYTES"])
+        compare("fragment stride received", published[1], code["ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES"])
+
     cell = row("Connect token")
     if cell is not None:
         published = ints(cell)

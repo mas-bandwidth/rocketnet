@@ -150,7 +150,7 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
     uint32_t pad2;
 };
 
-struct rn_sequenced_hold_t              // 1208 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
+struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
 {
     uint32_t bytes;
     uint32_t ordering;
@@ -193,7 +193,7 @@ enum
     RN_PART_SENT_INDEX,                 // 16 * 2P
     RN_PART_SENT_REFS,                  // 4 * 16P
     RN_PART_DELIVERIES,                 // 24 (W + Du)
-    RN_PART_SEQUENCED_HOLDS,            // 1208 Ru
+    RN_PART_SEQUENCED_HOLDS,            // 1432 Ru
     RN_PART_RECEIPTS,                   // 16 Rq
     RN_PART_RESEND_FIFO,                // 8 W
     RN_NUM_PARTS

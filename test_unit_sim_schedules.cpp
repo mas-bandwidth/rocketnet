@@ -330,13 +330,13 @@ static void TestSimScheduleFinalFragmentFirst()
     // an oversized final-first payload: the final stages first, then a
     // non-final whose stride makes the reconstruction exceed the ceiling --
     // refused as too large, and nothing keeps the slot
-    int b1 = sim_build_fragment( frag_b, 17, 7, 8, 40, 1387, 0x80 );
+    int b1 = sim_build_fragment( frag_b, 17, 7, 8, 40, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0x80 );
     sim_schedule_deliver( &sched, frag_b, b1 );
     rocketnet_unit_check( sim_schedule_flush( &sched ) == 1 );
     rocketnet_unit_check( sim_schedule_receive( &sched ) == b1 );
     rocketnet_unit_check( rocketnet_reassembly_process_fragment( set, 0, sched.rx, b1, counters, table ) == 1 );
 
-    int b0 = sim_build_fragment( frag_a, 17, 0, 8, 1387, 1387, 0x80 );
+    int b0 = sim_build_fragment( frag_a, 17, 0, 8, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES, 0x80 );
     sim_schedule_deliver( &sched, frag_a, b0 );
     rocketnet_unit_check( sim_schedule_flush( &sched ) == 1 );
     rocketnet_unit_check( sim_schedule_receive( &sched ) == b0 );

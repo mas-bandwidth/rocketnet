@@ -139,7 +139,7 @@ and stages it. Nothing is copied at any step — the packet is encrypted where i
 was written. `context.payload_capacity` is the frame's real capacity, never the
 request; write up to it and `finish_packet` routes on what you actually wrote.
 
-A request at or under `ROCKETNET_MAX_PAYLOAD_BYTES` (1192) is a real wire frame,
+A request at or under `ROCKETNET_MAX_PAYLOAD_BYTES` (1416) is a real wire frame,
 zero copies. A larger request — up to the configured maximum — routes through the
 transport's arena and `finish_packet` splits it into type 9 fragments, one copy,
 spent only where splitting makes it unavoidable. Either way the context's single
@@ -167,8 +167,8 @@ route, reserves `fragment_count - 1` more in a block
 `rocketnet_server_transport_finish_arena_packet`) — fragment 0 rides the sequence
 `start_packet` already spent, and the rest come from that block. So a fragmented
 payload occupies `fragment_count` consecutive sequences. At the default
-16384-byte maximum payload over a 1193-byte fragment budget, `fragment_count` is
-**14**.
+16384-byte maximum payload over a 1413-byte fragment budget, `fragment_count` is
+**12**.
 
 That matters because of where the failures are. A `finish_packet` that returns
 zero *after* the block is reserved — a seal failure inside the fragment loop —
