@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 #define check rocketnet_unit_check
 
@@ -340,7 +341,7 @@ static void reliable_waits_unreliable_drops()
         waits++;
         check( waits < 100 );
     }
-    check( now >= (double) ROCKETNET_SEND_BUDGET / 125.0 );        // 1232 bytes at 125 B/s: 9.856 s
+    check( now >= (double) ROCKETNET_SEND_BUDGET / 125.0 );        // ROCKETNET_SEND_BUDGET bytes at 125 B/s: 9.856 s
 
     // refusals spend nothing
     const double before = budget.tokens;
@@ -621,6 +622,46 @@ static void no_allocation_after_create()
     check( rocketnet_init() );
 }
 
+// ---------------------------------------------------------------------------
+// The wire-byte formula refuses any payload or ack block near INT_MAX: the
+// bound is written as a subtraction, so no arithmetic on an untrusted int
+// happens before its range is known, and a payload near INT_MAX cannot
+// overflow the sum before the comparison (CERT INT32-C).
+// ---------------------------------------------------------------------------
+
+static void wire_bytes_refuses_int_max()
+{
+    const int imax = INT_MAX;
+    check( rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, imax ) == 0 );
+    check( rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, imax - 1 ) == 0 );
+    check( rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, imax - ROCKETNET_PACKET_OVERHEAD_BYTES ) == 0 );
+    check( rocketnet_send_budget_wire_bytes( imax, ROCKETNET_ACK_BLOCK_MIN_BYTES ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( imax ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( imax - 1 ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( imax - ROCKETNET_PACKET_OVERHEAD_BYTES ) == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// The boundaries, every bound computed from the macros, never a literal: the
+// largest payload that fits the send budget with the minimum ack block returns
+// overhead + block + payload, one more returns 0, and 0 and negative payloads
+// return 0.
+// ---------------------------------------------------------------------------
+
+static void wire_bytes_boundaries()
+{
+    const int min_block = ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    const int fit = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - min_block;
+    check( rocketnet_send_budget_wire_bytes( min_block, fit ) == ROCKETNET_PACKET_OVERHEAD_BYTES + min_block + fit );
+    check( rocketnet_send_budget_wire_bytes( min_block, fit + 1 ) == 0 );
+    check( rocketnet_send_budget_wire_bytes( min_block, 0 ) == 0 );
+    check( rocketnet_send_budget_wire_bytes( min_block, -1 ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( fit ) == ROCKETNET_PACKET_OVERHEAD_BYTES + min_block + fit );
+    check( rocketnet_send_budget_max_wire_bytes( fit + 1 ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( 0 ) == 0 );
+    check( rocketnet_send_budget_max_wire_bytes( -1 ) == 0 );
+}
+
 REGISTER_UNIT_TEST( never_exceeds_budget_per_window );
 REGISTER_UNIT_TEST( large_message_paced_across_windows );
 REGISTER_UNIT_TEST( budgets_are_per_connection );
@@ -629,3 +670,5 @@ REGISTER_UNIT_TEST( class_order_retransmit_first );
 REGISTER_UNIT_TEST( runtime_change_takes_effect_next_window );
 REGISTER_UNIT_TEST( wire_bytes_match_the_transport );
 REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( wire_bytes_refuses_int_max );
+REGISTER_UNIT_TEST( wire_bytes_boundaries );
