@@ -8,7 +8,6 @@
 # code now agree) is itself a failure, and so is a mismatch with no entry.
 timing.send_rate	unowned
 timing.cookie_lifetime	unowned
-timing.cookie_rotation	unowned
 config.max_token_lifetime_seconds	unowned
 config.allow_negative_timeout	unowned
 sizing.encryption_map	unowned

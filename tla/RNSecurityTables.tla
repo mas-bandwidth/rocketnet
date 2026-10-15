@@ -4,7 +4,8 @@
 (*                                                                         *)
 (* The used-token history and the admitted-token set                       *)
 (* (sdk/rocketnet_token_tables.cpp), the cookie gate and its key           *)
-(* generation (sdk/rocketnet_server_protocol.cpp, the cookie gate and      *)
+(* rotation (sdk/rocketnet_server_protocol.cpp, the cookie gate,           *)
+(* rocketnet_server_protocol_rotate_cookie_key_if_due,                     *)
 (* rocketnet_server_process_opened_request and                             *)
 (* rocketnet_server_process_connection_response), and the failed-verify    *)
 (* budget (sdk/rocketnet_server.h, 64 table slots), as STANDARD.md         *)
@@ -18,8 +19,9 @@
 (* Switches name the code and the fixed code.  RefuseAdmittedAtResponse,   *)
 (* AdmitExpiredAtResponse, EvictLiveHistory, DeniedConsumesToken and       *)
 (* CapVerifyBudget in their code position reproduce a finding each; in     *)
-(* their fixed position the invariants hold.  AcceptPrevious and Rotation  *)
-(* state the cookie-key window the rotation code is written against.       *)
+(* their fixed position the invariants hold.  Rotation, AcceptPrevious     *)
+(* and PreviousOutlivesWindow state the cookie-key rotation window and     *)
+(* its stall bound.                                                        *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -28,7 +30,8 @@ CONSTANTS
     MaxClients, HistoryCap, AdmittedCap, VerifyBudget, HandshakeDeadline,
     Rotation, AcceptPrevious,
     RefuseAdmittedAtResponse, AdmitExpiredAtResponse,
-    EvictLiveHistory, DeniedConsumesToken, CapVerifyBudget
+    EvictLiveHistory, DeniedConsumesToken, CapVerifyBudget,
+    PreviousOutlivesWindow
 
 ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in Nat \ {0}
        /\ MaxClients \in Nat \ {0} /\ HistoryCap \in Nat \ {0} /\ AdmittedCap \in Nat \ {0}
@@ -36,18 +39,21 @@ ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in
        /\ Rotation \in BOOLEAN /\ AcceptPrevious \in BOOLEAN
        /\ RefuseAdmittedAtResponse \in BOOLEAN /\ AdmitExpiredAtResponse \in BOOLEAN
        /\ EvictLiveHistory \in BOOLEAN /\ DeniedConsumesToken \in BOOLEAN
-       /\ CapVerifyBudget \in BOOLEAN
+       /\ CapVerifyBudget \in BOOLEAN /\ PreviousOutlivesWindow \in BOOLEAN
        /\ Expire \in [Tokens -> Nat] /\ Cid \in [Tokens -> Nat]
 
 Gens == 1..3
 ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, verifies, deniedPulse, admits, lateAdmit, evictedLive
+          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive
 vars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
 
-LiveGens == {gen} \cup (IF AcceptPrevious /\ hasPrev THEN {IF gen = 1 THEN 3 ELSE gen - 1} ELSE {})
+PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
+NextRotate == gen * RotatePeriod
+PrevStoppedAt == (gen - 1) * RotatePeriod
+LiveGens == {gen} \cup (IF AcceptPrevious /\ hasPrev /\ clock < prevUntil THEN {PrevGen} ELSE {})
 
 TokExpired(tk) == ExpTime(tk) <= clock
 HistLive(tk) == IF history[tk] = None THEN FALSE ELSE history[tk].exp > clock
@@ -60,7 +66,7 @@ NumFree == MaxClients - Cardinality(slots) - others
 Live(a) == map[a] # None
 
 Init ==
-    /\ clock = 0 /\ gen = 1 /\ hasPrev = FALSE /\ verifies = 0
+    /\ clock = 0 /\ gen = 1 /\ hasPrev = FALSE /\ prevUntil = 0 /\ verifies = 0
     /\ history = [t \in Tokens |-> None] /\ admitted = [t \in Tokens |-> 0] /\ insertOrder = 0
     /\ map = [a \in Addrs |-> None] /\ mapGen = [a \in Addrs |-> 0] /\ mapBorn = [a \in Addrs |-> 0]
     /\ slots = {} /\ others = 0
@@ -106,7 +112,7 @@ Request(a, tok, g) ==
     /\ history' = HistoryRecord(tok, a)
     /\ insertOrder' = IF HistLive(tok) THEN insertOrder ELSE insertOrder + 1
     /\ map' = [map EXCEPT ![a] = tok] /\ mapGen' = [mapGen EXCEPT ![a] = g] /\ mapBorn' = [mapBorn EXCEPT ![a] = clock]
-    /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, deniedPulse, admits, lateAdmit>>
+    /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit>>
 
 \* The response rung: the packet opened under the mapping.  The code
 \* checks the client id, then the slots, then the admitted set, whose
@@ -129,7 +135,7 @@ Response(a) ==
             /\ deniedPulse' = ~deniedPulse
             /\ admitted' = IF DeniedConsumesToken THEN AdmittedAfterAdd(tok) ELSE admitted
             /\ UNCHANGED <<clock, history, insertOrder, map, mapGen, mapBorn, slots, others,
-                           gen, hasPrev, verifies, admits, lateAdmit, evictedLive>>
+                           gen, hasPrev, prevUntil, verifies, admits, lateAdmit, evictedLive>>
        ELSE
             /\ admitted' = AdmittedAfterAdd(tok)
             /\ slots' = slots \cup {[cid |-> Cid[tok], tok |-> tok, addr |-> a]}
@@ -137,25 +143,32 @@ Response(a) ==
             /\ admits' = [admits EXCEPT ![tok] = @ + 1]
             /\ lateAdmit' = (lateAdmit \/ TokExpired(tok))
             /\ UNCHANGED <<clock, history, insertOrder, mapGen, mapBorn, others, gen, hasPrev,
-                           verifies, deniedPulse, evictedLive>>
+                           prevUntil, verifies, deniedPulse, evictedLive>>
 
 OtherJoins == /\ others < MaxClients /\ NumFree > 0 /\ others' = others + 1
               /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
-                             gen, hasPrev, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+                             gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
 OtherLeaves == /\ others > 0 /\ others' = others - 1
-              /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
-                             gen, hasPrev, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+               /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
+                              gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
 Disconnect(a) == /\ \E s \in slots : s.addr = a
                  /\ slots' = {s \in slots : s.addr # a}
                  /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, others,
-                                gen, hasPrev, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+                                gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
 
 Tick ==
-    /\ clock' = IF clock < MaxClock THEN clock + 1 ELSE clock
+    /\ \/ clock' = IF clock < MaxClock THEN clock + 1 ELSE clock
+       \/ (clock < NextRotate /\ NextRotate + RotatePeriod <= MaxClock
+           /\ clock' = NextRotate + RotatePeriod)
     /\ verifies' = 0
-    /\ IF Rotation /\ clock' % RotatePeriod = 0 /\ clock' # clock
-         THEN gen' = (gen % 3) + 1 /\ hasPrev' = TRUE
-         ELSE UNCHANGED <<gen, hasPrev>>
+    /\ IF Rotation /\ clock' # clock /\ clock' >= NextRotate
+         THEN /\ gen' = (gen % 3) + 1
+              /\ IF clock' < NextRotate + RotatePeriod
+                   THEN hasPrev' = TRUE /\ prevUntil' = NextRotate + RotatePeriod
+                   ELSE IF PreviousOutlivesWindow
+                          THEN hasPrev' = TRUE /\ prevUntil' = clock' + RotatePeriod
+                          ELSE hasPrev' = FALSE /\ prevUntil' = 0
+         ELSE UNCHANGED <<gen, hasPrev, prevUntil>>
     /\ map' = [a \in Addrs |-> IF Live(a) /\ clock' >= mapBorn[a] + HandshakeDeadline THEN None ELSE map[a]]
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
                    deniedPulse, admits, lateAdmit, evictedLive>>
@@ -168,6 +181,7 @@ SpecFair == Spec
 
 TypeOK ==
     /\ clock \in 0..MaxClock /\ gen \in Gens /\ verifies \in 0..VerifyBudget + 1
+    /\ hasPrev \in BOOLEAN /\ prevUntil \in 0..(MaxClock + RotatePeriod)
     /\ \A t \in Tokens : admitted[t] \in Nat /\ admits[t] \in Nat
     /\ \A a \in Addrs : map[a] = None \/ map[a] \in Tokens
 
@@ -176,6 +190,12 @@ NoLiveHistoryEviction == ~evictedLive
 ExpiredNeverAdmitted == ~lateAdmit
 DeniedTokenStaysUsable == [][deniedPulse' # deniedPulse => admitted' = admitted]_vars
 RotationWindow == [][\A a \in Addrs : (~Live(a) /\ Live(a)') => mapGen'[a] \in LiveGens']_vars
+PreviousBoundedToOnePeriod ==
+    [][/\ \A a \in Addrs : (~Live(a) /\ Live(a)' /\ mapGen'[a] # gen') => clock' < prevUntil'
+       /\ prevUntil' <= (IF hasPrev' THEN PrevStoppedAt' + RotatePeriod ELSE 0)]_vars
+InFlightCookieSurvivesRotation ==
+    [][(CookieLife < RotatePeriod /\ gen' # gen /\ clock' - clock <= CookieLife)
+        => gen \in LiveGens']_vars
 VerifyBudgetRespected == CapVerifyBudget => verifies <= VerifyBudget
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients

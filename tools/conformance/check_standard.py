@@ -27,11 +27,10 @@ agree is stale and also fails, so the file must shrink as fixes land.
 
 WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
 the Magic row -- the standard publishes no default magic and the code ships
-none, so there is nothing to compare. Cookie key rotation is compared only
-as absence: the implementation declares no period, the dump publishes no
-DEFAULT_COOKIE_ROTATION_SECONDS, and that absence is the known divergence
-timing.cookie_rotation. A rotation added without a macro this dump expands
-is not seen. Connection timeout has no protocol-default macro; the timing
+none, so there is nothing to compare. Cookie key rotation is compared
+directly against ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS through
+DEFAULT_COOKIE_ROTATION_SECONDS on both the Timing table row and the glance
+table row. Connection timeout has no protocol-default macro; the timing
 row must name the token, and a published number with no matching macro
 fails. Fragment reassembly slot count is printed from the header macro
 ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, but STANDARD.md publishes no numeric
@@ -392,8 +391,7 @@ def main():
     # Timing values come from the macros the create path assigns. The
     # divergence that send_rate, handshake_deadline and cookie_lifetime are
     # missing from the transport configuration table is tracked above by
-    # config_field. Cookie key rotation is not declared: a missing dump key
-    # is the implementation's side, not a zero this checker invents.
+    # config_field.
 
     cell = timing_row("Send rate")
     if cell is not None:
@@ -415,9 +413,9 @@ def main():
 
     cell = timing_row("Cookie key rotation")
     if cell is not None:
-        stated_divergence("timing.cookie_rotation", "cookie key rotation",
-                          ints(cell)[0],
-                          code.get("DEFAULT_COOKIE_ROTATION_SECONDS", "not declared"))
+        implemented = require("DEFAULT_COOKIE_ROTATION_SECONDS")
+        if implemented is not None:
+            compare("cookie key rotation (timing table)", ints(cell)[0], implemented)
 
     cell = timing_row("Connection timeout")
     if cell is not None:
@@ -456,9 +454,9 @@ def main():
         implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
         if implemented is not None:
             compare("cookie lifetime (glance table)", numbers[0], implemented)
-        stated_divergence("timing.cookie_rotation", "cookie key rotation (glance table)",
-                          numbers[1],
-                          code.get("DEFAULT_COOKIE_ROTATION_SECONDS", "not declared"))
+        implemented = require("DEFAULT_COOKIE_ROTATION_SECONDS")
+        if implemented is not None:
+            compare("cookie key rotation (glance table)", numbers[1], implemented)
 
     cell = row("Redundant disconnects")
     if cell is not None:

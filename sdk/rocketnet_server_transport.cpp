@@ -1,14 +1,17 @@
 // Protocol defaults and table-sizing ratios the create path assigns.
 // One declaration: rocketnet_server_transport_create uses these macros, and
 // the conformance dump includes this file under
-// ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones. Cookie key
-// rotation has no macro: the implementation does not declare a period.
+// ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands the same ones.
 
 #define ROCKETNET_DEFAULT_SEND_RATE                    10.0
 #define ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS   5.0
 #define ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS      3
+#define ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS      60
 #define ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS   0
 #define ROCKETNET_DEFAULT_ALLOW_NEGATIVE_TIMEOUT       0
+
+static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS,
+               "cookie rotation period must exceed cookie lifetime so a cookie never outlives both keys" );
 
 #define ROCKETNET_ENCRYPTION_MAP_RATIO                 2
 #define ROCKETNET_USED_TOKEN_HISTORY_RATIO             8
@@ -820,7 +823,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         protocol->advertised_ipv6 = public_address;
 
     randombytes_buf( protocol->cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    sodium_memzero( protocol->previous_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    protocol->has_previous_cookie_key = 0;
     protocol->cookie_lifetime_seconds = ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS;
+    protocol->cookie_rotation_seconds = ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS;
+    protocol->cookie_key_rotation_time = time + (double) protocol->cookie_rotation_seconds;
+    protocol->previous_cookie_key_expire_time = 0.0;
     protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
