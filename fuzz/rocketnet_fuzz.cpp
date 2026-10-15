@@ -342,6 +342,8 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     rocketnet_fuzz_reassembly = rocketnet_reassembly_set_create( NULL, 2, 4, 8192, 2 * 4 );
+    if ( rocketnet_fuzz_reassembly == NULL )
+        abort();
 
     return 0;
 }

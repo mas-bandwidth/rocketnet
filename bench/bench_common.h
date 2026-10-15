@@ -585,7 +585,8 @@ static inline struct sockaddr_in bench_address( const char * ip, int port )
     memset( &address, 0, sizeof(address) );
     address.sin_family = AF_INET;
     address.sin_port = htons( (uint16_t) port );
-    inet_pton( AF_INET, ip, &address.sin_addr );
+    if ( inet_pton( AF_INET, ip, &address.sin_addr ) != 1 )
+        bench_fatal( "inet_pton", ip );
     return address;
 }
 
