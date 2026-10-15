@@ -106,3 +106,6 @@ MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverR
 MCRNScheduler.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
 MCRNSchedulerBrokenPerMessagePriority.cfg	MCRNScheduler.tla	invariant	FirstWriteInOrderPerChannel	check	rnscheduler	required	-
 MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
+MCXdpHardwareBench.cfg	MCXdpHardwareBench.tla	pass	-	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenNoRestore.cfg	MCXdpHardwareBench.tla	invariant	FreeMeansRestored	check	xdphardwarebench	required	-
+MCXdpHardwareBenchBrokenTwoRuns.cfg	MCXdpHardwareBench.tla	invariant	OneRunAtATime	check	xdphardwarebench	required	-
