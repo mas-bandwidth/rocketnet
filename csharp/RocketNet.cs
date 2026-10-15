@@ -585,6 +585,16 @@ public static unsafe partial class RocketNet
     [DllImport( Lib, EntryPoint = "rocketnet_log_level", CallingConvention = CallingConvention.Cdecl )]
     public static extern void LogLevel( int level );
 
+    /// <summary>The library log level currently in force.</summary>
+    [DllImport( Lib, EntryPoint = "rocketnet_get_log_level", CallingConvention = CallingConvention.Cdecl )]
+    public static extern int GetLogLevel();
+
+    [DllImport( Lib, EntryPoint = "rocketnet_log_level_string", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr log_level_string( int level );
+
+    /// <summary>The name of a log level, as the default log function renders it.</summary>
+    public static string LogLevelString( int level ) => Marshal.PtrToStringUTF8( log_level_string( level ) ) ?? string.Empty;
+
     /// <summary>Formats a user id into the caller's buffer and returns it.</summary>
     [DllImport( Lib, EntryPoint = "rocketnet_user_id_string", CallingConvention = CallingConvention.Cdecl )]
     public static extern IntPtr UserIdString( ulong userId, byte* buffer, nuint bufferSize );
