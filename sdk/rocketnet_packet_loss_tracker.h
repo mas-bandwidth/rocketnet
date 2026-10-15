@@ -69,7 +69,14 @@ inline void rocketnet_packet_loss_tracker_packet_received( rocketnet_packet_loss
     const int index = int( sequence % ROCKETNET_PACKET_LOSS_TRACKER_HISTORY );
 
     tracker->received_packets[index] = sequence;
-    tracker->most_recent_packet_received = sequence;
+    // the high-water mark never moves backwards: a reordered older packet
+    // stays a hole in the judged window, not a new most-recent sequence, so
+    // the mark is kept at the highest sequence seen (each sequence judged
+    // once, never re-judged)
+    if ( sequence > tracker->most_recent_packet_received )
+    {
+        tracker->most_recent_packet_received = sequence;
+    }
 }
 
 inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t * tracker )
@@ -81,7 +88,7 @@ inline int rocketnet_packet_loss_tracker_update( rocketnet_packet_loss_tracker_t
     uint64_t start = tracker->last_packet_processed + 1;
     uint64_t finish = ( tracker->most_recent_packet_received > ROCKETNET_PACKET_LOSS_TRACKER_SAFETY ) ? ( tracker->most_recent_packet_received - ROCKETNET_PACKET_LOSS_TRACKER_SAFETY ) : 0;
 
-    if ( finish > start && finish - start > ROCKETNET_PACKET_LOSS_TRACKER_HISTORY )
+    if ( finish > start && finish - start >= ROCKETNET_PACKET_LOSS_TRACKER_HISTORY )
     {
         tracker->last_packet_processed = tracker->most_recent_packet_received;
         return 0;
