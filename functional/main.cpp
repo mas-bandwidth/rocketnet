@@ -55,8 +55,38 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+// A bare case name is a filter: `./bin/functional <case>` runs that one case
+// in this process, exactly as `--run <case>` does, never the whole suite
+// with the name ignored. One name per run: cases that share machine state
+// (the xdp veth cases share their namespaces) run one after the other, never
+// raced in parallel workers. An unknown name refuses by name (exit 2).
+
+static int rocketnet_functional_main_filter( int * argc, char *** argv, char ** run_argv )
+{
+    if ( *argc < 2 || (*argv)[1][0] == '-' )
+        return 0;
+    if ( *argc > 2 )
+    {
+        fprintf( stderr, "one functional case per run: ./bin/functional <case> (or --run <case>), one after the other\n" );
+        return 2;
+    }
+    static char run_flag[] = "--run";
+    run_argv[0] = (*argv)[0];
+    run_argv[1] = run_flag;
+    run_argv[2] = (*argv)[1];
+    run_argv[3] = NULL;
+    *argc = 3;
+    *argv = run_argv;
+    return 0;
+}
+
 int main( int argc, char ** argv )
 {
+    char * run_argv[4];
+    const int filter_result = rocketnet_functional_main_filter( &argc, &argv, run_argv );
+    if ( filter_result != 0 )
+        return filter_result;
+
 #if defined(_WIN32)
     static const suite_exec execs[] = {
         { "test_serialize", "test_serialize", true },
