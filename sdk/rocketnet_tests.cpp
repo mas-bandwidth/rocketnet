@@ -643,7 +643,6 @@ void rocketnet_test_address()
         rocketnet_check( address.data.ipv4[3] == 1 );
     }
 
-#if ROCKETNET_PLATFORM_HAS_IPV6
     {
         struct rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "fe80::202:b3ff:fe1e:8329" ) );
@@ -810,7 +809,6 @@ void rocketnet_test_address()
         rocketnet_check( address.data.ipv6[7] == 0x0304 );
         rocketnet_check( rocketnet_address_is_ipv4_in_ipv6( &address ) );
     }
-#endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
 void rocketnet_test_address_equal_none_is_false()
@@ -6401,8 +6399,6 @@ void rocketnet_test_anonymize_address_ipv4()
     rocketnet_check( address.port == 0 );
 }
 
-#if ROCKETNET_PLATFORM_HAS_IPV6
-
 void rocketnet_test_anonymize_address_ipv6()
 {
     rocketnet_address_t address;
@@ -6450,8 +6446,6 @@ void rocketnet_test_platform_inet6_round_trip()
     rocketnet_check( rocketnet_platform_inet_pton6( address_string, round_trip ) );
     rocketnet_check( memcmp( address, round_trip, sizeof(address) ) == 0 );
 }
-
-#endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 
 void rocketnet_test_packet_loss_tracker()
 {
@@ -10677,6 +10671,30 @@ struct rocketnet_unit_test_t
     void ( *function )();
 };
 
+// a test a platform's build compiles out still registers its name, printing a
+// named skip instead of vanishing from the count (a skipped test is named and
+// logged, never silent)
+
+static void rocketnet_test_skip_linux_only_xdp_free_list()
+{
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_free_list_refuses_overflow [SKIPPED linux only: the xdp free list is not built on this platform]" );
+}
+
+static void rocketnet_test_skip_linux_only_xdp_interrupt_matcher()
+{
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_interrupt_matcher [SKIPPED linux only: the xdp interrupt matcher is not built on this platform]" );
+}
+
+static void rocketnet_test_skip_linux_only_xdp_empty_map_drops()
+{
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_xdp_empty_map_drops [SKIPPED linux only: the xdp empty-map drop path is not built on this platform]" );
+}
+
+static void rocketnet_test_skip_linux_only_umem_config_frame_size_explicit()
+{
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_umem_config_frame_size_explicit [SKIPPED linux only: the xdp umem config is not built on this platform]" );
+}
+
 void rocketnet_test_dev_token_minting_absent_in_release();
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
@@ -10688,6 +10706,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_time", rocketnet_test_time },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_xdp_free_list_refuses_overflow },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_xdp_free_list_refuses_overflow", rocketnet_test_skip_linux_only_xdp_free_list },
 #endif
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
@@ -10783,10 +10803,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
-#if ROCKETNET_PLATFORM_HAS_IPV6
     { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
-#endif
     { "test_packet_loss_tracker", rocketnet_test_packet_loss_tracker },
     { "test_out_of_order_tracker", rocketnet_test_out_of_order_tracker },
     { "test_jitter_tracker", rocketnet_test_jitter_tracker },
@@ -10833,10 +10851,15 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
     { "test_xdp_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_xdp_interrupt_matcher", rocketnet_test_skip_linux_only_xdp_interrupt_matcher },
+    { "test_xdp_empty_map_drops", rocketnet_test_skip_linux_only_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_umem_config_frame_size_explicit", rocketnet_test_skip_linux_only_umem_config_frame_size_explicit },
 #endif
 };
 
