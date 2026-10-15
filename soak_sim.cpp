@@ -72,6 +72,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <cerrno>
 #include <sodium.h>
 
 static volatile int quit;
@@ -363,7 +364,18 @@ int main( int argc, char ** argv )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
-    const uint64_t max_iterations = argc > 1 ? strtoull( argv[1], NULL, 10 ) : 0;
+    uint64_t max_iterations = 0;
+    if ( argc > 1 )
+    {
+        char * end = NULL;
+        errno = 0;
+        max_iterations = strtoull( argv[1], &end, 10 );
+        if ( argv[1][0] < '0' || argv[1][0] > '9' || !end || *end || errno || !max_iterations )
+        {
+            fprintf( stderr, "soak_sim: iteration count must be a positive integer\n" );
+            return 1;
+        }
+    }
 
     // the profile, and its negative control
 
@@ -401,10 +413,40 @@ int main( int argc, char ** argv )
     server.cookie_lifetime_seconds = 3;
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, 32 );
+    if ( !server.encryption_map )
+    {
+        printf( "soak_sim: failed to create the encryption map\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
+    if ( !server.used_token_history )
+    {
+        printf( "soak_sim: failed to create the used token history\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
+    if ( !server.admitted_token_set )
+    {
+        printf( "soak_sim: failed to create the admitted token set\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
+    if ( !server.client_slots )
+    {
+        printf( "soak_sim: failed to create the client slots\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
+    if ( !server.reassembly )
+    {
+        printf( "soak_sim: failed to create the reassembly set\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.counters = &server_counters;
 
     #define SOAK_NUM_CLIENTS 8

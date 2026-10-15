@@ -297,7 +297,18 @@ static void probe_interface_features( void )
         }
         uint32_t count = sset_info.buf[0];
 
-        struct ethtool_gstrings * strings = calloc( 1, sizeof(struct ethtool_gstrings) + count * ETH_GSTRING_LEN );
+        size_t strings_bytes = sizeof(struct ethtool_gstrings) + (size_t) count * ETH_GSTRING_LEN;
+        if ( ( ( strings_bytes - sizeof(struct ethtool_gstrings) ) / ETH_GSTRING_LEN ) != (size_t) count )
+        {
+            printf( "  %-16s string table size overflow\n", ifc->if_name );
+            continue;
+        }
+        struct ethtool_gstrings * strings = calloc( 1, strings_bytes );
+        if ( !strings )
+        {
+            printf( "  %-16s failed to allocate string table (%s)\n", ifc->if_name, strerror(errno) );
+            continue;
+        }
         strings->cmd = ETHTOOL_GSTRINGS;
         strings->string_set = ETH_SS_FEATURES;
         strings->len = count;
@@ -309,9 +320,22 @@ static void probe_interface_features( void )
             continue;
         }
 
-        struct ethtool_gfeatures * features = calloc( 1, sizeof(struct ethtool_gfeatures) + ( ( count + 31 ) / 32 ) * sizeof(struct ethtool_get_features_block) );
+        size_t feature_words = ( (size_t) count + 31 ) / 32;
+        if ( feature_words > ( SIZE_MAX - sizeof(struct ethtool_gfeatures) ) / sizeof(struct ethtool_get_features_block) )
+        {
+            printf( "  %-16s feature table size overflow\n", ifc->if_name );
+            free( strings );
+            continue;
+        }
+        struct ethtool_gfeatures * features = calloc( 1, sizeof(struct ethtool_gfeatures) + feature_words * sizeof(struct ethtool_get_features_block) );
+        if ( !features )
+        {
+            printf( "  %-16s failed to allocate feature table (%s)\n", ifc->if_name, strerror(errno) );
+            free( strings );
+            continue;
+        }
         features->cmd = ETHTOOL_GFEATURES;
-        features->size = ( count + 31 ) / 32;
+        features->size = (uint32_t) feature_words;
         ifr.ifr_data = (void*) features;
         if ( ioctl( fd, SIOCETHTOOL, &ifr ) < 0 )
         {
