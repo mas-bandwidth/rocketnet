@@ -96,7 +96,7 @@ deployment SHOULD accept cookies under the previous key for one rotation period"
 S:2226 timing table gives "Cookie key rotation | 60 s". CLAUDE.md:179 says "cookie key
 rotation runs always at its 60 s period". Closed: `sdk/rocketnet_server_transport.cpp:832-838`
 initialises `cookie_rotation_seconds` from `ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS` (60)
-and `cookie_key_rotation_time = time + cookie_rotation_seconds`;
+and `cookie_key_rotation_time = server_transport->time + cookie_rotation_seconds`;
 `rocketnet_server_protocol_rotate_cookie_key_if_due` (`sdk/rocketnet_server_protocol.cpp:1198-1227`),
 called first in `rocketnet_server_protocol_update`, rotates the key on its period and bounds
 the previous key's acceptance window to one period (`sdk/rocketnet_server_protocol.cpp:377`,

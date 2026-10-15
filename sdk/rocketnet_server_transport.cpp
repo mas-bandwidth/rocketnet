@@ -827,7 +827,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->has_previous_cookie_key = 0;
     protocol->cookie_lifetime_seconds = ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS;
     protocol->cookie_rotation_seconds = ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS;
-    protocol->cookie_key_rotation_time = time + (double) protocol->cookie_rotation_seconds;
+    protocol->cookie_key_rotation_time = server_transport->time + (double) protocol->cookie_rotation_seconds;
     protocol->previous_cookie_key_expire_time = 0.0;
     protocol->max_token_lifetime_seconds = ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
