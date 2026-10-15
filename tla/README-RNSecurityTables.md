@@ -104,8 +104,23 @@ On a Linux bench holding `/opt/tla/tla2tools.jar`, from `tla/`:
 java -XX:+UseParallelGC -cp /opt/tla/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNSecurityTables.cfg MCRNSecurityTables
 ```
 
-Each reversed witness is the same command with one switch edited in a
-copy of the config, as `tla/RUNS.tsv` records per row.
+Each reversed witness has a committed configuration registered in
+`tla/CASES.tsv`, in group `rnsecuritytables`:
+
+| Configuration suffix after `MCRNSecurityTables` | Reversed switch | Expected failure |
+|---|---|---|
+| `NoRefuseAdmitted.cfg` | `RefuseAdmittedAtResponse = FALSE` | `SafetyInvariants` (`OneConnectionPerToken`) |
+| `AdmitExpired.cfg` | `AdmitExpiredAtResponse = TRUE` | `SafetyInvariants` (`ExpiredNeverAdmitted`) |
+| `EvictLiveHistory.cfg` | `EvictLiveHistory = TRUE` | `SafetyInvariants` (`NoLiveHistoryEviction`) |
+| `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` | `DeniedTokenStaysUsable` |
+| `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `SafetyInvariants` (`VerifyBudgetRespected`) |
+| `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
+| `PreviousOutlivesWindow.cfg` | `PreviousOutlivesWindow = TRUE` | `PreviousBoundedToOnePeriod` |
+
+Refresh all eight cases through the pinned `tlacheck` runner and merge with
+`--keep tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
+one row per configuration; earlier seven-column records remain in
+`RUNS-HISTORY.tsv`.
 
 The small instance:
 

@@ -55,3 +55,10 @@ MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendsta
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
 MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	bench	server-reuse-safety-over-budget
+MCRNSecurityTablesNoRefuseAdmitted.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
+MCRNSecurityTablesAdmitExpired.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
+MCRNSecurityTablesEvictLiveHistory.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
+MCRNSecurityTablesDeniedConsumesToken.cfg	MCRNSecurityTables.tla	action	DeniedTokenStaysUsable	check	rnsecuritytables	required	-
+MCRNSecurityTablesNoVerifyCap.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
+MCRNSecurityTablesNoPrevious.cfg	MCRNSecurityTables.tla	action	InFlightCookieSurvivesRotation	check	rnsecuritytables	required	-
+MCRNSecurityTablesPreviousOutlivesWindow.cfg	MCRNSecurityTables.tla	action	PreviousBoundedToOnePeriod	check	rnsecuritytables	required	-
