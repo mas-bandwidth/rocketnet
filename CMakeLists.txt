@@ -109,6 +109,11 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
+    sdk/rocketnet_channel.cpp
+    sdk/rocketnet_channel_reliable.cpp
+    sdk/rocketnet_channel_sequenced.cpp
+    sdk/rocketnet_channel_receipts.cpp
+    sdk/rocketnet_packet_builder.cpp
     sdk/rocketnet_window_receive.cpp
     sdk/rocketnet_window_ack.cpp
     sdk/rocketnet_unreliable.cpp

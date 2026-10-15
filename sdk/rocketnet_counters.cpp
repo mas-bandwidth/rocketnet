@@ -225,6 +225,16 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED:                       return "MESSAGE_SENT_MAP_EVICTED";
         case ROCKETNET_COUNTER_MESSAGE_RESENT:                                 return "MESSAGE_RESENT";
         case ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED:                       return "MESSAGE_MEMORY_EXHAUSTED";
+        case ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED:                  return "MESSAGE_SEND_TYPE_NOT_ENABLED";
+        case ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED:                       return "MESSAGE_TYPE_NOT_ENABLED";
+        case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET:                 return "MESSAGE_UNRELIABLE_OVER_BUDGET";
+        case ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND:                        return "MESSAGE_ORDERING_BEHIND";
+        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE:                        return "MESSAGE_SEQUENCED_STALE";
+        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED:                   return "MESSAGE_SEQUENCED_SUPERSEDED";
+        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL:                    return "MESSAGE_SEQUENCED_HOLD_FULL";
+        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL:                      return "MESSAGE_RECEIPT_RING_FULL";
+        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED:                          return "MESSAGE_RECEIPT_ACKED";
+        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS:                           return "MESSAGE_RECEIPT_LOSS";
         default:
             rocketnet_assert( 0 );
             return "???";
