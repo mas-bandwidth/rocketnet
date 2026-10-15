@@ -292,7 +292,39 @@ REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 
 static void client_disconnects_itself_on_exhaustion()
 {
-    check( 0 && "red: client self-kick not implemented" );
+    // R5: when the client's own region is exhausted on a start, the client
+    // disconnects itself with MESSAGE_MEMORY_EXHAUSTED. A tiny config makes
+    // the region exhaust after a few queued sends.
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 1;
+    config.window_messages = 64;
+    config.receive_ring_bytes = 32768;
+    config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+    config.send_buffer_bytes = 400000;
+    config.send_queue_messages = 16;
+    config.packets_in_flight = 16;
+    config.unreliable_deliveries = 1;
+
+    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, NULL, NULL, &config, NULL, 0, 0 );
+    check( client != NULL );
+
+    int nulls = 0;
+    for ( int i = 0; i < 10000; i++ )
+    {
+        uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 16 );
+        if ( !p )
+        {
+            nulls++;
+            break;
+        }
+        memcpy( p, "exhaust-xx", 10 );
+        rocketnet_message_client_finish( client, 16 );
+    }
+    check( nulls == 1 );
+    check( rocketnet_message_client_disconnect_reason( client ) == MESSAGE_MEMORY_EXHAUSTED );
+
+    rocketnet_message_client_destroy( client );
 }
 
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
@@ -406,14 +438,64 @@ REGISTER_UNIT_TEST( no_allocation_after_create );
 // 11. rnslots_witness_replays
 // ---------------------------------------------------------------------------
 
+static int mo_asserts = 0;
+
+static void mo_assert_hook( const char * c, const char * f, const char * file, int line )
+{
+    (void) c;
+    (void) f;
+    (void) file;
+    (void) line;
+    mo_asserts++;
+}
+
 static void rnslots_witness_replays()
 {
-    // The five reversed witnesses of tla/README-RNSlots.md, as unit tests:
-    // no cross-connection apply, reset on reuse, exhaustion only leads to
-    // disconnect, release returns the region charge, and update with held
-    // views is refused (asserts in debug, ROCKETNET_ERROR_MESSAGE_NOT_RELEASED
-    // in release).
-    check( 0 && "red: RNSlots witness replays not implemented" );
+    // The release contract (OWNER RULING 2026-10-15): a received message is
+    // valid only until the next update and must be released before it. Update
+    // with a held view is refused (asserts in debug, a named error in
+    // release); release-then-update is fine.
+    struct mo_pair_t pair;
+    mo_pair_setup( &pair, NULL, 0, NULL );
+
+    const int channel = 0;
+    uint8_t * p = rocketnet_message_client_start( pair.client, channel, ROCKETNET_RELIABLE_ORDERED, 8 );
+    check( p != NULL );
+    memcpy( p, "witness-h", 8 );
+    rocketnet_message_client_finish( pair.client, 8 );
+
+    const uint8_t * data = NULL;
+    int bytes = 0;
+    int got = 0;
+    for ( int u = 0; u < 8 && !got; u++ )
+    {
+        rocketnet_message_server_update( pair.server, 0.1 );
+        rocketnet_message_client_update( pair.client, 0.1 );
+        if ( rocketnet_message_server_receive( pair.server, channel, &data, &bytes ) )
+        {
+            check( bytes == 8 );
+            got = 1;
+        }
+    }
+    check( got && "server never received the record" );
+
+    // Holding the view across an update is refused by name (and asserts).
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    rocketnet_assert_function( mo_assert_hook );
+    mo_asserts = 0;
+    int err = rocketnet_message_server_update( pair.server, 0.2 );
+    check( err == ROCKETNET_ERROR_MESSAGE_NOT_RELEASED );
+    check( mo_asserts > 0 );
+    rocketnet_assert_function( saved_assert );
+
+    // Release-then-update is fine: no error, no assert, no growth.
+    rocketnet_message_server_release( pair.server, data );
+    mo_asserts = 0;
+    err = rocketnet_message_server_update( pair.server, 0.2 );
+    check( err == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( mo_asserts == 0 );
+
+    mo_pair_teardown( &pair );
 }
 
 REGISTER_UNIT_TEST( rnslots_witness_replays );
