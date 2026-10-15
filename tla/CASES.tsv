@@ -55,3 +55,11 @@ MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendsta
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
 MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	bench	server-reuse-safety-over-budget
+MCRNChannel.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
+MCRNChannelSafety.cfg	MCRNChannel.tla	pass	-	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenOutOfOrder.cfg	MCRNChannel.tla	invariant	OrderedExactlyOnceInOrder	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenTwice.cfg	MCRNChannel.tla	invariant	OrderedExactlyOnceInOrder	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenDropOnRetransmit.cfg	MCRNChannel.tla	temporal	EveryOrderedMessageDelivered	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenPartialChunk.cfg	MCRNChannel.tla	invariant	WholeMessagesOnly	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenChunkBlocksSmall.cfg	MCRNChannel.tla	temporal	NoHeadOfLineDeadlock	ignore-terminal	rnchannel	required	-
+MCRNChannelBrokenNoSequencedReset.cfg	MCRNChannel.tla	invariant	OrderedTraceUnchangedBySequenced	ignore-terminal	rnchannel	required	-
