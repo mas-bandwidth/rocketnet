@@ -16,6 +16,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
 #include "rocketnet.h"
+#include "rocketnet_unreliable.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -505,9 +506,120 @@ static void exhausted_region_refuses_sends_until_reset()
     rn_arena_destroy( arena );
 }
 
+// RNConnectionMemory Exhaust from an unreliable send: a full store refuses and
+// exhausts the region, exactly as a reliable send does. The FIFO length bound
+// is a configured queue length, not memory, and stays a counted drop
+// (tla/RNConnectionMemory.tla, R1), so this drives the store's no-room
+// outcome only.
+static void unreliable_store_full_exhausts_the_region()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    // the default store: a flood of small messages fills its small class, and
+    // the FIFO (capacity 4096) is far larger than that class's chunk count, so
+    // the flood reaches the store's no-room outcome, never the queue length
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t capacity = 4096;
+    rn_unreliable_message_t * queue =
+        (rn_unreliable_message_t*) malloc( sizeof(rn_unreliable_message_t) * capacity );
+    check( queue );
+    memset( queue, 0, sizeof(rn_unreliable_message_t) * capacity );
+    rn_unreliable_t u;
+    rn_unreliable_init( &u, region, queue, capacity );
+
+    uint8_t data[16];
+    memset( data, 0xAB, sizeof(data) );
+    int sent = 0;
+    while ( rn_unreliable_send( &u, data, 16, 0, 0 ) )
+    {
+        sent++;
+        check( sent < 1000000 );
+    }
+
+    // the flood never frees, so the store refused and that refusal is exhaustion
+    check( sent > 0 );
+    check( rn_region_exhausted( region ) );
+    check( rn_region_exhausted_reason( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    // sticky and refused: a later send on the exhausted region delivers nothing,
+    // counted as a store-full drop like any other (R1)
+    check( rn_unreliable_send( &u, data, 16, 0, 0 ) == 0 );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+
+    free( queue );
+    rn_arena_destroy( arena );
+}
+
+// The receive descriptor take is guaranteed room by the window: accept rejects
+// a number outside [R, R+W) before indexing, so the W-entry descriptor array
+// never runs out (rn_window_receive_accept). No receive path ever lacks room,
+// so there is no receive no-room outcome to wire. What a receive can do is
+// arrive on an already-exhausted region; this pins that it is refused -- the
+// connection's exhaustion already kicked it -- and the decision stays exhaustion.
+static void receive_without_room_exhausts_the_region()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    // exhaust the region through reliable sends (the store runs out)
+    const int n = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
+    check( n > 0 );
+    check( rn_region_exhausted( region ) );
+
+    rn_unreliable_t u;
+    rn_unreliable_message_t queue[64];
+    memset( queue, 0, sizeof(queue) );
+    rn_unreliable_init( &u, region, queue, 64 );
+
+    // a valid unreliable record
+    uint8_t payload[2048];
+    struct rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof(payload) );
+    struct rocketnet_message_record_t record;
+    memset( &record, 0, sizeof(record) );
+    record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+    record.data = (const uint8_t*) "hi";
+    record.bytes = 2;
+    check( rocketnet_message_writer_add( &writer, &record ) );
+    const int payload_bytes = rocketnet_message_writer_finish( &writer );
+    check( payload_bytes > 0 );
+
+    struct rocketnet_message_limits_t limits;
+    memset( &limits, 0, sizeof(limits) );
+    limits.num_channels = (int) region->num_channels;
+    limits.window_messages = (int) region->window;
+    limits.receive_ring_bytes = (int) region->ring_bytes;
+    limits.enabled_codes = 1u << ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+
+    rn_delivery_t out[4];
+    int out_count = -1;
+    const int rc = rn_unreliable_receive( &u, payload, payload_bytes, &limits, out, 4, &out_count );
+    check( rc == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( out_count == 0 );            // refused: nothing is delivered
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
 REGISTER_UNIT_TEST( no_allocation_after_create );
 REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
+REGISTER_UNIT_TEST( unreliable_store_full_exhausts_the_region );
+REGISTER_UNIT_TEST( receive_without_room_exhausts_the_region );
