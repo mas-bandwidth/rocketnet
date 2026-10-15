@@ -103,3 +103,6 @@ MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchann
 MCRNSentHistory.cfg	MCRNSentHistory.tla	pass	-	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenCountEveryUnacked.cfg	MCRNSentHistory.tla	invariant	NoOverflowUnderBoundedLoss	check	rnsenthistory	required	-
 MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverRefused	check	rnsenthistory	required	-
+MCRNScheduler.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
+MCRNSchedulerBrokenPerMessagePriority.cfg	MCRNScheduler.tla	invariant	FirstWriteInOrderPerChannel	check	rnscheduler	required	-
+MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
