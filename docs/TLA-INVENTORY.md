@@ -28,7 +28,7 @@ not a code change on this card.
 | # | Kind | Where | One line |
 |---|---|---|---|
 | F1 | **defect** | `sdk/rocketnet_replay.cpp:54-60` | A forward jump of ≥ 4096 sequences clears 4 of the window's 64 words. The stale bits make the receiver refuse genuine packets and make its next ack block claim thousands of sequences it never opened. |
-| F2 | gap (SHOULD, and CLAUDE.md:180) | `sdk/rocketnet_server_transport.cpp:792` | The cookie key is never rotated. The previous-key branch (`sdk/rocketnet_server_protocol.cpp:231-236`) can only be reached from a test. |
+| F2 | closed (gap, SHOULD, and CLAUDE.md:179) | `sdk/rocketnet_server_transport.cpp:832-838`, `sdk/rocketnet_server_protocol.cpp:377, 1198-1227` | Closed: the cookie key rotates on its 60 s period (`ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS`) via `rocketnet_server_protocol_rotate_cookie_key_if_due` in `rocketnet_server_protocol_update`, keeping the previous key for one period while `current_time < previous_cookie_key_expire_time`. |
 | F3 | gap (MUST) | `sdk/rocketnet_client_slots.cpp:148-156` | The free slot is found by a linear scan. The standard requires a free list. |
 | F4 | gap (MUST) | `sdk/rocketnet_client_protocol.cpp:201-221, 612-614` | When an attempt fails from state 1 or 2 (denied, cookie/request timeout, token expired), the client's ephemeral secret is not zeroed. It survives until the application calls `disconnect`, `connect` or `destroy`. |
 | F5 | question | `sdk/rocketnet_server_protocol.cpp:514-576` | A server can deny a response and then, after a slot frees, accept the client's retransmission. If the denied packet reaches the client first, the client ends at -1 while the server holds a slot, an admitted token and an established mapping for it until the idle timeout. |
@@ -89,15 +89,19 @@ burnt sequences: a failed fragmented finish burns up to 14 (U:126-160). The unit
 covers, so it passes. **The fix shape:** clear every word (`memset` of the window) when
 skipped ≥ W. It belongs to a code card, after module 1 shows the trace.
 
-### F2
+### F2 (closed)
 
-S:1175-1178: "The cookie key is generated at server start and rotated periodically; a
+S:1182-1184: "The cookie key is generated at server start and rotated periodically; a
 deployment SHOULD accept cookies under the previous key for one rotation period". The
-S:1994 timing table gives "Cookie key rotation | 60 s". CLAUDE.md:180 says "cookie key
-rotation runs always at its 60 s period". The key is drawn once at create
-(`sdk/rocketnet_server_transport.cpp:792`). Nothing in `sdk/` outside
-`rocketnet_tests.cpp` writes `previous_cookie_key` or `has_previous_cookie_key`
-(`sdk/rocketnet_server_protocol.h:49-50`).
+S:2226 timing table gives "Cookie key rotation | 60 s". CLAUDE.md:179 says "cookie key
+rotation runs always at its 60 s period". Closed: `sdk/rocketnet_server_transport.cpp:832-838`
+initialises `cookie_rotation_seconds` from `ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS` (60)
+and `cookie_key_rotation_time = time + cookie_rotation_seconds`;
+`rocketnet_server_protocol_rotate_cookie_key_if_due` (`sdk/rocketnet_server_protocol.cpp:1198-1227`),
+called first in `rocketnet_server_protocol_update`, rotates the key on its period and bounds
+the previous key's acceptance window to one period (`sdk/rocketnet_server_protocol.cpp:377`,
+`current_time < server->previous_cookie_key_expire_time`), dropping the previous key if an
+update stalls past a whole window (`sdk/rocketnet_server_protocol.h:49-55`).
 
 ### F3
 
@@ -438,34 +442,35 @@ constant number of ticks.
 
 ## M5. The cookie gate and cookie key rotation
 
-**Files.** `sdk/rocketnet_server_protocol.cpp:213-275`, `.h:48-51`;
-`sdk/rocketnet_client_protocol.cpp:363-416`.
+**Files.** `sdk/rocketnet_server_protocol.cpp:350-416, 1198-1236`, `.h:49-55`;
+`sdk/rocketnet_server_transport.cpp:832-838`; `sdk/rocketnet_client_protocol.cpp:363-416`.
 
-**States.** Server: key generation `g`, `has_previous`. Client: `has_cookie` and stored
+**States.** Server: key generation `g`, `has_previous`, `previous_cookie_key_expire_time`. Client: `has_cookie` and stored
 `(gen, expire)`.
 
 **Transitions.**
 
 | Event | Effect | Code |
 |---|---|---|
-| server create | `g := 0`, no previous key | `server_transport.cpp:792` |
-| rotation every 60 s | `prev := key; key := fresh` | **absent (F2)** |
-| _Recv(request)_ with zero / non-verifying / expired cookie | fresh cookie, current key, lifetime 3 s | `server_protocol.cpp:239-274`; lifetime `server_transport.cpp:793` |
-| _Recv(request)_ with a MAC under the current or previous key, unexpired | pass | `server_protocol.cpp:223-257` |
+| server create | `g := 0`, no previous key, `rotation_time := time + 60` | `server_transport.cpp:832-838` |
+| rotation every 60 s (or stall) | on time: `prev := key; prev_expire := rot + 60; key := fresh`; stall past window: `prev := 0; has_prev := 0; key := fresh` (F2 closed) | `server_protocol.cpp:1198-1236` (`rocketnet_server_protocol_rotate_cookie_key_if_due`) |
+| _Recv(request)_ with zero / non-verifying / expired cookie | fresh cookie, current key, lifetime 3 s | `server_protocol.cpp:361-415`; lifetime `server_transport.cpp:835` |
+| _Recv(request)_ with a MAC under the current key, or the previous key while `current_time < previous_cookie_key_expire_time`, unexpired | pass | `server_protocol.cpp:370-398` |
 | client _Recv(cookie)_ in 1/2 with matching salt | store, replacing | `client_protocol.cpp:402-413` |
 
 **Rules.**
 - `INV NoAsymmetricWithoutCookie`: signature verify, seal open and scalar multiplication
-  happen only after a cookie passed (S:2322-2326; ordering `:213-305`).
-- `INV RotationWindow`: a cookie verifies only under the generation that issued it or
-  the next (S:1175-1178).
+  happen only after a cookie passed (S:2322-2326; ordering `:350-445`).
+- `INV RotationWindow`, `PreviousBoundedToOnePeriod`, `InFlightCookieSurvivesRotation`: a
+  cookie verifies only under the generation that issued it or the next within one rotation
+  period, and a cookie issued within `CookieLife < RotatePeriod` survives one rotation
+  (S:1182-1184).
 - `LIVE CookieRaceResolves`: with lifetime ≥ 2 send intervals, a retransmitting client
   gets past the gate even when a stored cookie expires (S:2016-2022, S:2149-2153).
 
-**Verdict: model it, small, inside `RNSecurityTables`.** Without rotation it is one key
-and nearly trivial. F2 is the reason to write it: the model becomes the specification
-the rotation code is written against, and a reversed witness (no previous-key
-acceptance) must fail `CookieRaceResolves` across a rotation.
+**Verdict: modelled, small, inside `RNSecurityTables`.** F2 is closed: `RNSecurityTables`
+checks `RotationWindow`, `PreviousBoundedToOnePeriod` and `InFlightCookieSurvivesRotation`
+with reversed witnesses `AcceptPrevious = FALSE` and `PreviousOutlivesWindow = TRUE`.
 
 ## M6. The token tables: used-token history and admitted-token set
 

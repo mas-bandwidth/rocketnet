@@ -2824,8 +2824,9 @@ void rocketnet_test_cookie_zero_field_hashes_once()
     // a rotation in flight: the previous cookie key is live, so a gate that
     // verifies before it reads the field pays both hashes -- the case the
     // audit counted as three
-    memcpy( test.server.previous_cookie_key, test.server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
-    test.server.has_previous_cookie_key = 1;
+    test.server.cookie_rotation_seconds = 60;
+    test.server.cookie_key_rotation_time = 100.0;
+    rocketnet_server_protocol_rotate_cookie_key_if_due( &test.server, 100.0 );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_test_build_request( request, 0x6666777788889999ULL, rocketnet_test_salt );
@@ -3265,9 +3266,9 @@ void rocketnet_test_request_path_config_branches()
     rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.62:56789" ) );
     rocketnet_test_build_request( request, 0x0F0F, rocketnet_test_salt );
     rocketnet_test_pass_cookie_gate( &test, request );
-    memcpy( test.server.previous_cookie_key, test.server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
-    memset( test.server.cookie_key, 0x77, ROCKETNET_COOKIE_KEY_BYTES );
-    test.server.has_previous_cookie_key = 1;
+    test.server.cookie_rotation_seconds = 60;
+    test.server.cookie_key_rotation_time = 100.0;
+    rocketnet_server_protocol_rotate_cookie_key_if_due( &test.server, 100.0 );
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
 
     // nonce freshness across mapping lifetimes: the same request after the
