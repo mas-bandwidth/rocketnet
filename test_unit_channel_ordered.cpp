@@ -1325,7 +1325,13 @@ static uint64_t cm_calls()
     return cm_mallocs + cm_frees;
 }
 
-static void no_allocation_after_create()
+// The card names this test no_allocation_after_create. Three other unit files
+// register that name already (test_unit_connection_memory.cpp,
+// test_unit_send_budget.cpp, test_unit_packet_builder.cpp), and the registry
+// runs the first test it finds by name, so only one test of that name ever runs
+// in the suite. This test is registered under its own name as well, so it runs.
+
+static void ordered_no_allocation_after_create()
 {
     // the defaults are admissible, and a connection's region at them is this many bytes (CHANNELS.md 14)
     rocketnet_message_config_t defaults;
@@ -1361,16 +1367,17 @@ static void no_allocation_after_create()
     uint64_t random = 12345;
     check( send_message( a, 0, (uint32_t) config.max_message_bytes ) != 0 );
     int rounds_sent = 0;
-    for ( int round = 0; round < 400; round++ )
+    for ( int round = 0; round < 6000; round++ )
     {
-        if ( round > 40 && rounds_sent < 150 )
-        {
-            random = random * 6364136223846793005ULL + 1442695040888963407ULL;
-            const uint32_t pick = (uint32_t) ( random >> 33 ) % 3;
-            const uint32_t bytes = pick == 0 ? 8 + (uint32_t) ( ( random >> 40 ) % 200 ) : ( pick == 1 ? 1300 : 5000 );
-            if ( send_message( a, (uint32_t) ( ( random >> 50 ) % 4 ), bytes ) )
-                rounds_sent++;
-        }
+        if ( rounds_sent >= 150 && everything_delivered( a, b ) && a->region->descriptors_free == a->region->queue )
+            break;
+
+        // the application paces itself to the room the connection has (the maximal message holds all of it at first)
+        random = random * 6364136223846793005ULL + 1442695040888963407ULL;
+        const uint32_t pick = (uint32_t) ( random >> 33 ) % 3;
+        const uint32_t bytes = pick == 0 ? 8 + (uint32_t) ( ( random >> 40 ) % 200 ) : ( pick == 1 ? 1300 : 5000 );
+        if ( rounds_sent < 150 && has_room_for( a, bytes + 16 ) && send_message( a, (uint32_t) ( ( random >> 50 ) % 4 ), bytes ) )
+            rounds_sent++;
 
         now += 0.02;
         wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
@@ -1702,5 +1709,11 @@ REGISTER_UNIT_TEST( chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( no_partial_delivery );
 REGISTER_UNIT_TEST( hostile_chunk_count_or_index_kicks );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
+static void no_allocation_after_create()
+{
+    ordered_no_allocation_after_create();
+}
+
+REGISTER_UNIT_TEST( ordered_no_allocation_after_create );
 REGISTER_UNIT_TEST( no_allocation_after_create );
 REGISTER_UNIT_TEST( rnchannel_witness_replays_ordered );
