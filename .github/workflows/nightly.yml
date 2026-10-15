@@ -55,9 +55,10 @@ jobs:
   # unsetenv are shimmed over _putenv_s in the test file -- EXCEPT the
   # empty-value distinction, which windows cannot represent: its CRT has no
   # set-but-empty variable, so that one case is skipped, named and logged with
-  # that reason. Exactly two tests are compiled out on windows, named and
-  # logged by the suite itself: the refused-destination and zero-length-chaff
-  # pump tests, whose raw-socket injector is posix-only.
+  # that reason. Tests compiled out on windows are named and logged by the
+  # suite itself as named skips: the refused-destination and zero-length-chaff
+  # pump tests, whose raw-socket injector is posix-only, and the gso/xdp
+  # and msgx rung tests windows does not build.
 
   build-and-test-windows-debug:
     name: windows-2025 / Debug
