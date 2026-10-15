@@ -37,7 +37,8 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 // once at its start, structurally, so every present and future test is
 // safe by default; the pre-flight stays reachable (non-mutating by
 // contract) and create refuses before its first act. allow_commit is the
-// deliberate opt-out; nothing in the suite calls it.
+// deliberate opt-out; only the xdp veth cases in the functional suite call
+// it, and only when the operator opts in (ROCKETNET_TEST_XDP_VETH=1, root).
 
 void rocketnet_server_socket_forbid_commit();
 
@@ -86,6 +87,33 @@ int rocketnet_server_socket_num_queues( struct rocketnet_server_socket_t * serve
 // and why, and what it redirected, before userspace ever saw a byte.
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters );
+
+// The driver's userspace counters, summed across queues: what the workers
+// handed up and sent, and every frame the XDP program redirected but
+// userspace refused, by reason -- so a redirect the driver cannot use is
+// counted and named, never hidden. One server serves one family (the
+// family of its public address): a frame or a destination of the other
+// family is refused and counted here.
+
+#define ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVED                    0   // frames parsed and handed to the transport
+#define ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVE_REFUSED_PARSE       1   // the frame codec refused it, or it is shorter than any server packet
+#define ROCKETNET_SERVER_SOCKET_COUNTER_RECEIVE_REFUSED_FAMILY      2   // a frame of the family this server does not serve
+#define ROCKETNET_SERVER_SOCKET_COUNTER_SENT                        3   // frames built and queued for transmit
+#define ROCKETNET_SERVER_SOCKET_COUNTER_SEND_REFUSED_FAMILY         4   // a destination of the family this server does not serve
+#define ROCKETNET_SERVER_SOCKET_COUNTER_SEND_REFUSED_BUILD          5   // the frame codec refused to build it
+#define ROCKETNET_SERVER_SOCKET_NUM_COUNTERS                        6
+
+void rocketnet_server_socket_driver_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters );
+
+const char * rocketnet_server_socket_counter_name( int counter );
+
+// Both counter sets of the most recently created server socket in this
+// process that is not yet destroyed: the kernel prefilter's
+// (ROCKETNET_SERVER_XDP_NUM_COUNTERS values) and the driver's
+// (ROCKETNET_SERVER_SOCKET_NUM_COUNTERS values). False when there is none.
+// The functional suite reads a transport's xdp driver through this.
+
+bool rocketnet_server_socket_live_counters( uint64_t * xdp_counters, uint64_t * driver_counters );
 
 // send packets (zero copy)
 
