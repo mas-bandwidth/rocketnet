@@ -807,9 +807,47 @@ static void boundary_sizes_leg()
     node_free( b );
 }
 
+// the ordering index is 24 bits on the wire and 32 in the channel's counters:
+// both ends start just short of the wrap, and a mix of small and chunked
+// messages crosses 2^24 and 2^32 in order
+
+static void ordering_wrap_leg( uint32_t start )
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 8 );
+    node_t * b = node_new( &config, 8 );
+    a->region->channel_send[0].ordered_write = start;
+    b->region->channel_receive[0].ordered_read = start;
+    for ( int i = 0; i < 12; i++ )
+        check( send_message( a, 0, i % 4 == 3 ? 3000 : 24 + (uint32_t) i ) != 0 );
+    double now = 1.0;
+    int packets = 0;
+    // lose every other packet on the way, so held and drained records cross the wrap too
+    for ( int u = 0; u < 400 && b->got[0].size() < 12; u++ )
+    {
+        now += 0.02;
+        wire_packet_t out[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+        const int n = write_packets( a, now, out, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        for ( int p = 0; p < n; p++ )
+            if ( ( ++packets % 2 ) == 0 )
+                open_packet( b, &out[p] );
+        std::vector<uint64_t> acks;
+        take_acks( b, &acks );
+        feed_acks( a, acks, now + 0.005 );
+    }
+    check_ordered_exactly_once( a, b, true );
+    check( b->violations == 0 );
+    check( b->region->channel_receive[0].ordered_read == start + 12 );
+    node_free( a );
+    node_free( b );
+}
+
 static void large_between_small_keeps_order()
 {
     boundary_sizes_leg();
+    ordering_wrap_leg( 0x00FFFFFA );
+    ordering_wrap_leg( 0xFFFFFFFA );
 
     large_between_small_leg( 0.0f, 0.0f, 11 );
     large_between_small_leg( 15.0f, 15.0f, 12 );
