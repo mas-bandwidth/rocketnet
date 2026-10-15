@@ -1,3 +1,0 @@
-gcc	sdk/rocketnet_tests.cpp	-Wanalyzer-null-dereference	df9ecba3b5ad85c1
-gcc	sdk/rocketnet_tests.cpp	-Wanalyzer-possible-null-argument	118ea287e99ea80c
-gcc	sdk/rocketnet_tests.cpp	-Wanalyzer-possible-null-dereference	6fe49d3867643271
