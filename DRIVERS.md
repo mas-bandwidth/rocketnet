@@ -108,6 +108,13 @@ Dispatch measurements and their limits are recorded in
 
 ## Embedded XDP source maintenance
 
+The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
+UDP for both address families: IPv4 byte-identical to the historical builder
+(ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
+mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
+pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
+or later) is a follow-up, not yet used.
+
 `cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
 dependencies and verification. Add a new runtime BPF source/header there; archive
 entries use basenames, which must be unique. The checker also exercises adding

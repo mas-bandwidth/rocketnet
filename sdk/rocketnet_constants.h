@@ -33,6 +33,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
                          "the receive payload is the receive ceiling less the overhead and the minimum ack block" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PAYLOAD_BYTES - 1,
                          "the SINGLE message is the payload capacity less its form byte" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
+                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES_IPV6 == 1514,
+                         "one maximum IPv6 packet is exactly one 1500-MTU Ethernet frame" );
 
 #define ROCKETNET_FRAME_SIZE                                              2048
 

@@ -12,6 +12,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_xdp_frame.h"
 #include "rocketnet_hash.h"
 
 #include <ifaddrs.h>
@@ -1713,66 +1714,6 @@ uint64_t rocketnet_server_socket_id( rocketnet_server_socket_t * server_socket )
     return server_socket->server_id;
 }
 
-static uint16_t rocketnet_server_socket_ipv4_checksum( const void * data, size_t header_length )
-{
-    unsigned long sum = 0;
-    const uint16_t * p = (const uint16_t*) data;
-    while ( header_length > 1 )
-    {
-        sum += *p++;
-        if ( sum & 0x80000000 )
-        {
-            sum = ( sum & 0xFFFF ) + ( sum >> 16 );
-        }
-        header_length -= 2;
-    }
-    while ( sum >> 16 )
-    {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-    return ~sum;
-}
-
-static int rocketnet_server_socket_generate_packet_header( void * data, uint8_t * server_ethernet_address, uint8_t * gateway_ethernet_address, uint32_t server_address_big_endian, uint32_t client_address_big_endian, uint16_t server_port_big_endian, uint16_t client_port_big_endian, int payload_bytes )
-{
-    struct ethhdr * eth = (ethhdr*) data;
-    struct iphdr  * ip  = (iphdr*) ( (uint8_t*)data + sizeof( struct ethhdr ) );
-    struct udphdr * udp = (udphdr*) ( (uint8_t*)ip + sizeof( struct iphdr ) );
-
-    // generate ethernet header
-
-    memcpy( eth->h_source, server_ethernet_address, ETH_ALEN );
-    memcpy( eth->h_dest, gateway_ethernet_address, ETH_ALEN );
-    eth->h_proto = __constant_htons( ETH_P_IP );
-
-    // generate ip header
-
-    ip->ihl      = 5;
-    ip->version  = 4;
-    ip->tos      = 0x0;
-    ip->tot_len  = __constant_htons( sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes );
-    ip->id       = 0;
-    ip->frag_off = __constant_htons( 0x4000 );
-    ip->ttl      = 64;
-    ip->protocol = IPPROTO_UDP;
-    ip->check    = 0; // IMPORTANT: Must clear for checksum calculation (!!!)
-    ip->saddr    = server_address_big_endian;
-    ip->daddr    = client_address_big_endian;
-
-    // calculate ip checksum
-
-    ip->check    = rocketnet_server_socket_ipv4_checksum( ip, sizeof( struct iphdr ) );
-
-    // generate udp header
-
-    udp->source  = server_port_big_endian;
-    udp->dest    = client_port_big_endian;
-    udp->len     = __constant_htons( sizeof(struct udphdr) + payload_bytes );
-    udp->check   = 0;
-
-    return sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr) + payload_bytes; 
-}
-
 static void rocketnet_server_socket_acquire_send_buffer( rocketnet_server_xdp_socket_t * socket );
 
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, int queue, const rocketnet_address_t * to )
@@ -2318,13 +2259,17 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                         const int payload_bytes = send_buffer->packet_info[i].packet_bytes;
 
-                        memcpy( packet_data + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr), send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
+                        // The server's own source address is IPv4 until the
+                        // integration card wires IPv6 receive; the codec
+                        // writes the family the destination addresses.
+                        rocketnet_address_t server_address;
+                        rocketnet_address_load_ipv4( &server_address, socket->server_address_big_endian, socket->server_port_big_endian );
 
-                        uint32_t to_address_big_endian = rocketnet_address_ipv4( &send_buffer->packet_info[i].to );
-                        uint16_t to_port_big_endian = rocketnet_platform_htons( send_buffer->packet_info[i].to.port );
+                        const int header_bytes = rocketnet_xdp_frame_header_bytes( send_buffer->packet_info[i].to.type );
+                        memcpy( packet_data + header_bytes, send_buffer->packet_data[i] + ROCKETNET_FRAME_WIRE_OFFSET, payload_bytes );
 
                         batch_frames[num_batch_packets] = frame;
-                        batch_packet_bytes[num_batch_packets] = rocketnet_server_socket_generate_packet_header( packet_data, socket->server_ethernet_address, socket->gateway_ethernet_address, socket->server_address_big_endian, to_address_big_endian, socket->server_port_big_endian, to_port_big_endian, payload_bytes );
+                        batch_packet_bytes[num_batch_packets] = rocketnet_xdp_frame_build( packet_data, ROCKETNET_XDP_FRAME_SIZE, socket->server_ethernet_address, socket->gateway_ethernet_address, &server_address, &send_buffer->packet_info[i].to, payload_bytes );
                         num_batch_packets++;
                     }
 
