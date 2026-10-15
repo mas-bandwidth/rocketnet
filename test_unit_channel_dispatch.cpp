@@ -222,32 +222,51 @@ static void ack_feed_marks_only_carried_numbers()
     rn_window_ack_t ack;
     rn_window_ack_init( &ack, &send, region, NULL );
 
+    // the carried numbers are assigned through the send window at first write
+    // (docs/CHANNELS.md 6.2, RNWindow!NumberRecord), as the builder's numbered
+    // send does: layer 3 commits only numbers the window owns
+    uint64_t numbered[3];
+    for ( int i = 0; i < 3; i++ )
+    {
+        uint64_t ring_start = 0;
+        rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16,
+                                                          RN_DESCRIPTOR_NONE, &numbered[i], &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+        rocketnet_unit_check( numbered[i] == (uint64_t) i );
+    }
+
     const double now = 100.0;
     const uint64_t transport_id = 90210;            // the id the transport assigned the packet
 
-    const uint64_t carried[2] = { 0, 1 };
+    const uint64_t carried[2] = { numbered[0], numbered[1] };
     rn_window_ack_commit_packet( &ack, transport_id, carried, 2, now );
 
     rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+    rocketnet_unit_check( send.U == 0 );
 
     // an ack of a packet that carried nothing marks nothing
     const uint64_t other = transport_id + 1;
     rocketnet_unit_check( rn_channels_feed_acks( &ack, &other, 1, now + 0.01 ) == 0 );
     rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+    rocketnet_unit_check( send.U == 0 );
 
     // the transport's ack of the packet that carried them marks exactly them:
-    // the entry leaves the map, so both numbers are acked
+    // the entry leaves the map and U moves past both numbers, not past 2
     rocketnet_unit_check( rn_channels_feed_acks( &ack, &transport_id, 1, now + 0.02 ) == 1 );
     rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 0 );
+    rocketnet_unit_check( send.U == 2 );
+    rocketnet_unit_check( region->send_numbers[0].acked && region->send_numbers[1].acked );
+    rocketnet_unit_check( !region->send_numbers[2].acked );
 
     // a resend of number 2 under the id the transport assigns that resend is
     // matched by that id, not by an invented counter
     const uint64_t resend_id = 90211;
-    const uint64_t resent[1] = { 2 };
+    const uint64_t resent[1] = { numbered[2] };
     rn_window_ack_commit_packet( &ack, resend_id, resent, 1, now + 0.03 );
     rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     rocketnet_unit_check( rn_channels_feed_acks( &ack, &resend_id, 1, now + 0.05 ) == 1 );
     rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 0 );
+    rocketnet_unit_check( send.U == 3 );
+    rocketnet_unit_check( region->send_numbers[2].acked );
 
     // nothing else marks a message acked: a second feed of the same id, and a
     // feed of nothing, match nothing
