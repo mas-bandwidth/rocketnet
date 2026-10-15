@@ -309,6 +309,32 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        # test_xdp_filter loads server_xdp/server_xdp.c and runs crafted frames
+        # through it with BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to
+        # run). The object is built with the command server_xdp/Makefile uses.
+        find_program(ROCKETNET_CLANG clang)
+        if(ROCKETNET_CLANG)
+            execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+                OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
+            add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
+                COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
+                    "-I/usr/include/${ROCKETNET_MULTIARCH}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+                    -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
+                    -o "${ROCKETNET_XDP_FILTER_OBJECT}"
+                DEPENDS ${ROCKETNET_XDP_SOURCES}
+                VERBATIM)
+            add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
+            add_executable(test_xdp_filter test_xdp_filter.cpp)
+            add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            target_compile_definitions(test_xdp_filter PRIVATE
+                "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
+            target_include_directories(test_xdp_filter PRIVATE sdk)
+            target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
+            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
+        else()
+            message(STATUS "clang not found: test_xdp_filter is not built")
+        endif()
     endif()
     if(APPLE)
         add_executable(test_msgx test_msgx.cpp)
