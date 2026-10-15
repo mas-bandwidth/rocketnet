@@ -89,6 +89,25 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
                                    const uint8_t * backend_secret_key,
                                    uint8_t * token );
 
+// TEST-ONLY. Exists for the known-answer vectors in
+// test/connect_token_vectors.json, which another implementation of the
+// backend's minting is checked against byte for byte; nothing ships calling
+// it. The same token as rocketnet_write_connect_token, except the private
+// block is sealed with the caller's 32-byte ephemeral X25519 secret instead
+// of a freshly drawn one -- exactly crypto_box_seal's construction:
+// epk = crypto_scalarmult_base(esk), nonce = crypto_generichash(24 bytes,
+// epk || server_pk), output epk || crypto_box_easy(block, nonce, server_pk,
+// esk). The token keys come from private_fields, as in the production writer.
+// A reused ephemeral secret ties tokens together, so it is never exported
+// (kept out of tools/exports.txt) and never used to mint a real token.
+// Returns 1 on success, 0 on a crypto failure.
+
+int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                 const struct rocketnet_connect_token_private_t * private_fields,
+                                                 const uint8_t * backend_secret_key,
+                                                 const uint8_t * ephemeral_secret_key,
+                                                 uint8_t * token );
+
 // Client-side split of a 768-byte token into its parts. Pure layout.
 
 struct rocketnet_connect_token_t

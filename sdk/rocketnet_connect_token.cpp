@@ -66,10 +66,46 @@ void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t 
     rocketnet_read_bytes( &p, output->sealed_private_block, ROCKETNET_SEALED_BLOCK_BYTES );
 }
 
-int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t * signed_fields,
-                                   const struct rocketnet_connect_token_private_t * private_fields,
-                                   const uint8_t * backend_secret_key,
-                                   uint8_t * token )
+// crypto_box_seal's construction with the ephemeral secret supplied rather than
+// drawn: the test-only deterministic writer's seal, and nothing else's. Output
+// is epk || crypto_box_easy(m), crypto_box_SEALBYTES longer than m. 0 on
+// success, as libsodium returns.
+
+static int rocketnet_box_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned long long mlen,
+                                              const uint8_t * pk, const uint8_t * esk )
+{
+    int result = -1;
+    uint8_t epk[crypto_box_PUBLICKEYBYTES];
+    uint8_t nonce[crypto_box_NONCEBYTES];
+    crypto_generichash_state state;
+
+    if ( crypto_scalarmult_base( epk, esk ) != 0 )
+        goto out;
+    if ( crypto_generichash_init( &state, NULL, 0, crypto_box_NONCEBYTES ) != 0 ||
+         crypto_generichash_update( &state, epk, crypto_box_PUBLICKEYBYTES ) != 0 ||
+         crypto_generichash_update( &state, pk, crypto_box_PUBLICKEYBYTES ) != 0 ||
+         crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) != 0 )
+        goto out;
+    if ( crypto_box_easy( c + crypto_box_PUBLICKEYBYTES, m, mlen, nonce, pk, esk ) != 0 )
+        goto out;
+    memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
+    result = 0;
+
+out:
+    sodium_memzero( nonce, sizeof(nonce) );
+    sodium_memzero( &state, sizeof(state) );
+    return result;
+}
+
+// the one writer behind both entry points: ephemeral_secret_key NULL seals
+// with crypto_box_seal's fresh ephemeral key (production); non-NULL seals
+// with that key (the test-only vectors)
+
+static int rocketnet_write_connect_token_sealed( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                 const struct rocketnet_connect_token_private_t * private_fields,
+                                                 const uint8_t * backend_secret_key,
+                                                 const uint8_t * ephemeral_secret_key,
+                                                 uint8_t * token )
 {
     int result = 0;
     uint8_t * p = NULL;
@@ -82,8 +118,17 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     rocketnet_write_connect_token_private( &private_data, private_block );
 
     struct rocketnet_signed_connect_data_t signed_data = *signed_fields;
-    if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
-        goto out;
+    if ( ephemeral_secret_key == NULL )
+    {
+        if ( crypto_box_seal( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, signed_data.server_public_key ) != 0 )
+            goto out;
+    }
+    else
+    {
+        if ( rocketnet_box_seal_with_ephemeral( signed_data.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
+                                                signed_data.server_public_key, ephemeral_secret_key ) != 0 )
+            goto out;
+    }
 
     p = token;
     rocketnet_write_signed_connect_data( &signed_data, p );
@@ -106,6 +151,26 @@ out:
     sodium_memzero( private_block, sizeof(private_block) );
     sodium_memzero( &private_data, sizeof(private_data) );
     return result;
+}
+
+int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                   const struct rocketnet_connect_token_private_t * private_fields,
+                                   const uint8_t * backend_secret_key,
+                                   uint8_t * token )
+{
+    return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, NULL, token );
+}
+
+// TEST-ONLY: exists for test/connect_token_vectors.json; see the header
+int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_connect_data_t * signed_fields,
+                                                 const struct rocketnet_connect_token_private_t * private_fields,
+                                                 const uint8_t * backend_secret_key,
+                                                 const uint8_t * ephemeral_secret_key,
+                                                 uint8_t * token )
+{
+    if ( ephemeral_secret_key == NULL )
+        return 0;
+    return rocketnet_write_connect_token_sealed( signed_fields, private_fields, backend_secret_key, ephemeral_secret_key, token );
 }
 
 void rocketnet_read_connect_token( struct rocketnet_connect_token_t * output, const uint8_t * token )
