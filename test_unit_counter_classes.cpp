@@ -511,16 +511,20 @@ static const counters_exception_t counters_no_code_path[] =
     { NULL, NULL }
 };
 
-// Counters that have a code path no test below the root tier can reach. The
-// counting site is real; what is missing is a way to drive it without root.
-// An entry leaves this list the day a test names the counter, and the audit
-// fails if one is named while it is still listed.
+// Reachable counters no test names yet: NOT DONE, and reported as such. This
+// is not an exemption. The counting site is real and the counter belongs to
+// the card's reachable set; every run prints one NOT-DONE line per row with
+// the reason, and an entry leaves this list the day a test names the counter
+// (the audit fails if one is named while it is still listed, and fails if a
+// listed counter has no code path, so the list only shrinks and never holds a
+// counter that belongs in counters_no_code_path).
 
-static const counters_exception_t counters_owed_to_a_root_tier[] =
+static const counters_exception_t counters_reachable_not_done[] =
 {
-    { "SEND_LEASE_FULL", "the lease table admits 65536 starts per fill phase and gives none back until the next update; "
-                         "no driver recycles an aborted start, so the portable phase is capped at 272 (ring 256, arena 16) "
-                         "and the gso phase at 16400, and only the xdp driver across four or more queues reaches the bound" },
+    { "SEND_LEASE_FULL", "the lease table admits Capacity/2 starts per fill phase (65536 on the server, 512 on the client) and an abort gives none back; "
+                         "the portable fill is capped at 272 (ring 256, arena 16) and the gso fill at 16400, so only a staged driver that hands out 65537 frames "
+                         "reaches the server site, and the one seam that fakes such a driver below root is test_transport_control.cpp, which this card's PATHS do not name; "
+                         "the client sites have no driver seam and a fixed 256-slot ring" },
     { NULL, NULL }
 };
 
@@ -538,16 +542,25 @@ static void counters_every_counter_is_named_by_a_test()
     const std::set<std::string> counted = counters_named_by_sdk();
 
     int missed = 0;
+    int not_done = 0;
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
         const std::string name = rocketnet_counter_name( i );
-        if ( named.count( name ) || counters_in_list( counters_no_code_path, name ) || counters_in_list( counters_owed_to_a_root_tier, name ) )
+        if ( named.count( name ) || counters_in_list( counters_no_code_path, name ) )
             continue;
+        if ( counters_in_list( counters_reachable_not_done, name ) )
+        {
+            printf( "NOT-DONE: reachable counter named by no test: ROCKETNET_COUNTER_%s\n", name.c_str() );
+            not_done++;
+            continue;
+        }
         printf( "counter named by no test: ROCKETNET_COUNTER_%s\n", name.c_str() );
         missed++;
     }
     if ( missed )
         printf( "%d of %d counters are named by no test\n", missed, ROCKETNET_NUM_COUNTERS );
+    if ( not_done )
+        printf( "NOT-DONE: %d reachable counters are named by no test and are reported, not exempted\n", not_done );
     check( missed == 0 );
 
     // a listed counter that gained a code path is a counter a test can reach
@@ -559,15 +572,18 @@ static void counters_every_counter_is_named_by_a_test()
         check( rocketnet_counter_name( counters_find( counters_no_code_path[i].name ) ) != NULL );
     }
 
-    // an owed counter has its code path, and no test names it yet
-    for ( int i = 0; counters_owed_to_a_root_tier[i].name; i++ )
+    // a not-done counter has its code path, and no test names it yet; the
+    // reason is printed beside the NOT-DONE line
+    for ( int i = 0; counters_reachable_not_done[i].name; i++ )
     {
-        if ( !counted.count( counters_owed_to_a_root_tier[i].name ) )
-            printf( "counter listed as owed has no code path: ROCKETNET_COUNTER_%s\n", counters_owed_to_a_root_tier[i].name );
-        check( counted.count( counters_owed_to_a_root_tier[i].name ) );
-        if ( named.count( counters_owed_to_a_root_tier[i].name ) )
-            printf( "counter listed as owed is named by a test now: ROCKETNET_COUNTER_%s\n", counters_owed_to_a_root_tier[i].name );
-        check( !named.count( counters_owed_to_a_root_tier[i].name ) );
+        const char * name = counters_reachable_not_done[i].name;
+        if ( !counted.count( name ) )
+            printf( "counter listed as not done has no code path: ROCKETNET_COUNTER_%s\n", name );
+        check( counted.count( name ) );
+        if ( named.count( name ) )
+            printf( "counter listed as not done is named by a test now: ROCKETNET_COUNTER_%s\n", name );
+        check( !named.count( name ) );
+        printf( "NOT-DONE: ROCKETNET_COUNTER_%s: %s\n", name, counters_reachable_not_done[i].why );
     }
 }
 
