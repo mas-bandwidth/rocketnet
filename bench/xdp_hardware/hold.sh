@@ -187,6 +187,74 @@ esac
 [ "$(uname -s)" = "Linux" ] || { echo "hold: Linux only" >&2; exit 2; }
 [ "$(id -u)" = "0" ] || { echo "hold: root only, and only on the dedicated machine" >&2; exit 2; }
 
+# The control-path guard. The ports under test must never carry the path an
+# operator reaches the machine by: binding AF_XDP sockets and attaching a
+# program resets the port's queues, and when the driver stalls in that reset
+# the machine drops off the network until someone reaches its console. So a
+# hold refuses, before it takes the lock and before anything is attached,
+# while the receiver port or the sender port carries a default route, the
+# route to the ssh client of this session, or the route to
+# XDPHW_CONTROL_HOST. In the model this is part of Verify: a refused guard
+# is a failed verify, so nothing attaches (AttachOnlyAfterVerify).
+
+route_dev()
+{
+    # route_dev <exec-prefix> <address>: the device the kernel routes <address> by
+    $1 ip route get "$2" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1
+}
+
+# the ssh session this hold runs under: SSH_CONNECTION, or, when sudo reset
+# the environment, the nearest ancestor process that still carries it
+# ("client-address client-port server-address server-port", or empty)
+ssh_connection()
+{
+    local pid=$$ value
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        echo "$SSH_CONNECTION"
+        return 0
+    fi
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+        value="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p' | head -1)"
+        if [ -n "$value" ]; then
+            echo "$value"
+            return 0
+        fi
+        pid="$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)"
+    done
+}
+
+SESSION="$(ssh_connection)"
+
+control_path_guard()
+{
+    local exec_prefix="$1" iface="$2" side="$3" dev client
+    [ -n "$iface" ] || return 0
+    for dev in $($exec_prefix ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p') \
+               $($exec_prefix ip -6 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p'); do
+        if [ "$dev" = "$iface" ]; then
+            echo "hold: REFUSED: the $side port $iface carries a default route; it is a control path, and this tier never attaches XDP or binds AF_XDP on one (RUNBOOK.md, the cabling)" >&2
+            return 1
+        fi
+    done
+    if [ -z "$exec_prefix" ] && [ -n "$SESSION" ]; then
+        client="${SESSION%% *}"
+        if [ "$(route_dev "" "$client")" = "$iface" ]; then
+            echo "hold: REFUSED: this ssh session reaches the machine through the $side port $iface; use a dedicated cabled port (RUNBOOK.md, the cabling)" >&2
+            return 1
+        fi
+    fi
+    if [ -n "${XDPHW_CONTROL_HOST:-}" ] && [ "$(route_dev "$exec_prefix" "$XDPHW_CONTROL_HOST")" = "$iface" ]; then
+        echo "hold: REFUSED: XDPHW_CONTROL_HOST $XDPHW_CONTROL_HOST is routed through the $side port $iface; use a dedicated cabled port (RUNBOOK.md, the cabling)" >&2
+        return 1
+    fi
+    return 0
+}
+
+if [ "$mode" = "--" ]; then
+    control_path_guard "" "$XDPHW_IFACE" receiver || exit 75
+    control_path_guard "$XDPHW_SENDER_EXEC" "${XDPHW_SENDER_IFACE:-}" sender || exit 75
+fi
+
 mkdir -p "$XDPHW_STATE" || exit 2
 chmod 700 "$XDPHW_STATE"
 
@@ -233,17 +301,100 @@ rm -f "$XDPHW_STATE/pids" "$XDPHW_STATE/baseline.snap"
 snapshot "$XDPHW_STATE/baseline.snap"
 echo "hold: held by pid $$; baseline snapshot $XDPHW_STATE/baseline.snap"
 
-# Finish/Restore: restore runs on every exit path. INT and TERM become exits
-# so the EXIT trap is the one place restore runs.
+# The watchdog. It runs beside the hold, with the lock descriptor closed,
+# ignoring HUP, and ends with the hold. It fires on the first of: the run
+# passing XDPHW_MAX_SECONDS; the ssh session the hold started under closing
+# (XDPHW_WATCHDOG_SSH=1, the default when there is one); or
+# XDPHW_WATCHDOG_MISSES consecutive failed pings, XDPHW_WATCHDOG_INTERVAL
+# seconds apart, to XDPHW_WATCHDOG_PING (default: the default gateway), so a
+# control path that goes dark mid-run ends the run. Firing sends TERM to the
+# hold, whose trap runs restore. If the hold is still alive
+# XDPHW_WATCHDOG_GRACE seconds later, the watchdog stops the recorded
+# processes itself (start time checked) and detaches the receiver port's
+# program. In the model, firing is an exit path into Restore(r); the direct
+# detach is part of Restore's "clears everything the run attached".
+
+XDPHW_MAX_SECONDS="${XDPHW_MAX_SECONDS:-7200}"
+XDPHW_WATCHDOG_INTERVAL="${XDPHW_WATCHDOG_INTERVAL:-2}"
+XDPHW_WATCHDOG_MISSES="${XDPHW_WATCHDOG_MISSES:-5}"
+XDPHW_WATCHDOG_GRACE="${XDPHW_WATCHDOG_GRACE:-60}"
+XDPHW_WATCHDOG_PING="${XDPHW_WATCHDOG_PING:-$(ip -4 route show default 2>/dev/null | sed -n 's/^default via \([^ ]*\).*/\1/p' | head -1)}"
+if [ -n "$SESSION" ]; then
+    XDPHW_WATCHDOG_SSH="${XDPHW_WATCHDOG_SSH:-1}"
+else
+    XDPHW_WATCHDOG_SSH=0
+fi
+
+watchdog()
+{
+    local hold_pid="$1" hold_start="$2" log="$XDPHW_STATE/watchdog.log"
+    local deadline=$(( $(date +%s) + XDPHW_MAX_SECONDS )) misses=0 why="" i
+    local client_port server_port
+    trap '' HUP
+    client_port="$(echo "$SESSION" | awk '{ print $2 }')"
+    server_port="$(echo "$SESSION" | awk '{ print $4 }')"
+    # a check that cannot pass at arming would fire on its first look:
+    # it is left out, and the log says so
+    if [ "$XDPHW_WATCHDOG_SSH" = "1" ] && \
+       ! ss -Htn state established "( sport = :$server_port and dport = :$client_port )" 2>/dev/null | grep -q .; then
+        echo "watchdog: the ssh session's socket is not visible to ss; the ssh check is off" >> "$log"
+        XDPHW_WATCHDOG_SSH=0
+    fi
+    if [ -n "$XDPHW_WATCHDOG_PING" ] && ! ping -c 1 -W 1 "$XDPHW_WATCHDOG_PING" > /dev/null 2>&1; then
+        echo "watchdog: $XDPHW_WATCHDOG_PING does not answer ping at arming; the ping check is off" >> "$log"
+        XDPHW_WATCHDOG_PING=""
+    fi
+    echo "watchdog: armed $(date -u +%Y-%m-%dT%H:%M:%SZ) max=${XDPHW_MAX_SECONDS}s ssh=$XDPHW_WATCHDOG_SSH${SESSION:+ ($client_port -> $server_port)} ping=${XDPHW_WATCHDOG_PING:-none} misses=$XDPHW_WATCHDOG_MISSES interval=${XDPHW_WATCHDOG_INTERVAL}s" >> "$log"
+    while [ "$(process_start_time "$hold_pid")" = "$hold_start" ]; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            why="the run passed XDPHW_MAX_SECONDS=$XDPHW_MAX_SECONDS"
+        elif [ "$XDPHW_WATCHDOG_SSH" = "1" ] && \
+             ! ss -Htn state established "( sport = :$server_port and dport = :$client_port )" 2>/dev/null | grep -q .; then
+            why="the ssh session that started the hold is gone"
+        elif [ -n "$XDPHW_WATCHDOG_PING" ]; then
+            if ping -c 1 -W 1 "$XDPHW_WATCHDOG_PING" > /dev/null 2>&1; then
+                misses=0
+            else
+                misses=$((misses + 1))
+                [ "$misses" -ge "$XDPHW_WATCHDOG_MISSES" ] && why="$misses pings in a row to $XDPHW_WATCHDOG_PING failed: the control path is dark"
+            fi
+        fi
+        if [ -n "$why" ]; then
+            echo "watchdog: FIRED $(date -u +%Y-%m-%dT%H:%M:%SZ): $why; TERM to the hold (pid $hold_pid)" >> "$log"
+            kill -TERM "$hold_pid" 2>/dev/null
+            for ((i = 0; i < XDPHW_WATCHDOG_GRACE; i++)); do
+                [ "$(process_start_time "$hold_pid")" = "$hold_start" ] || { echo "watchdog: the hold ended and restored" >> "$log"; return 0; }
+                sleep 1
+            done
+            echo "watchdog: the hold is still alive after ${XDPHW_WATCHDOG_GRACE}s; stopping the run's processes and detaching $XDPHW_IFACE" >> "$log"
+            tac "$XDPHW_STATE/pids" 2>/dev/null | while read -r pid start name; do
+                [ -n "$pid" ] && [ "$pid" != "$hold_pid" ] && [ "$(process_start_time "$pid")" = "$start" ] && kill -KILL "$pid" 2>/dev/null && echo "watchdog: killed $name (pid $pid)" >> "$log"
+            done
+            xdp-loader unload -a "$XDPHW_IFACE" >> "$log" 2>&1
+            ip link set dev "$XDPHW_IFACE" xdp off >> "$log" 2>&1
+            return 1
+        fi
+        sleep "$XDPHW_WATCHDOG_INTERVAL"
+    done
+}
+
+# Finish/Restore: restore runs on every exit path. INT, TERM and HUP become
+# exits so the EXIT trap is the one place restore runs.
 
 child=""
 restored=0
+watchdog_pid=""
 
 on_exit()
 {
     local status=$?
     if [ "$restored" = "0" ]; then
         restored=1
+        # the watchdog stands down first, so it never interrupts restore
+        if [ -n "$watchdog_pid" ]; then
+            kill -TERM "$watchdog_pid" 2>/dev/null
+            wait "$watchdog_pid" 2>/dev/null
+        fi
         if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
             kill -TERM "$child" 2>/dev/null
             wait "$child" 2>/dev/null
@@ -260,6 +411,11 @@ on_exit()
 trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+: > "$XDPHW_STATE/watchdog.log"
+watchdog "$$" "$start_time" 9>&- < /dev/null > /dev/null 2>&1 &
+watchdog_pid=$!
 
 "$@" 9>&- &
 child=$!

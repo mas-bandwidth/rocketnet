@@ -57,6 +57,11 @@ XDPHW_WINDOW_SECONDS=60
 XDPHW_TOL_ABS=32                 # NIC-counter tolerance, frames per window
 XDPHW_TOL_REL=0.000001           # or this fraction of sent, whichever is larger
 # XDPHW_SENDER_EXEC="ssh -T sender-host"   # second-machine mode, below
+# XDPHW_CONTROL_HOST=192.0.2.10  # an address operators reach the machine from; its route must not use a port under test
+XDPHW_MAX_SECONDS=7200           # the watchdog ends any run that lasts longer
+# XDPHW_WATCHDOG_PING=192.0.2.1  # default: the default gateway
+# XDPHW_WATCHDOG_MISSES=5        # consecutive failed pings, XDPHW_WATCHDOG_INTERVAL (2) seconds apart
+# XDPHW_WATCHDOG_SSH=1           # default when the hold runs under ssh: end the run when that session closes
 ```
 
 Size the cores together. One receiver queue takes one isolated core. Some
@@ -88,8 +93,16 @@ machine's state is the baseline that each run's snapshot records.
    `nosmt irqaffinity=0 isolcpus=<range> nohz_full=<range>` to
    `GRUB_CMDLINE_LINUX`, then run `update-grub` and reboot. `<range>` must
    cover the receiver workers, their interrupts and the sender cores.
-4. **The cabling.** There are two modes, and each result names the one it
-   used.
+4. **The cabling.** Neither port under test may be a control path: not
+   the port with the default route, not the port an operator's ssh session
+   arrives on. Binding AF_XDP sockets and attaching a program resets the
+   port's queues. When the driver stalls in that reset, the port goes dark,
+   and on the uplink that takes the machine off the network until someone
+   reaches its console. `hold.sh` refuses before it takes the lock while
+   either port carries a default route, the route to the ssh client of the
+   session, or the route to `XDPHW_CONTROL_HOST`. A machine whose only
+   cabled port is its uplink cannot run this tier: cable a second port.
+   There are two modes, and each result names the one it used.
    - *Self-contained (preferred):* a second port of the same NIC, cabled
      straight back to the receiver port. The sender port lives in its own
      network namespace with its own pinned cores, so the kernel never routes
@@ -255,6 +268,27 @@ green.
    harness.
 7. **`restore_leaves_the_baseline`**: printed by `restore.sh` after the run.
    See the next section.
+
+## The watchdog
+
+`hold.sh` starts a watchdog beside every held run. It ignores `HUP`, holds
+no lock descriptor, logs to `/run/rocketnet-xdp-hw/watchdog.log`, and ends
+with the hold. It fires on the first of:
+
+- the run lasting past `XDPHW_MAX_SECONDS`;
+- the ssh session the hold started under closing (`XDPHW_WATCHDOG_SSH`);
+- `XDPHW_WATCHDOG_MISSES` failed pings in a row to `XDPHW_WATCHDOG_PING`,
+  the default gateway unless the conf names another address on the control
+  path.
+
+A check that cannot pass when the watchdog arms (no visible ssh socket, a
+gateway that drops ping) is left out, and the log says so. Firing sends
+`TERM` to the hold, whose trap runs restore. If the hold is still alive
+`XDPHW_WATCHDOG_GRACE` (60) seconds later, the watchdog kills the run's
+recorded processes and detaches the receiver port's program itself. The
+next hold then finds the lock file naming the dead run and restores again.
+The watchdog cannot help when the kernel itself is stuck. The cabling
+rule above is the guard for that.
 
 ## Restore
 
