@@ -97,6 +97,24 @@ static class Smoke
         Ok( "token boundary: null, empty, short and long arrays/spans refused before native calls" );
     }
 
+    static void CheckLogLevel()
+    {
+        int first = RocketNet.GetLogLevel();
+        int moved = first == RocketNet.LogLevelDebug ? RocketNet.LogLevelInfo : RocketNet.LogLevelDebug;
+        RocketNet.LogLevel( moved );
+        if ( RocketNet.GetLogLevel() != moved )
+            Fail( "log level did not round-trip through the binding" );
+        RocketNet.LogLevel( first );
+        if ( RocketNet.GetLogLevel() != first )
+            Fail( "log level did not restore through the binding" );
+        string name = RocketNet.LogLevelString( RocketNet.LogLevelError );
+        if ( name != "error" )
+            Fail( $"log level string is '{name}', expected 'error'" );
+        if ( name.Length == 0 )
+            Fail( "log level string is empty" );
+        Ok( "log level getter round-trips and the error level names as 'error'" );
+    }
+
     static void CheckNonNullConfig()
     {
         try
@@ -154,6 +172,7 @@ static class Smoke
         if ( !RocketNet.Init() )
             Fail( "rocketnet_init" );
         RocketNet.LogLevel( RocketNet.LogLevelError );
+        CheckLogLevel();
 
         // the commit barrier, structural rather than per-line discipline: this
         // smoke must never commit an XDP data plane on any box it runs on,
