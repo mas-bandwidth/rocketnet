@@ -105,6 +105,15 @@ int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, in
     if ( bytes < 1 || (uint32_t) bytes > region->max_message_bytes || channel < 0 || (uint32_t) channel >= region->num_channels )
         return 0;
 
+    // an already-exhausted region refuses every send: exhaustion is the end of
+    // the connection (tla/RNConnectionMemory.tla, Exhaust), and the refusal is
+    // a store-full drop, counted as one (R1)
+    if ( rn_region_exhausted( region ) )
+    {
+        rn_unreliable_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        return 0;
+    }
+
     // a record's length is a u16, so a longer message can never be carried by
     // an unreliable record. It is dropped and counted now, not enqueued, so
     // the FIFO never holds a message that can never be sent (R1: unreliable
@@ -129,6 +138,7 @@ int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, in
     if ( chunk == RN_CHUNK_NONE )
     {
         rn_unreliable_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        rn_region_exhaust( region );
         return 0;
     }
 
@@ -267,6 +277,15 @@ int rn_unreliable_receive( rn_unreliable_t * u, const uint8_t * payload, int byt
 {
     if ( out_count )
         *out_count = 0;
+
+    // an already-exhausted region refuses every receive: nothing is delivered
+    // (tla/RNConnectionMemory.tla, Exhaust), and the refusal is counted under
+    // the counter that names it
+    if ( rn_region_exhausted( u->region ) )
+    {
+        rn_unreliable_count( u->region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+        return ROCKETNET_MESSAGE_VIOLATION_NONE;
+    }
 
     struct rocketnet_message_reader_t reader;
     const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, limits );
