@@ -55,3 +55,6 @@ MCRNDriverSendStaging.cfg	MCRNDriverSendStaging.tla	pass	-	check	rndriversendsta
 MCRNDriverSendStagingBrokenDisconnect.cfg	MCRNDriverSendStaging.tla	invariant	StagedDisconnectFlushed	check	rndriversendstaging	required	-
 MCRNSecurityTables.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
 MCServerConnection.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	bench	server-reuse-safety-over-budget
+MCRNSendBudget.cfg	MCRNSendBudget.tla	pass	-	check	rnsendbudget	required	-
+MCRNSendBudgetBrokenOverspend.cfg	MCRNSendBudget.tla	invariant	NeverOverspend	check	rnsendbudget	required	-
+MCRNSendBudgetBrokenUnreliableFirst.cfg	MCRNSendBudget.tla	temporal	EveryReliableEventuallySent	check	rnsendbudget	required	-
