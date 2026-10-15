@@ -203,6 +203,26 @@ green.
        and the stats map's five).
      - E3: every REFUSAL-class counter on the receiver, and the sender's
        `tx_invalid_descs`, stay at 0.
+
+     One drop in the program has no counter of its own: a frame that
+     passes every filter check but arrives on a queue whose socket is not
+     in the socket map makes `bpf_redirect_map` fail, and the program
+     returns `XDP_DROP` (`server_xdp/server_xdp.c`, after the
+     `bpf_redirect_map` call). In a nominal window that path cannot be
+     reached. `preflight_verify` holds the receiver port at exactly
+     `XDPHW_QUEUES` combined channels, so `rx_queue_index` is always in
+     `0 .. XDPHW_QUEUES - 1`. The transport puts a socket in the map for
+     every one of those queues before create returns, and
+     `zero_copy_bind_per_queue` checks one socket per queue before the
+     warm-up starts. The sockets stay bound until restore, after the last
+     window. If the path is reached anyway, nothing absorbs it: the frame
+     shows in the NIC's per-queue rx count and in no in-process counter,
+     so E2 fails by exactly the number of such frames, and H1 fails once
+     that number is past the tolerance. The window's line names the
+     difference. A counter for this verdict means a new index in
+     `sdk/rocketnet_wire.h` and a regenerated `sdk/rocketnet_server_xdp.h`
+     (`tools/check_xdp_archive.py` checks that header against the XDP
+     sources), and `counters.py` then adds the new index to E2.
    - *Hardware, within tolerance:*
      - H1: the receiver NIC's per-queue rx packets sum equals the program's
        verdict sum.

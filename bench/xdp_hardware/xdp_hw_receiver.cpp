@@ -65,7 +65,10 @@ static const char * xdp_counter_names[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     "xdp_dropped_wrong_filter",
     "xdp_dropped_invalid_type",
     "xdp_dropped_wrong_epoch",
+    "xdp_passed_ipv6_extension",
 };
+
+static_assert( ROCKETNET_SERVER_XDP_NUM_COUNTERS == 7, "name every stats map counter above, and count each new drop in counters.py's E2" );
 
 static uint64_t monotonic_ns()
 {
