@@ -442,11 +442,56 @@ void rn_region_carve( rn_region_t * region )
     }
     memset( region->receipts, 0, sizeof(rn_receipt_t) * region->receipt_entries );
 
+    region->exhausted = 0;
+    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+
     region->carves++;
+}
+
+void rn_region_reset( rn_region_t * region )
+{
+    // tla/RNConnectionMemory.tla, Reuse: the slot's region is carved again
+    // before its next client, so ReusedSlotStartsClean holds -- used room,
+    // the exhausted state and every record of the previous client are gone
+    rn_region_carve( region );
+}
+
+void rn_region_exhaust( rn_region_t * region )
+{
+    // tla/RNConnectionMemory.tla, Exhaust: sticky with its one reason
+    // (ExhaustedReasonNamed), counted once per exhausted connection
+    rocketnet_assert( region );
+    if ( region->exhausted )
+        return;
+    region->exhausted = 1;
+    region->exhausted_reason = ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED;
+    rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+}
+
+bool rn_region_exhausted( const rn_region_t * region )
+{
+    rocketnet_assert( region );
+    return region->exhausted != 0;
+}
+
+int rn_region_exhausted_reason( const rn_region_t * region )
+{
+    rocketnet_assert( region );
+    return region->exhausted ? region->exhausted_reason : ROCKETNET_MESSAGE_ERROR_NONE;
+}
+
+int rn_connection_memory_decide( const rn_region_t * region )
+{
+    // tla/RNConnectionMemory.tla, Kick's guard: an exhausted connection's only
+    // step is the disconnect (ExhaustionOnlyLeadsToDisconnect), and the
+    // decision is this region's alone (NoCrossSlotEffect)
+    rocketnet_assert( region );
+    return region->exhausted ? ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_MESSAGE_ERROR_NONE;
 }
 
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
+    // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
     rocketnet_assert( region );
 
     // an argument outside the config is the caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
@@ -454,11 +499,14 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
         return RN_DESCRIPTOR_NONE;
 
     // exhaustion is a counted refusal, never growth (R1, 4), and nothing is
-    // taken from either pool when one of them refuses
+    // taken from either pool when one of them refuses. It is also the end of
+    // the connection: the region is exhausted (tla/RNConnectionMemory.tla,
+    // Exhaust) and its owner kicks it on the next decision.
 
     if ( region->descriptors_free == 0 )
     {
         rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+        rn_region_exhaust( region );
         return RN_DESCRIPTOR_NONE;
     }
 
@@ -466,6 +514,7 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
     if ( chunk == RN_CHUNK_NONE )
     {
         rn_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        rn_region_exhaust( region );
         return RN_DESCRIPTOR_NONE;
     }
 
@@ -487,6 +536,7 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 
 void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
+    // tla/RNConnectionMemory.tla, Release
     rocketnet_assert( region );
     rocketnet_assert( d < region->queue );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
@@ -504,6 +554,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
 
 void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t chain_index )
 {
+    // tla/RNConnectionMemory.tla, Release (one fragment's room)
     rocketnet_assert( region );
     rocketnet_assert( d < region->queue );
     if ( d >= region->queue )
@@ -598,10 +649,57 @@ struct rn_arena_t
     void * context;
     uint64_t bytes;
     int num_regions;
+    int owns_memory;                    // 1: the create's own allocation, freed at destroy; 0: the caller's block
     rn_region_layout_t layout;
     rn_region_t * regions;
     uint8_t * memory;
 };
+
+// the arena's one block: its header, its region structs, then num_regions
+// regions back to back, each 64-aligned (4). false, with a log line, for a
+// refused config or count, or a size that does not fit in memory.
+static bool rn_arena_plan( const rocketnet_message_config_t * config, int num_regions, rn_region_layout_t * layout, uint64_t * header, uint64_t * bytes )
+{
+    if ( num_regions < 1 || num_regions > ( 1 << 20 ) )
+    {
+        rocketnet_error( "message arena of %d regions refused (1 to %d)", num_regions, 1 << 20 );
+        return false;
+    }
+
+    if ( !rn_region_layout( config, layout ) )
+        return false;
+
+    *header = rn_align64( sizeof(rn_arena_t) ) + rn_align64( sizeof(rn_region_t) * (uint64_t) num_regions );
+    if ( layout->region_bytes > ( UINT64_MAX - *header ) / (uint64_t) num_regions || *header + layout->region_bytes * (uint64_t) num_regions > (uint64_t) SIZE_MAX )
+    {
+        rocketnet_error( "message arena of %d regions of %" PRIu64 " bytes is too large", num_regions, layout->region_bytes );
+        return false;
+    }
+    *bytes = *header + layout->region_bytes * (uint64_t) num_regions;
+    return true;
+}
+
+// lays the arena out in memory and carves every region: no allocation
+static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_memory, const rocketnet_message_config_t * config, int num_regions, const rn_region_layout_t * layout, uint64_t header, uint64_t bytes, rocketnet_counters_t * counters )
+{
+    rn_arena_t * arena = (rn_arena_t*) memory;
+    memset( arena, 0, sizeof(*arena) );
+    arena->context = context;
+    arena->bytes = bytes;
+    arena->num_regions = num_regions;
+    arena->owns_memory = owns_memory;
+    arena->layout = *layout;
+    arena->regions = (rn_region_t*) ( memory + rn_align64( sizeof(rn_arena_t) ) );
+    arena->memory = memory + header;
+
+    for ( int i = 0; i < num_regions; i++ )
+    {
+        rn_region_point( &arena->regions[i], arena->memory + layout->region_bytes * (uint64_t) i, layout, config, counters );
+        rn_region_carve( &arena->regions[i] );
+    }
+
+    return arena;
+}
 
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
@@ -612,27 +710,13 @@ rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t *
         config = &defaults;
     }
 
-    if ( num_regions < 1 || num_regions > ( 1 << 20 ) )
-    {
-        rocketnet_error( "message arena of %d regions refused (1 to %d)", num_regions, 1 << 20 );
-        return NULL;
-    }
-
     rn_region_layout_t layout;
-    if ( !rn_region_layout( config, &layout ) )
+    uint64_t header = 0;
+    uint64_t bytes = 0;
+    if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
         return NULL;
 
-    // one allocation for the object: its header, its region structs, then
-    // num_regions regions back to back, each 64-aligned (4)
-
-    const uint64_t header = rn_align64( sizeof(rn_arena_t) ) + rn_align64( sizeof(rn_region_t) * (uint64_t) num_regions );
-    if ( layout.region_bytes > ( UINT64_MAX - header ) / (uint64_t) num_regions || header + layout.region_bytes * (uint64_t) num_regions > (uint64_t) SIZE_MAX )
-    {
-        rocketnet_error( "message arena of %d regions of %" PRIu64 " bytes is too large", num_regions, layout.region_bytes );
-        return NULL;
-    }
-    const uint64_t bytes = header + layout.region_bytes * (uint64_t) num_regions;
-
+    // the create path's one allocation (R2): nothing after it allocates
     uint8_t * memory = (uint8_t*) rocketnet_malloc( context, (size_t) bytes );
     if ( !memory )
     {
@@ -640,29 +724,64 @@ rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t *
         return NULL;
     }
 
-    rn_arena_t * arena = (rn_arena_t*) memory;
-    memset( arena, 0, sizeof(*arena) );
-    arena->context = context;
-    arena->bytes = bytes;
-    arena->num_regions = num_regions;
-    arena->layout = layout;
-    arena->regions = (rn_region_t*) ( memory + rn_align64( sizeof(rn_arena_t) ) );
-    arena->memory = memory + header;
+    return rn_arena_build( memory, context, 1, config, num_regions, &layout, header, bytes, counters );
+}
 
-    for ( int i = 0; i < num_regions; i++ )
+uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int num_regions )
+{
+    rocketnet_message_config_t defaults;
+    if ( !config )
     {
-        rn_region_point( &arena->regions[i], arena->memory + layout.region_bytes * (uint64_t) i, &layout, config, counters );
-        rn_region_carve( &arena->regions[i] );
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
     }
 
-    return arena;
+    rn_region_layout_t layout;
+    uint64_t header = 0;
+    uint64_t bytes = 0;
+    if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
+        return 0;
+    return bytes;
+}
+
+rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
+{
+    rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    rn_region_layout_t layout;
+    uint64_t header = 0;
+    uint64_t bytes = 0;
+    if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
+        return NULL;
+
+    // the caller's block is checked, never truncated: the configuration's
+    // exact size and the regions' 64-byte alignment, or nothing
+    if ( !block || ( (uintptr_t) block & ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) != 0 )
+    {
+        rocketnet_error( "message arena block refused: NULL or not %d-byte aligned", ROCKETNET_ALLOCATION_ALIGNMENT );
+        return NULL;
+    }
+    if ( block_bytes < bytes )
+    {
+        rocketnet_error( "message arena block of %" PRIu64 " bytes refused: %d regions need %" PRIu64, block_bytes, num_regions, bytes );
+        return NULL;
+    }
+
+    return rn_arena_build( (uint8_t*) block, NULL, 0, config, num_regions, &layout, header, bytes, counters );
 }
 
 void rn_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
         return;
-    rocketnet_free( arena->context, arena );
+    // a caller's block stays the caller's
+    if ( arena->owns_memory )
+        rocketnet_free( arena->context, arena );
 }
 
 int rn_arena_num_regions( const rn_arena_t * arena )

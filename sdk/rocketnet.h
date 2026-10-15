@@ -1276,6 +1276,21 @@ namespace rocketnet
 #define ROCKETNET_RECEIPT_ACKED                                         1
 #define ROCKETNET_RECEIPT_LOSS                                          2
 
+// Why a message connection ended, the reason its DISCONNECTED event carries
+// (docs/CHANNELS.md 12). Values 0 to 4 are the window layer's
+// (sdk/rocketnet_window_ack.h defines the same values when this header is
+// absent). MESSAGE_MEMORY_EXHAUSTED: the connection's region had no room for
+// an operation it must not drop (docs/CHANNELS.md 4,
+// tla/RNConnectionMemory.tla). A server disconnects that client's slot with
+// this reason and resets the slot's region; a client disconnects itself.
+
+#define ROCKETNET_MESSAGE_ERROR_NONE                0
+#define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH     1
+#define ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT      2
+#define ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION  3
+#define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT    4
+#define ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED 5
+
 // the largest message start_message writes into a real wire frame, zero copy:
 // the payload capacity less the one form byte
 

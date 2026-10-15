@@ -109,8 +109,22 @@ public static unsafe partial class RocketNet
     /// <summary>Server state: stopped.</summary>
     public const int ServerTransportStopped = 2;
 
+    /// <summary>Message disconnect reason: none.</summary>
+    public const int MessageErrorNone = 0;
+    /// <summary>Message disconnect reason: the peers' message configs differ.</summary>
+    public const int MessageErrorConfigMismatch = 1;
+    /// <summary>Message disconnect reason: the config exchange timed out.</summary>
+    public const int MessageErrorConfigTimeout = 2;
+    /// <summary>Message disconnect reason: the peer broke the message wire.</summary>
+    public const int MessageErrorProtocolViolation = 3;
+    /// <summary>Message disconnect reason: a reliable message went unacked past its timeout.</summary>
+    public const int MessageErrorReliableTimeout = 4;
+    /// <summary>Message disconnect reason: the connection's message memory was exhausted;
+    /// a server kicks that client, a client disconnects itself.</summary>
+    public const int MessageErrorMessageMemoryExhausted = 5;
+
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 204;
+    public const int NumCounters = 205;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -322,6 +336,7 @@ public static unsafe partial class RocketNet
         MessageWindowStall,
         MessageSentMapEvicted,
         MessageResent,
+        MessageMemoryExhausted,
     }
 #pragma warning restore 1591
 
