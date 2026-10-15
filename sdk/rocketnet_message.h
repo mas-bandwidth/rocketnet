@@ -93,7 +93,9 @@
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_RING                8   // check 8
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE                9   // check 9
 #define ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL             10  // check 12
-#define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    11
+#define ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW   11  // check 10, layer 3
+#define ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION          12  // check 10, layer 3
+#define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    13
 
 const char * rocketnet_message_violation_name( int violation );
 
