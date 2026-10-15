@@ -353,6 +353,56 @@ static void test_cookie_rotation_draws_a_fresh_key()
     }
 }
 
+// The transport receives before its sweep. A receive near the end of a
+// delayed rotation window or after a stall must issue a usable cookie.
+static void test_cookie_rotation_receive_before_update_keeps_fresh_cookie()
+{
+    const double boundary = ROCKETNET_ROTATION_TEST_START_TIME + 2.0 * ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
+    const double receive_times[] = { boundary - 0.1, boundary + 0.1 };
+    for ( int i = 0; i < 2; ++i )
+    {
+        struct rocketnet_rotation_server_t test;
+        rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_rotation_build_request_with_key( &test, request, 0x5001ULL, test.server.cookie_key );
+        memset( request + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        rocketnet_unit_check( rocketnet_server_protocol_process_connection_request(
+            &test.server, &test.client_address, request, sizeof(request),
+            ROCKETNET_TEST_CREATE_TS, receive_times[i], response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+        rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+        memcpy( request + ROCKETNET_PREFILTER_BYTES,
+                response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
+                ROCKETNET_COOKIE_FIELD_BYTES );
+
+        rocketnet_server_protocol_update( &test.server, receive_times[i] );
+        const double return_time = receive_times[i] + 0.2;
+        rocketnet_server_protocol_update( &test.server, return_time );
+        const uint64_t bad_mac_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY];
+        rocketnet_unit_check( rocketnet_rotation_process_at( &test, request, return_time ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+        rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] == bad_mac_before );
+        rocketnet_rotation_server_teardown( &test );
+    }
+}
+
+static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
+{
+    struct rocketnet_rotation_server_t test;
+    rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_rotation_build_request_with_key( &test, request, 0x5002ULL, test.server.cookie_key );
+    const double after_stall = ROCKETNET_ROTATION_TEST_START_TIME + 2.0 * ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
+    const uint64_t bad_mac_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY];
+    rocketnet_unit_check( rocketnet_rotation_process_at( &test, request, after_stall ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] == bad_mac_before + 1 );
+    rocketnet_rotation_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_cookie_rotation_receive_before_update_keeps_fresh_cookie );
+REGISTER_UNIT_TEST( test_cookie_rotation_receive_after_stall_rejects_outgoing_key );
+
 REGISTER_UNIT_TEST( test_cookie_rotation_current_key_accepted );
 REGISTER_UNIT_TEST( test_cookie_rotation_previous_key_accepted_in_window );
 REGISTER_UNIT_TEST( test_cookie_rotation_previous_key_rejected_after_window );

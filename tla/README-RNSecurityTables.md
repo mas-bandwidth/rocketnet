@@ -30,7 +30,9 @@ presents any token under any cookie generation it has seen.
   `server->has_previous_cookie_key && current_time < server->previous_cookie_key_expire_time`).
   The key is initialised at create (`sdk/rocketnet_server_transport.cpp:832-838`)
   and rotated on its period by `rocketnet_server_protocol_rotate_cookie_key_if_due`,
-  called from `rocketnet_server_protocol_update`. An on-time rotation
+  called before the request cookie gate and from `rocketnet_server_protocol_update`.
+  The receive path rotates before both verification and issuance because the
+  transport drains receives before its sweep. An on-time rotation
   copies the outgoing key to `previous_cookie_key` and sets `prevUntil`
   (`previous_cookie_key_expire_time`) to the rotation instant plus
   `RotatePeriod`; a stall past a whole window zeroes the previous key
@@ -142,6 +144,11 @@ distinct states, with no error: the invariants hold and
 as properties.
 
 ## What the model leaves out
+
+- `Tick` advances the clock and rotates atomically. It does not represent
+  the transport receive-before-sweep ordering. Unit regressions exercise
+  cookies issued before a delayed sweep, both near a rotation deadline and
+  after a full-window stall, plus refusal of the outgoing key after a stall.
 
 - Packets, the link, the replay window and the session keys stay in
   the held draft; a response here is a packet that has already opened

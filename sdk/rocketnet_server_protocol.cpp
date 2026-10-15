@@ -340,6 +340,11 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // Receives precede the transport sweep. Rotate before verifying or
+    // issuing cookies so a delayed update cannot immediately discard a
+    // cookie that this receive just issued.
+    rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
+
     // the cookie gate: address validation before any asymmetric work. a
     // request that fails it is answered with a cookie packet -- the one
     // response on a rejection path, and every arrival re-provokes it, so a

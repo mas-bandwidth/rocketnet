@@ -50,3 +50,7 @@ MCRNSecurityTables	MCRNSecurityTables.cfg with DeniedConsumesToken TRUE (reverse
 MCRNSecurityTables	MCRNSecurityTables.cfg with CapVerifyBudget FALSE (reversed witness, mutant)	3566	2110	fail as expected: SafetyInvariants violated (VerifyBudgetRespected), 7-state trace, see README-RNSecurityTables.md	vision	2026-10-14
 MCRNSecurityTables	MCRNSecurityTables.cfg with AcceptPrevious FALSE (reversed witness)	111	93	fail as expected: InFlightCookieSurvivesRotation violated, 4-state trace, see README-RNSecurityTables.md	vision	2026-10-14
 MCRNSecurityTables	MCRNSecurityTables.cfg with PreviousOutlivesWindow TRUE (reversed witness, mutant)	16	16	fail as expected: PreviousBoundedToOnePeriod violated, 2-state trace, see README-RNSecurityTables.md	vision	2026-10-14
+
+# Superseded measured fixed-config receipt before cookie rotation; original 19-column metadata preserved.
+config	module	input_sha256	input_files	jar_sha256	java_version	host	cpus	started_utc	workers	generated	distinct	seconds	exit	result	expected	property	budget	mode
+MCRNSecurityTables.cfg	MCRNSecurityTables.tla	466359a5276f5c4bbc02afbea01a0882ac7094a960c127799532be069d763fcc	8	936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88	21.0.12.1	linux-amd64	64	2026-10-15T01:09:43.681563+00:00	2	1025308	249679	7.902	0	PASS	pass	-	110	bounded
