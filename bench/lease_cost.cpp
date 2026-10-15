@@ -143,6 +143,10 @@ int main(int argc, char ** argv)
                     fprintf(stderr, "%s %s=%llu\n", side ? "server" : "client",
                             rocketnet_counter_name(counter), (unsigned long long)value);
             }
+        rocketnet_client_transport_destroy(client);
+        rocketnet_server_transport_destroy(server);
+        rocketnet_term();
+        CHECK(live_bytes.load() == 0);
         return 1;
     }
     const int batch_size = payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES ? 64 : 16;
