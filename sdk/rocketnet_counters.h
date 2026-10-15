@@ -507,7 +507,24 @@
     /* send records (tla/RNSentHistory.tla). Advisory: the packet is still */ \
     /* transmitted. PATH_LOSS: it moves only when the path loses packets. */ \
     /* appended: indices are the contract. */ \
-    X( SEND_HISTORY_LOST, PATH_LOSS, NONE )
+    X( SEND_HISTORY_LOST, PATH_LOSS, NONE ) \
+    \
+    /* RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a */ \
+    /* wire violation, counted once per record, and each ends the */ \
+    /* connection with ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION. A record */ \
+    /* whose channel is at or past this end's count; a block fragment whose */ \
+    /* count or index disagrees with the block's first-seen count, or whose */ \
+    /* count is above ceil(max_message_bytes / F), or whose length is not F */ \
+    /* (or 1 to F for the last); a record whose span lies outside the */ \
+    /* receive ring; an ordering index a window or more ahead of the */ \
+    /* channel's read index; and the total of every violation that ended a */ \
+    /* connection. REFUSAL: a clean peer never sends one. appended: indices */ \
+    /* are the contract. */ \
+    X( MESSAGE_BAD_CHANNEL, REFUSAL, NONE ) \
+    X( MESSAGE_BAD_BLOCK, REFUSAL, NONE ) \
+    X( MESSAGE_BAD_RING, REFUSAL, NONE ) \
+    X( MESSAGE_ORDERING_AHEAD, REFUSAL, NONE ) \
+    X( MESSAGE_PROTOCOL_VIOLATION, REFUSAL, NONE )
 
 enum
 {

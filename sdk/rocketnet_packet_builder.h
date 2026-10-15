@@ -12,7 +12,6 @@
 
 #include "rocketnet.h"
 #include "rocketnet_allocator.h"
-#include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
@@ -37,6 +36,7 @@
 
 #define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets one builder call tracks, config max_packets_per_update at most this
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
+#define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 
 #define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // RakNet's four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
 
@@ -53,12 +53,17 @@ struct rn_packet_item_t
     uint32_t ordering;              // codes 1, 3, 4
     uint32_t sequencing;            // codes 1, 4
     uint32_t descriptor;            // the send descriptor, or RN_DESCRIPTOR_NONE
+    uint32_t ring;                  // codes 3, 4 and a block: the receive ring offset in 16-byte units
+    uint32_t fragment;              // a block: this fragment's index
+    uint32_t fragments;             // a block: the fragment count - 1 (the wire field)
     uint16_t channel;
     uint8_t code;                   // the wire code the record carries
     uint8_t send_class;             // ROCKETNET_SEND_CLASS_*: the budget's class order
     uint8_t taken;                  // the builder sets this on an item it wrote
     uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
-    uint8_t pad[2];
+    uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
+    uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
+    uint8_t resend;                 // nonzero: an RTO resend, counted and backed off by the caller
 };
 
 struct rn_packet_builder_t

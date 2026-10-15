@@ -94,6 +94,16 @@ static void print_server_config_table( const char * tag )
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( RN_CFG_INT, RN_CFG_UINT64, RN_CFG_BYTES, RN_CFG_STRING )
 }
 
+// The message layer's table (docs/CHANNELS.md 12), whose WIRE fields the CONFIG
+// record carries (STANDARD.md _The CONFIG control record_): num_channels,
+// window_messages, receive_ring_bytes and max_message_bytes print their
+// defaults, so the CONFIG vector's defaults are checked against them.
+
+static void print_message_config_table( const char * tag )
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( RN_CFG_INT, RN_CFG_UINT64, RN_CFG_BYTES, RN_CFG_STRING )
+}
+
 
 
 int main()
@@ -183,6 +193,7 @@ int main()
 
     print_server_config_table( "SERVER" );
     print_client_config_table( "CLIENT" );
+    print_message_config_table( "MESSAGE" );
 
     print_int( "ROCKETNET_HISTORY_PACKETS", ROCKETNET_HISTORY_PACKETS );
     print_int( "ROCKETNET_REPLAY_WINDOW_BITS", ROCKETNET_REPLAY_WINDOW_BITS );
