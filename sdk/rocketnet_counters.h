@@ -368,6 +368,26 @@ enum
     // MESSAGE_SEND_QUEUE_FULL). appended: indices are the contract.
     ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED,
 
+    // Layer 4's dispatch (docs/CHANNELS.md 7.2, 7.3, 7.4, 7.5): a send refused
+    // because its reliability is outside the enabled mask, a receive of an
+    // application record whose code the mask does not admit, an unreliable
+    // record dropped because the send budget could not pay the packet that
+    // would carry it, and the counters the sequenced and receipt cards need,
+    // appended now so those cards run without touching this header. An ordered
+    // record behind its channel's read index is MESSAGE_ORDERING_BEHIND (7.2:
+    // layer 3 already caught the duplicates, so it is a violation).
+    // appended: indices are the contract.
+    ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED,
+    ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED,
+    ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET,
+    ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND,
+    ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE,
+    ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED,
+    ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL,
+    ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL,
+    ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED,
+    ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS,
+
     ROCKETNET_NUM_COUNTERS
 };
 

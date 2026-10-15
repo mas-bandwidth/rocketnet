@@ -721,7 +721,8 @@ ordered trace, and `RNChannel` checks that.
 ### 7.2 Dispatch per record
 
 The decoder (layer 2) gives a record with a code. Layer 3 has already accepted
-it, if it is reliable and not a duplicate. Then:
+it, if it is reliable and not a duplicate. Then `rn_channels_dispatch`
+(`sdk/rocketnet_channel.cpp`) switches over all eight types:
 
 | Code | Action |
 |---|---|
@@ -731,6 +732,15 @@ it, if it is reliable and not a duplicate. Then:
 | 3 | If `o == ordered_read`, deliver now, then **drain** (below). If `o > ordered_read`, copy into the ring at its offset, insert `(channel, o)` into the held index, and keep the descriptor live. If `o < ordered_read`, it is a violation (`MESSAGE_ORDERING_BEHIND`), because a reliable ordered record can only be behind if it is a duplicate, and layer 3 already caught those. |
 | 4 | Same as code 1, except the held copy lives in the ring at its offset. |
 | CONTROL | Go to the endpoint (section 10.3). Never delivered. |
+
+Each later type's case lives in its own file, so its card runs without touching
+the dispatch: `sdk/rocketnet_channel_reliable.cpp` (code 2),
+`sdk/rocketnet_channel_sequenced.cpp` (codes 1 and 4) and
+`sdk/rocketnet_channel_receipts.cpp` (codes 5, 6 and 7). Each holds its
+enabled flag (false today) and its refusal; `rn_channels_dispatch` calls into
+them and counts `MESSAGE_TYPE_NOT_ENABLED` on the way back. Code 0's path is
+complete and code 3's reaches `rn_channels_dispatch_ordered`, which delivers a
+record whose ordering is its channel's turn and holds nothing yet.
 
 **Drain** runs after each ordered delivery on channel `c`:
 
@@ -881,25 +891,36 @@ after numbers wrap; and the `U'` rule prevents slot reuse.
 
 ### 9.3 Writing packets
 
-`write_packets` runs per connection, at most `max_packets_per_update` packets:
+`rn_packet_builder_write` (`sdk/rocketnet_packet_builder.cpp`) runs per
+connection, at most `max_packets_per_update` packets:
 
 1. **Plan:** if the next item is an unreliable message longer than one packet,
    it gets its own large payload (L2.3).
-2. **Fill** a RECORDS packet in this order:
-   - CONFIG, if it has not been written yet;
-   - due resends (6.4);
-   - new items in scheduler order. A reliable item that fails the 6.2 bounds
-     stops new reliable numbering for this call, and unreliable items keep
-     filling.
-   
-   Small unreliable messages pack until the packet is full. A record that does
-   not fit ends the packet; it is never split across packets, except as a
-   block.
-3. **Commit** the packet (6.4). Unreliable data chunks are freed as soon as
-   they are written.
+2. **Fill** a RECORDS packet through layer 2's writer, in the send budget's
+   class order (`sdk/rocketnet_send_budget.h`): retransmits and ordered
+   progress, then new reliable items, then unreliable ones. This order
+   replaces 9.2's virtual-clock order where the two disagree: between classes
+   the budget's rank rules, and 9.2's four priority levels and their strides
+   are the later `rocketnet-four-send-priorities` card. Within a class,
+   channels take turns round robin, one item each, from the cursor the last
+   packet left (17.3 item 4). A record that does not fit ends the packet; it
+   is never split across packets, except as a block.
+3. **Admit** the finished packet against the budget at the class of the first
+   item it carries, at `rocketnet_send_budget_max_wire_bytes` of its payload.
+   A packet the budget cannot pay is not written: a reliable one waits for the
+   next update and is never dropped, an unreliable one is dropped and counted
+   (`MESSAGE_UNRELIABLE_OVER_BUDGET`). Either way the update stops there.
+   `rocketnet_send_budget_settle` refunds the ack block the packet did not use
+   after sealing.
+4. **Commit** the packet (6.4) under the packet id the transport assigned when
+   it finished the packet, never an invented counter, so the sent map's keys
+   are the ids `rocketnet_*_transport_acked_packets` returns and a resend's ack
+   matches the send that produced it. Unreliable data chunks are freed as soon
+   as they are written.
 
 An empty plan writes nothing. The transport's keep-alives and standalone acks
 carry acks when this layer has nothing to send (S:1793-1828).
+
 
 **Checked by** `RNScheduler`, with these properties:
 
