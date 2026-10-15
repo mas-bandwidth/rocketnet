@@ -92,6 +92,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_abi.cpp
     sdk/rocketnet_ack.cpp
     sdk/rocketnet_allocator.cpp
+    sdk/rocketnet_window_send.cpp
     sdk/rocketnet_address.cpp
     sdk/rocketnet_base64.cpp
     sdk/rocketnet_client_protocol.cpp
@@ -108,6 +109,8 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
+    sdk/rocketnet_window_receive.cpp
+    sdk/rocketnet_window_ack.cpp
     sdk/rocketnet_unreliable.cpp
     sdk/rocketnet_network_simulator.cpp
     sdk/rocketnet_platform.cpp

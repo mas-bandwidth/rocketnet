@@ -28,6 +28,8 @@ const char * rocketnet_message_violation_name( int violation )
         case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:          return "MESSAGE_BAD_RING";
         case ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE:          return "MESSAGE_BAD_SIZE";
         case ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL:       return "MESSAGE_BAD_CONTROL";
+        case ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW: return "MESSAGE_NUMBER_OUTSIDE_WINDOW";
+        case ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION:        return "MESSAGE_SLOT_COLLISION";
         default:                                            return "unknown";
     }
 }
