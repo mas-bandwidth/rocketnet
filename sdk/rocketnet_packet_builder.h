@@ -38,6 +38,8 @@
 #define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets one builder call tracks, config max_packets_per_update at most this
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
 
+#define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // RakNet's four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
+
 #define ROCKETNET_PACKET_NUMBER_NONE                    0xFFFFFFFFFFFFFFFFull   // an item that takes no reliable number (I3)
 
 // One item the builder may write: a record's bytes as they sit in the region,
@@ -55,7 +57,8 @@ struct rn_packet_item_t
     uint8_t code;                   // the wire code the record carries
     uint8_t send_class;             // ROCKETNET_SEND_CLASS_*: the budget's class order
     uint8_t taken;                  // the builder sets this on an item it wrote
-    uint8_t pad[3];
+    uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
+    uint8_t pad[2];
 };
 
 struct rn_packet_builder_t
@@ -71,6 +74,9 @@ struct rn_packet_builder_t
     uint32_t round_robin;                       // the channel the last packet took from
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
+
+    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (RakNet's weights, 5.3)
+    uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
 
     struct
     {
