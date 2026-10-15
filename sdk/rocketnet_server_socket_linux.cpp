@@ -1027,6 +1027,29 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
     return provisioned;
 }
 
+// The AF_XDP bind flags for one queue's socket. XDP_ZEROCOPY and XDP_COPY are
+// BIND flags (sockaddr_xdp.sxdp_flags); they never belong in xdp_flags, where
+// bit 2 reads as XDP_FLAGS_DRV_MODE and so asks for nothing at bind. Zero-copy
+// is forced on a natively attached program, so a driver that cannot do it
+// refuses the bind rather than falling back silently; the caller then binds
+// in explicit copy mode and says so. A program attached in skb mode always
+// binds in copy mode. The static_asserts below are the checks: they run in
+// every build and need no root, no NIC and no kernel.
+
+#define ROCKETNET_SERVER_XSK_XDP_FLAGS 0u
+
+static constexpr __u16 rocketnet_server_xsk_bind_flags( bool attached_native, bool zero_copy_refused )
+{
+    return (__u16) ( XDP_USE_NEED_WAKEUP | ( ( attached_native && !zero_copy_refused ) ? XDP_ZEROCOPY : XDP_COPY ) );
+}
+
+static_assert( ( rocketnet_server_xsk_bind_flags( true, false ) & XDP_ZEROCOPY ) != 0, "a natively attached queue requests zero-copy at bind" );
+static_assert( ( rocketnet_server_xsk_bind_flags( true, false ) & XDP_COPY ) == 0, "a zero-copy bind never also asks for copy mode" );
+static_assert( ( rocketnet_server_xsk_bind_flags( true, false ) & XDP_USE_NEED_WAKEUP ) != 0, "every bind keeps need-wakeup" );
+static_assert( rocketnet_server_xsk_bind_flags( true, true ) == ( XDP_USE_NEED_WAKEUP | XDP_COPY ), "a refused zero-copy bind retries in explicit copy mode" );
+static_assert( rocketnet_server_xsk_bind_flags( false, false ) == ( XDP_USE_NEED_WAKEUP | XDP_COPY ), "an skb-mode attach binds in copy mode" );
+static_assert( ( ROCKETNET_SERVER_XSK_XDP_FLAGS & ( XDP_ZEROCOPY | XDP_COPY ) ) == 0, "bind-mode flags never go in xdp_flags" );
+
 rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * public_address_string, const uint8_t * filter_value, int num_queues, int num_os_cpus )
 {
     rocketnet_assert( num_queues >= 1 );
@@ -1457,24 +1480,62 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        // create xdp socket
+        // create xdp socket: zero-copy is requested as a BIND flag on a natively
+        // attached program (see rocketnet_server_xsk_bind_flags). A driver that
+        // refuses it gets a fresh umem and an explicit copy-mode bind, logged by
+        // queue, so the mode a queue runs in is always stated, never inferred.
 
-        struct xsk_socket_config xsk_config;
+        bool zero_copy_refused = false;
 
-        memset( &xsk_config, 0, sizeof(xsk_config) );
-
-        xsk_config.rx_size = ROCKETNET_XDP_RECV_QUEUE_SIZE;
-        xsk_config.tx_size = ROCKETNET_XDP_SEND_QUEUE_SIZE;
-        xsk_config.xdp_flags = XDP_ZEROCOPY;     
-        xsk_config.bind_flags = XDP_USE_NEED_WAKEUP;
-        xsk_config.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
-
-        result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
-        if ( result )
+        for ( ;; )
         {
-            rocketnet_error( "server could not create xsk socket for queue %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
+            struct xsk_socket_config xsk_config;
+
+            memset( &xsk_config, 0, sizeof(xsk_config) );
+
+            xsk_config.rx_size = ROCKETNET_XDP_RECV_QUEUE_SIZE;
+            xsk_config.tx_size = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+            xsk_config.xdp_flags = ROCKETNET_SERVER_XSK_XDP_FLAGS;
+            xsk_config.bind_flags = rocketnet_server_xsk_bind_flags( server_socket->attached_native, zero_copy_refused );
+            xsk_config.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
+
+            result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
+            if ( result == 0 )
+                break;
+
+            if ( !( xsk_config.bind_flags & XDP_ZEROCOPY ) )
+            {
+                rocketnet_error( "server could not create xsk socket for queue %d (%s)", queue, strerror( -result ) );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+
+            // The failed bind has consumed the umem's fill and completion
+            // rings, so the copy-mode retry starts from a fresh umem over the
+            // same buffer.
+
+            rocketnet_warn( "xdp queue %d: the driver on %s refused a zero-copy bind (%s): falling back to copy mode", queue, interface_name, strerror( -result ) );
+            zero_copy_refused = true;
+            socket->xsk = NULL;
+            xsk_umem__delete( socket->umem );
+            socket->umem = NULL;
+            result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
+            if ( result )
+            {
+                rocketnet_error( "server could not recreate umem for queue %d", queue );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+        }
+
+        {
+            struct xdp_options options;
+            socklen_t options_bytes = sizeof( options );
+            memset( &options, 0, sizeof( options ) );
+            if ( getsockopt( xsk_socket__fd( socket->xsk ), SOL_XDP, XDP_OPTIONS, &options, &options_bytes ) == 0 )
+                rocketnet_info( "xdp queue %d bound in %s mode", queue, ( options.flags & XDP_OPTIONS_ZEROCOPY ) ? "zero-copy" : "copy" );
+            else
+                rocketnet_warn( "xdp queue %d: could not read the socket's bind mode (%s)", queue, strerror( errno ) );
         }
 
         // configure the xdp socket to receive packets from the xdp program

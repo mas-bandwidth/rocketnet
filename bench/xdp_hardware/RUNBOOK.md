@@ -174,7 +174,13 @@ green.
 3. **`zero_copy_bind_per_queue`**: the receiver reads every AF_XDP socket it
    holds with `getsockopt(XDP_OPTIONS)`. Each queue's socket on the
    receiver port must report `XDP_OPTIONS_ZEROCOPY`. A fall to copy mode
-   fails the row and never counts as a pass.
+   fails the row and never counts as a pass. The transport forces
+   `XDP_ZEROCOPY` as a bind flag on a natively attached program, so a
+   driver that cannot do zero-copy refuses the bind; the transport then
+   binds that queue in explicit copy mode and logs `the driver on <iface>
+   refused a zero-copy bind`. Every queue logs `xdp queue <n> bound in
+   zero-copy mode` or `... copy mode` in the receiver's log; the row
+   judges by the `XDP_OPTIONS` reading, never by the log line.
 4. **`irq_and_core_pinning`**: each of the interface's IRQ lines in
    `/proc/interrupts` has a single-CPU `smp_affinity_list`, in the isolated
    set, no CPU shared. For every queue, a receiver thread's
