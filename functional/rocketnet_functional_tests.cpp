@@ -1043,8 +1043,6 @@ void rocketnet_test_platform_socket()
         rocketnet_platform_socket_destroy( socket );
     }
 
-#if ROCKETNET_PLATFORM_HAS_IPV6
-
     // non-blocking socket (ipv6)
     {
         rocketnet_address_t bind_address;
@@ -1103,7 +1101,6 @@ void rocketnet_test_platform_socket()
         rocketnet_platform_socket_destroy( socket );
     }
 
-#endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
 void rocketnet_test_receive_drops_oversize_datagram()
@@ -1293,9 +1290,7 @@ void rocketnet_test_platform_batch_pump()
 {
     rocketnet_test_pump_exchange( "0.0.0.0", "127.0.0.1", ROCKETNET_TEST_EXPECTED_PUMP );
 
-#if ROCKETNET_PLATFORM_HAS_IPV6
     rocketnet_test_pump_exchange( "[::]", "[::1]", ROCKETNET_TEST_EXPECTED_PUMP );
-#endif // #if ROCKETNET_PLATFORM_HAS_IPV6
 }
 
 void rocketnet_test_platform_batch_pump_degraded()
@@ -2874,7 +2869,7 @@ void rocketnet_test_server_gso_probe()
 // including equal-size same-destination runs, the shape GSO coalesces --
 // and the peer must receive each byte-exact.
 
-static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, const char * peer_string, const char * server_host, int flags, int expect_ipv4_from )
+static void rocketnet_test_server_gso_wire_exchange( const char * test_name, const char * bind_string, const char * peer_string, const char * server_host, int flags, int expect_ipv4_from )
 {
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, bind_string ) );
@@ -2998,6 +2993,8 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
     rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] >= ROCKETNET_GSO_TEST_PACKETS );
     if ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT )
         rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] > 0 );
+    else
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED GSO_SENDS assertion: this host has no UDP_SEGMENT feature; the segmented-send counter cannot be observed]", test_name );
 
     // a runt and an oversize packet die at the driver's size pass -- one
     // below the smallest packet a server reads, one above the receive
@@ -3123,7 +3120,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
         }
         else
         {
-            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_gso_super_datagram_split [SKIPPED GRO_BATCHES assertion: this host delivers UDP_SEGMENT super-datagrams uncoalesced over loopback (tx-udp-segmentation off?); segments still surfaced byte-exact above]" );
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED GRO_BATCHES assertion: this host delivers UDP_SEGMENT super-datagrams uncoalesced over loopback (tx-udp-segmentation off?); segments still surfaced byte-exact above]", test_name );
         }
     }
 
@@ -3133,7 +3130,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * bind_string, c
 
 void rocketnet_test_server_gso_wire_ipv4()
 {
-    rocketnet_test_server_gso_wire_exchange( "127.0.0.1", "127.0.0.1", "127.0.0.1", 0, 1 );
+    rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_ipv4", "127.0.0.1", "127.0.0.1", "127.0.0.1", 0, 1 );
 }
 
 void rocketnet_test_server_gso_wire_plain()
@@ -3142,12 +3139,12 @@ void rocketnet_test_server_gso_wire_plain()
     // plain sendmmsg/recvmmsg batching. the fallback path is never the
     // untested path.
 
-    rocketnet_test_server_gso_wire_exchange( "127.0.0.1", "127.0.0.1", "127.0.0.1", ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO, 1 );
+    rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_plain", "127.0.0.1", "127.0.0.1", "127.0.0.1", ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO, 1 );
 }
 
 void rocketnet_test_server_gso_wire_ipv6()
 {
-    rocketnet_test_server_gso_wire_exchange( "[::1]", "[::1]", "[::1]", 0, 0 );
+    rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_ipv6", "[::1]", "[::1]", "[::1]", 0, 0 );
 }
 
 void rocketnet_test_server_gso_wire_dual_stack()
@@ -3155,7 +3152,7 @@ void rocketnet_test_server_gso_wire_dual_stack()
     // an ipv6 wildcard listen accepts an ipv4 peer, whose source surfaces
     // as native ipv4 -- the v4-mapped normalization the standard makes law
 
-    rocketnet_test_server_gso_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
+    rocketnet_test_server_gso_wire_exchange( "test_server_gso_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );
 }
 
 void rocketnet_test_server_gso_send_overflow()
@@ -3577,6 +3574,31 @@ void rocketnet_test_transport_reply_opens_a_later_update()
 
 extern void rocketnet_test_lifecycle_driver();
 
+// a test a platform's build compiles out still registers its name, printing a
+// named skip instead of vanishing from the count (a skipped test is named and
+// logged, never silent)
+
+#define ROCKETNET_FUNCTIONAL_SKIP( fn, test_name, reason ) \
+    static void fn() \
+    { \
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, test_name " [SKIPPED " reason "]" ); \
+    }
+
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_gso, "test_server_driver_pin_gso", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_xdp, "test_server_driver_pin_xdp", "linux only: the xdp driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_ladder_fall, "test_server_driver_ladder_fall", "linux only: the gso/xdp ladder is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_probe, "test_server_gso_probe", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_ipv4, "test_server_gso_wire_ipv4", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_plain, "test_server_gso_wire_plain", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_ipv6, "test_server_gso_wire_ipv6", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_dual_stack, "test_server_gso_wire_dual_stack", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_send_overflow, "test_server_gso_send_overflow", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
+
 struct rocketnet_functional_test_t
 {
     const char * name;
@@ -3601,6 +3623,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
+#else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    { "test_platform_batch_pump_refused_destination", rocketnet_functional_skip_batch_pump_refused_destination },
+    { "test_platform_pump_zero_length_chaff", rocketnet_functional_skip_pump_zero_length_chaff },
 #endif
     { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
@@ -3612,6 +3637,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_server_driver_pin_iocp", rocketnet_functional_skip_server_driver_pin_iocp },
 #endif
     { "test_server_port_zero_driver", rocketnet_test_server_port_zero_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -3624,10 +3651,23 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_server_driver_pin_gso", rocketnet_functional_skip_server_driver_pin_gso },
+    { "test_server_driver_pin_xdp", rocketnet_functional_skip_server_driver_pin_xdp },
+    { "test_server_driver_ladder_fall", rocketnet_functional_skip_server_driver_ladder_fall },
+    { "test_server_gso_probe", rocketnet_functional_skip_server_gso_probe },
+    { "test_server_gso_wire_ipv4", rocketnet_functional_skip_server_gso_wire_ipv4 },
+    { "test_server_gso_wire_plain", rocketnet_functional_skip_server_gso_wire_plain },
+    { "test_server_gso_wire_ipv6", rocketnet_functional_skip_server_gso_wire_ipv6 },
+    { "test_server_gso_wire_dual_stack", rocketnet_functional_skip_server_gso_wire_dual_stack },
+    { "test_server_gso_send_overflow", rocketnet_functional_skip_server_gso_send_overflow },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
     { "test_driver_pump_alias", rocketnet_test_driver_pump_alias },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_server_driver_pin_msgx", rocketnet_functional_skip_server_driver_pin_msgx },
+    { "test_driver_pump_alias", rocketnet_functional_skip_driver_pump_alias },
 #endif
     { "test_driver_all_skipped_uses_auto", rocketnet_test_driver_all_skipped_uses_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases },

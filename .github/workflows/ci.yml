@@ -309,10 +309,11 @@ jobs:
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
   # represent: its CRT has no set-but-empty variable, so that one case is
-  # skipped there, named and logged with that reason. Exactly two tests
-  # are compiled out on windows, named and logged by the suite itself: the
-  # refused-destination and zero-length-chaff pump tests, whose raw-socket
-  # injector is posix-only.
+  # skipped there, named and logged with that reason. Tests compiled out
+  # on windows are named and logged by the suite itself as named skips:
+  # the refused-destination and zero-length-chaff pump tests, whose
+  # raw-socket injector is posix-only, and the gso/xdp and msgx rung
+  # tests windows does not build.
   #
   # RELEASE ONLY, IN TWO PARALLEL LEGS (2026-09-13).
   #
@@ -381,10 +382,11 @@ jobs:
   # engine and the portable rung on the one platform whose only rung is
   # portable -- EXCEPT the empty-value distinction, which windows cannot
   # represent: its CRT has no set-but-empty variable, so that one case is
-  # skipped there, named and logged with that reason. Exactly two tests are
-  # compiled out on windows, named and logged by the suite itself: the
-  # refused-destination and zero-length-chaff pump tests, whose raw-socket
-  # injector is posix-only.
+  # skipped there, named and logged with that reason. Tests compiled out
+  # on windows are named and logged by the suite itself as named skips:
+  # the refused-destination and zero-length-chaff pump tests, whose
+  # raw-socket injector is posix-only, and the gso/xdp and msgx rung
+  # tests windows does not build.
 
   build-and-test-windows:
     name: windows-2025 / Release (${{ matrix.leg }})
@@ -583,6 +585,7 @@ jobs:
 
       - name: Build the harness
         run: |
+          mkdir -p bin
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
