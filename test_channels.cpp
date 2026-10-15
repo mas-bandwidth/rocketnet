@@ -1426,18 +1426,27 @@ static void test_channels_allocator_descriptor_pool()
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free );
 
-    // a free returns the descriptor and its chunk
+    // a free returns the descriptor and its chunk, but an exhausted region
+    // still refuses the next send until reset (ExhaustionOnlyLeadsToDisconnect)
 
     rn_region_send_free( region, descriptors[5] );
     check( region->descriptors_free == 1 );
     check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == small_free + 1 );
-    check( rn_region_send_alloc( region, 10 ) == descriptors[5] );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+
+    // the reset the model names ends exhaustion; sending works again
+
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+    check( region->descriptors_free == 16 );
+    const uint32_t after_reset = rn_region_send_alloc( region, 10 );
+    check( after_reset != RN_DESCRIPTOR_NONE );
+    rn_region_send_free( region, after_reset );
+    check( region->descriptors_free == 16 );
 
     // a store refusal takes no descriptor, and is counted as itself
 
-    for ( int i = 0; i < 16; i++ )
-        rn_region_send_free( region, descriptors[i] );
-    check( region->descriptors_free == 16 );
     check( rn_region_send_alloc( region, config.max_message_bytes + 1 ) == RN_DESCRIPTOR_NONE );   // too large is a refusal, never a store attempt
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
@@ -1721,12 +1730,13 @@ static void rn_soak_send( rn_soak_side_t * side )
 
         const uint64_t store_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
         const uint64_t queue_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
+        const bool already_exhausted = rn_region_exhausted( region );
         const uint32_t d = rn_region_send_alloc( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
         {
             const uint64_t store_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
             const uint64_t queue_now = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
-            check( ( store_now - store_full ) + ( queue_now - queue_full ) == 1 );       // exactly one reason, counted once
+            check( ( store_now - store_full ) + ( queue_now - queue_full ) == ( already_exhausted ? 0u : 1u ) );   // a fresh exhaustion counts its one reason; an already-exhausted region refuses without re-counting the store or queue
             side->refused_store += store_now - store_full;
             side->refused_queue += queue_now - queue_full;
             break;
@@ -2114,7 +2124,10 @@ static void test_channels_allocator_no_live_allocation()
                 rn_region_t * ends[2] = { rn_arena_region( server, s ), rn_arena_region( clients[s], 0 ) };
                 for ( int e = 0; e < 2; e++ )
                 {
-                    check( ends[e]->descriptors_free < ends[e]->queue );
+                    // sends in flight, unless the region is already exhausted:
+                    // then every send is refused until the reset, so nothing
+                    // in flight is expected (ExhaustionOnlyLeadsToDisconnect)
+                    check( ends[e]->descriptors_free < ends[e]->queue || rn_region_exhausted( ends[e] ) );
                     rn_region_carve( ends[e] );
                     check( ends[e]->descriptors_free == ends[e]->queue );
                     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
@@ -4310,6 +4323,13 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
             const int is_block = ( next_message % 6 == 0 );
             const int msg_bytes = is_block ? (int) ( 2 * F + 32 ) : ( ( next_message % 3 == 0 ) ? 256 : 48 );
 
+            // bound the sender so the region never exhausts: only send when
+            // the store holds the message's chunks, and let acks free them
+            // before sending more (exhausted regions refuse until reset)
+            const int store_class = rn_send_store_class_for( msg_bytes );
+            const uint32_t chunks_needed = rn_send_store_chunks_needed( msg_bytes );
+            if ( rn_send_store_free_chunks( &source->store, store_class ) < chunks_needed )
+                break;
             const uint32_t d = rn_region_send_alloc( source, msg_bytes );
             if ( d == RN_DESCRIPTOR_NONE )
                 break;

@@ -192,9 +192,10 @@ static void memory_isolation_between_slots()
     check( rn_region_send_alloc( b, 1000 ) != RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( b ) );
 
-    // A's exhaustion is a kick for A only, counted once
+    // A's exhaustion is a kick for A only; the refusal of A's further send
+    // counts on the exhaustion counter (the one at the top of the send path)
     check( rn_connection_memory_decide( a ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
     free( b_memory );
     rn_arena_destroy( arena );
@@ -233,11 +234,13 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 1 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
-    // sticky: a later refusal does not clear it or count it again
+    // sticky: a later refusal stays refused and still takes nothing; the
+    // refusal counts on the exhaustion counter, while rn_region_exhaust
+    // itself stays idempotent (it adds no second count)
     check( rn_region_send_alloc( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
     for ( int update = 0; update < 3; update++ )
         check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
 
@@ -251,7 +254,7 @@ static void exhaustion_is_a_kick_with_its_reason()
     check( cm_fill( q, 10, NULL, 0 ) == 16 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
     check( rn_connection_memory_decide( q ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
 
     // the kick resets the region for the slot's next client
     rn_region_reset( region );
@@ -441,7 +444,52 @@ static void no_allocation_after_create()
     cm_restore();
 }
 
+// RNConnectionMemory ExhaustionOnlyLeadsToDisconnect: an exhausted region
+// refuses every send until reset, even after a free returns room. This is the
+// model's trace Use, Exhaust, Release, Use (refused), Reset, Use (granted).
+static void exhausted_region_refuses_sends_until_reset()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.send_queue_messages = 16;
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    // Use until Exhaust: the descriptor pool runs out
+    uint32_t taken[16];
+    for ( int i = 0; i < 16; i++ )
+    {
+        taken[i] = rn_region_send_alloc( region, 10 );
+        check( taken[i] != RN_DESCRIPTOR_NONE );
+    }
+    check( region->descriptors_free == 0 );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    const uint64_t exhausted_after = counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED];
+
+    // Release returns a descriptor, but the region still refuses the next Use
+    rn_region_send_free( region, taken[2] );
+    check( region->descriptors_free == 1 );
+    check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
+    check( rn_region_exhausted( region ) );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == exhausted_after + 1 );
+
+    // Reset clears exhaustion; the next Use is granted again
+    rn_region_reset( region );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rn_region_send_alloc( region, 10 ) != RN_DESCRIPTOR_NONE );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( memory_isolation_between_slots );
+REGISTER_UNIT_TEST( exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( exhaustion_is_a_kick_with_its_reason );
 REGISTER_UNIT_TEST( reused_slot_starts_clean );
 REGISTER_UNIT_TEST( user_block_is_used_and_nothing_else );
