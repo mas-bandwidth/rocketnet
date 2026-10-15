@@ -128,7 +128,7 @@ public static unsafe partial class RocketNet
     public const int MessageErrorMessageMemoryExhausted = 5;
 
     /// <summary>Number of counters in <see cref="Counter"/>. The length of the counters block.</summary>
-    public const int NumCounters = 215;
+    public const int NumCounters = 217;
 
     /// <summary>Counter indices, mirroring sdk/rocketnet_counters.h: one counter per distinct
     /// reason a packet is rejected, arrival counted separately from outcome, monotonic and
@@ -327,7 +327,6 @@ public static unsafe partial class RocketNet
         SendArenaFull,
         ReceiveCursorTooSmall,
         SendHistoryOverflow,
-        SendHistoryLost,
         SendLeaseFull,
         IntegrityLimitReached,
         ClientCookieWrongSize,
@@ -352,8 +351,24 @@ public static unsafe partial class RocketNet
         MessageReceiptRingFull,
         MessageReceiptAcked,
         MessageReceiptLoss,
+        ConnectionResponseInternalError,
+        ConnectionRequestMappingSaltMismatch,
+        SendHistoryLost,
     }
 #pragma warning restore 1591
+
+    /// <summary>What a clean run shows of a <see cref="Counter"/>. Every counter has exactly one class.</summary>
+    public enum CounterClass
+    {
+        /// <summary>Reads 0 on a clean path at any round trip. A resource exhaustion is a refusal.</summary>
+        Refusal = 0,
+        /// <summary>Moves on a clean path by design: success outcomes, lifecycle and side counters.</summary>
+        Expected = 1,
+        /// <summary>Moves only when the path loses or reorders packets.</summary>
+        PathLoss = 2,
+        /// <summary>A RECEIVED counter: a packet of the type arrived.</summary>
+        Arrival = 3,
+    }
 
     // -----------------------------------------
     //                                 structs
@@ -1193,6 +1208,33 @@ public static unsafe partial class RocketNet
 
     /// <summary>The name of a counter.</summary>
     public static string CounterName( Counter counter ) => Marshal.PtrToStringUTF8( counter_name( (int) counter ) ) ?? string.Empty;
+
+    [DllImport( Lib, EntryPoint = "rocketnet_counter_class", CallingConvention = CallingConvention.Cdecl )]
+    static extern int counter_class( int counter );
+
+    [DllImport( Lib, EntryPoint = "rocketnet_counter_class_name", CallingConvention = CallingConvention.Cdecl )]
+    static extern IntPtr counter_class_name( int counterClass );
+
+    [DllImport( Lib, EntryPoint = "rocketnet_counters_conserved", CallingConvention = CallingConvention.Cdecl )]
+    static extern int counters_conserved( IntPtr counters, byte* report, int reportBytes );
+
+    /// <summary>The class of a counter: what a clean run shows of it.</summary>
+    public static CounterClass ClassOf( Counter counter ) => (CounterClass) counter_class( (int) counter );
+
+    /// <summary>The class's name: "refusal", "expected", "path_loss" or "arrival".</summary>
+    public static string CounterClassName( CounterClass counterClass ) => Marshal.PtrToStringUTF8( counter_class_name( (int) counterClass ) ) ?? string.Empty;
+
+    /// <summary>True when every counter family balances: each RECEIVED counter equals the sum of
+    /// the outcomes that name it as their family. Read the block at a quiescent point, on the
+    /// thread that owns it. When false, <paramref name="report"/> names the first unbalanced
+    /// family as "RECEIVED_NAME received=n outcomes=m".</summary>
+    public static bool CountersConserved( IntPtr counters, out string report )
+    {
+        byte* buffer = stackalloc byte[256];
+        int conserved = counters_conserved( counters, buffer, 256 );
+        report = Marshal.PtrToStringUTF8( (IntPtr) buffer ) ?? string.Empty;
+        return conserved != 0;
+    }
 
     // -----------------------------------------
     //                              frame sync

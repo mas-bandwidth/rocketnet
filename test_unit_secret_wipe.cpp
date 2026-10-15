@@ -33,6 +33,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 static const uint8_t k_canary = 0xA5;
 
 static void plant_canary( uint8_t * bytes, int count )
@@ -142,6 +145,7 @@ static void TestClientTokenKeysAreWipedOnDisconnect()
     rocketnet_unit_check( !canary_survives( client.token.client_to_server_key, ROCKETNET_KEY_BYTES ) );
     rocketnet_unit_check( !canary_survives( client.token.server_to_client_key, ROCKETNET_KEY_BYTES ) );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +172,7 @@ static void TestClientEphemeralSecretWipedOnCookieTimeout()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // The connect-token-expired terminal (-7): the token's lifetime elapses during
@@ -189,6 +194,7 @@ static void TestClientEphemeralSecretWipedOnTokenExpired()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // The denied terminal (-1): a sealed denied that opens with the handshake keys
@@ -227,6 +233,7 @@ static void TestClientEphemeralSecretWipedOnDenied()
                                                                     100.6, payload, sizeof(payload), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // The connection-request timeout (-3): reach sending-connection-request via
@@ -249,6 +256,7 @@ static void TestClientEphemeralSecretWipedOnConnectionRequestTimeout()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // The connection-response timeout (-4): feed a valid challenge from state 2;
@@ -301,6 +309,7 @@ static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // Server verify and decrypt failure paths (signature fail before open, sealed

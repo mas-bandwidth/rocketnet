@@ -206,6 +206,10 @@ do                                                                              
     }                                                                                                           \
 } while(0)
 
+// the exact-delta helper and the conservation assert, checked by this suite
+#define ROCKETNET_COUNTERS_CHECK rocketnet_check
+#include "../test/counters_expect.h"
+
 void rocketnet_test_time()
 {
     double start = rocketnet_platform_time();
@@ -2415,6 +2419,9 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
 
 static void rocketnet_test_server_teardown( struct rocketnet_test_server_t * test )
 {
+    // every test that owns a server ends with the server's counters balanced
+    rocketnet_counters_assert_conserved( &test->counters );
+
     rocketnet_encryption_map_destroy( test->server.encryption_map );
     rocketnet_used_token_history_destroy( test->server.used_token_history );
     rocketnet_admitted_token_set_destroy( test->server.admitted_token_set );
@@ -2476,13 +2483,8 @@ static void rocketnet_test_expect_reason( struct rocketnet_test_server_t * test,
                                           const struct rocketnet_counters_t * before,
                                           int reason )
 {
-    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
-    {
-        uint64_t expected = before->values[i];
-        if ( i == ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED || i == reason )
-            expected++;
-        rocketnet_check( test->counters.values[i] == expected );
-    }
+    rocketnet_counters_expect( before, &test->counters, { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
+                                                          { reason, 1 } } );
 }
 
 // the cookie exchange as a legitimate client performs it: first request gets
@@ -2610,8 +2612,10 @@ void rocketnet_test_challenge_resend_checks_salt()
     const uint8_t different_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 8, 7, 6, 5, 4, 3, 2, 1 };
     memcpy( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, different_salt, sizeof(different_salt) );
     response_bytes = 0;
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    const struct rocketnet_counters_t before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -4781,6 +4785,7 @@ void rocketnet_test_client_payload_before_first_keep_alive()
     rocketnet_check( client.client_index == 0 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_keep_alive_suppression()
@@ -4815,6 +4820,7 @@ void rocketnet_test_client_keep_alive_suppression()
     rocketnet_check( packet_bytes == ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_keep_alive_invalid_index_has_no_effect()
@@ -4904,6 +4910,7 @@ void rocketnet_test_client_keep_alive_invalid_index_has_no_effect()
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
 
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 }
 
@@ -5040,6 +5047,7 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
     rocketnet_check( (double) payloads_sent_while_unestablished * tick >= connected_time - establishment_time - 2.0 * tick );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_keep_alive_pacing_survives_early_ack()
@@ -5167,6 +5175,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
     rocketnet_check( client.client_index == 0 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_connect_validations()
@@ -5205,6 +5214,7 @@ void rocketnet_test_client_connect_validations()
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 10, 10 );
     rocketnet_check( !rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS + 10 ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 void rocketnet_test_client_server_connect()
@@ -5279,6 +5289,7 @@ void rocketnet_test_client_server_connect()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] == (uint64_t) ( burst_count - 1 ) );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 static int rocketnet_test_token_keys_are_zero( const struct rocketnet_connect_token_t * token )
@@ -5323,6 +5334,7 @@ void rocketnet_test_client_token_keys_wiped_on_disconnect()
     rocketnet_check( rocketnet_test_token_keys_are_zero( &client.token ) );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_server_loss_walk()
@@ -5357,6 +5369,7 @@ void rocketnet_test_client_server_loss_walk()
         rocketnet_check( rocketnet_test_pump( &test, &client, drop_types[i], 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 }
 
@@ -5383,6 +5396,7 @@ void rocketnet_test_client_denied_when_server_full()
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_ACCEPTED] == 1 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 static int rocketnet_test_bytes_are_zero( const uint8_t * p, size_t n )
@@ -5480,6 +5494,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
         rocketnet_check( rocketnet_test_bytes_are_zero( client.client_ephemeral_secret_key, sizeof(client.client_ephemeral_secret_key) ) );
 
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 }
 
@@ -5581,6 +5596,7 @@ void rocketnet_test_client_timeout_paths()
             rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 
     // the total connect deadline: per-state timers disabled by a negative
@@ -5592,6 +5608,7 @@ void rocketnet_test_client_timeout_paths()
     for ( double time = 100.0; time < 107.0; time += 0.05 )
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 void rocketnet_test_client_cookie_injection()
@@ -5647,6 +5664,7 @@ void rocketnet_test_client_cookie_injection()
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, real_cookie, sizeof(real_cookie), 100.0, payload, sizeof(payload), &payload_bytes ) );
     rocketnet_check( client.has_cookie );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 // the AEAD integrity limit, per the standard's _Replay Protection_: each end
@@ -5897,6 +5915,7 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( rocketnet_test_keys_are_zero( &client.keys ) );
 
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 
     // --- the client: the attempt accumulates, and the limit disconnects with the keys zeroed ---
@@ -5951,6 +5970,7 @@ void rocketnet_test_integrity_limit()
         rocketnet_check( client_counters.values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] == 1 );
 
         rocketnet_test_server_teardown( &test );
+        rocketnet_counters_assert_conserved( &client_counters );
     }
 }
 
@@ -6113,6 +6133,7 @@ void rocketnet_test_client_server_harsh_wire()
 
     rocketnet_network_simulator_destroy( simulator );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_server_lossy_wire()
@@ -6206,6 +6227,7 @@ void rocketnet_test_client_server_lossy_wire()
 
     rocketnet_network_simulator_destroy( simulator );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_swarm()
@@ -6430,124 +6452,12 @@ void rocketnet_test_swarm()
 
     // received == sum of outcomes, for every packet family the server saw --
     // the accounting invariant from the standard, asserted over the whole
-    // storm, so no packet was ever half-counted or silently dropped
+    // storm by the library's own call (teardown asserts it again), so no
+    // packet was ever half-counted or silently dropped
+
+    rocketnet_counters_assert_conserved( &test.counters );
 
     {
-        uint64_t request_outcomes =
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
-        rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] == request_outcomes );
-    }
-
-    {
-        uint64_t response_outcomes =
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] +
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] +
-            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] == response_outcomes );
-    }
-
-    {
-        // RECEIVED == the sum of outcomes, every session type, every
-        // outcome the type can produce -- ACK_UNKNOWN_SEQUENCE and
-        // ACKED_BATCH_FULL are side counters outside the invariant
-
-        uint64_t keep_alive_outcomes =
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE] +
-            counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == keep_alive_outcomes );
-
-        uint64_t payload_outcomes =
-            counters[ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE] +
-            counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] == payload_outcomes );
-
-        uint64_t disconnect_outcomes =
-            counters[ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE] +
-            counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] == disconnect_outcomes );
-
-        uint64_t ack_outcomes =
-            counters[ROCKETNET_COUNTER_ACK_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_ACK_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED] +
-            counters[ROCKETNET_COUNTER_ACK_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_ACK_NOT_CONNECTED] +
-            counters[ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK] +
-            counters[ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE] +
-            counters[ROCKETNET_COUNTER_ACK_ACCEPTED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_ACK_RECEIVED] == ack_outcomes );
-
-        uint64_t fragment_outcomes =
-            counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
-            counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
-        rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == fragment_outcomes );
-
         // every fragmented payload sent arrived whole on the direct wire:
         // 10 fragmenting clients, three rounds -- and nothing was ever
         // abandoned or dropped at a full batch
@@ -6572,6 +6482,7 @@ void rocketnet_test_swarm()
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR] == 0 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] == 0 );
@@ -6585,6 +6496,7 @@ void rocketnet_test_swarm()
     rocketnet_free( NULL, clients );
     rocketnet_free( NULL, addresses );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_server_disconnect_client()
@@ -6634,6 +6546,7 @@ void rocketnet_test_server_disconnect_client()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT] == 1 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_server_keyless_config_has_no_keys()
@@ -6790,6 +6703,7 @@ void rocketnet_test_client_rtt_handshake()
     rocketnet_check( fabs( client.rtt_estimate - 0.03 ) < 1e-9 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 
@@ -6852,6 +6766,7 @@ void rocketnet_test_payload_size_sweep()
     rocketnet_check( rocketnet_server_protocol_write_payload( &test.server, 0, payload, ROCKETNET_MAX_PAYLOAD_BYTES + 1, time, packet ) == 0 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_hostname_resolve_localhost()
@@ -8795,6 +8710,7 @@ void rocketnet_test_ack_debt()
     rocketnet_check( out_bytes == 0 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_ack_non_elicitation()
@@ -8884,6 +8800,7 @@ void rocketnet_test_ack_non_elicitation()
     }
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_ack_replay_protection()
@@ -8950,6 +8867,7 @@ void rocketnet_test_ack_replay_protection()
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED] == 1 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 // seals a session packet whose plaintext is exactly the given bytes -- for
@@ -9195,6 +9113,7 @@ void rocketnet_test_ack_bad_block_refusals()
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_ack_asymmetric_rate()
@@ -9346,6 +9265,7 @@ void rocketnet_test_ack_asymmetric_rate()
 
     rocketnet_free( NULL, acked_seen );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 // --- the send history on a lossy, long path ---
@@ -9737,6 +9657,7 @@ void rocketnet_test_ack_rtt_freshness()
     rocketnet_check( test.server.acks->endpoints[0].has_rtt_sample );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_ack_payload_seal_with_ranges()
@@ -9831,6 +9752,7 @@ void rocketnet_test_ack_payload_seal_with_ranges()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE] == 0 );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 
@@ -10314,6 +10236,7 @@ static void rocketnet_test_fragment_pair_setup( struct rocketnet_test_fragment_p
 
 static void rocketnet_test_fragment_pair_teardown( struct rocketnet_test_fragment_pair_t * pair )
 {
+    rocketnet_counters_assert_conserved( &pair->client_counters );
     rocketnet_reassembly_set_destroy( pair->client.reassembly );
     rocketnet_test_server_teardown( &pair->test );
 }
@@ -10468,24 +10391,7 @@ void rocketnet_test_fragment_client_to_server()
     rocketnet_check( pair.test.server.acks->endpoints[0].highest_received_sequence >= (uint64_t) ( 2 * ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) + ROCKETNET_TEST_FRAGMENT_COUNT( 16384 ) ) );
 
     // received == sum of outcomes for the fragment family, the server side
-    const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_STALE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] +
-                              counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED];
-    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == outcomes );
+    rocketnet_counters_assert_conserved( &pair.test.counters );
 
     rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
 
@@ -10532,23 +10438,7 @@ void rocketnet_test_fragment_server_to_client()
     rocketnet_check( pair.client.ack.ack_debt == debt_before + (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 8000 ) );
 
     // received == sum of outcomes for the client's fragment family
-    const uint64_t outcomes = counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_SEQUENCE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_DUPLICATE_INDEX] +
-                              counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED];
-    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == outcomes );
+    rocketnet_counters_assert_conserved( &pair.client_counters );
 
     rocketnet_test_fragment_pair_teardown( &pair );
 }
@@ -11295,6 +11185,7 @@ void rocketnet_test_fragment_vector()
     // lives in its aggregate
     rocketnet_check( client.ack.sent[6 % ROCKETNET_SENT_PACKET_BUFFER_SIZE].sequence == 6 );
     rocketnet_check( client.ack.sent[6 % ROCKETNET_SENT_PACKET_BUFFER_SIZE].has_packet_id == 0 );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 void rocketnet_test_fragment_packet_id_aggregation()
@@ -12670,6 +12561,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     rocketnet_free( NULL, server_delivered );
     rocketnet_free( NULL, server_acked );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_transport_reply_opens_a_later_update()
@@ -12823,6 +12715,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
 
     rocketnet_network_simulator_destroy( simulator );
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 void rocketnet_test_client_index_range_checked()
@@ -12883,6 +12776,7 @@ void rocketnet_test_client_index_range_checked()
     rocketnet_check( client.client_index == initial_index );
 
     rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
 }
 
 static void rocketnet_test_protocol_id_zero_refused( void )

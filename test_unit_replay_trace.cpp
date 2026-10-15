@@ -35,6 +35,9 @@
 #include <string.h>
 #include <set>
 
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 // ---------------------------------------------------------------------------
 // The pure C++ reference of the model's state. W is the code's real width
 // (ROCKETNET_REPLAY_WINDOW_BITS); the model's small instance (W = 12,
@@ -368,6 +371,7 @@ static void TestSlotlessPacketNeverMovesTheSessionWindow()
     rocketnet_unit_check( mapping->replay_session.highest_opened == 0 );
 
     rocketnet_encryption_map_destroy( server.encryption_map );
+    rocketnet_counters_assert_conserved( &counters );
 }
 
 REGISTER_UNIT_TEST( TestReplayWindowModelTrace );

@@ -6,6 +6,8 @@
 #include "rocketnet_counters.h"
 #include "rocketnet.h"
 
+#include <stdio.h>
+
 int rocketnet_num_counters() { return ROCKETNET_NUM_COUNTERS; }
 
 uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int counter )
@@ -16,228 +18,100 @@ uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int cou
         counters->values[counter] : 0;
 }
 
+// The name, class and family tables are generated from the counter list in
+// rocketnet_counters.h, one row each, so an index, its name, its class and its
+// family cannot drift apart.
+
+static const char * const rocketnet_counter_names[ROCKETNET_NUM_COUNTERS] =
+{
+#define ROCKETNET_COUNTER_NAME_ROW( name, klass, family ) #name,
+    ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_NAME_ROW )
+#undef ROCKETNET_COUNTER_NAME_ROW
+};
+
+static const uint8_t rocketnet_counter_classes[ROCKETNET_NUM_COUNTERS] =
+{
+#define ROCKETNET_COUNTER_CLASS_ROW( name, klass, family ) ROCKETNET_COUNTER_CLASS_##klass,
+    ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_CLASS_ROW )
+#undef ROCKETNET_COUNTER_CLASS_ROW
+};
+
+static const int16_t rocketnet_counter_families[ROCKETNET_NUM_COUNTERS] =
+{
+#define ROCKETNET_COUNTER_FAMILY_ROW( name, klass, family ) ROCKETNET_COUNTER_##family,
+    ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_FAMILY_ROW )
+#undef ROCKETNET_COUNTER_FAMILY_ROW
+};
+
 const char * rocketnet_counter_name( int counter )
 {
-    switch ( counter )
+    if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
     {
-        case ROCKETNET_COUNTER_PACKETS_RECEIVED:                                      return "PACKETS_RECEIVED";
-        case ROCKETNET_COUNTER_PREFILTER_TOO_SHORT:                                   return "PREFILTER_TOO_SHORT";
-        case ROCKETNET_COUNTER_PREFILTER_TOO_LARGE:                                   return "PREFILTER_TOO_LARGE";
-        case ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH:                                 return "PREFILTER_WRONG_EPOCH";
-        case ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE:                                 return "PREFILTER_WRONG_VALUE";
-        case ROCKETNET_COUNTER_RESERVED_TYPE:                                         return "RESERVED_TYPE";
-        case ROCKETNET_COUNTER_WRONG_DIRECTION:                                       return "WRONG_DIRECTION";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED:                           return "CONNECTION_REQUEST_RECEIVED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE:                         return "CONNECTION_REQUEST_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED:                  return "CONNECTION_REQUEST_ALREADY_CONNECTED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT:                   return "CONNECTION_REQUEST_CHALLENGE_RESENT";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION:                      return "CONNECTION_REQUEST_WRONG_VERSION";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID:                  return "CONNECTION_REQUEST_WRONG_PROTOCOL_ID";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED:                      return "CONNECTION_REQUEST_TOKEN_EXPIRED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID:                    return "CONNECTION_REQUEST_TIMEOUT_INVALID";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS:                  return "CONNECTION_REQUEST_BAD_ADDRESS_FLAGS";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED:             return "CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY:                   return "CONNECTION_REQUEST_WRONG_SERVER_KEY";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE:                          return "CONNECTION_REQUEST_NO_COOKIE";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY:              return "CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED:                     return "CONNECTION_REQUEST_COOKIE_EXPIRED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED:                 return "CONNECTION_REQUEST_TOKEN_ALREADY_USED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY:           return "CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK:        return "CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH:                    return "CONNECTION_REQUEST_SEALED_MISMATCH";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED:        return "CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED:            return "CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY:                    return "CONNECTION_REQUEST_SMALL_ORDER_KEY";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS:                           return "CONNECTION_REQUEST_NO_SLOTS";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING:              return "CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE:                     return "CONNECTION_REQUEST_SENT_CHALLENGE";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR:                     return "CONNECTION_REQUEST_INTERNAL_ERROR";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED:                          return "CONNECTION_RESPONSE_RECEIVED";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE:                        return "CONNECTION_RESPONSE_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING:                        return "CONNECTION_RESPONSE_NO_MAPPING";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE:                     return "CONNECTION_RESPONSE_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN:                      return "CONNECTION_RESPONSE_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED:                 return "CONNECTION_RESPONSE_ALREADY_CONNECTED";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED:       return "CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL:                 return "CONNECTION_RESPONSE_ADMITTED_SET_FULL";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS:                          return "CONNECTION_RESPONSE_NO_SLOTS";
-        case ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED:                         return "CONNECTION_RESPONSE_CONNECTED";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED:                                   return "KEEP_ALIVE_RECEIVED";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING:                                 return "KEEP_ALIVE_NO_MAPPING";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE:                              return "KEEP_ALIVE_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED:                           return "KEEP_ALIVE_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN:                               return "KEEP_ALIVE_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED:                              return "KEEP_ALIVE_NOT_CONNECTED";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED:                                   return "KEEP_ALIVE_ACCEPTED";
-        case ROCKETNET_COUNTER_PAYLOAD_RECEIVED:                                      return "PAYLOAD_RECEIVED";
-        case ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING:                                    return "PAYLOAD_NO_MAPPING";
-        case ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE:                                 return "PAYLOAD_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED:                              return "PAYLOAD_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN:                                  return "PAYLOAD_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED:                                 return "PAYLOAD_NOT_CONNECTED";
-        case ROCKETNET_COUNTER_PAYLOAD_DELIVERED:                                     return "PAYLOAD_DELIVERED";
-        case ROCKETNET_COUNTER_DISCONNECT_RECEIVED:                                   return "DISCONNECT_RECEIVED";
-        case ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING:                                 return "DISCONNECT_NO_MAPPING";
-        case ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE:                              return "DISCONNECT_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED:                           return "DISCONNECT_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN:                               return "DISCONNECT_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED:                              return "DISCONNECT_NOT_CONNECTED";
-        case ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED:                               return "DISCONNECT_DISCONNECTED";
-        case ROCKETNET_COUNTER_MAPPING_CREATED:                                       return "MAPPING_CREATED";
-        case ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT:                                  return "MAPPING_IDLE_TIMEOUT";
-        case ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED:                    return "MAPPING_HANDSHAKE_DEADLINE_EXPIRED";
-        case ROCKETNET_COUNTER_MAPPING_TABLE_FULL:                                    return "MAPPING_TABLE_FULL";
-        case ROCKETNET_COUNTER_CLIENT_CONNECTED:                                      return "CLIENT_CONNECTED";
-        case ROCKETNET_COUNTER_SEND_RING_FULL:                                        return "SEND_RING_FULL";
-        case ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING:                                  return "SLOT_WITHOUT_MAPPING";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECTED:                                   return "CLIENT_DISCONNECTED";
-        case ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT:                            return "SERVER_DISCONNECTED_CLIENT";
-        case ROCKETNET_COUNTER_CLIENT_TIMED_OUT:                              return "CLIENT_TIMED_OUT";
-        case ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED:                        return "CLIENT_COOKIE_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE:                      return "CLIENT_COOKIE_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH:                    return "CLIENT_COOKIE_SALT_MISMATCH";
-        case ROCKETNET_COUNTER_CLIENT_COOKIE_STORED:                           return "CLIENT_COOKIE_STORED";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED:                      return "CLIENT_CHALLENGE_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_STATE:                   return "CLIENT_CHALLENGE_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_ZERO_SEQUENCE:                 return "CLIENT_CHALLENGE_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN:                  return "CLIENT_CHALLENGE_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_SMALL_ORDER_KEY:               return "CLIENT_CHALLENGE_SMALL_ORDER_KEY";
-        case ROCKETNET_COUNTER_CLIENT_CHALLENGE_ACCEPTED:                      return "CLIENT_CHALLENGE_ACCEPTED";
-        case ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED:                         return "CLIENT_DENIED_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE:                      return "CLIENT_DENIED_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_DENIED_ZERO_SEQUENCE:                    return "CLIENT_DENIED_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN:                     return "CLIENT_DENIED_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_DENIED_ACCEPTED:                         return "CLIENT_DENIED_ACCEPTED";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED:                     return "CLIENT_KEEP_ALIVE_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE:                  return "CLIENT_KEEP_ALIVE_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ZERO_SEQUENCE:                return "CLIENT_KEEP_ALIVE_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED:             return "CLIENT_KEEP_ALIVE_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN:                 return "CLIENT_KEEP_ALIVE_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED:                     return "CLIENT_KEEP_ALIVE_ACCEPTED";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED:                        return "CLIENT_PAYLOAD_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_STATE:                     return "CLIENT_PAYLOAD_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_ZERO_SEQUENCE:                   return "CLIENT_PAYLOAD_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED:                return "CLIENT_PAYLOAD_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN:                    return "CLIENT_PAYLOAD_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED:                       return "CLIENT_PAYLOAD_DELIVERED";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED:                     return "CLIENT_DISCONNECT_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_STATE:                  return "CLIENT_DISCONNECT_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_ZERO_SEQUENCE:                return "CLIENT_DISCONNECT_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_ALREADY_RECEIVED:             return "CLIENT_DISCONNECT_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_DID_NOT_OPEN:                 return "CLIENT_DISCONNECT_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED:                     return "CLIENT_DISCONNECT_ACCEPTED";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE:                          return "KEEP_ALIVE_WRONG_SIZE";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK:                       return "KEEP_ALIVE_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE:                             return "PAYLOAD_WRONG_SIZE";
-        case ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK:                          return "PAYLOAD_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE:                          return "DISCONNECT_WRONG_SIZE";
-        case ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK:                       return "DISCONNECT_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_ACK_RECEIVED:                                   return "ACK_RECEIVED";
-        case ROCKETNET_COUNTER_ACK_WRONG_SIZE:                                 return "ACK_WRONG_SIZE";
-        case ROCKETNET_COUNTER_ACK_NO_MAPPING:                                 return "ACK_NO_MAPPING";
-        case ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE:                              return "ACK_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED:                           return "ACK_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_ACK_DID_NOT_OPEN:                               return "ACK_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_ACK_NOT_CONNECTED:                              return "ACK_NOT_CONNECTED";
-        case ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK:                              return "ACK_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_ACK_ACCEPTED:                                   return "ACK_ACCEPTED";
-        case ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE:                           return "ACK_UNKNOWN_SEQUENCE";
-        case ROCKETNET_COUNTER_ACKED_BATCH_FULL:                               return "ACKED_BATCH_FULL";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE:                   return "CLIENT_KEEP_ALIVE_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK:                return "CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_SIZE:                      return "CLIENT_PAYLOAD_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_BAD_ACK_BLOCK:                   return "CLIENT_PAYLOAD_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_SIZE:                   return "CLIENT_DISCONNECT_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_BAD_ACK_BLOCK:                return "CLIENT_DISCONNECT_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED:                            return "CLIENT_ACK_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_ACK_WRONG_STATE:                         return "CLIENT_ACK_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_ACK_WRONG_SIZE:                          return "CLIENT_ACK_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_ACK_ZERO_SEQUENCE:                       return "CLIENT_ACK_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED:                    return "CLIENT_ACK_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_ACK_DID_NOT_OPEN:                        return "CLIENT_ACK_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_ACK_BAD_ACK_BLOCK:                       return "CLIENT_ACK_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED:                            return "CLIENT_ACK_ACCEPTED";
-        case ROCKETNET_COUNTER_CLIENT_ACK_UNKNOWN_SEQUENCE:                    return "CLIENT_ACK_UNKNOWN_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL:                        return "CLIENT_ACKED_BATCH_FULL";
-        case ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE:                   return "KEEP_ALIVE_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE:                      return "PAYLOAD_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE:                   return "DISCONNECT_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE:                          return "ACK_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE:            return "CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE:               return "CLIENT_PAYLOAD_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_OPENED_SIZE:            return "CLIENT_DISCONNECT_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_ACK_WRONG_OPENED_SIZE:                   return "CLIENT_ACK_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_FRAGMENT_RECEIVED:                              return "FRAGMENT_RECEIVED";
-        case ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE:                            return "FRAGMENT_WRONG_SIZE";
-        case ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING:                            return "FRAGMENT_NO_MAPPING";
-        case ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE:                         return "FRAGMENT_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED:               return "FRAGMENT_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN:                          return "FRAGMENT_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED:                         return "FRAGMENT_NOT_CONNECTED";
-        case ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK:                         return "FRAGMENT_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE:                     return "FRAGMENT_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID:                       return "FRAGMENT_ZERO_PAYLOAD_ID";
-        case ROCKETNET_COUNTER_FRAGMENT_STALE:                                 return "FRAGMENT_STALE";
-        case ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID:                         return "FRAGMENT_COUNT_INVALID";
-        case ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE:                    return "FRAGMENT_INDEX_OUT_OF_RANGE";
-        case ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH:                        return "FRAGMENT_COUNT_MISMATCH";
-        case ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH:                         return "FRAGMENT_SIZE_MISMATCH";
-        case ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE:                     return "FRAGMENT_PAYLOAD_TOO_LARGE";
-        case ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX:                      return "FRAGMENT_DUPLICATE_INDEX";
-        case ROCKETNET_COUNTER_FRAGMENT_ACCEPTED:                              return "FRAGMENT_ACCEPTED";
-        case ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED:                   return "FRAGMENT_PAYLOAD_REASSEMBLED";
-        case ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED:                     return "FRAGMENT_PAYLOAD_ABANDONED";
-        case ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL:                    return "FRAGMENT_PAYLOAD_BATCH_FULL";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED:                       return "CLIENT_FRAGMENT_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE:                    return "CLIENT_FRAGMENT_WRONG_STATE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_SIZE:                     return "CLIENT_FRAGMENT_WRONG_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_SEQUENCE:                  return "CLIENT_FRAGMENT_ZERO_SEQUENCE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_ALREADY_RECEIVED:        return "CLIENT_FRAGMENT_ALREADY_RECEIVED";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_DID_NOT_OPEN:                   return "CLIENT_FRAGMENT_DID_NOT_OPEN";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_BAD_ACK_BLOCK:                  return "CLIENT_FRAGMENT_BAD_ACK_BLOCK";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_OPENED_SIZE:              return "CLIENT_FRAGMENT_WRONG_OPENED_SIZE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID:                return "CLIENT_FRAGMENT_ZERO_PAYLOAD_ID";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE:                          return "CLIENT_FRAGMENT_STALE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_INVALID:                  return "CLIENT_FRAGMENT_COUNT_INVALID";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE:             return "CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH:                 return "CLIENT_FRAGMENT_COUNT_MISMATCH";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_SIZE_MISMATCH:                  return "CLIENT_FRAGMENT_SIZE_MISMATCH";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE:              return "CLIENT_FRAGMENT_PAYLOAD_TOO_LARGE";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_DUPLICATE_INDEX:               return "CLIENT_FRAGMENT_DUPLICATE_INDEX";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED:                       return "CLIENT_FRAGMENT_ACCEPTED";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED:            return "CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED:              return "CLIENT_FRAGMENT_PAYLOAD_ABANDONED";
-        case ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL:             return "CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL";
-        case ROCKETNET_COUNTER_SEND_ARENA_FULL:                                return "SEND_ARENA_FULL";
-        case ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL:                       return "RECEIVE_CURSOR_TOO_SMALL";
-        case ROCKETNET_COUNTER_SEND_LEASE_FULL: return "SEND_LEASE_FULL";
-        case ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW:                            return "SEND_HISTORY_OVERFLOW";
-        case ROCKETNET_COUNTER_SEND_HISTORY_LOST:                                return "SEND_HISTORY_LOST";
-        case ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED:                        return "INTEGRITY_LIMIT_REACHED";
-        case ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE:                       return "CLIENT_COOKIE_WRONG_SIZE";
-        case ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL:                        return "MESSAGE_SEND_STORE_FULL";
-        case ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL:                        return "MESSAGE_SEND_QUEUE_FULL";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED:   return "CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED";
-        case ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT:      return "CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT";
-        case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL:               return "MESSAGE_UNRELIABLE_DELIVERY_FULL";
-        case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED:                 return "MESSAGE_UNRELIABLE_SEND_FAILED";
-        case ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL:                           return "MESSAGE_WINDOW_STALL";
-        case ROCKETNET_COUNTER_MESSAGE_DUPLICATE:                              return "MESSAGE_DUPLICATE";
-        case ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED:                       return "MESSAGE_SENT_MAP_EVICTED";
-        case ROCKETNET_COUNTER_MESSAGE_RESENT:                                 return "MESSAGE_RESENT";
-        case ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED:                       return "MESSAGE_MEMORY_EXHAUSTED";
-        case ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED:                  return "MESSAGE_SEND_TYPE_NOT_ENABLED";
-        case ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED:                       return "MESSAGE_TYPE_NOT_ENABLED";
-        case ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET:                 return "MESSAGE_UNRELIABLE_OVER_BUDGET";
-        case ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND:                        return "MESSAGE_ORDERING_BEHIND";
-        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE:                        return "MESSAGE_SEQUENCED_STALE";
-        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED:                   return "MESSAGE_SEQUENCED_SUPERSEDED";
-        case ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL:                    return "MESSAGE_SEQUENCED_HOLD_FULL";
-        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL:                      return "MESSAGE_RECEIPT_RING_FULL";
-        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED:                          return "MESSAGE_RECEIPT_ACKED";
-        case ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS:                           return "MESSAGE_RECEIPT_LOSS";
-        default:
-            rocketnet_assert( 0 );
-            return "???";
+        rocketnet_assert( 0 );
+        return "???";
     }
+    return rocketnet_counter_names[counter];
+}
+
+int rocketnet_counter_class( int counter )
+{
+    if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
+        return -1;
+    return rocketnet_counter_classes[counter];
+}
+
+const char * rocketnet_counter_class_name( int counter_class )
+{
+    switch ( counter_class )
+    {
+        case ROCKETNET_COUNTER_CLASS_REFUSAL:       return "refusal";
+        case ROCKETNET_COUNTER_CLASS_EXPECTED:      return "expected";
+        case ROCKETNET_COUNTER_CLASS_PATH_LOSS:     return "path_loss";
+        case ROCKETNET_COUNTER_CLASS_ARRIVAL:       return "arrival";
+        default:                                    return NULL;
+    }
+}
+
+// RECEIVED == the sum of its family's outcomes, for every family, checked in
+// index order of the RECEIVED counter so the first unbalanced family is the
+// same one every time. A counter is a RECEIVED counter when some counter's
+// family names it; the sum of a family is every counter whose family it is.
+
+int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes )
+{
+    if ( report && report_bytes > 0 )
+        report[0] = '\0';
+
+    if ( !rocketnet_api_null_guard( counters ) )
+    {
+        if ( report && report_bytes > 0 )
+            snprintf( report, (size_t) report_bytes, "counters is NULL" );
+        return 0;
+    }
+
+    for ( int received = 0; received < ROCKETNET_NUM_COUNTERS; received++ )
+    {
+        uint64_t outcomes = 0;
+        int is_received_counter = 0;
+        for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+        {
+            if ( rocketnet_counter_families[i] == received )
+            {
+                outcomes += counters->values[i];
+                is_received_counter = 1;
+            }
+        }
+
+        if ( is_received_counter && counters->values[received] != outcomes )
+        {
+            if ( report && report_bytes > 0 )
+                snprintf( report, (size_t) report_bytes, "%s received=%llu outcomes=%llu",
+                          rocketnet_counter_names[received],
+                          (unsigned long long) counters->values[received],
+                          (unsigned long long) outcomes );
+            return 0;
+        }
+    }
+
+    return 1;
 }

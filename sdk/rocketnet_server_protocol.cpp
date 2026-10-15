@@ -205,6 +205,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             if ( memcmp( mapping->connection_salt, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) != 0 )
             {
                 rocketnet_debug( "server ignored connection request. mapping salt does not match" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -716,7 +717,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
         {
             rocketnet_assert( 0 );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
+            counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
         mapping->send_sequence_handshake++;
@@ -749,7 +750,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     if ( keep_alive_bytes == 0 )
     {
         rocketnet_assert( 0 );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
     *response_bytes = keep_alive_bytes;

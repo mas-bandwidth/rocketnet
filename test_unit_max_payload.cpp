@@ -39,6 +39,10 @@
 
 #define check rocketnet_unit_check
 
+// the conservation assert, checked by the registry's check
+#define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
+#include "test/counters_expect.h"
+
 // the space game's largest packet: its baseline, delta, explosion and
 // message writers fill to this many bytes
 
@@ -145,6 +149,8 @@ static void max_payload_pair_setup( struct max_payload_pair_t * pair )
 
 static void max_payload_pair_teardown( struct max_payload_pair_t * pair )
 {
+    rocketnet_counters_assert_conserved( &pair->server_counters );
+    rocketnet_counters_assert_conserved( &pair->client_counters );
     rocketnet_reassembly_set_destroy( pair->client.reassembly );
     rocketnet_encryption_map_destroy( pair->server.encryption_map );
     rocketnet_used_token_history_destroy( pair->server.used_token_history );
