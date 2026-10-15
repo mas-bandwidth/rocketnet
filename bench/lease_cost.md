@@ -122,7 +122,7 @@ allocator totals are 33,129,896 bytes for the server and 9,405,558 for the clien
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
-  bench/transport_memory.cpp build/librocketnet.a $(pkg-config --libs libsodium) \
+  bench/transport_memory.cpp build/librocketnet.a \
   -framework CoreFoundation -framework SystemConfiguration -o build/transport-memory
 ./build/transport-memory 1000 4096 16
 ```

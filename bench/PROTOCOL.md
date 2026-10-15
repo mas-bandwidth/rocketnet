@@ -53,13 +53,13 @@ plausible-looking pps — under a pace plant it cannot.
     ./smoke_pair.sh bench_portable 9301 15 14 pace=100000
     # the WINDOW line's pps must come back at ~100000
 
-**The drop-half plant.** `drop-half` makes the sender skip every other batch;
-the receiver's pps must fall visibly. Weaker than the pace plant (it moves the
-byte mix as well as the rate) but it costs nothing and catches a receiver that
-is reporting a constant.
+**The half-pace plant.** A second pace at half the first checks that the rate
+instrument follows a changed input; skipping unpaced batches has no fixed
+ratio, so a receiver that reports a constant cannot pass both.
 
-`run_all.sh` runs both for every built harness before it takes a single
-measurement, and writes them to `honesty_<harness>_<plant>.txt`.
+`run_all.sh` runs the pace plant at both rates for every built harness before
+it takes a single measurement, and writes them to
+`honesty_<harness>_<rate>.txt`.
 
 ## The fail-loud check
 

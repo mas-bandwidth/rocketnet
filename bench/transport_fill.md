@@ -14,11 +14,11 @@ not a latency percentile. Select the driver, payload bytes, and measured batch
 count as arguments. The client uses portable I/O.
 
 Build the same source against each candidate's Release static library, with the
-same compiler, flags and dependencies. For example on macOS with pkg-config:
+same compiler, flags and dependencies. For example on macOS:
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
-  bench/transport_fill.cpp build/librocketnet.a $(pkg-config --libs libsodium) \
+  bench/transport_fill.cpp build/librocketnet.a \
   -framework CoreFoundation -framework SystemConfiguration -o fill
 ./fill portable 64 2000
 ./fill portable 1192 2000

@@ -28,12 +28,12 @@ already earn their keep.
 
 ## The layering
 
-    libsodium            system package (brew/apt/vcpkg) — the one external dependency
+    libsodium            pinned two-file vendor (sodium/sodium.c, sodium/sodium.h)
     leaf utilities       hash, base64, address, trackers
     rocketnet_platform        threads, mutexes, time, sockets — the only system headers
     wire format          constants, packets, tokens, packet filter
     the two transports   client_transport, and server_transport over
-                         runtime-selected drivers (portable, xdp, gso, msgx)
+                         runtime-selected drivers (portable, xdp, gso, msgx, iocp)
 
 `rocketnet.{h,cpp}` sits beside rather than above: process init, assert/log/allocator
 hooks, RNG.
@@ -72,12 +72,11 @@ address-validated two-RTT handshake, per-connection derived keys, sealed
 packets opening with the general ack block, fragmentation, and server-side
 client slots — `client_transport` and `server_transport` over the runtime
 driver ladder (portable everywhere; xdp and gso on linux; msgx ahead of
-portable on macOS). `client.c` and `server.c` connect out of the box under
-the published dev keys.
+portable on macOS; iocp behind portable on windows). `client.c` and
+`server.c` connect out of the box under the published dev keys.
 
 What remains is REQUIREMENTS.md's tail: reliability, flows and broadcast
-above the transport, and the sodium re-vendor before anything ships.
-TODO.md is the live ordering.
+above the transport. TODO.md is the live ordering.
 
 ## The scaling story, in one paragraph
 
@@ -227,10 +226,10 @@ bench: at 1000 players x 60 Hz its packet crypto alone exceeds one core
 where sodium uses about a fifth, scalar versus scalar on arm64.
 
 The switch is complete: every crypto call in the tree is sodium, from the
-system package for now (brew on mac, libsodium-dev on linux, vcpkg on
-windows). Before anything ships: a gutted two-file vendor in the shape
+pinned two-file vendor (`sodium/sodium.c` and `sodium/sodium.h`) in the shape
 netcode and yojimbo already carry, extended with the Ed25519 and sealed box
-families the public key token design needs.
+families the public key token design needs. An independently supplied
+libsodium is an opt-in integration test, not the default.
 
 [Hydrogen](https://github.com/mas-bandwidth/hydrogen) and
 [proton](https://github.com/mas-bandwidth/proton) remain the kernel/XDP
