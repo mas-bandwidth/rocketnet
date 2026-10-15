@@ -146,6 +146,40 @@ mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
 or later) is a follow-up, not yet used.
 
+The filter's decisions also run as ordinary host C in the unit suite, with no
+kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
+compiles `test/xdp_host/server_xdp_host.c`, which includes
+`server_xdp/server_xdp.c` unchanged, with the BPF build's defines
+(`-D__linux__ -D__BPF__ -ffreestanding`) and `test/xdp_host/` first on that
+one target's include path. That directory is a shim: minimal `linux/*.h` and
+`bpf/bpf_helpers.h` with only the types, constants and map macros the filter
+uses. `struct xdp_md` carries `data` and `data_end` as `unsigned long` so they
+hold host pointers. The maps are host storage, and the two helpers are host
+functions. `bpf_redirect_map` copies the kernel's semantics, cited beside it
+(`__bpf_xdp_redirect_map` in `include/linux/filter.h`, reached through
+`xsk_map_redirect`): `XDP_REDIRECT` for a populated slot below `max_entries`,
+otherwise the flags' action bits, so `BPF_F_INGRESS` gives `XDP_DROP`.
+`test_unit_xdp_filter_host.cpp` drives it with frames written byte by byte,
+one table row per frame (bytes, receive queue, wanted verdict, wanted
+counter). Each row checks its verdict, its counter, and that every other
+counter stayed at zero. Each frame is copied into a heap allocation of
+exactly its length, so the sanitizer legs catch a read past `data_end`.
+
+The host tier covers both address families, the address and port match, the
+size bounds, the epoch and filter value, every type at every size against the
+STANDARD.md size table, the IPv6 extension and fragment passes, and the
+redirect decision per receive queue. It also covers the `config == NULL`
+branch, which the kernel's one-entry array never reaches. Only the kernel
+tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
+behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
+GCC or Clang on a little-endian, non-Windows host. Elsewhere, including the
+MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
+a new kernel header, helper or map, the shim follows in the same change, with
+the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
+when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
+a historical filter, configure with
+`-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
+
 `cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
 dependencies and verification. Add a new runtime BPF source/header there; archive
 entries use basenames, which must be unique. The checker also exercises adding
