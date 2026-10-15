@@ -154,7 +154,17 @@ int rocketnet_message_client_finish( struct rocketnet_message_client_t * client,
 
 void rocketnet_message_client_abort( struct rocketnet_message_client_t * client )
 {
-    (void) client;
+    if ( !client )
+        return;
+    if ( client->node.pending_unreliable )
+    {
+        rn_send_store_free( &client->node.region->store, client->node.upending_chunk );
+        client->node.pending_unreliable = 0;
+    }
+    else
+    {
+        rn_channels_cancel( &client->node.ordered.channels );
+    }
 }
 
 int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes )

@@ -179,8 +179,18 @@ int rocketnet_message_server_finish( struct rocketnet_message_server_t * server,
 
 void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index )
 {
-    (void) server;
-    (void) client_index;
+    if ( !server || client_index < 0 || client_index >= RN_MESSAGE_SERVER_MAX_SLOTS )
+        return;
+    rn_message_node_t * n = &server->slots[client_index];
+    if ( n->pending_unreliable )
+    {
+        rn_send_store_free( &n->region->store, n->upending_chunk );
+        n->pending_unreliable = 0;
+    }
+    else
+    {
+        rn_channels_cancel( &n->ordered.channels );
+    }
 }
 
 int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int channel, const uint8_t ** data, int * bytes )

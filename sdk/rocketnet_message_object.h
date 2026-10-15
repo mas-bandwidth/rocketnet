@@ -20,6 +20,7 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_unreliable.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -55,6 +56,10 @@ struct rn_message_node_t
     rocketnet_send_budget_t budget;
     int budgeted;
     uint64_t next_packet_id;
+    int pending_unreliable;             // a start() took an unreliable store chunk, not a region descriptor
+    uint32_t upending_chunk;
+    uint32_t upending_bytes;
+    int upending_channel;
     double time;
     int disconnect_reason;              // 0 = connected, else MESSAGE_MEMORY_EXHAUSTED etc.
 
