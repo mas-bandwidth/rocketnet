@@ -90,6 +90,9 @@ struct spec_t
     uint8_t epoch;
     uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES];
     int truncate_to;                            // cut the frame to this many bytes; -1 = whole frame
+    int ethertype;                              // -1 = the family's own
+    uint8_t ipv4_ihl;                           // IPv4 only: the header length nibble
+    uint8_t ipv4_protocol;                      // IPv4 only: the protocol byte
 };
 
 static spec_t spec_default( bool ipv6 )
@@ -105,6 +108,9 @@ static spec_t spec_default( bool ipv6 )
     spec.epoch = filter_epoch;
     memcpy( spec.filter, filter_value, sizeof(spec.filter) );
     spec.truncate_to = -1;
+    spec.ethertype = -1;
+    spec.ipv4_ihl = 5;
+    spec.ipv4_protocol = IP_UDP;
     return spec;
 }
 
@@ -125,7 +131,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
 
     memset( p, 0x02, 6 );                       // destination mac
     memset( p + 6, 0x04, 6 );                   // source mac
-    put16( p + 12, spec.ipv6 ? ETH_P_IPV6 : ETH_P_IP );
+    put16( p + 12, spec.ethertype >= 0 ? (uint16_t) spec.ethertype : ( spec.ipv6 ? ETH_P_IPV6 : ETH_P_IP ) );
     p += ROCKETNET_ETHERNET_HEADER_BYTES;
 
     const int udp_bytes = ROCKETNET_UDP_HEADER_BYTES + spec.packet_bytes;
@@ -134,10 +140,10 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     if ( !spec.ipv6 )
     {
         const uint8_t * destination = spec.destination_address ? spec.destination_address : server_ipv4;
-        p[0] = 0x45;                            // version 4, ihl 5
+        p[0] = (uint8_t) ( 0x40 | ( spec.ipv4_ihl & 0x0F ) );     // version 4, ihl 5 unless the spec says otherwise
         put16( p + 2, (uint16_t) ( ROCKETNET_IPV4_HEADER_BYTES + udp_bytes ) );
         p[8] = 64;                              // ttl
-        p[9] = IP_UDP;
+        p[9] = spec.ipv4_protocol;
         memcpy( p + 12, client_ipv4, 4 );
         memcpy( p + 16, destination, 4 );
         p += ROCKETNET_IPV4_HEADER_BYTES;
@@ -364,8 +370,13 @@ static const char * verdict_name( int verdict )
     }
 }
 
-// Run one frame. counter < 0: no counter moves. Otherwise exactly that
-// counter goes up by one and every other counter stays where it was.
+// Run one frame. counter == NO_COUNTER: no counter moves. counter ==
+// ANY_COUNTER: exactly one counter, whichever, goes up by one. Otherwise
+// exactly that counter goes up by one and every other counter stays where it
+// was.
+
+#define NO_COUNTER -1
+#define ANY_COUNTER -2
 
 static bool run_frame( filter_t * filter, const char * label, const spec_t & spec, int want_verdict, int want_counter )
 {
@@ -399,6 +410,19 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
     if ( !ok )
         printf( "  FAIL %s: verdict %s, wanted %s\n", label, verdict_name( (int) options.retval ), verdict_name( want_verdict ) );
 
+    if ( want_counter == ANY_COUNTER )
+    {
+        int moved = 0;
+        for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
+            moved += after[i] - before[i] == 1 ? 1 : ( after[i] != before[i] ? 2 : 0 );
+        if ( moved != 1 )
+        {
+            printf( "  FAIL %s: %s, wanted exactly one counter to move by one\n", label, moved == 0 ? "no counter moved" : "more than one counter moved" );
+            ok = false;
+        }
+        return ok;
+    }
+
     for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
     {
         const uint64_t want = ( i == want_counter ) ? 1 : 0;
@@ -412,7 +436,6 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
     return ok;
 }
 
-#define NO_COUNTER -1
 
 // the cases
 
@@ -628,6 +651,132 @@ static bool config_layout_matches_header( filter_t * filter )
     return ok;
 }
 
+// Every exit of the program moves a counter: one frame per exit path, for
+// IPv4 and IPv6 where both have the path. A row whose exit has no named
+// counter yet asks for any one counter to move.
+
+static bool write_config_unconfigured( filter_t * filter )
+{
+    struct rocketnet_server_xdp_config_t config;
+    memset( &config, 0, sizeof(config) );
+    const __u32 key = 0;
+    if ( bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) != 0 )
+    {
+        fprintf( stderr, "could not write the config map: %s\n", strerror( errno ) );
+        return false;
+    }
+    return true;
+}
+
+static bool every_verdict_is_counted( filter_t * filter )
+{
+    bool ok = write_config( filter, server_ipv4, server_ipv6 );
+
+    spec_t ipv4_short = spec_default( false );
+    ipv4_short.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV4_HEADER_BYTES - 1;
+    ok &= run_frame( filter, "ipv4 header cut one byte short", ipv4_short, XDP_DROP, ANY_COUNTER );
+
+    spec_t ipv6_short = spec_default( true );
+    ipv6_short.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES - 1;
+    ok &= run_frame( filter, "ipv6 header cut one byte short", ipv6_short, XDP_DROP, ANY_COUNTER );
+
+    spec_t ethernet_short = spec_default( false );
+    ethernet_short.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES - 1;
+    ok &= run_frame( filter, "frame shorter than an ethernet header", ethernet_short, XDP_PASS, ANY_COUNTER );
+
+    spec_t arp = spec_default( false );
+    arp.ethertype = 0x0806;
+    ok &= run_frame( filter, "ethertype is not ip", arp, XDP_PASS, ANY_COUNTER );
+
+    spec_t ipv4_options = spec_default( false );
+    ipv4_options.ipv4_ihl = 6;
+    ok &= run_frame( filter, "ipv4 header with options", ipv4_options, XDP_PASS, ANY_COUNTER );
+
+    spec_t ipv4_tcp = spec_default( false );
+    ipv4_tcp.ipv4_protocol = 6;
+    ok &= run_frame( filter, "ipv4 protocol is not udp", ipv4_tcp, XDP_PASS, ANY_COUNTER );
+
+    spec_t ipv6_icmp = spec_default( true );
+    ipv6_icmp.next_header = IPV6_ICMPV6;
+    ok &= run_frame( filter, "ipv6 next header is neither udp nor an extension", ipv6_icmp, XDP_PASS, ANY_COUNTER );
+
+    spec_t ipv6_extension = spec_default( true );
+    ipv6_extension.next_header = IPV6_HOP_BY_HOP;
+    ok &= run_frame( filter, "ipv6 extension header", ipv6_extension, XDP_PASS, ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION );
+
+    for ( int family = 0; family < 2; family++ )
+    {
+        const bool ipv6 = family == 1;
+        const char * name = ipv6 ? "ipv6" : "ipv4";
+        const int ip_bytes = ipv6 ? ROCKETNET_IPV6_HEADER_BYTES : ROCKETNET_IPV4_HEADER_BYTES;
+        char label[128];
+
+        ok &= write_config( filter, server_ipv4, server_ipv6 );
+
+        spec_t udp_short = spec_default( ipv6 );
+        udp_short.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ip_bytes + ROCKETNET_UDP_HEADER_BYTES - 1;
+        snprintf( label, sizeof(label), "%s udp header cut one byte short", name );
+        ok &= run_frame( filter, label, udp_short, XDP_PASS, ANY_COUNTER );
+
+        spec_t other_port = spec_default( ipv6 );
+        other_port.destination_port = server_port + 1;
+        snprintf( label, sizeof(label), "%s other destination port", name );
+        ok &= run_frame( filter, label, other_port, XDP_PASS, ANY_COUNTER );
+
+        spec_t other_address = spec_default( ipv6 );
+        other_address.destination_address = ipv6 ? other_ipv6 : other_ipv4;
+        snprintf( label, sizeof(label), "%s other destination address", name );
+        ok &= run_frame( filter, label, other_address, XDP_PASS, ANY_COUNTER );
+
+        spec_t too_short = spec_default( ipv6 );
+        too_short.packet_bytes = ROCKETNET_PREFILTER_BYTES - 1;
+        snprintf( label, sizeof(label), "%s packet shorter than the prefilter header", name );
+        ok &= run_frame( filter, label, too_short, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
+
+        spec_t too_large = spec_default( ipv6 );
+        too_large.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
+        snprintf( label, sizeof(label), "%s packet one byte over the ceiling", name );
+        ok &= run_frame( filter, label, too_large, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE );
+
+        spec_t wrong_epoch = spec_default( ipv6 );
+        wrong_epoch.epoch = filter_epoch + 1;
+        snprintf( label, sizeof(label), "%s wrong epoch", name );
+        ok &= run_frame( filter, label, wrong_epoch, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
+
+        spec_t wrong_value = spec_default( ipv6 );
+        wrong_value.filter[0] ^= 0x01;
+        snprintf( label, sizeof(label), "%s wrong filter value", name );
+        ok &= run_frame( filter, label, wrong_value, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
+
+        spec_t reserved = spec_default( ipv6 );
+        reserved.packet_type = ROCKETNET_CONNECTION_FRAGMENT_PACKET + 1;
+        snprintf( label, sizeof(label), "%s reserved type", name );
+        ok &= run_frame( filter, label, reserved, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+
+        spec_t denied = spec_default( ipv6 );
+        denied.packet_type = ROCKETNET_CONNECTION_DENIED_PACKET;
+        denied.packet_bytes = ROCKETNET_CONNECTION_DENIED_WIRE_BYTES;
+        snprintf( label, sizeof(label), "%s server-to-client type", name );
+        ok &= run_frame( filter, label, denied, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+
+        spec_t request_short = spec_default( ipv6 );
+        request_short.packet_type = ROCKETNET_CONNECTION_REQUEST_PACKET;
+        request_short.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1;
+        snprintf( label, sizeof(label), "%s connection request one byte short", name );
+        ok &= run_frame( filter, label, request_short, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
+
+        spec_t accepted = spec_default( ipv6 );
+        snprintf( label, sizeof(label), "%s accepted packet", name );
+        ok &= run_frame( filter, label, accepted, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+        ok &= write_config_unconfigured( filter );
+        snprintf( label, sizeof(label), "%s filter not configured", name );
+        ok &= run_frame( filter, label, spec_default( ipv6 ), XDP_PASS, ANY_COUNTER );
+    }
+
+    return ok;
+}
+
 struct case_t
 {
     const char * name;
@@ -636,6 +785,7 @@ struct case_t
 
 static const case_t cases[] =
 {
+    { "every_verdict_is_counted", every_verdict_is_counted },
     { "ipv4_rocketnet_packet_redirects", ipv4_rocketnet_packet_redirects },
     { "ipv6_rocketnet_packet_redirects", ipv6_rocketnet_packet_redirects },
     { "ipv6_extension_header_passes", ipv6_extension_header_passes },
