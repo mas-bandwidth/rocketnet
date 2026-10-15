@@ -275,12 +275,16 @@ static void probe_reuseport( void )
         if ( setsockopt( workers[i], SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes) ) != 0 )
         {
             printf( "SO_REUSEPORT refused on socket %d: errno=%d (%s)\n", i, errno, strerror( errno ) );
+            for ( int j = 0; j <= i; j++ )
+                close( workers[j] );
             return;
         }
         struct sockaddr_in address = loopback_address( port );
         if ( bind( workers[i], (struct sockaddr*) &address, sizeof(address) ) < 0 )
         {
             printf( "bind refused on reuseport socket %d: errno=%d (%s)\n", i, errno, strerror( errno ) );
+            for ( int j = 0; j <= i; j++ )
+                close( workers[j] );
             return;
         }
         if ( port == 0 )
@@ -343,7 +347,11 @@ static void probe_kqueue( void )
     struct kevent change;
     EV_SET( &change, fd, EVFILT_READ, EV_ADD, 0, 0, NULL );
     if ( kevent( kq, &change, 1, NULL, 0, NULL ) < 0 )
-        { printf( "kevent EV_ADD failed: errno=%d (%s)\n\n", errno, strerror( errno ) ); return; }
+        { printf( "kevent EV_ADD failed: errno=%d (%s)\n\n", errno, strerror( errno ) );
+          close( sender );
+          close( fd );
+          close( kq );
+          return; }
 
     struct sockaddr_in to = loopback_address( port );
     uint8_t packet[100];
