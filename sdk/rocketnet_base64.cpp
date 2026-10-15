@@ -172,10 +172,6 @@ int rocketnet_base64_decode_string( const char * input, char * output, size_t ou
         return 0;       // room for nothing but the terminator; decode_data requires a real buffer
 
     int output_length = rocketnet_base64_decode_data( input, (uint8_t *)( output ), output_size - 1 );
-    if ( output_length < 0 )
-    {
-        return 0;
-    }
 
     output[output_length] = '\0';
 
