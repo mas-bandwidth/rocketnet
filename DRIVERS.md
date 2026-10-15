@@ -136,6 +136,50 @@ CAP_NET_ADMIN; `-v` prints the verifier's last log line:
 sudo ./bin/test_xdp_filter -v
 ```
 
+## The XDP driver's address family
+
+The xdp driver serves IPv4 or IPv6, one family per server. A server owns one
+public address, and the family of that address is the family it serves; dual
+stack on one AF_XDP socket set is not served, so a deployment that wants both
+families runs one server per family.
+
+- Pre-flight and create accept an IPv4 or an IPv6 public address. The
+  interface is the UP interface carrying it (`getifaddrs`, `AF_INET` or
+  `AF_INET6`). An IPv6 link-local address (`fe80::/10`) is refused by name: a
+  server's public address is global.
+- The gateway MAC comes from `ip neigh` for the IPv4 default gateway, and for
+  IPv6 from the next hop of `ip -6 route show default dev <if>` looked up in
+  `ip -6 neigh show dev <if>`. `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` overrides
+  both.
+- The config map carries the server's own address in its family's slot. The
+  other family's slot holds that family's loopback address (`127.0.0.1` or
+  `::1`), not zero, because zero accepts any destination. No NIC delivers a
+  loopback destination legitimately, so the program redirects only the
+  server's family and passes the other.
+- Receive strips headers through the frame codec's parse and fills the
+  from-address in the family it read. Send builds each frame through the codec
+  from the server's own address. A destination of the other family is refused
+  and counted, never sent malformed.
+- `rocketnet_server_socket_driver_counters` counts what userspace handed up
+  and sent, and every frame the program redirected that userspace refused:
+  `receive_refused_parse`, `receive_refused_family`, `send_refused_family`,
+  `send_refused_build`. A redirect the driver cannot use is counted and named.
+
+The functional cases `xdp_max_size_both_ways_ipv4` and
+`xdp_max_size_both_ways_ipv6` prove each family on the wire. They build a veth
+pair at MTU 1500 between two network namespaces, pin the server to the xdp
+driver, run a portable client, and send a maximum-size payload 20 times each
+way. Then they read the stats map, the driver counters and the transport
+counters, and print one `tcpdump -vv` line per direction from a capture on the
+client end. They change the machine, so they run only as root with
+`ROCKETNET_TEST_XDP_VETH=1` on an XDP-provisioned machine, and print a named
+skip otherwise:
+
+```sh
+sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional xdp_max_size_both_ways_ipv4
+sudo ROCKETNET_TEST_XDP_VETH=1 ROCKETNET_TEST_XDP_PCAP_DIR=/path/to/keep ./bin/functional xdp_max_size_both_ways_ipv6
+```
+
 ## Embedded XDP source maintenance
 
 The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
