@@ -340,11 +340,11 @@ bounded only by the transport. Its replay window refuses any packet
 `ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS` sequences or more behind the
 highest it has opened, and any packet it has seen before
 (`sdk/rocketnet_replay.cpp:32-39`, `sdk/rocketnet_replay.h:26`). That constant is 4096 by
-default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1192-byte payload carries
-at most 170 numbered records (a code 2 record is at least a 6-byte header and 1 data
+default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1416-byte payload carries
+at most 202 numbered records (a code 2 record is at least a 6-byte header and 1 data
 byte, 13.2), and a block numbers up to 911 fragments at once. So in the worst case a copy
 that survives the replay window is
-`W + 32767 × 170 + 911 <= 6,619,877 ≈ 6.3 × 2^20` behind `R`, under `2^23`.
+`W + 32767 × 202 + 911 <= 7,668,421 ≈ 7.3 × 2^20` behind `R`, under `2^23`.
 This rests on transport sequences rising in packet write order. A sequence is taken at
 `start_packet` by an atomic increment (`sdk/rocketnet_client_protocol.cpp:1068`,
 `sdk/rocketnet_server_protocol.cpp:1524`), so this layer must fill a connection's

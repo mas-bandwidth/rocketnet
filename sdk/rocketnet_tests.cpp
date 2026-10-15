@@ -9244,7 +9244,7 @@ void rocketnet_test_ack_asymmetric_rate()
             uint64_t sequence = 0;
             rocketnet_check( rocketnet_client_protocol_start_payload( &client, &sequence ) );
 
-            uint8_t frame[1500];
+            alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
             const uint8_t bytes_out[4] = { 0xAA, 0xBB, 0xCC, 0xDD };
             memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, bytes_out, 4 );
 
@@ -9295,7 +9295,7 @@ void rocketnet_test_ack_asymmetric_rate()
         for (int i = 0; i < burst; ++i)
         {
             uint64_t sequence = 0;
-            uint8_t frame[1500]{};
+            alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE]{};
             int bytes = 0;
             if (direction == 0)
             {
@@ -9452,25 +9452,32 @@ void rocketnet_test_ack_payload_seal_with_ranges()
     uint64_t high_acked_sequence = mapping->send_sequence_session - 1;
     rocketnet_check( high_acked_sequence == low_acked_sequence + 2 );
 
-    // seal a full-capacity payload in place, in a sentinel-filled frame
+    // seal, in place in a sentinel-filled frame, the largest payload whose
+    // block still carries the one range: the budget less the overhead and
+    // the 11-byte block. A full-capacity payload leaves less room than one
+    // range needs, so its block truncates to the minimum.
+
+    const int full = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - 4;
+    rocketnet_check( full <= ROCKETNET_MAX_PAYLOAD_BYTES );
 
     uint8_t frame[2048];
     memset( frame, 0xEE, sizeof(frame) );
 
     uint8_t expected[ROCKETNET_MAX_PAYLOAD_BYTES];
-    rocketnet_test_generate_payload( expected, ROCKETNET_MAX_PAYLOAD_BYTES );
-    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, expected, ROCKETNET_MAX_PAYLOAD_BYTES );
+    rocketnet_test_generate_payload( expected, full );
+    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, expected, (size_t) full );
 
     uint64_t sequence = 0;
     rocketnet_check( rocketnet_client_protocol_start_payload( &client, &sequence ) );
 
-    int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client, sequence, 777, frame, ROCKETNET_MAX_PAYLOAD_BYTES, 200.2 );
+    int wire_bytes = rocketnet_client_protocol_seal_payload_frame( &client, sequence, 777, frame, full, 200.2 );
 
     // the wire carries the fixed overhead, the 11-byte one-range block, and
-    // the full payload -- the loss branch moved the payload up four bytes
+    // the payload -- the loss branch moved the payload up four bytes, to
+    // the send budget's last byte
 
-    rocketnet_check( wire_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 + ROCKETNET_MAX_PAYLOAD_BYTES );
-    rocketnet_check( wire_bytes <= ROCKETNET_SEND_BUDGET );
+    rocketnet_check( wire_bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 + full );
+    rocketnet_check( wire_bytes == ROCKETNET_SEND_BUDGET );
 
     // nothing outside the wire region was touched
 
@@ -9483,8 +9490,8 @@ void rocketnet_test_ack_payload_seal_with_ranges()
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, frame, wire_bytes,
                                                       ROCKETNET_TEST_CREATE_TS, 200.3, response, &response_bytes,
                                                       payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_check( payload_bytes == ROCKETNET_MAX_PAYLOAD_BYTES );
-    rocketnet_check( memcmp( payload, expected, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
+    rocketnet_check( payload_bytes == full );
+    rocketnet_check( memcmp( payload, expected, (size_t) full ) == 0 );
 
     struct rocketnet_ack_endpoint_t * endpoint = &test.server.acks->endpoints[0];
     rocketnet_check( endpoint->sent[low_acked_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE].acked );
@@ -9922,6 +9929,10 @@ void rocketnet_test_fragment_delivery_batch()
 // from the rtt test, plus a client-side reassembly set, so the fragment
 // tests start from a live session in a few lines
 
+// the type 9 packets a payload of n bytes splits into: ceil(n / stride)
+
+#define ROCKETNET_TEST_FRAGMENT_COUNT( n )      ( ( (n) + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES )
+
 struct rocketnet_test_fragment_pair_t
 {
     struct rocketnet_test_server_t test;
@@ -10080,7 +10091,7 @@ void rocketnet_test_fragment_client_to_server()
 
     int count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 5000, pair.time,
                                                            packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_check( count == 5 );                          // ceil(5000 / 1193)
+    rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) );
 
     for ( int i = 0; i < count; i++ )
     {
@@ -10091,15 +10102,15 @@ void rocketnet_test_fragment_client_to_server()
     }
     rocketnet_check( reassembly->completed_bytes == 5000 );
     rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 5000 ) == 0 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == 5 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 5 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) );
     rocketnet_check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
 
     // the same payload again, delivered in reverse -- the final fragment
     // first, staged until the stride pins -- and payload ids increment
     count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 5000, pair.time,
                                                        packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_check( count == 5 );
+    rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) );
     for ( int i = count - 1; i >= 0; i-- )
         rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     rocketnet_check( reassembly->completed_bytes == 5000 );
@@ -10109,20 +10120,20 @@ void rocketnet_test_fragment_client_to_server()
     // the largest configured payload crosses whole
     count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 16384, pair.time,
                                                        packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_check( count == 14 );                         // ceil(16384 / 1193)
+    rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 16384 ) );
     for ( int i = 0; i < count; i++ )
         rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
     rocketnet_check( reassembly->completed_bytes == 16384 );
     rocketnet_check( memcmp( reassembly->completed_payload, payload_data, 16384 ) == 0 );
 
     // fragments elicit: every one of those packets armed the ack debt
-    rocketnet_check( pair.test.server.acks->endpoints[0].ack_debt == 24 );
+    rocketnet_check( pair.test.server.acks->endpoints[0].ack_debt == (uint64_t) ( 2 * ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) + ROCKETNET_TEST_FRAGMENT_COUNT( 16384 ) ) );
 
     // and each carried a fresh valid ack block that applied -- the
     // client's sends are covered by the server's replay state, so a
     // keep-alive built now reports them back (the block machinery is
     // proven in the ack tests; here it must simply have engaged)
-    rocketnet_check( pair.test.server.acks->endpoints[0].highest_received_sequence >= 24 );
+    rocketnet_check( pair.test.server.acks->endpoints[0].highest_received_sequence >= (uint64_t) ( 2 * ROCKETNET_TEST_FRAGMENT_COUNT( 5000 ) + ROCKETNET_TEST_FRAGMENT_COUNT( 16384 ) ) );
 
     // received == sum of outcomes for the fragment family, the server side
     const uint64_t outcomes = counters[ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE] +
@@ -10167,7 +10178,7 @@ void rocketnet_test_fragment_server_to_client()
 
     int count = rocketnet_server_protocol_write_fragments( &pair.test.server, 0, payload_data, 8000, pair.time,
                                                            packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_check( count == 7 );                          // ceil(8000 / 1193)
+    rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 8000 ) );
 
     uint8_t out_payload[ROCKETNET_RECEIVE_CEILING];
     int out_payload_bytes = 0;
@@ -10180,13 +10191,13 @@ void rocketnet_test_fragment_server_to_client()
     }
     rocketnet_check( pair.client.reassembly->completed_bytes == 8000 );
     rocketnet_check( memcmp( pair.client.reassembly->completed_payload, payload_data, 8000 ) == 0 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == 7 );
-    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED] == 7 );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 8000 ) );
+    rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED] == (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 8000 ) );
     rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
     rocketnet_check( counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
 
     // fragments elicit on the client exactly as on the server
-    rocketnet_check( pair.client.ack.ack_debt == debt_before + 7 );
+    rocketnet_check( pair.client.ack.ack_debt == debt_before + (uint64_t) ROCKETNET_TEST_FRAGMENT_COUNT( 8000 ) );
 
     // received == sum of outcomes for the client's fragment family
     const uint64_t outcomes = counters[ROCKETNET_COUNTER_CLIENT_FRAGMENT_WRONG_STATE] +
@@ -10645,10 +10656,10 @@ void rocketnet_test_fragment_punched_loss()
     static uint8_t packets[ROCKETNET_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
     int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
 
-    // payload id 1: six fragments, the middle one punched out of the wire
+    // payload id 1: five fragments, one punched out of the wire
     int count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 6000, pair.time,
                                                            packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-    rocketnet_check( count == 6 );
+    rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 6000 ) );
     for ( int i = 0; i < count; i++ )
     {
         if ( i == 3 )
@@ -10685,7 +10696,7 @@ void rocketnet_test_fragment_punched_loss()
     {
         count = rocketnet_client_protocol_write_fragments( &pair.client, payload_data, 6000, pair.time,
                                                            packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS );
-        rocketnet_check( count == 6 );
+        rocketnet_check( count == ROCKETNET_TEST_FRAGMENT_COUNT( 6000 ) );
         for ( int i = 0; i < count; i++ )
             rocketnet_check( rocketnet_test_fragment_deliver_to_server( &pair, packets + i * ROCKETNET_SEND_BUDGET, packet_bytes[i] ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
         rocketnet_check( reassembly->completed_bytes == 6000 );

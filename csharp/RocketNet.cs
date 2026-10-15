@@ -44,15 +44,19 @@ public static unsafe partial class RocketNet
     /// <summary>Maximum client slots a server supports.</summary>
     public const int MaxClients = 1000;
 
-    /// <summary>Largest payload one wire packet carries: the 1232-byte send budget less the
-    /// fixed overhead and the minimum ack block, floored to a multiple of eight. A StartPacket
-    /// request above this routes through the transport's arena and fragments at finish.</summary>
-    public const int MaxPayloadBytes = 1192;
+    /// <summary>Largest payload one wire packet carries: the 1452-byte send budget (the IPv6 UDP
+    /// payload of a 1500-byte MTU, 1500 - 40 - 8) less the 26-byte fixed overhead and the 7-byte
+    /// minimum ack block, floored to a multiple of eight: ((1452 - 26 - 7) / 8) * 8 = 1416. A
+    /// StartPacket request above this routes through the transport's arena and fragments at
+    /// finish. Mirrors ROCKETNET_MAX_PAYLOAD_BYTES.</summary>
+    public const int MaxPayloadBytes = 1416;
 
     /// <summary>Largest single-packet payload the receive calls can deliver: the receive side
-    /// accepts up to the fixed 1426-byte ceiling whatever this end's own send budget. Reassembled
-    /// fragmented payloads are larger -- size receive buffers by the configured maximum payload.</summary>
-    public const int MaxReceivePayloadBytes = 1393;
+    /// accepts up to the fixed 1472-byte ceiling (the IPv4 UDP payload of a 1500-byte MTU,
+    /// 1500 - 20 - 8) whatever this end's own send budget, less the same overhead and block:
+    /// 1472 - 26 - 7 = 1439. Reassembled fragmented payloads are larger -- size receive buffers
+    /// by the configured maximum payload. Mirrors ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES.</summary>
+    public const int MaxReceivePayloadBytes = 1439;
 
     /// <summary>Default configured maximum payload: the largest payload a transport sends
     /// (fragmenting transparently) and reassembles, when the config leaves it zero.</summary>

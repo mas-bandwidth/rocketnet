@@ -25,6 +25,7 @@
 #include <math.h>
 
 #include "rocketnet_wire.h"
+#include "rocketnet_fragment.h"
 
 #include <unordered_map>
 
@@ -1518,7 +1519,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
 // (index and pattern), never by arrival order.
 
 #define ROCKETNET_TEST_PUMP_PACKETS 100         // several pump chunks, with a short final chunk
-#define ROCKETNET_TEST_PUMP_STRIDE  1426        // the transport's own receive ceiling
+#define ROCKETNET_TEST_PUMP_STRIDE  ROCKETNET_RECEIVE_CEILING        // the transport's own receive ceiling
 
 // the pump each platform must be running when nothing forces portable: on
 // macOS the msgx pump, everywhere else the portable loop. asserted inside
@@ -2223,8 +2224,8 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( up_acks_seen == 1 );                   // the payload's one id, exactly once
 
     const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
-    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == 5 );
-    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 5 );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == (uint64_t) ( ( 5000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == (uint64_t) ( ( 5000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );
     rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
 
     // server to client: a 9000-byte payload the other way
@@ -2273,7 +2274,7 @@ void rocketnet_test_transport_fragmentation()
     rocketnet_check( down_acks_seen == 1 );
 
     const struct rocketnet_counters_t * client_counters = rocketnet_client_transport_counters( client );
-    rocketnet_check( client_counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == 8 );
+    rocketnet_check( client_counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] == (uint64_t) ( ( 9000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );
     rocketnet_check( client_counters->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == 1 );
 
     // an over-capacity request whose write turns out small collapses to
@@ -2305,7 +2306,7 @@ void rocketnet_test_transport_fragmentation()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( server_received == 1 );
-    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == 5 );        // unchanged
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] == (uint64_t) ( ( 5000 + ROCKETNET_MAX_FRAGMENT_BYTES - 1 ) / ROCKETNET_MAX_FRAGMENT_BYTES ) );        // unchanged
 
     // the configured maximum is readable, so callers can size buffers
     rocketnet_check( rocketnet_client_transport_max_payload_bytes( client ) == ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
@@ -4111,6 +4112,163 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_send_overflow, "
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
 
+
+// A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
+// each address family: the wire is the judge. The client and the server
+// exchange payloads of ROCKETNET_MAX_PAYLOAD_BYTES, sealed into datagrams at
+// the send budget (the IPv6 UDP payload of a 1500-byte MTU), and each side
+// receives every one byte-exact with no fragment counted.
+//
+// On a bench the link is a veth pair at MTU 1500 between two network
+// namespaces: ROCKETNET_TEST_MTU_SERVER_NETNS names the server end's
+// namespace (a /proc/<pid>/ns/net path), and ROCKETNET_TEST_MTU_SERVER_IPV4
+// and ROCKETNET_TEST_MTU_SERVER_IPV6 its addresses. The server's sockets are
+// opened inside that namespace, the client's in this one, so every datagram
+// crosses the veth. With none of them set the case runs on loopback.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include <sched.h>
+#include <fcntl.h>
+#endif
+
+static void rocketnet_test_max_size_packet_crosses( const char * host_env, const char * loopback_host, bool ipv6 )
+{
+    const char * host = rocketnet_platform_getenv( host_env );
+    if ( host == NULL || host[0] == '\0' )
+        host = loopback_host;
+
+    char bind_host[128];
+    if ( ipv6 && host[0] != '[' )
+        snprintf( bind_host, sizeof(bind_host), "[%s]", host );
+    else
+        snprintf( bind_host, sizeof(bind_host), "%s", host );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 4;
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const char * netns = rocketnet_platform_getenv( "ROCKETNET_TEST_MTU_SERVER_NETNS" );
+    int self_ns = -1;
+    if ( netns != NULL && netns[0] != '\0' )
+    {
+        self_ns = open( "/proc/self/ns/net", O_RDONLY );
+        const int peer_ns = open( netns, O_RDONLY );
+        rocketnet_check( self_ns >= 0 && peer_ns >= 0 );
+        rocketnet_check( setns( peer_ns, CLONE_NEWNET ) == 0 );
+        close( peer_ns );
+    }
+#endif
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind_host, &server_config );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( self_ns >= 0 )
+    {
+        rocketnet_check( setns( self_ns, CLONE_NEWNET ) == 0 );
+        close( self_ns );
+    }
+#endif
+
+    rocketnet_check( server );
+
+    char server_address[160];
+    snprintf( server_address, sizeof(server_address), "%s:%d", bind_host, rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    rocketnet_check( client );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    static uint8_t to_server[ROCKETNET_MAX_PAYLOAD_BYTES];
+    static uint8_t to_client[ROCKETNET_MAX_PAYLOAD_BYTES];
+    for ( int i = 0; i < ROCKETNET_MAX_PAYLOAD_BYTES; i++ )
+    {
+        to_server[i] = (uint8_t) ( i * 7 + 1 );
+        to_client[i] = (uint8_t) ( i * 11 + 3 );
+    }
+
+    const int count = 8;
+    int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent_to_server < count )
+        {
+            rocketnet_client_transport_send_packet( client, to_server, ROCKETNET_MAX_PAYLOAD_BYTES );
+            sent_to_server++;
+        }
+        if ( sent_to_client < count )
+        {
+            rocketnet_server_transport_send_packet( server, 0, to_client, ROCKETNET_MAX_PAYLOAD_BYTES );
+            sent_to_client++;
+        }
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 );
+            rocketnet_check( payload_bytes == ROCKETNET_MAX_PAYLOAD_BYTES );
+            rocketnet_check( memcmp( payload, to_server, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
+            server_received++;
+        }
+
+        static uint8_t packet[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == ROCKETNET_MAX_PAYLOAD_BYTES );
+            rocketnet_check( memcmp( packet, to_client, ROCKETNET_MAX_PAYLOAD_BYTES ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= count && client_received >= count )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received == count );
+    rocketnet_check( client_received == count );
+
+    // one datagram per payload: nothing fragmented on either side
+    rocketnet_check( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_FRAGMENT_RECEIVED ) == 0 );
+    rocketnet_check( rocketnet_counter_value( rocketnet_client_transport_counters( client ), ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED ) == 0 );
+
+    rocketnet_client_transport_destroy( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    rocketnet_server_transport_destroy( server );
+}
+
+void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4()
+{
+    rocketnet_test_max_size_packet_crosses( "ROCKETNET_TEST_MTU_SERVER_IPV4", "127.0.0.1", false );
+}
+
+void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
+{
+    rocketnet_test_max_size_packet_crosses( "ROCKETNET_TEST_MTU_SERVER_IPV6", "[::1]", true );
+}
+
 struct rocketnet_functional_test_t
 {
     const char * name;
@@ -4148,6 +4306,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation },
     { "test_transport_ipv6_loopback", rocketnet_test_transport_ipv6_loopback },
+    { "max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4 },
+    { "max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6 },
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },

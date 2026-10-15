@@ -88,7 +88,7 @@ paired with the test or card that keeps it true.
 
 | # | Precondition | Evidence | Kept by |
 |---|---|---|---|
-| P1 | A payload up to `ROCKETNET_MAX_PAYLOAD_BYTES` = 1192 is one wire packet. `start_packet` hands back a 16-aligned frame, and the payload sits at `frame + payload_index`. | `sdk/rocketnet.h:420`, `:815-821` | existing transport tests |
+| P1 | A payload up to `ROCKETNET_MAX_PAYLOAD_BYTES` = 1416 is one wire packet. `start_packet` hands back a 16-aligned frame, and the payload sits at `frame + payload_index`. | `sdk/rocketnet.h:420`, `:815-821` | existing transport tests |
 | P2 | **For an unfragmented payload (type 5), an acked packet id means the payload was in exactly one delivered batch at the peer.** The sequence is marked received at open (`sdk/rocketnet_server_protocol.cpp:791`, `sdk/rocketnet_client_protocol.cpp:711`). The payload is then copied into the batch, which is sized to the receive drain bound, so it cannot overflow (`sdk/rocketnet_server_transport.cpp:982-1018`, `sdk/rocketnet_constants.h:30,53`). The client's receive thread drops before opening when it is full (`sdk/rocketnet_client_transport.cpp:1111`), and its batch has the same capacity (`:407`). The only "acked but not delivered" exits are a malformed ack block or a wrong opened size (`sdk/rocketnet_server_protocol.cpp:806-829`), and a correct peer never sends those. | as cited | `test_transport_acked_unfragmented_was_in_exactly_one_batch` in `sdk/rocketnet_tests.cpp` and `functional/rocketnet_functional_tests.cpp` (card C0b, commit `bec3ed5`); **F1 must be fixed first** (below) |
 | P3 | **For a fragmented payload (type 9), P2 does not hold.** A fragment's sequence is marked received before reassembly can refuse it as stale or displace its slot as abandoned (`sdk/rocketnet_fragment.cpp:250-256, 375-376`). The payload id still surfaces once every fragment is acked (`sdk/rocketnet_ack.cpp:403-415`). So **no reliable record ever rides a fragmented payload.** Large reliable messages are split by this layer (layer 5). | as cited | rule L2.4 below |
 | P4 | Acked packet ids arrive once per update, with the client index on the server. They are valid until the next update, and overflow is deferred to a later update, never lost (`sdk/rocketnet.h:966-976`, `:640-646`). An id is a process-wide ticket that never repeats (`sdk/rocketnet_packet_lease.h:7-8`). | as cited | existing |
@@ -206,7 +206,7 @@ the design these points:
   The clamp in 6.4 needs `min <= max`, and a first timeout outside the clamp
   has no meaning.
 - **The exact region** is the formula plus at most 63 bytes of alignment per
-  part. At the defaults the padding is 0, and the region is 457,216 bytes,
+  part. At the defaults the padding is 0, and the region is 460,800 bytes,
   which is section 14's figure to the byte.
 - **Every entry type is pinned** to its section 14 size by a static assert.
   `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
@@ -323,10 +323,10 @@ Rules of this layer:
   (study §2): 5 is sent as 0, 6 as 2 and 7 as 3. Codes 5 to 7 on the wire are
   violations.
 - **L2.2** Every packet that carries a reliable record is a RECORDS packet of
-  at most 1192 bytes, so the transport sends it as an unfragmented type 5
+  at most 1416 bytes, so the transport sends it as an unfragmented type 5
   (P2). A reliable message longer than one record can hold is a block.
 - **L2.3** An unreliable message (code 0 or 1) that is longer than one packet
-  can hold travels alone, in a payload above 1192 bytes that the transport
+  can hold travels alone, in a payload above 1416 bytes that the transport
   fragments. With `send_message` that payload is a RECORDS packet holding one
   record, so the u16 length caps it at 65,535 bytes. With `start_message` it
   is a SINGLE packet, capped by the transport's `max_payload_bytes`. Losing one
@@ -577,7 +577,7 @@ details explicit:
   (`{prev, next}`, 8 bytes each, `RN_RESEND_NONE = UINT32_MAX`), indexed by
   `n % W`. That gives O(1) unlink on out-of-order ack and O(1) move-to-tail on
   commit or resend without scanning `W`, and adds `8W` to section 14's region
-  formula (`104.125W`, `457,216` bytes at the defaults).
+  formula (`104.125W`, `460,800` bytes at the defaults).
 - **Commit and eviction.** `rn_window_ack_commit_packet` writes
   `{packet_id, send_time, ref_start, ref_count}` into the circular `P`-entry
   `sent_packets` ring, inserts `packet_id -> ring_slot` into the open-addressed
@@ -756,7 +756,7 @@ state as soon as the epoch opens. The storage depends on the code:
 
 - Code 4 (reliable) is held in the ring at its own offset, which the sender
   already counted against `B`.
-- Code 1 (unreliable) is held in one of `Ru` hold slots of 1192 bytes each.
+- Code 1 (unreliable) is held in one of `Ru` hold slots of 1416 bytes each.
   When the slots are all in use, it is dropped and counted
   (`MESSAGE_SEQUENCED_HOLD_FULL`).
 
@@ -804,7 +804,7 @@ the first version it is `{0, 3}`.
 ## 8. Layer 5: blocks
 
 A reliable message is a **block** when its single record would not fit in
-`1191` bytes, which is the RECORDS area of a 1192-byte payload.
+`1415` bytes, which is the RECORDS area of a 1416-byte payload.
 
 - **Split.** The block is cut at the fixed stride `F = 1152`, a wire constant
   and a multiple of 16. Fragments `0 .. k-2` hold exactly `F` bytes and
@@ -1064,7 +1064,7 @@ void      rocketnet_server_abort_message( server, &ctx );
 ```
 
 - `start_message` calls `start_packet( request_bytes + 1 )`. When
-  `request_bytes <= 1191` that is a real wire frame, with no copy at all.
+  `request_bytes <= 1415` that is a real wire frame, with no copy at all.
   Larger requests go through the transport's arena (L2.3).
 - The message is always UNRELIABLE and is always SINGLE form. Endpoint state
   is not touched; only atomic counters are. So any number of threads may call
@@ -1143,7 +1143,7 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
 // the largest message start_message writes into a real wire frame, zero copy:
 // the payload capacity less the one form byte
 
-#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1191
+#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1415
 
 // the block stride, a wire constant
 
@@ -1157,7 +1157,7 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
     INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
     INT_FIELD( receive_ring_bytes,      65536,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,       32768,   1191, 1 << 20,                0 )   /* WIRE, <= receive_ring_bytes */     \
+    INT_FIELD( max_message_bytes,       32768,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_ring_bytes */     \
     INT_FIELD( send_buffer_bytes,      131072,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
@@ -1405,7 +1405,7 @@ Each failed check stops parsing the payload, increments the named counter
    length rounded up to 16; a fragment that is not the last takes `last = 16`,
    the shortest block it could be part of.
 9. A reliable or CONTROL record inside a payload longer than
-   `ROCKETNET_MAX_PAYLOAD_BYTES` (1192). Such a payload either rode the
+   `ROCKETNET_MAX_PAYLOAD_BYTES` (1416). Such a payload either rode the
    transport's fragments or came from a sender that broke L2.2 (L2.4):
    `MESSAGE_BAD_SIZE`.
 10. Window (6.5): `MESSAGE_NUMBER_OUTSIDE_WINDOW`, `MESSAGE_SLOT_COLLISION`.
@@ -1461,7 +1461,7 @@ opened, and any packet it opened before (`sdk/rocketnet_replay.cpp:32-39`,
 and at most 32768 (`sdk/rocketnet_history.h:8,13`). So when a stale copy of
 `n` is opened, at most 32767 packets written after it have been opened. When
 the copy was written, `n >= U'` and so `next <= n + W`. Each later packet
-first-writes at most 170 numbered records (a payload is at most 1192 bytes,
+first-writes at most 202 numbered records (a payload is at most 1416 bytes,
 and a code 2 record is at least a 6-byte header and 1 data byte, 13.2). A
 block numbers all its fragments at once, up to `ceil(2^20 / 1152) = 911` of
 them (`max_message_bytes` is at most 2^20, `sdk/rocketnet.h:1173`), which can
@@ -1469,7 +1469,7 @@ run ahead of the packets that carry them by at most 911 numbers. In the worst
 case:
 
 ```
-R - n <= W + 32767 × 170 + 911 <= 2^20 + 5,570,390 + 911 = 6,619,877 ≈ 6.3 × 2^20 < 2^23
+R - n <= W + 32767 × 202 + 911 <= 2^20 + 6,618,934 + 911 = 7,668,421 ≈ 7.3 × 2^20 < 2^23
 ```
 
 So the half range never aliases, on two assumptions. First, the replay window
@@ -1557,11 +1557,11 @@ exact figure.
 | send store (slab) | `S` |
 | sent-packet ring, its index and its references | `32·P + 16·2P + 4·16P` = `128·P` |
 | delivered entries (on the server, the object's list) | `24·(W + Du)` |
-| sequenced holds | `1208·Ru` |
+| sequenced holds | `1432·Ru` |
 | receipt ring | `16·Rq` |
 
 ```
-connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1208Ru + 16Rq
+connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq
 ```
 
 At the defaults, `C=32, W=1024, B=65536, S=131072, Q=1024, P=256, Du=256,
@@ -1576,11 +1576,11 @@ Ru=16, Rq=256`:
 | S | 131,072 |
 | 128·256 | 32,768 |
 | 24·1280 | 30,720 |
-| 1208·16 | 19,328 |
+| 1432·16 | 22,912 |
 | 16·256 | 4,096 |
-| **total** | **457,216** bytes, 446.5 KiB |
+| **total** | **460,800** bytes, 450.0 KiB |
 
-That is about 436 MiB for a 1000-client server, on top of the transport's own
+That is about 439 MiB for a 1000-client server, on top of the transport's own
 memory (`rocketnet_server_transport_required_memory`).
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to

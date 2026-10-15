@@ -293,8 +293,12 @@ section, and this table exists so an implementer never hunts for a number.
 | Message record header | 3 to 20 bytes: flags, u16 length, then the code's fields | _Messages_ |
 | Message block stride | 1152 bytes | _Messages_ |
 | CONFIG control body | 28 bytes | _Messages_ |
-| Send budget | 1232 default, 1426 maximum | _Packet sizes_ |
-| Receive ceiling | 1426, fixed | _Packet sizes_ |
+| Packet size | 1500-byte link MTU; 1472 bytes of UDP payload over the smaller IP header, 1452 over the larger | _Packet sizes_ |
+| Send budget | 1452 default, 1472 maximum | _Packet sizes_ |
+| Receive ceiling | 1472, fixed | _Packet sizes_ |
+| Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
+| SINGLE message | 1415 bytes | _Messages_ |
+| Fragment stride | 1413 sent, 1433 received | _Fragmentation_ |
 | Connect token | 768 bytes; signed data 576; sealed block 432; private block 384 | _Connect Token_ |
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
 | Send rate | 10 Hz default | _Timing_ |
@@ -599,7 +603,7 @@ operator controls.
 ### Structural checks that accompany the header
 
 A receiver drops any packet smaller than the minimum for its type, larger than
-1426 bytes — the receive ceiling, fixed regardless of the local send budget — or
+1472 bytes — the receive ceiling, fixed regardless of the local send budget — or
 whose filter value does not match. **The type and size checks are part of the
 same cheap pass** and are specified in _Reading packets_; every non-payload type
 has a single fixed size, so the pair costs one compare and rejects most malformed
@@ -625,9 +629,14 @@ alike.
 
 ## Packet sizes
 
-One budget governs both address families: the IPv6 minimum MTU is 1280 bytes,
-less 40 for the IPv6 header and 8 for UDP, giving **1232 bytes** as the largest
-UDP payload that never fragments on either family.
+Every size limit in this standard derives from one number: **the MTU of a
+plain 1500-byte link**. A UDP datagram on it carries 1500 − 20 − 8 = **1472
+bytes** over IPv4 and 1500 − 40 − 8 = **1452 bytes** over IPv6. The receive
+ceiling is the larger, so a receiver accepts anything one 1500-MTU IPv4
+datagram can carry; the default send budget is the smaller, so one budget
+serves both families and a maximum-size packet crosses a 1500-MTU path
+unfragmented on either: over IPv4 with 20 bytes to spare, over IPv6 exactly
+at the limit.
 
 Every sealed packet spends, before the application's bytes:
 
@@ -643,7 +652,12 @@ additionally open every sealed packet with an ack block**, specified in _Acks_,
 which is 7 bytes in the fully-received case and grows only with loss events.
 
 So payload packets carry **1 to budget−26−block bytes** of application data —
-1 to 1199 at the default budget and the minimum block.
+1 to 1419 at the default budget and the minimum block. An implementation's
+payload capacity is that figure rounded down to a multiple of eight, **1416
+bytes**, so a word-based serializer can root at the payload pointer; the
+receive side accepts payloads up to the ceiling less the same overhead, 1472 −
+26 − 7 = **1439 bytes**. A 1400-byte game packet is therefore one unfragmented
+payload packet, with the message layer's one form byte, on either family.
 
 The handshake types have a fixed total size on the wire; the session types have
 a range, because the ack block and the payload vary. A receiver checks the size
@@ -655,18 +669,18 @@ before any other per-type work:
 | 1 | connection denied | 34 | 6 + 4 + 8 + 0 + 16 |
 | 2 | connection challenge | 66 | 6 + 4 + 8 + 32 + 16 |
 | 3 | connection response | 50 | 6 + 4 + 24 + 16 |
-| 4 | connection keep-alive | 41 to 1426 received; sender bounded by its budget | 6 + 4 + block + 8 + 16 |
-| 5 | connection payload | 34 to 1426 received; sender bounded by its budget | 6 + 4 + block + payload + 16 |
-| 6 | connection disconnect | 33 to 1426 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
+| 4 | connection keep-alive | 41 to 1472 received; sender bounded by its budget | 6 + 4 + block + 8 + 16 |
+| 5 | connection payload | 34 to 1472 received; sender bounded by its budget | 6 + 4 + block + payload + 16 |
+| 6 | connection disconnect | 33 to 1472 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
 | 7 | connection cookie | 38 | 6 + 8 + 8 + 16 |
-| 8 | connection ack | 33 to 1426 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
-| 9 | connection payload fragment | 40 to 1426 received; sender bounded by its budget | 6 + 4 + block + 6 + fragment + 16 |
+| 8 | connection ack | 33 to 1472 received; sender bounded by its budget | 6 + 4 + block + 0 + 16 |
+| 9 | connection payload fragment | 40 to 1472 received; sender bounded by its budget | 6 + 4 + block + 6 + fragment + 16 |
 
 The composition columns are prefilter header + sequence + data + AEAD tag for
 sealed types, with the additional 8 being the clear session nonce on types 1 and
 2; the request is prefilter header + its unsealed body; the cookie is prefilter
 header + its three unsealed fields; _block_ is the sealed ack block, 7 bytes
-minimum. The session types share one receive ceiling — 1426 bytes, whatever
+minimum. The session types share one receive ceiling — 1472 bytes, whatever
 the sender's budget — while each keeps its own hard minimum from this table;
 past the size check, the geometry inside the seal decides. One ceiling and a
 per-type floor is one comparison each, and the counters stay attributable:
@@ -675,27 +689,35 @@ a packet below its type's floor is `WRONG_SIZE`, never a later refusal.
 The connect token is a fixed 768 bytes, inside a single 1500-byte MTU with room
 to spare, by design.
 
-**The 1232-byte budget is the default, not a ceiling built into the protocol.**
-It is derived from the one MTU that is guaranteed everywhere — and on IPv6 a
-packet exceeding the path MTU is not fragmented in transit but dropped, so
-exceeding it on a 1280-byte tunnel path is silent connection death. On IPv4
-today, everywhere that matters, the real MTU is 1500.
+**The 1452-byte budget is the default, by the owner's ruling, and it assumes
+a 1500-byte path.** It is the IPv6 UDP payload of a 1500-byte MTU, chosen so
+the game's largest packets travel whole: the protocol grows to fit the game,
+the game does not shrink to fit the protocol. On IPv6 a packet exceeding the
+path MTU is not fragmented in transit but dropped (RFC 8200, section 5), and
+RFC 8085 section 3.2 asks a UDP sender to stay inside the path MTU, so **a path
+below MTU 1500 drops a maximum-size IPv6 packet**: an IPv6 tunnel at the
+1280-byte minimum, or PPPoE at 1492, carries the small packets of a session and
+silently loses the large ones. A deployment that must serve such paths lowers
+its budget; 1232 (1280 − 40 − 8) is the value safe with no knowledge of the
+network. On IPv4 a 1452-byte packet has 20 bytes of headroom under 1500.
 
 The budget governs **sending**: a sender MUST NOT emit a packet larger than its
-configured budget, default 1232, and a deployment that knows its paths MAY raise
-it, to at most 1426. **The receive side is not configurable: every receiver
-accepts payload packets up to a flat 1426-byte ceiling, whatever its own send
-budget.** One fixed receive rule means a budget mismatch between two correctly
-implemented ends degrades to nothing worse than one side sending smaller
-packets than it could, and there is no second receive behavior to test. The budget is a deployment constant, not negotiated, and not
-carried on the wire. The fixed packet sizes above do not change with it; only
-the payload range does. The 1232 default is the only value that is safe with no
-knowledge of the network; every raise is a statement about paths, and it is the
-deployment's to make. The 1426 maximum is itself such a statement, made on
-evidence: it carries a 1393-byte payload, and this protocol's ancestor shipped
-1468-byte frames to players on the open internet for years without incident.
-1426 leaves 46 bytes of headroom under the 1472 available on plain 1500-MTU
-ethernet.
+configured budget, default 1452, and a deployment that knows its paths MAY
+raise it, to at most 1472. **The receive side is not configurable: every
+receiver accepts payload packets up to a flat 1472-byte ceiling, whatever its
+own send budget.** One fixed receive rule means a budget mismatch between two
+correctly implemented ends degrades to nothing worse than one side sending
+smaller packets than it could, and there is no second receive behavior to
+test. The budget is a deployment constant, not negotiated, and not carried on
+the wire. The fixed packet sizes above do not change with it; only the payload
+range does. The 1472 maximum is the whole IPv4 UDP payload of a 1500-byte MTU
+and carries a 1439-byte payload; this protocol's ancestor shipped 1468-byte
+frames to players on the open internet for years without incident.
+
+**The change from the 1280-derived sizes is not backward compatible.** A
+receiver built with the earlier 1426-byte ceiling refuses a packet above it,
+so both ends update together; returning clients update, and there is no
+compatibility mode.
 
 ## Sequence numbers
 
@@ -1353,7 +1375,7 @@ _connection keep-alive_:
 
 _connection payload_:
 
-    [payload data] (1 to budget−26−block bytes; 1199 at the default budget and
+    [payload data] (1 to budget−26−block bytes; 1419 at the default budget and
                     the minimum block)
 
 _connection disconnect_: no data beyond the ack block.
@@ -1418,7 +1440,7 @@ On every receive path, every refusal that can be decided without cryptography (s
 In this exact order:
 
 * If the packet is shorter than the 6-byte prefilter header, or longer than the
-  1426-byte receive ceiling, ignore it.
+  1472-byte receive ceiling, ignore it.
 
 * If the type byte is greater than 9, ignore the packet. Types 10 through 255
   are reserved and MUST be ignored by a conforming receiver. **This check and
@@ -1534,12 +1556,12 @@ In this exact order:
   * 32 bytes — _connection challenge_
   * 24 bytes, all zero — _connection response_
   * 8 bytes — _connection keep-alive_
-  * 1 to 1393 bytes — _connection payload_ (1393 = the 1426 receive ceiling −
+  * 1 to 1439 bytes — _connection payload_ (1439 = the 1472 receive ceiling −
     26 − the 7-byte minimum block)
   * 0 bytes — _connection disconnect_
   * 0 bytes — _connection ack_
-  * 7 to 1393 bytes — _connection payload fragment_ (the 6-byte fragment
-    header and at least one fragment byte, up to the same 1393 the payload
+  * 7 to 1439 bytes — _connection payload fragment_ (the 6-byte fragment
+    header and at least one fragment byte, up to the same 1439 the payload
     line derives)
 
 * Otherwise, process the packet — the ack block's delivery information first,
@@ -2014,7 +2036,7 @@ to loss, and a soak asserts it stays zero on a clean link.
 
 **Storage is allocated once, at create, to the maximum.** A reassembly slot
 owns capacity for the configured maximum payload size plus its one staging
-buffer at the 1,387-byte maximum fragment size (1426 − 26 − 7 − 6), and the
+buffer at the 1,433-byte maximum fragment size (1472 − 26 − 7 − 6), and the
 slot count is configuration; the arena is slots × (maximum payload + staging),
 allocated at create time and never grown, resized or shared. At the moment of delivery the reassembled
 payload is copied out once — the one copy fragmentation inherently costs —
@@ -2108,7 +2130,7 @@ code 0, 6 as 2, and 7 as 3. The block stride is the wire constant
 exactly F bytes and fragment k−1 carries 1 to F (_CHANNELS 8_).
 
 A payload that carries a reliable record (code 2, 3 or 4) or a CONTROL record
-is at most `ROCKETNET_MAX_PAYLOAD_BYTES` (1192) long, so the transport sends it
+is at most `ROCKETNET_MAX_PAYLOAD_BYTES` (1416) long, so the transport sends it
 unfragmented. A reliable message longer than one record can hold is sent as a
 block. An unreliable record (code 0 or 1) may travel alone in a larger payload
 that the transport fragments; its u16 length caps it at 65,535 bytes.
@@ -2155,7 +2177,7 @@ and no check reads outside `[payload, payload + L)`.
    `last` is the last fragment's length rounded up to 16. A fragment that is
    not the last does not know that length, so it takes `last = 16`, the
    shortest block it could belong to; the last fragment checks the exact end.
-9. A reliable or CONTROL record inside a payload longer than 1192 bytes: such
+9. A reliable or CONTROL record inside a payload longer than 1416 bytes: such
    a payload either rode the transport's fragments or came from a sender that
    broke the size rule above. `MESSAGE_BAD_SIZE`.
 10. The window (_CHANNELS 6.5_): `MESSAGE_NUMBER_OUTSIDE_WINDOW`,

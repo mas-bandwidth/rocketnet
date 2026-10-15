@@ -844,7 +844,7 @@ What the transport gives, from `sdk/rocketnet.h` and `USAGE.md`: a per-packet
 delivery notification batch of acked `packet_id`s per update
 (`rocketnet.h:646, 966-976`), "The transport tells; it never resends"
 (`rocketnet.h:970-971`); a zero-copy frame of up to `ROCKETNET_MAX_PAYLOAD_BYTES`
-= 1192 (`rocketnet.h:420`) and a copying fragment path above it up to the
+= 1416 (`rocketnet.h`) and a copying fragment path above it up to the
 configured maximum, default 16384, hard ceiling 256 fragments
 (`rocketnet.h:423-433`, `rocketnet_fragment.h:29`), with unreliable semantics,
 "A lost fragment loses the whole payload" (`rocketnet.h:833-834`); a delivered

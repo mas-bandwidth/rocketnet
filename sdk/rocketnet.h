@@ -44,7 +44,26 @@
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
 
-#define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 8 - 20 )
+// The packet size: the UDP payload of one datagram on a 1500-byte MTU link,
+// the number every other size limit derives from (STANDARD.md _Packet
+// sizes_). Over IPv4 it is 1500 - 20 - 8 = 1472 bytes, the receive ceiling;
+// over IPv6 it is 1500 - 40 - 8 = 1452 bytes, the send budget, so a maximum
+// packet crosses a 1500-MTU path unfragmented on either family. The internal
+// wire header (rocketnet_wire.h) derives the same two numbers from the same
+// MTU, and rocketnet_constants.h asserts they agree.
+
+#define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 20 - 8 )
+#define ROCKETNET_MAX_PACKET_BYTES_IPV6                ( 1500 - 40 - 8 )
+
+// a compile-time assert that builds as C11 and as C++
+
+#ifdef __cplusplus
+#define ROCKETNET_STATIC_ASSERT( condition, message )  static_assert( condition, message )
+#else
+#define ROCKETNET_STATIC_ASSERT( condition, message )  _Static_assert( condition, message )
+#endif
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
 #define ROCKETNET_LOG_LEVEL_NONE                                       0
 #define ROCKETNET_LOG_LEVEL_ERROR                                      1
@@ -474,17 +493,24 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE    3
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED                      4
 
-// The send-side payload capacity. The 1232-byte default budget less the
-// 26-byte fixed overhead and the 7-byte minimum ack block allows 1199; the
-// capacity is the largest multiple of eight inside that, keeping the
-// documented guarantee that any word-based serializer can root at the
-// payload pointer directly. The receive side is not configurable and
-// accepts payloads up to 1393 bytes -- the 1426-byte receive ceiling less
-// the same overhead -- whatever this end's own budget, so receive buffers
-// size by the receive constant.
+// The send-side payload capacity: the send budget (ROCKETNET_MAX_PACKET_BYTES_IPV6,
+// 1452) less the 26-byte fixed overhead and the 7-byte minimum ack block
+// leaves 1419; the capacity is the largest multiple of eight inside that,
+// 1416, keeping the documented guarantee that any word-based serializer can
+// root at the payload pointer directly. The receive side is not configurable
+// and accepts payloads up to the receive ceiling (ROCKETNET_MAX_PACKET_BYTES,
+// 1472) less the same overhead, 1439 bytes, whatever this end's own budget,
+// so receive buffers size by the receive constant. The overhead and the block
+// are internal constants this header cannot see: the values are written here
+// with their derivation, and rocketnet_constants.h asserts each equals it.
 
-#define ROCKETNET_MAX_PAYLOAD_BYTES                        1192
-#define ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES                1393
+#define ROCKETNET_MAX_PAYLOAD_BYTES                        1416    // ( ( 1452 - 26 - 7 ) / 8 ) * 8
+#define ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES                1439    // 1472 - 26 - 7
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES < ROCKETNET_MAX_PACKET_BYTES_IPV6, "the payload capacity fits the send budget" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAYLOAD_BYTES >=
+                         ROCKETNET_MAX_PACKET_BYTES - ROCKETNET_MAX_PACKET_BYTES_IPV6, "the receive payload is the capacity plus the family difference and the rounding" );
 
 // Payloads above the wire capacity fragment transparently: request the
 // capacity at start_packet and the transport routes the payload through
@@ -782,7 +808,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // reassembles, and the per-client reassembly slot count. zero means the
 // defaults. budget arithmetic, all spent once at create, approximately --
 // slot records ride along: the reassembly arena is max_clients x slots x
-// (max payload + 1387 staging) per the standard; this implementation's
+// (max payload + 1433 staging, ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES) per the standard; this implementation's
 // delivered mirror of slots x max payload per client -- the per-update
 // home of completed payloads, sized to the receive drain's completion
 // bound so a completed payload always has a home; and the ack endpoints'
@@ -1294,7 +1320,9 @@ namespace rocketnet
 // the largest message start_message writes into a real wire frame, zero copy:
 // the payload capacity less the one form byte
 
-#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1191
+#define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1415
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 
 // the block stride, a wire constant
 
@@ -1310,7 +1338,7 @@ namespace rocketnet
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
     INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
     INT_FIELD( receive_ring_bytes,      65536,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,       32768,   1191, 1 << 20,                0 )   /* WIRE, <= receive_ring_bytes */     \
+    INT_FIELD( max_message_bytes,       32768,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_ring_bytes */     \
     INT_FIELD( send_buffer_bytes,      131072,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
