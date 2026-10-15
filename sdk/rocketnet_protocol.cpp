@@ -151,7 +151,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
         return 0;
 
     if ( payload_bytes < 1 ||
-         ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes > ROCKETNET_SEND_BUDGET )
+         payload_bytes > ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ack_block_bytes )
         return 0;
 
     uint8_t * p = wire_start;
