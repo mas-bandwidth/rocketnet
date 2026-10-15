@@ -29,14 +29,14 @@ memcmp (bin/test)
 # origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
 # origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
 
-rocketnet_random_float sdk/rocketnet.cpp:357:5
+rocketnet_random_float sdk/rocketnet.cpp:463:5
 # origin: Uninitialized value was stored to memory at
-# origin: rocketnet_random_float sdk/rocketnet.cpp:356:12
-# origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:904:23
-# origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:10880:9
-# origin: rocketnet_unit_worker(char const*) test.cpp:77:18
+# origin: rocketnet_random_float sdk/rocketnet.cpp:462:12
+# origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:1047:23
+# origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:12956:9
+# origin: rocketnet_unit_worker(char const*) test.cpp:86:18
 # origin: suite_main(int, char**, int (*)(char const*), int (*)(), char const* (*)(int), suite_exec const*, int, char const**, int, bool) test/suite_runner.h:178:16
-# origin: main test.cpp:169:12
+# origin: main test.cpp:178:12
 # origin: (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a600)
 
 load64_be sodium/sodium.h:1464:5
@@ -49,9 +49,9 @@ load64_be sodium/sodium.h:1464:5
 # origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
 # origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
 
-rocketnet_random_uint32 sdk/rocketnet.cpp:378:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:484:5
 # origin: Uninitialized value was created by an allocation of 'value' in the stack frame
-# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:376:5
+# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:482:5
 
 std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
 # origin: Uninitialized value was created by a heap allocation
@@ -62,4 +62,7 @@ std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Ident
 # origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_create_node<unsigned long const&>(unsigned long const&) include/c++/bits/stl_tree.h:1253:22
 # origin: std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node::operator()<unsigned long const&>(unsigned long const&) const include/c++/bits/stl_tree.h:1136:18
 # origin: std::_Rb_tree_iterator<unsigned long> std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_insert_<unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, unsigned long const&, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2481:4
+
+std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:1901:10
+posix_spawn (bin/test)
 

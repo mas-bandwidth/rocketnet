@@ -81,7 +81,7 @@ void rocketnet_test_lifecycle_driver()
         config.num_reassembly_slots = 256;
         config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
         strcpy(config.driver, "portable");
-        check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config, 0.0));
+        check(!rocketnet_server_transport_create(&state, "127.0.0.1", &config));
         check(state.calls == before);
     }
 #if ROCKETNET_XDP
@@ -129,7 +129,7 @@ void rocketnet_test_lifecycle_driver()
     for ( int failure = 1; failure <= 64; ++failure )
     {
         state.fail_at = state.calls + failure;
-        auto * server = rocketnet_server_transport_create( &state, "127.0.0.1", &server_config, 0.0 );
+        auto * server = rocketnet_server_transport_create( &state, "127.0.0.1", &server_config);
         state.fail_at = 0;
         if ( server )
         {

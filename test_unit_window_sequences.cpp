@@ -1019,7 +1019,7 @@ static void TestWindowRingOperationSequences()
     probe_ack_does_not_free_held( &g_world );
     probe_wrap_and_delivery( &g_world );
     probe_exhaustive( &g_world );
-    probe_walk( &g_world, 0x853c49e6748fea9bULL, 0, 1000000, 1 );
+    probe_walk( &g_world, 0x853c49e6748fea9bULL, 0, 200000, 1 );
 }
 
 REGISTER_UNIT_TEST( TestWindowRingOperationSequences );

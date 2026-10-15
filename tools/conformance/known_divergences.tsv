@@ -7,7 +7,6 @@
 # Remove an entry once its fix lands: a stale entry (the document and the
 # code now agree) is itself a failure, and so is a mismatch with no entry.
 timing.send_rate	unowned
-timing.handshake_deadline	unowned
 timing.cookie_lifetime	unowned
 timing.cookie_rotation	unowned
 config.max_token_lifetime_seconds	unowned

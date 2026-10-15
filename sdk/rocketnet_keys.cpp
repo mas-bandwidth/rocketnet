@@ -16,6 +16,7 @@
 #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
 #include "rocketnet_keys.h"
+#include "rocketnet_crypto_tally.h"
 #include "rocketnet.h"
 
 #include <sodium.h>
@@ -72,6 +73,7 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     rocketnet_assert( server_ephemeral_public_key );
 
     uint8_t shared_secret[32];
+    rocketnet_crypto_tally.scalarmult++;
     if ( crypto_scalarmult( shared_secret, own_ephemeral_secret_key, peer_ephemeral_public_key ) != 0 )
         return 0;
 

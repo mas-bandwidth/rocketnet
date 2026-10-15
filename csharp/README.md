@@ -52,6 +52,27 @@ modified, consumed and wrong-owner contexts yield an empty span. All payload
 views still expire at finish, abort, update, flush or destroy and must not race
 those operations. Native/managed struct layout remains unchanged.
 
+Frame sync is now a safe handle. `FrameSyncCreate` returns a `FrameSyncHandle`
+(dispose it once, or call `FrameSyncDestroy` with it); `FrameSyncWait` and
+`FrameSyncGetStats` take that handle. A second destroy, or a wait or stats read
+after destroy, throws `ObjectDisposedException` in managed code before the
+native handle is touched. Migrate `IntPtr frameSync = FrameSyncCreate(...)` to
+`FrameSyncHandle frameSync = FrameSyncCreate(...)` and compare `.IsInvalid`
+instead of `== IntPtr.Zero`. The type change is intentional and happens before
+1.0.
+
+Received payloads are now checked views. `ClientTransportPayloadSpan`,
+`ServerTransportPayloadSpan` and both payload-batch indexers return
+`ReceivedPayload`, a `ref struct` whose `Span`, `Length`, `IsEmpty` and indexer
+each check the owner transport's update epoch captured at creation. Reading one
+after the next update throws `StalePayloadException` instead of handing back
+memory the library has reused. Migrate `ReadOnlySpan<byte> payload = batch[i]`
+to `ReadOnlySpan<byte> payload = batch[i].Span`, and the single-payload
+accessors likewise (`.Span`). The step before an update is still to consume the
+payload; the check turns a stale read into an exception rather than silent
+corruption. Native/managed layout is unchanged. The acked-packet accessors are
+not payload accessors and keep their existing lifetime.
+
 `CounterCount()` reports the loaded library's counter count; `CountersSpan` uses
 it instead of a compiled array length. `CounterValue` is bounds checked. Read
 counters outside update/fill. Native and managed builds remain a matched pair.

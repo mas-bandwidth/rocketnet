@@ -288,7 +288,7 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
             rocketnet_handshake_process_at( test, &test->client_address, packet, packet_bytes,
                                             response, &response_bytes, payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
-                rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, &payload_bytes );
+                rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
         }
 
         if ( time - last_keep_alive_time >= 0.1 )
@@ -300,7 +300,7 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
                     continue;
                 int bytes = rocketnet_server_write_keep_alive( &test->server, i, time, response );
                 if ( bytes > 0 )
-                    rocketnet_client_protocol_process_packet( client, response, bytes, time, payload, &payload_bytes );
+                    rocketnet_client_protocol_process_packet( client, response, bytes, time, payload, sizeof(payload), &payload_bytes );
             }
         }
 
@@ -378,7 +378,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                     // deliver cookies; swallow challenges, so the client waits
                     // in state 2 until its timeout
                     if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET )
-                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, &payload_bytes );
+                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -408,7 +408,7 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                     rocketnet_handshake_process_at( &test, &test.client_address, packet, packet_bytes,
                                                     response, &response_bytes, payload, &payload_bytes, &payload_client_index );
                     if ( response_bytes > 0 )
-                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, &payload_bytes );
+                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof(payload), &payload_bytes );
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -717,7 +717,7 @@ static void TestKeepAliveClockCountsOnlyKeepAlives()
     rocketnet_handshake_server_teardown( &test );
 }
 
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralErasedOutsideHandshake, "rnfix-client-erase-ephemeral-and-token-on-failure" );
+REGISTER_UNIT_TEST( TestClientEphemeralErasedOutsideHandshake );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestDisconnectAbsorbsTerminalState, "rnfix-client-terminal-state-absorbing" );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestOneConnectionPerTokenAfterHistoryFlush, "rnfix-refuse-admitted-token-at-response" );
 REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );

@@ -4,15 +4,13 @@
 */
 
 #include "rocketnet_connect_token.h"
+#include "rocketnet_crypto_tally.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet.h"
 
 #include <sodium.h>
 #include <string.h>
-
-uint8_t rocketnet_test_private_block_copy[ROCKETNET_PRIVATE_BLOCK_BYTES];
-bool rocketnet_test_private_block_copied = false;
 
 void rocketnet_write_connect_token_private( const struct rocketnet_connect_token_private_t * input, uint8_t * buffer )
 {
@@ -103,10 +101,10 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
     result = 1;
 
 out:
+    // the wipe runs on every path out, including the two goto out paths, and
+    // nothing outside this call observes either buffer
     sodium_memzero( private_block, sizeof(private_block) );
     sodium_memzero( &private_data, sizeof(private_data) );
-    memcpy( rocketnet_test_private_block_copy, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES );
-    rocketnet_test_private_block_copied = true;
     return result;
 }
 
@@ -123,6 +121,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
                                           const uint8_t * signature,
                                           const uint8_t * backend_public_key )
 {
+    rocketnet_crypto_tally.signature_verify++;
     return crypto_sign_verify_detached( signature, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_public_key ) == 0;
 }
 
@@ -132,6 +131,7 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
                                           const uint8_t * server_secret_key )
 {
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+    rocketnet_crypto_tally.seal_open++;
     if ( crypto_box_seal_open( private_block,
                                signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,
                                ROCKETNET_SEALED_BLOCK_BYTES,
@@ -198,6 +198,10 @@ int rocketnet_write_dev_connect_token( const char * server_address_string,
                                        uint64_t current_timestamp,
                                        uint8_t * connect_token )
 {
+    if ( !rocketnet_api_null_guard( server_address_string ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( connect_token ) )
+        return 0;
     rocketnet_assert( server_address_string );
     rocketnet_assert( connect_token );
 

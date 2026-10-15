@@ -9,7 +9,8 @@ transport itself never resends and a lost fragment loses its payload (USAGE.md,
 to it.
 
 `tla/MCLink.tla` and `tla/MCLink.cfg` are the small instance that proves the module
-itself. Every TLC run is a row in `tla/RUNS.tsv`.
+itself. Current measured cases are in `tla/RUNS.tsv`; earlier records are
+preserved in `tla/RUNS-HISTORY.tsv`. See [the record guide](README.md).
 
 ## What the module covers
 
@@ -212,3 +213,26 @@ The reversed witness, `wf-arbitrary-witness`, fails `LinkDelivers` with a 44-sta
 lasso in which every copy is dropped before it is delivered (no `MCDeliver` step in the
 trace). That is the behaviour `EventualDelivery` exists to rule out, and the committed
 run passing while the witness fails shows the assumption is doing the work.
+
+## Reproducible case files
+
+The original seven-column records are preserved unchanged in
+[`RUNS-HISTORY.tsv`](RUNS-HISTORY.tsv). Current measurements use the runner
+and refresh procedure in [`README.md`](README.md). Each historical row now
+has its own committed configuration; no edit to a shared file is needed.
+The table follows the original ledger order. A declared debt retains its
+original parameters and is not a completed proof.
+
+| Historical row | Committed configuration | Declared outcome |
+|---|---|---|
+| 1 | `MCLink.cfg` | pass |
+| 2 | `MCLinkSpecNone.cfg` | pass |
+| 3 | `MCLinkSpecFirst.cfg` | pass |
+| 4 | `MCLinkSpecAlternate.cfg` | pass |
+| 5 | `MCLinkSpecBurst.cfg` | pass |
+| 6 | `MCLinkWireFairNone.cfg` | pass |
+| 7 | `MCLinkWireFairFirst.cfg` | pass |
+| 8 | `MCLinkWireFairAlternate.cfg` | pass |
+| 9 | `MCLinkWireFairBurst.cfg` | pass |
+| 10 | `MCLinkWireFairArbitraryWitness.cfg` | temporal / LinkDelivers |
+| 11 | `MCLinkWireFairAlternateResent.cfg` | temporal / ResentIsDelivered |

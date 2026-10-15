@@ -6,6 +6,22 @@ free RocketNet allocations before `rocketnet_term`; termination with live
 allocations is refused and logged. Repeated termination is a no-op. Startup,
 shutdown and global configuration must be serialized with application activity.
 Set custom allocator callbacks before initialization, with no live allocations.
+Call `rocketnet_init` first: a create before it —
+`rocketnet_client_transport_create`, `rocketnet_server_transport_create` or
+`rocketnet_frame_sync_create` — returns NULL and allocates nothing. A refused
+`rocketnet_allocator` replacement (late, while transitioning, with live
+allocations, or with either callback NULL) returns false; an accepted
+replacement returns true. Every refused call logs one line and increments
+`rocketnet_api_misuse_count`, the process-wide count of refused API misuse.
+
+The public API is also NULL safe at the boundary. Every entry point checks each
+pointer argument it would dereference once, at the top of the call: a NULL is a
+no-op that returns the function's documented value (`0`, `NULL` or `false`; a
+void function returns nothing), increments `rocketnet_api_misuse_count`, and in
+a debug build fires `rocketnet_assert`. A NULL handle is refused before any
+I/O, so no socket opens. The check is one predictable branch at the top, never
+inside a loop and never on an internal call, so the send and receive hot paths
+pay nothing when their pointers are valid.
 
 Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
 digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.
@@ -53,6 +69,14 @@ Call `send_packets` after each joined fill phase. There is no required frame,
 update, send or ACK rate. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
 sent by it, and nothing is guaranteed sent without it.
+
+The `time` passed to `update` — and to `rocketnet_client_transport_create` — must
+be finite and non-decreasing: a game clock in seconds, monotonic. A NaN, an
+infinity or a step backwards is clamped to the last good time, counted once in
+`rocketnet_api_misuse_count`, and asserted (`rocketnet_assert`) in a debug build;
+a release build clamps and goes on rather than freezing a timeout or rewinding a
+deadline. The library never reads a clock of its own on these paths, so a game
+owns time and a test can hold it still.
 
 Driver eagerness above that floor differs, and it is a *server*-side difference:
 on the server the GSO rung flushes update's own staging — protocol responses,
@@ -306,6 +330,12 @@ One X-macro table per transport in `rocketnet.h` derives the struct, the default
 the environment variable names, the parse and the validation. For everything in
 the table, there is one declaration and the rest is generated from it.
 
+The server field `handshake_deadline_seconds` defaults to 5 seconds and accepts
+1 to 60. It fixes the half-open mapping deadline when the challenge is created;
+requests never refresh it, and connecting discharges it. Set it in the server
+config or with `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS`. It is independent
+of the connect token's connected idle timeout.
+
 **The table is not the whole environment surface**, and the difference matters
 because only the table's variables get the precedence, logging and validation
 described below. Reading every `getenv` in `sdk/`, these sit outside it:
@@ -313,32 +343,45 @@ described below. Reading every `getenv` in `sdk/`, these sit outside it:
 - `ROCKETNET_PUMP` — see below, it has the sharpest edge;
 - `ROCKETNET_LOG_LEVEL`, read once at process init;
 - `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, read by the XDP driver;
-- `ROCKETNET_SERVER_NUM_QUEUES`, `ROCKETNET_SERVER_NUM_OS_CPUS` and
-  `ROCKETNET_SERVER_PUBLIC_ADDRESS` — deprecated but fully functional aliases of
-  the table's `ROCKETNET_NUM_XDP_QUEUES`, `ROCKETNET_NUM_OS_CPUS` and
-  `ROCKETNET_PUBLIC_ADDRESS`. Each is honored only where its successor is unset,
-  and every use is logged naming the successor.
+- `ROCKETNET_SERVER_NUM_QUEUES` — the one surviving deprecated alias, of the
+  server table's `ROCKETNET_SERVER_NUM_XDP_QUEUES`. It is honored only where
+  its successor is unset, and every use is logged naming the successor.
+
+Every config field has **one name per endpoint**: the server table reads
+`ROCKETNET_SERVER_<FIELD>` and the client table reads `ROCKETNET_CLIENT_<FIELD>`,
+so a server and a client in one process never share a variable.
+`ROCKETNET_SERVER_NUM_OS_CPUS` and `ROCKETNET_SERVER_PUBLIC_ADDRESS` are the
+canonical names of their fields. The old process-wide spelling
+`ROCKETNET_<FIELD>` is **no longer applied**: a variable set under it is
+refused with one error naming its per-endpoint replacement, once per create,
+so an operator is never silently ignored.
 
 **`ROCKETNET_PUMP=portable` refuses the Darwin msgx candidate**, including
 an explicit msgx pin. The deprecated switch retains its original pump-disable
 meaning: `auto` may continue to portable, while `driver = "msgx"` fails loudly
 because its only candidate refused. It never silently changes a pin to portable.
-Unset the legacy variable to allow msgx, or use `ROCKETNET_DRIVER=portable` to
-request portable through the current driver selector. The refusal log names
-both the old switch and its successor.
+Unset the legacy variable to allow msgx, or use `ROCKETNET_SERVER_DRIVER` /
+`ROCKETNET_CLIENT_DRIVER` `=portable` to request portable through the current
+driver selector. The refusal log names both the old switch and its successor.
 
-**Precedence is default < struct < env.** The struct you pass is the middle layer,
-and the environment overlays it. Every environment override is logged loudly,
+**Precedence is default < struct < env, evaluated per endpoint.** The struct you
+pass is the middle layer, and the environment overlays it.
+
+Every environment override is logged loudly,
 naming the variable, the new value and the value it displaced — with secret fields
 redacted on both sides, so a key's encoding never reaches a log line. Validation
 **refuses and never clamps**: an out-of-range value fails the create with an error
 naming the field and its range.
 
-Environment names are mechanical: `ROCKETNET_` plus the field name uppercased.
-`max_clients` is `ROCKETNET_MAX_CLIENTS`, `driver` is `ROCKETNET_DRIVER`,
-`public_address` is `ROCKETNET_PUBLIC_ADDRESS`. Byte fields (keys, filter value)
-are base64. An environment variable set to the empty string is treated as unset,
-with a log line saying so.
+Environment names are mechanical: `ROCKETNET_` plus the endpoint plus the field
+name uppercased. On the server `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`,
+`driver` is `ROCKETNET_SERVER_DRIVER`, `public_address` is
+`ROCKETNET_SERVER_PUBLIC_ADDRESS`; on the client `driver` is
+`ROCKETNET_CLIENT_DRIVER`. A field's old process-wide spelling
+(`ROCKETNET_MAX_CLIENTS`, `ROCKETNET_DRIVER`, `ROCKETNET_PUBLIC_ADDRESS`) is
+refused aloud with the per-endpoint name to use instead. Byte fields (keys,
+filter value) are base64. An environment variable set to the empty string is
+treated as unset, with a log line saying so.
 
 **Passing `NULL` for the config is the default shape** — and on the two ends that
 means different things:
@@ -347,15 +390,15 @@ means different things:
   the ordinary path. The token names the server and carries the keys; the config
   only carries what the token does not.
 
-- **Server:** `rocketnet_server_transport_create( context, address, NULL, time )`
+- **Server:** `rocketnet_server_transport_create( context, address, NULL )`
   gets the default shape, which has **no keys** — and a server with no keys is
   refused, never defaulted, because default keys are how every deployment of a
   protocol ends up sharing one identity. So a NULL config succeeds on the server
   only when the environment supplies all three keys. For development, fill
   `rocketnet_server_transport_dev_config`, which installs the published
   development keys loudly. For production, fill the struct or set
-  `ROCKETNET_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SECRET_KEY` and
-  `ROCKETNET_BACKEND_PUBLIC_KEY`.
+  `ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`
+  and `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`.
 
 `config.public_address`, when set, displaces the address parameter passed to
 `create` — so the address the driver ladder verifies, the address the driver binds
@@ -370,7 +413,8 @@ variable. It is consumed only after a create that fully succeeds.
 Selection is **runtime**, not compile time (#106): one build carries every driver
 its platform has, and the transport walks an ordered candidate list at create,
 left to right, **first grant wins**. The list rides `config.driver` or
-`ROCKETNET_DRIVER`, under the usual precedence.
+`ROCKETNET_SERVER_DRIVER` (server) / `ROCKETNET_CLIENT_DRIVER` (client), under
+the usual precedence.
 
     driver = "auto"            the platform's recommended order for this endpoint
     driver = "gso"             a one-element list is a PIN: that driver or failure

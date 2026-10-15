@@ -17,15 +17,10 @@
 // field is exactly the canary, so the scan is deterministic -- it never
 // depends on a random key happening to contain the byte.
 //
-// Two fixes have landed and are asserted green:
-//   * the connect-token mint scratch (sdk/rocketnet_connect_token.cpp, the
-//     private_block/private_data buffers zeroed on every return), and
-//   * the client token keys, zeroed by the deliberate disconnect
-//     (sdk/rocketnet_client_protocol.cpp, rocketnet_client_protocol_disconnect).
-// The ephemeral secret on a *failed* attempt is still open (the model finding
-// F4): the automatic terminal transitions -- denied, every handshake timeout,
-// connect-token expired -- reach rocketnet_client_set_state without zeroing,
-// so that path carries the expected-fail marker and names its fix card.
+// The client token keys and ephemeral secret are zeroed by the deliberate
+// disconnect (sdk/rocketnet_client_protocol.cpp,
+// rocketnet_client_protocol_disconnect) and by every automatic terminal
+// transition (rnfix-client-terminal-states-wipe-their-secrets).
 
 #include "test_unit_registry.h"
 
@@ -37,11 +32,6 @@
 
 #include <stdint.h>
 #include <string.h>
-
-// the connect-token mint scratch: the mint copies its zeroed scratch here, so
-// the test can see whether the wipe ran. Declared by sdk/rocketnet_connect_token.cpp.
-extern uint8_t rocketnet_test_private_block_copy[ROCKETNET_PRIVATE_BLOCK_BYTES];
-extern bool rocketnet_test_private_block_copied;
 
 static const uint8_t k_canary = 0xA5;
 
@@ -119,51 +109,13 @@ static void feed_cookie( struct rocketnet_client_protocol_t * client, double cur
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( client, cookie, sizeof(cookie),
-                                                                    current_time, payload, &payload_bytes ) );
+                                                                    current_time, payload, sizeof(payload), &payload_bytes ) );
     rocketnet_unit_check( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 }
 
 // ---------------------------------------------------------------------------
 // green: the wipes that have landed
 // ---------------------------------------------------------------------------
-
-// The connect-token mint scratch: rocketnet_write_connect_token fills a local
-// private_block from the input and MUST zero it (and the private_data copy)
-// before every return, so no copy of the token keys outlives the call. Plant
-// the canary in the input keys; if the wipe is missing the scratch copy is the
-// canary, and this test goes red.
-static void TestConnectTokenScratchIsWiped()
-{
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-
-    memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
-    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
-    signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
-    signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
-    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
-    memcpy( signed_fields.ipv4_address, server_address, 6 );
-    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
-
-    memset( &private_fields, 0, sizeof(private_fields) );
-    private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
-    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
-    private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
-    plant_canary( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
-    plant_canary( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
-
-    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-    rocketnet_test_private_block_copied = false;
-    rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields,
-                                                         rocketnet_test_backend_secret_key, token_data ) );
-    rocketnet_unit_check( rocketnet_test_private_block_copied );
-
-    // the scratch returned to its zeroed state: no canary survives
-    rocketnet_unit_check( !canary_survives( rocketnet_test_private_block_copy, ROCKETNET_PRIVATE_BLOCK_BYTES ) );
-}
 
 // The client's parsed token keys and its ephemeral secret: the deliberate
 // disconnect zeroes the whole token (which holds both per-session keys), the
@@ -272,7 +224,7 @@ static void TestClientEphemeralSecretWipedOnDenied()
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, denied, denied_bytes,
-                                                                    100.6, payload, &payload_bytes ) == 1 );
+                                                                    100.6, payload, sizeof(payload), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 }
@@ -337,7 +289,7 @@ static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, challenge, ch_bytes,
-                                                                     100.6, payload, &payload_bytes ) == 1 );
+                                                                     100.6, payload, sizeof(payload), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     // zero happened on entry to state 3
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
@@ -355,14 +307,12 @@ static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
 // private-block decrypt fail inside open_connect_token_private): no per-attempt
 // secret buffers are allocated on those early returns (server's long-term
 // keys stay live across requests; server eph pair and derived keys are created
-// only after successful token open). The connect-token scratch wipe is already
-// asserted by the green TestConnectTokenScratchIsWiped. These paths are
-// therefore not-applicable for a canary scan in this oracle.
+// only after successful token open). These paths are therefore not-applicable
+// for a canary scan in this oracle.
 
-REGISTER_UNIT_TEST( TestConnectTokenScratchIsWiped );
 REGISTER_UNIT_TEST( TestClientTokenKeysAreWipedOnDisconnect );
 REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionResponseTimeout );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnCookieTimeout, "rnfix-client-terminal-states-wipe-their-secrets" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnTokenExpired, "rnfix-client-terminal-states-wipe-their-secrets" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnDenied, "rnfix-client-terminal-states-wipe-their-secrets" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestClientEphemeralSecretWipedOnConnectionRequestTimeout, "rnfix-client-terminal-states-wipe-their-secrets" );
+REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnCookieTimeout );
+REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnTokenExpired );
+REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnDenied );
+REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionRequestTimeout );

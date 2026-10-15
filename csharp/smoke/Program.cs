@@ -183,7 +183,7 @@ static class Smoke
         RocketNet.ServerTransportDevConfig( out RocketNet.ServerTransportConfig typoConfig );
         typoConfig.SetDriver( "protable" );
         RocketNet.LogLevel( RocketNet.LogLevelNone );       // the refusal is the assertion; its chatter is not
-        ServerTransportHandle typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig, time );
+        ServerTransportHandle typoServer = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref typoConfig );
         RocketNet.LogLevel( RocketNet.LogLevelError );
         if ( !typoServer.IsInvalid )
             Fail( "a typo driver list must refuse create" );
@@ -194,7 +194,7 @@ static class Smoke
         serverConfig.MaxClientSlots = 4;
         string serverDriver = args.Length == 1 && args[0] == "--iocp" ? "iocp" : "portable";
         serverConfig.SetDriver( serverDriver );
-        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig, time );
+        ServerTransportHandle server = RocketNet.ServerTransportCreate( IntPtr.Zero, address, ref serverConfig );
         if ( server.IsInvalid )
             Fail( $"server create on {address}" );
         if ( RocketNet.ServerTransportDriver( server ) != serverDriver )
@@ -307,8 +307,8 @@ static class Smoke
             {
                 if ( batch.ClientIndex( j ) != clientIndex )
                     Fail( "payload from wrong client index" );
-                ReadOnlySpan<byte> received = batch[j];
-                ReadOnlySpan<byte> indexed = RocketNet.ServerTransportPayloadSpan( server, j, out int indexedClient );
+                ReadOnlySpan<byte> received = batch[j].Span;
+                ReadOnlySpan<byte> indexed = RocketNet.ServerTransportPayloadSpan( server, j, out int indexedClient ).Span;
                 if ( indexedClient != clientIndex || !received.SequenceEqual( indexed ) )
                     Fail( "server payload mismatch between accessors" );
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
@@ -356,11 +356,11 @@ static class Smoke
                 Fail( "client payload count mismatch between accessors" );
             for ( int j = 0; j < batch.Count; j++ )
             {
-                ReadOnlySpan<byte> received = batch[j];
+                ReadOnlySpan<byte> received = batch[j].Span;
                 int copied = RocketNet.ClientTransportReceivePacket( client, receiveCopy.AsSpan() );
                 if ( copied != received.Length || !received.SequenceEqual( receiveCopy.AsSpan( 0, copied ) ) )
                     Fail( "copying receive differs from the client batch" );
-                if ( !received.SequenceEqual( RocketNet.ClientTransportPayloadSpan( client, j ) ) )
+                if ( !received.SequenceEqual( RocketNet.ClientTransportPayloadSpan( client, j ).Span ) )
                     Fail( "client payload mismatch between accessors" );
                 if ( received.Length == 256 && MatchesPattern( received, 1 ) )
                     gotEcho = true;
@@ -375,6 +375,53 @@ static class Smoke
         if ( !gotEcho || !gotDown )
             Fail( $"client did not receive both payloads (acquire/commit {gotEcho}, convenience {gotDown})" );
         Ok( "server -> client: acquire/commit and convenience payloads byte-exact" );
+
+        // received-payload views are checked: a view taken from the last update
+        // carries the transport's update epoch and throws once the next update
+        // has reused the storage it points at
+
+        {
+            RocketNet.PacketContext staleUp = default;
+            if ( RocketNet.ClientTransportStartPacket( client, 64, ref staleUp ) == IntPtr.Zero )
+                Fail( "start packet for received-span staleness test" );
+            FillPattern( RocketNet.ClientTransportPacketPayloadSpan( client, in staleUp ).Slice( 0, 64 ), 7 );
+            if ( RocketNet.ClientTransportFinishPacket( client, ref staleUp, 64 ) == 0 )
+                Fail( "finish packet for received-span staleness test" );
+            RocketNet.ClientTransportSendPackets( client );
+
+            RocketNet.ReceivedPayload staleView = default;
+            bool gotStaleCandidate = false;
+            for ( int i = 0; i < 1000 && !gotStaleCandidate; i++ )
+            {
+                time += TimeStep;
+                RocketNet.ClientTransportUpdate( client, time );
+                RocketNet.ServerTransportUpdate( server, time );
+                RocketNet.ServerTransportPayloadBatch staleBatch = RocketNet.ServerTransportPayloads( server );
+                if ( staleBatch.Count > 0 )
+                {
+                    staleView = staleBatch[0];
+                    gotStaleCandidate = true;
+                }
+                RocketNet.ServerTransportSendPackets( server );
+                Thread.Sleep( 1 );
+            }
+            if ( !gotStaleCandidate )
+                Fail( "no received payload to test staleness against" );
+
+            // the next update reuses the storage the view points at
+            time += TimeStep;
+            RocketNet.ServerTransportUpdate( server, time );
+            try
+            {
+                _ = staleView.Length;
+                Fail( "a received payload was read after the next update" );
+            }
+            catch ( StalePayloadException )
+            {
+                Ok( "smoke_csharp_received_span_stale_after_update" );
+            }
+            RocketNet.ServerTransportSendPackets( server );
+        }
 
         // quality stats: the structs cross the interop boundary here, and the
         // numbers must be plausible after live traffic — rtt sampled from the
@@ -470,7 +517,7 @@ static class Smoke
             RocketNet.ServerTransportPayloadBatch fragmentBatch = RocketNet.ServerTransportPayloads( server );
             for ( int j = 0; j < fragmentBatch.Count; j++ )
             {
-                ReadOnlySpan<byte> received = fragmentBatch[j];
+                ReadOnlySpan<byte> received = fragmentBatch[j].Span;
                 if ( received.Length == 5000 && MatchesPattern( received, 6 ) )
                     gotFragmented = true;
                 else
@@ -563,22 +610,37 @@ static class Smoke
             Ok( "smoke_csharp_use_after_destroy_throws" );
         }
 
-        // span-after-update: a span taken before Update becomes invalid after update
+        // span-after-update: a span taken before Update is empty after update.
+        // The earlier client is already destroyed; this block uses its own live client.
         {
-            RocketNet.PacketContext context = default;
-            if (RocketNet.ClientTransportStartPacket(client, 64, ref context) == IntPtr.Zero)
-                Fail("start packet for span-after-update test");
-            Span<byte> span = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
-            if (span.IsEmpty)
-                Fail("span-after-update: span should not be empty");
-            // Update the transport - this invalidates the span
-            RocketNet.ClientTransportUpdate(client, time);
-            // Using the span after update should return empty
-            Span<byte> spanAfter = RocketNet.ClientTransportPacketPayloadSpan(client, in context);
-            if (!spanAfter.IsEmpty)
-                Fail("span-after-update: span remained valid after update (should be invalidated)");
-            RocketNet.ClientTransportAbortPacket(client, ref context);
-            Ok("smoke_csharp_span_after_update_throws");
+            ulong spanClientId = RocketNet.RandomUint64();
+            byte[] spanToken = new byte[RocketNet.ConnectTokenBytes];
+#if ROCKETNET_DEVELOPMENT
+            if ( RocketNet.WriteDevConnectToken( address, spanClientId, (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds(), spanToken.AsSpan() ) == 0 )
+                Fail( "write dev connect token (span-after-update)" );
+#endif
+            RocketNet.ClientTransportDefaultConfig( out RocketNet.ClientTransportConfig spanConfig );
+            ClientTransportHandle spanClient = RocketNet.ClientTransportCreate( IntPtr.Zero, (ReadOnlySpan<byte>) spanToken, ref spanConfig, time );
+            if ( spanClient.IsInvalid )
+                Fail( "span-after-update client create" );
+            for ( int i = 0; i < 2000 && RocketNet.ClientTransportState( spanClient ) != RocketNet.ClientTransportStateConnected; i++ )
+                Pump( spanClient, server );
+            if ( RocketNet.ClientTransportState( spanClient ) != RocketNet.ClientTransportStateConnected )
+                Fail( "span-after-update client did not connect" );
+
+            RocketNet.PacketContext spanContext = default;
+            if ( RocketNet.ClientTransportStartPacket( spanClient, 64, ref spanContext ) == IntPtr.Zero )
+                Fail( "start packet for span-after-update test" );
+            Span<byte> span = RocketNet.ClientTransportPacketPayloadSpan( spanClient, in spanContext );
+            if ( span.IsEmpty )
+                Fail( "span-after-update: span should not be empty" );
+            RocketNet.ClientTransportUpdate( spanClient, time );
+            Span<byte> spanAfter = RocketNet.ClientTransportPacketPayloadSpan( spanClient, in spanContext );
+            if ( !spanAfter.IsEmpty )
+                Fail( "span-after-update: span remained valid after update (should be invalidated)" );
+            RocketNet.ClientTransportAbortPacket( spanClient, ref spanContext );
+            RocketNet.ClientTransportDestroy( spanClient );
+            Ok( "smoke_csharp_span_after_update_invalidated" );
         }
 
         // negative control 1: one corrupted byte in the clear signed fields
@@ -625,18 +687,40 @@ static class Smoke
         RocketNet.ClientTransportDisconnect( sealedClient );
         RocketNet.ClientTransportDestroy( sealedClient );
 
-        // frame sync: three real-time waits at 60fps and sane stats
+        // frame sync: a safe handle owns the native frame sync exactly once, so
+        // a second destroy and any use after destroy are refused in managed code
+        // before native memory is touched. Three real-time waits at 60fps and
+        // sane stats.
 
-        IntPtr frameSync = RocketNet.FrameSyncCreate( IntPtr.Zero, 60.0 );
-        if ( frameSync == IntPtr.Zero )
+        FrameSyncHandle frameSync = RocketNet.FrameSyncCreate( IntPtr.Zero, 60.0 );
+        if ( frameSync.IsInvalid )
             Fail( "frame sync create" );
         for ( int i = 0; i < 3; i++ )
             RocketNet.FrameSyncWait( frameSync );
         RocketNet.FrameSyncGetStats( frameSync, out RocketNet.FrameSyncStats stats );
         if ( stats.Frame < 1 || stats.GuardSeconds < 0.0 || stats.GuardSeconds > 1.0 )
             Fail( $"frame sync stats implausible (frame {stats.Frame}, guard {stats.GuardSeconds})" );
-        RocketNet.FrameSyncDestroy( frameSync );
         Ok( $"frame sync: {stats.Frame} frames, {stats.DroppedFrames} dropped, priority {stats.PriorityHeld}, spin {stats.Spinning}" );
+
+        RocketNet.FrameSyncDestroy( frameSync );
+        try
+        {
+            RocketNet.FrameSyncDestroy( frameSync );
+            Fail( "destroying a frame sync twice did not throw" );
+        }
+        catch ( ObjectDisposedException )
+        {
+            Ok( "smoke_csharp_frame_sync_double_dispose_safe: second destroy throws" );
+        }
+        try
+        {
+            RocketNet.FrameSyncWait( frameSync );
+            Fail( "waiting on a destroyed frame sync did not throw" );
+        }
+        catch ( ObjectDisposedException )
+        {
+            Ok( "smoke_csharp_frame_sync_double_dispose_safe: wait after destroy throws" );
+        }
 
         // stop the server and shut down
 

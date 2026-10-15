@@ -32,7 +32,7 @@ print(result.stdout, end="")
 if result.returncode:
     sys.exit(f"SDK suite failed with ambient config overrides: {result.returncode}")
 lines = result.stdout.splitlines()
-if not lines or any(not re.fullmatch(r"test_[a-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line) for line in lines):
+if not lines or any(not re.fullmatch(r"(?:(?:rocketnet_)?test_[a-z0-9_]+|Test[A-Za-z0-9_]+)(?: [^\r\n]*\[(?:SKIPPED|EXPECTED_FAIL)[^\r\n]*\])?", line) for line in lines):
     sys.exit("Passing SDK suite emitted output other than test names or named skips")
 if "test_suite_environment" not in lines:
     sys.exit("SDK suite did not execute its environment restoration test")

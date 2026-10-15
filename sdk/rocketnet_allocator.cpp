@@ -289,21 +289,37 @@ void rn_send_store_free( rn_send_store_t * store, uint32_t handle )
 uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
-    rocketnet_assert( handle != RN_CHUNK_NONE );
-    const rn_store_class_t * cls = &store->classes[rn_send_store_chunk_class( handle )];
+
+    // the same rule as rn_send_store_free_checked: a handle the store did not
+    // issue -- a class at or past RN_STORE_NUM_CLASSES (class 3, which includes
+    // RN_CHUNK_NONE) or an index at or past the class's chunk count -- reads
+    // nothing. A refusal, not an assert, so a debug build answers alike.
+
+    const int c = rn_send_store_chunk_class( handle );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return NULL;
+    const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    rocketnet_assert( i < cls->num_chunks );
+    if ( i >= cls->num_chunks )
+        return NULL;
     return cls->data + (uint64_t) i * cls->chunk_bytes;
 }
 
 uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
-    rocketnet_assert( handle != RN_CHUNK_NONE );
+
+    // the same rule as rn_send_store_free_checked: a class the store has none
+    // of, or an index past the class's chunks, has no next. A refusal, not an
+    // assert, so a debug build answers alike.
+
     const int c = rn_send_store_chunk_class( handle );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return RN_CHUNK_NONE;
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_LINK_INDEX;
-    rocketnet_assert( i < cls->num_chunks && ( cls->link[i] & RN_LINK_IN_USE ) != 0 );
+    if ( i >= cls->num_chunks )
+        return RN_CHUNK_NONE;
     const uint32_t next = cls->link[i] & RN_LINK_INDEX;
     return next == RN_LINK_END ? RN_CHUNK_NONE : ( ( (uint32_t) c << 30 ) | next );
 }

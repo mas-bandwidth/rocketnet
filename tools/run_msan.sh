@@ -43,10 +43,11 @@ cmake -S . -B "$build_dir" \
 cmake --build "$build_dir" --target test --parallel
 
 test_bin="$abs_build/bin/test"
-log="$TMPDIR/msan.log"
-reports="$TMPDIR/msan-reports"
+msan_tmp=$(mktemp -d "${TMPDIR:-${RUNNER_TEMP:-/tmp}}/rocketnet-msan.XXXXXX")
+trap 'rm -rf "$msan_tmp"' EXIT
+log="$msan_tmp/msan.log"
+reports="$msan_tmp/msan-reports"
 known_file=tools/msan_known.txt
-rm -rf "$reports"
 mkdir -p "$reports"
 
 # Per-process logs keep each origin trace with its warning. The suite runner
@@ -69,7 +70,7 @@ def shorten(line):
     line = line.replace(root, "")
     line = re.sub(r" \(BuildId: [0-9a-f]+\)", "", line)
     line = re.sub(r"\((?:[^()]*?)bin/test\+0x[0-9a-f]+\)", "(bin/test)", line)
-    line = re.sub(r"/usr/lib/gcc/[^/]+/[0-9]+/(?:\.\./)+include/c\+\+/[0-9]+/", "include/c++/", line)
+    line = re.sub(r"/usr/(?:bin/\.\./)?lib/gcc/[^/]+/[0-9]+/(?:\.\./)+include/c\+\+/[0-9]+/", "include/c++/", line)
     line = re.sub(r"\s+$", "", line)
     return line
 

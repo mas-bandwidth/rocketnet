@@ -10,6 +10,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -529,32 +530,18 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         randombytes_buf( session_nonce, sizeof(session_nonce) );
 
-        uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
-        uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
-        crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
+        // Cheap refusals come before cryptography (STANDARD.md, Reading
+        // packets; ReceiveOrder CheapRefusalsFirst). The handshake keys need
+        // no ephemeral pair, so derive them alone and check the slots before
+        // any keypair or scalar multiplication. A full server seals the same
+        // denial as before (same packet, sequence one, nonce in the clear).
 
         struct rocketnet_connection_keys_t keys;
-        if ( !rocketnet_derive_connection_keys( &keys,
-                                                private_data->client_to_server_key,
-                                                private_data->server_to_client_key,
-                                                connection_salt,
-                                                session_nonce,
-                                                server_ephemeral_secret_key,
-                                                client_ephemeral_public_key,
-                                                client_ephemeral_public_key,
-                                                server_ephemeral_public_key ) )
-        {
-            sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
-            rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
-            return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
-
-        sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
-
-        // no slots: denied, sealed under the handshake keys just derived,
-        // carrying the session nonce in the clear. no mapping is created, so
-        // a retransmitted request runs this path again and is denied again.
+        rocketnet_derive_handshake_keys( &keys,
+                                         private_data->client_to_server_key,
+                                         private_data->server_to_client_key,
+                                         connection_salt,
+                                         session_nonce );
 
         if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
         {
@@ -575,6 +562,30 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
         }
+
+        uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
+        uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
+        rocketnet_crypto_tally.keypair++;
+        crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
+
+        if ( !rocketnet_derive_connection_keys( &keys,
+                                                private_data->client_to_server_key,
+                                                private_data->server_to_client_key,
+                                                connection_salt,
+                                                session_nonce,
+                                                server_ephemeral_secret_key,
+                                                client_ephemeral_public_key,
+                                                client_ephemeral_public_key,
+                                                server_ephemeral_public_key ) )
+        {
+            sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
+            sodium_memzero( &keys, sizeof(keys) );
+            rocketnet_debug( "server ignored connection request. client ephemeral key is a small order point" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+
+        sodium_memzero( server_ephemeral_secret_key, sizeof(server_ephemeral_secret_key) );
 
         int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
         if ( index == -1 )
@@ -954,12 +965,12 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         return rocketnet_server_process_connection_response( server, mapping_index, current_timestamp, current_time, response_packet, response_bytes );
     }
 
-    // session types: mark the sequence received and advance the high-water
-    // mark first, per the reading order -- no malformed or mis-sized packet
-    // has any effect beyond its replay-window mark, so the idle-timeout
-    // refresh and the slot confirmation wait below the checks
-
-    rocketnet_replay_advance( replay, sequence );
+    // session types: the slot gate runs before the replay-window mark, per
+    // STANDARD.md _Reading packets_ -- a session packet whose mapping has no
+    // assigned slot is ignored after the open and before the mark -- and
+    // _Processing session packets at the server_. The NoAdvanceBeforeConnect
+    // invariant of tla/ReplayWindow.tla: the session window of a mapping
+    // without a slot never moves.
 
     // session traffic for a mapping with no slot is a lost-response race or
     // an injection; the retransmitted response repairs the former
@@ -970,6 +981,8 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         counters[type_counters->not_connected]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
+
+    rocketnet_replay_advance( replay, sequence );
 
     int client_index = mapping->client_index;
 

@@ -9,6 +9,7 @@
 
 #include <sodium.h>
 #include <string.h>
+#include <limits.h>
 
 struct rocketnet_encryption_map_t
 {
@@ -38,6 +39,13 @@ uint64_t rocketnet_encryption_map_allocation_bytes(int capacity)
 struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * context, int capacity )
 {
     rocketnet_assert( capacity > 0 );
+
+    // num_buckets is capacity * 2 in a signed int, so a capacity above
+    // INT_MAX / 2 wraps the bucket count and the bucket array is sized from
+    // the wrapped value while the other arrays use the capacity. refuse it
+    // before any allocation.
+    if ( capacity < 1 || capacity > INT_MAX / 2 )
+        return NULL;
 
     struct rocketnet_encryption_map_t * map = (struct rocketnet_encryption_map_t*) rocketnet_malloc( context, sizeof(struct rocketnet_encryption_map_t) );
     if ( !map )
