@@ -124,6 +124,96 @@ design and their assigned cards. Neither `docs/CHANNELS.md` nor
 
 ## Reversed witnesses and measurements
 
-The final measured records and concrete trace interpretations are recorded
-below after the Linux checks complete. Diagnostic timeouts and parse failures
-are retained outside the checkout and are not acceptance evidence.
+Measured with the pinned runner and JAR in [README.md](README.md), on Linux
+2026-10-15, two workers for passing cases and one for counterexamples. Every
+case is within its 110-second bounded shard. `PASS` for a broken case means
+the expected invariant (exit 12) or temporal property (exit 13) failed.
+
+| Configuration | Generated | Distinct | Seconds | Expected result |
+|---|---:|---:|---:|---|
+| `MCRNChannel.cfg` | 191,331 | 75,140 | 100.621 | pass (safety + liveness) |
+| `MCRNChannelSafety.cfg` | 11,541,189 | 2,216,935 | 81.447 | pass (safety) |
+| `MCRNChannelBrokenOutOfOrder.cfg` | 98,330 | 36,361 | 2.367 | invariant: `OrderedExactlyOnceInOrder` |
+| `MCRNChannelBrokenTwice.cfg` | 841 | 376 | 0.757 | invariant: `OrderedExactlyOnceInOrder` |
+| `MCRNChannelBrokenDropOnRetransmit.cfg` | 39,019 | 15,863 | 8.556 | temporal: `EveryOrderedMessageDelivered` |
+| `MCRNChannelBrokenPartialChunk.cfg` | 75,941 | 27,679 | 2.020 | invariant: `WholeMessagesOnly` |
+| `MCRNChannelBrokenChunkBlocksSmall.cfg` | 180,027 | 63,169 | 33.430 | temporal: `NoHeadOfLineDeadlock` |
+| `MCRNChannelBrokenNoSequencedReset.cfg` | 18 | 15 | 0.679 | invariant: `OrderedTraceUnchangedBySequenced` |
+
+The normal case uses W=2. The safety and out-of-order cases use W=4 so a
+complete large message can overtake the missing first small message; W=2
+would serialize that particular ordering episode and make its witness
+vacuous. All cases use two send records, a one-entry packet map, and two
+quiescently reusable packet IDs. The safety case retains forward capacity 2
+for real duplicate/reorder transitions. These bounds still exercise sent-map
+eviction, mixed packet references, partial block ACKs and receiver-ring reuse.
+
+The final counterexamples are read as follows:
+
+- **OutOfOrder — `OrderedExactlyOnceInOrder`:** message 0's packet is lost.
+  Message 1 reaches channel 2 and is ACKed; both chunks of message 2 then
+  arrive. The broken arrival gate delivers channel 1 trace `<<2>>` while its
+  accepted trace begins with 0. This is precisely the missing predecessor
+  hold in §7.2, with whole-block receipt from §8.3.
+- **Twice — `OrderedExactlyOnceInOrder`:** reliable number 0 is written again
+  under another packet ID. Its first copy is delivered, then the second
+  packet is opened. Treating that already-received number as fresh releases
+  message 0 again, producing `<<0,0>>` from one accepted message. Transport
+  packet replay protection alone cannot replace §6.3's per-number duplicate
+  suppression on retransmissions.
+- **DropOnRetransmit — `EveryOrderedMessageDelivered`:** the first packet
+  carrying number 0 is lost and the broken sender removes that number from
+  resend eligibility. It remains unacked, but no oldest-number retransmit
+  is enabled. The receive/process update loop continues forever without
+  delivering it. This violates §6.2's retention of unacked records, even
+  when a packet reference is lost or evicted.
+- **PartialChunk — `WholeMessagesOnly`:** the first small messages are
+  delivered and ACKed. Chunk 0 of message 2 (number 2) is sent and dropped;
+  chunk 1 (number 3) arrives. The broken last-index gate appends message 2
+  while only number 3 is present. §8.3 requires all indices, not arrival of
+  the greatest index.
+- **ChunkBlocksSmall — `NoHeadOfLineDeadlock`:** message 2 queues while there
+  is insufficient reliable room. The bad early admission reserves all
+  staging slots. Existing small packets can still drain; their ACK returns
+  actual window room and sets `roomReturned`. The large block is then
+  numbered, but its premature whole-ring reservation leaves no free staging
+  slot for its first write. The following small message is also queued;
+  the update loop repeats with neither delivered. §8.2 requires whole-block
+  admission only when room is available, without consuming progress room
+  while waiting. This witness reaches the property antecedent; it is not
+  merely a generic transport stall.
+- **NoSequencedReset — `OrderedTraceUnchangedBySequenced`:** the approved
+  ghost write probe raises channel 1's sequenced counter to 1. The first
+  ordered enqueue advances its ordered counter but omits the reset, leaving
+  1 and making `resetOK` false. This exercises §7.1's reset obligation;
+  no sequenced application message is delivered and no relational trace
+  equivalence is claimed.
+
+Additional private diagnostics retain exact source/config hashes and logs.
+On the healthy model, negative invariants find a returned-room episode
+(11,504 generated / 4,498 distinct), chunk 1 received before chunk 0
+(333,704 / 83,989), and the two initial small records packed together
+(231 / 123). A separate private mutation replaces indexed block placement
+with next-arrival-position placement; `ChunksPlacedByIndex` fails
+(331,074 / 83,455). These are nonvacuity/diagnostic checks, not extra committed
+acceptance cases and not invented ledger rows.
+
+Earlier diagnostics include parse/domain mistakes and over-budget larger
+state spaces. In particular, the first duplicate witness encounters a
+`SubSeq` domain error rather than an invariant violation; the final prefix
+predicate explicitly checks the length before taking the prefix. Only the
+final eight measured rows above count as acceptance evidence.
+
+`tlacheck merge --keep tla/RUNS.tsv` adds the eight new measured rows. Every
+pre-existing row and `RUNS-HISTORY.tsv` remains byte-for-byte unchanged, and
+`tlacheck groups --root . --stale` returns `[]`. Existing unrelated bench
+debt remains recorded; this card does not turn those historical timeouts into
+passes.
+
+To reproduce, build the runner at the pin in [README.md](README.md), then run
+one bounded shard at a time with `--group rnchannel --shards 8 --shard N`
+for N=0 through 7, `--workers 2 --timeout 110s`, the pinned JAR, and a private
+output directory per shard. Merge the eight `RUNS.tsv` files with `--keep`,
+and check `groups --stale`. No C++ changes, Go/C++ tests, sequenced wire types,
+allocator proof, rate scheduler proof, or full-width wrap proof are part of
+this card.
