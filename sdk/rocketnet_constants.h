@@ -122,6 +122,14 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 #define ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE                             2048
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 
+// the packet threshold of RFC 9002 section 6.1.1 (kPacketThreshold): a sent
+// packet is known lost once the peer has acknowledged a sequence at least
+// this many above it. sequence based, so it needs no clock and fits the
+// sequence-distance windows of the standard's _Replay window sizing_.
+// tla/RNSentHistory.tla models the classification it drives.
+
+#define ROCKETNET_LOSS_PACKET_THRESHOLD                                   3
+
 // the AEAD integrity limit from the standard's _Replay Protection_: each end
 // counts the sealed packets that fail to open on a connection, across all of
 // that connection's keys, and disconnects it on reaching this many. 2^36 is

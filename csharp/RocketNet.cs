@@ -353,6 +353,7 @@ public static unsafe partial class RocketNet
         MessageReceiptLoss,
         ConnectionResponseInternalError,
         ConnectionRequestMappingSaltMismatch,
+        SendHistoryLost,
     }
 #pragma warning restore 1591
 

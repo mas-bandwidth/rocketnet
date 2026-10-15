@@ -278,6 +278,7 @@ static const char * const counters_appended_names[] =
 {
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
     "CONNECTION_REQUEST_MAPPING_SALT_MISMATCH",
+    "SEND_HISTORY_LOST",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

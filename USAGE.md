@@ -359,8 +359,16 @@ up to 32,768 entries with `-DROCKETNET_HISTORY_PACKETS=...` (a multiple of 64).
 This is a memory budget, not a packets-per-frame, packets-per-second or ACK-rate
 requirement. Records do not expire with elapsed time. Returned ACK batches cover
 the entire retained window for every configured client. Sending beyond that
-window overwrites older delivery history, counts `SEND_HISTORY_OVERFLOW`, and
-continues transmitting. Missing a notification therefore does not prove that a
+window overwrites older delivery history and continues transmitting. An
+overwritten record that was never acknowledged is counted by what the sender
+knows of it. `SEND_HISTORY_LOST` counts a packet known lost on the path: the
+peer has acknowledged a sequence at least `ROCKETNET_LOSS_PACKET_THRESHOLD` (3,
+the packet threshold of RFC 9002 section 6.1.1) above it. It is an outcome,
+and a lossy path raises it. `SEND_HISTORY_OVERFLOW` counts a record whose fate
+is unknown (the peer has been silent, or the window is too small for the path)
+and a writer that fell behind the retained window. It is a refusal of history
+and reads zero on a healthy path, however long the connection runs and however
+long the round trip is. Missing a notification therefore does not prove that a
 payload was lost. The remote peer's receive-history depth and the ACK block's
 255-range encoding bound also limit what it can describe after extreme loss.
 

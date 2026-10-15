@@ -380,8 +380,12 @@
     \
     X( RECEIVE_CURSOR_TOO_SMALL, REFUSAL, NONE ) \
     \
-    /* History was overwritten before its ACK, or a writer fell behind the */ \
-    /* retained sequence window. Advisory: the packet is still transmitted. */ \
+    /* History was overwritten before its ACK with no later ACK to say what */ \
+    /* became of the packet (a silent peer, or a window too small for the */ \
+    /* path), or a writer fell behind the retained sequence window. A */ \
+    /* refusal of history: it reads zero on a healthy path. Advisory: the */ \
+    /* packet is still transmitted. An eviction the peer's later ACKs mark */ \
+    /* as lost is SEND_HISTORY_LOST instead (tla/RNSentHistory.tla). */ \
     /* REFUSAL: a resource exhaustion. soak_sim moves it only when its wire */ \
     /* loses packets, and says so. */ \
     X( SEND_HISTORY_OVERFLOW, REFUSAL, NONE ) \
@@ -494,7 +498,16 @@
     /* a new attempt from the same address while the old one lives; the */ \
     /* old mapping answers only its own salt. appended: indices are the */ \
     /* contract. */ \
-    X( CONNECTION_REQUEST_MAPPING_SALT_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED )
+    X( CONNECTION_REQUEST_MAPPING_SALT_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    \
+    /* History was overwritten before its ACK, and the peer had acknowledged */ \
+    /* a sequence at least ROCKETNET_LOSS_PACKET_THRESHOLD above it: the */ \
+    /* packet was lost on the path. An outcome, not a refusal. Together with */ \
+    /* SEND_HISTORY_OVERFLOW this is the count of overwritten unacknowledged */ \
+    /* send records (tla/RNSentHistory.tla). Advisory: the packet is still */ \
+    /* transmitted. PATH_LOSS: it moves only when the path loses packets. */ \
+    /* appended: indices are the contract. */ \
+    X( SEND_HISTORY_LOST, PATH_LOSS, NONE )
 
 enum
 {

@@ -9268,6 +9268,338 @@ void rocketnet_test_ack_asymmetric_rate()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
+// --- the send history on a lossy, long path ---
+
+// A fake path with a fixed one-way delay: sealed packets are copied in and
+// released once the test clock reaches write time plus delay. No sockets and
+// no real time; the test advances the clock itself.
+
+#define ROCKETNET_TEST_DELAY_QUEUE_SLOTS    256
+
+struct rocketnet_test_delayed_packet_t
+{
+    double release_time;
+    int bytes;
+    uint8_t data[ROCKETNET_RECEIVE_CEILING];
+};
+
+struct rocketnet_test_delay_queue_t
+{
+    int head;
+    int count;
+    struct rocketnet_test_delayed_packet_t packets[ROCKETNET_TEST_DELAY_QUEUE_SLOTS];
+};
+
+static void rocketnet_test_delay_queue_push( struct rocketnet_test_delay_queue_t * queue, double release_time,
+                                             const uint8_t * data, int bytes )
+{
+    rocketnet_check( queue->count < ROCKETNET_TEST_DELAY_QUEUE_SLOTS );
+    rocketnet_check( bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING );
+    struct rocketnet_test_delayed_packet_t * packet = &queue->packets[( queue->head + queue->count ) % ROCKETNET_TEST_DELAY_QUEUE_SLOTS];
+    packet->release_time = release_time;
+    packet->bytes = bytes;
+    memcpy( packet->data, data, (size_t) bytes );
+    queue->count++;
+}
+
+// pops the oldest packet whose release time has come; the queue is a fifo
+// because the delay is fixed
+
+static struct rocketnet_test_delayed_packet_t * rocketnet_test_delay_queue_pop_due( struct rocketnet_test_delay_queue_t * queue, double now )
+{
+    if ( queue->count == 0 || queue->packets[queue->head].release_time > now )
+        return NULL;
+    struct rocketnet_test_delayed_packet_t * packet = &queue->packets[queue->head];
+    queue->head = ( queue->head + 1 ) % ROCKETNET_TEST_DELAY_QUEUE_SLOTS;
+    queue->count--;
+    return packet;
+}
+
+// the connected pair behind the fake path: the server sends one payload per
+// step toward the client, a packet is lost on the path when the caller says
+// so, the client's own sends (the acks ride them) return over the same
+// delay. step() advances the test clock by 10 ms.
+
+#define ROCKETNET_TEST_PATH_STEP_SECONDS    0.010
+#define ROCKETNET_TEST_PATH_DELAY_SECONDS   0.078
+
+struct rocketnet_test_lossy_path_t
+{
+    struct rocketnet_test_server_t test;
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    struct rocketnet_test_delay_queue_t * to_client;
+    struct rocketnet_test_delay_queue_t * to_server;
+    double time;
+    uint64_t next_packet_id;
+    uint64_t last_sequence;                         // the session sequence of the latest server payload
+    uint64_t num_sent;
+    uint64_t num_dropped;
+    uint64_t num_delivered;
+    uint64_t dropped_sequences[512];                // the sequences lost on the path, oldest first
+    uint8_t held[ROCKETNET_RECEIVE_CEILING];        // a packet held back, released late by release_held
+    int held_bytes;
+};
+
+#define ROCKETNET_TEST_PATH_CARRY   0               // the packet crosses the path
+#define ROCKETNET_TEST_PATH_LOSE    1               // the packet is lost on the path
+#define ROCKETNET_TEST_PATH_HOLD    2               // the packet is held back and released late
+
+static void rocketnet_test_lossy_path_setup( struct rocketnet_test_lossy_path_t * path, uint64_t client_id )
+{
+    memset( path, 0, sizeof(*path) );
+    rocketnet_test_server_setup( &path->test );
+    rocketnet_test_ack_connect( &path->test, &path->client, &path->client_counters, client_id );
+    path->to_client = (struct rocketnet_test_delay_queue_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_test_delay_queue_t) );
+    path->to_server = (struct rocketnet_test_delay_queue_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_test_delay_queue_t) );
+    rocketnet_check( path->to_client && path->to_server );
+    memset( path->to_client, 0, sizeof(struct rocketnet_test_delay_queue_t) );
+    memset( path->to_server, 0, sizeof(struct rocketnet_test_delay_queue_t) );
+    path->time = 101.0;
+    path->next_packet_id = 1;
+}
+
+static void rocketnet_test_lossy_path_teardown( struct rocketnet_test_lossy_path_t * path )
+{
+    rocketnet_free( NULL, path->to_client );
+    rocketnet_free( NULL, path->to_server );
+    rocketnet_test_server_teardown( &path->test );
+}
+
+// one step: release what is due on both directions, let the client send if
+// it is due, then (when send_payload) the server seals one payload and the
+// path either carries it or loses it. returns the sequence sealed, or zero
+
+static uint64_t rocketnet_test_lossy_path_step( struct rocketnet_test_lossy_path_t * path, int send_payload, int fate )
+{
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    path->time += ROCKETNET_TEST_PATH_STEP_SECONDS;
+    const double time = path->time;
+
+    while ( struct rocketnet_test_delayed_packet_t * due = rocketnet_test_delay_queue_pop_due( path->to_client, time ) )
+    {
+        rocketnet_client_protocol_process_packet( &path->client, due->data, due->bytes, time, payload, sizeof(payload), &payload_bytes );
+        path->num_delivered++;
+    }
+
+    while ( struct rocketnet_test_delayed_packet_t * due = rocketnet_test_delay_queue_pop_due( path->to_server, time ) )
+    {
+        rocketnet_server_protocol_process_packet( &path->test.server, &path->test.client_address, due->data, due->bytes,
+                                                  ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                  payload, &payload_bytes, &payload_client_index );
+    }
+
+    uint8_t client_packet[ROCKETNET_RECEIVE_CEILING];
+    int client_packet_bytes = 0;
+    rocketnet_client_protocol_update( &path->client, time, client_packet, &client_packet_bytes );
+    rocketnet_check( path->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    if ( client_packet_bytes > 0 )
+        rocketnet_test_delay_queue_push( path->to_server, time + ROCKETNET_TEST_PATH_DELAY_SECONDS, client_packet, client_packet_bytes );
+
+    if ( !send_payload )
+        return 0;
+
+    rocketnet_address_t to;
+    uint64_t sequence = 0;
+    rocketnet_check( rocketnet_server_protocol_start_payload( &path->test.server, 0, &to, &sequence ) );
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE]{};
+    int bytes = rocketnet_server_protocol_seal_payload_frame( &path->test.server, 0, sequence, path->next_packet_id++, frame, 4, time );
+    rocketnet_check( bytes > 0 );
+    path->num_sent++;
+    path->last_sequence = sequence;
+    if ( fate == ROCKETNET_TEST_PATH_LOSE )
+    {
+        rocketnet_check( path->num_dropped < 512 );
+        path->dropped_sequences[path->num_dropped++] = sequence;
+    }
+    else if ( fate == ROCKETNET_TEST_PATH_HOLD )
+    {
+        rocketnet_check( path->held_bytes == 0 );
+        memcpy( path->held, frame, (size_t) bytes );
+        path->held_bytes = bytes;
+    }
+    else
+    {
+        rocketnet_test_delay_queue_push( path->to_client, time + ROCKETNET_TEST_PATH_DELAY_SECONDS, frame, bytes );
+    }
+    return sequence;
+}
+
+// the held packet crosses the path now, one delay from this step
+
+static void rocketnet_test_lossy_path_release_held( struct rocketnet_test_lossy_path_t * path )
+{
+    rocketnet_check( path->held_bytes > 0 );
+    rocketnet_test_delay_queue_push( path->to_client, path->time + ROCKETNET_TEST_PATH_DELAY_SECONDS, path->held, path->held_bytes );
+    path->held_bytes = 0;
+}
+
+void rocketnet_test_send_history_lossy_long_path()
+{
+    // The long, lossy path the transport is played over: a 156 ms round
+    // trip (78 ms each way), one server payload every 10 ms for about three
+    // laps of the sent history, every 100th payload lost on the path plus
+    // one burst of three in a row, the client's acks returning over the same
+    // delay. Every packet either arrives and is acknowledged within a round
+    // trip or is lost for good: the history is never full of records whose
+    // fate is unknown, so the overflow count (a refusal of history) stays
+    // zero on this healthy path, while path loss is its own count.
+
+    struct rocketnet_test_lossy_path_t * path = (struct rocketnet_test_lossy_path_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_test_lossy_path_t) );
+    rocketnet_check( path );
+    rocketnet_test_lossy_path_setup( path, 0x11057ULL );
+
+    const int total_payloads = 12000;
+    const int burst_start = 6000;
+
+    for ( int i = 0; i < total_payloads; i++ )
+    {
+        const int lose = ( i % 100 ) == 99 || ( i >= burst_start && i < burst_start + 3 );
+        rocketnet_test_lossy_path_step( path, 1, lose ? ROCKETNET_TEST_PATH_LOSE : ROCKETNET_TEST_PATH_CARRY );
+    }
+
+    // let the last round trip complete
+    for ( int i = 0; i < 40; i++ )
+        rocketnet_test_lossy_path_step( path, 0, ROCKETNET_TEST_PATH_CARRY );
+
+    rocketnet_check( path->num_sent == (uint64_t) total_payloads );
+    rocketnet_check( path->num_dropped == 123 );
+    rocketnet_check( path->num_delivered == path->num_sent - path->num_dropped );
+
+    // every lost sequence a full lap behind the newest send has been
+    // evicted, and each of those is a known path loss: counted lost, and
+    // the history refused nothing
+    const uint64_t newest = path->test.server.acks->endpoints[0].highest_sequence;
+    uint64_t expected_lost = 0;
+    for ( uint64_t i = 0; i < path->num_dropped; i++ )
+    {
+        if ( path->dropped_sequences[i] + ROCKETNET_SENT_PACKET_BUFFER_SIZE <= newest )
+            expected_lost++;
+    }
+    rocketnet_check( expected_lost > 0 && expected_lost < path->num_dropped );
+
+    // a passing test prints its name and nothing else; a failing one keeps
+    // the counts that failed it
+    if ( path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] != 0 ||
+         path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST] != expected_lost )
+    {
+        printf( "send history lossy long path: sent %llu lost on path %llu evicted %llu SEND_HISTORY_OVERFLOW %llu SEND_HISTORY_LOST %llu\n",
+                (unsigned long long) path->num_sent, (unsigned long long) path->num_dropped, (unsigned long long) expected_lost,
+                (unsigned long long) path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW],
+                (unsigned long long) path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST] );
+    }
+    rocketnet_check( path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] == 0 );
+    rocketnet_check( path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST] == expected_lost );
+
+    rocketnet_test_lossy_path_teardown( path );
+    rocketnet_free( NULL, path );
+}
+
+void rocketnet_test_send_history_silent_peer_overflows()
+{
+    // A peer that never acknowledges: more than a full lap of sends with no
+    // ack block coming back. Every eviction replaces a record whose fate is
+    // unknown, so each one counts SEND_HISTORY_OVERFLOW, and none is a known
+    // loss -- there is no later acknowledgment to say so. Every send is still
+    // sealed.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x51137ULL );
+
+    struct rocketnet_ack_endpoint_t * endpoint = &test.server.acks->endpoints[0];
+    const uint64_t lost_before = test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST];
+    const uint64_t overflow_before = test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW];
+
+    const int num_sends = 2 * ROCKETNET_SENT_PACKET_BUFFER_SIZE + 500;
+    uint64_t expected_overflow = 0;
+    double time = 200.0;
+
+    for ( int i = 0; i < num_sends; i++ )
+    {
+        time += 0.01;
+        rocketnet_address_t to;
+        uint64_t sequence = 0;
+        rocketnet_check( rocketnet_server_protocol_start_payload( &test.server, 0, &to, &sequence ) );
+
+        // the record this send replaces, read before the send: unacknowledged
+        // and no acknowledgment above it is an eviction of unknown fate
+        const struct rocketnet_sent_packet_record_t * replaced = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+        if ( replaced->sequence && !replaced->acked )
+        {
+            rocketnet_check( replaced->sequence + ROCKETNET_LOSS_PACKET_THRESHOLD > endpoint->largest_acked_sequence );
+            expected_overflow++;
+        }
+
+        alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE]{};
+        rocketnet_check( rocketnet_server_protocol_seal_payload_frame( &test.server, 0, sequence, 1 + (uint64_t) i, frame, 4, time ) > 0 );
+    }
+
+    rocketnet_check( expected_overflow >= (uint64_t) ( ROCKETNET_SENT_PACKET_BUFFER_SIZE + 400 ) );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] - overflow_before == expected_overflow );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST] == lost_before );
+    rocketnet_check( lost_before == 0 );
+
+    rocketnet_test_server_teardown( &test );
+}
+
+void rocketnet_test_send_history_late_ack_before_eviction()
+{
+    // A packet the peer acknowledges late: it is past the loss threshold
+    // (the peer has acknowledged a sequence above it) and still unacked, so
+    // it is a known loss in waiting -- then it arrives after all and is
+    // acknowledged before its lap. Its eviction is a clean write: neither
+    // lost nor overflow.
+
+    struct rocketnet_test_lossy_path_t * path = (struct rocketnet_test_lossy_path_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_test_lossy_path_t) );
+    rocketnet_check( path );
+    rocketnet_test_lossy_path_setup( path, 0x1A7E5ULL );
+
+    const struct rocketnet_ack_endpoint_t * endpoint = &path->test.server.acks->endpoints[0];
+
+    uint64_t late_sequence = 0;
+    for ( int i = 0; i < 200; i++ )
+    {
+        const uint64_t sequence = rocketnet_test_lossy_path_step( path, 1, i == 5 ? ROCKETNET_TEST_PATH_HOLD : ROCKETNET_TEST_PATH_CARRY );
+        if ( i == 5 )
+            late_sequence = sequence;
+    }
+    for ( int i = 0; i < 40; i++ )
+        rocketnet_test_lossy_path_step( path, 0, ROCKETNET_TEST_PATH_CARRY );
+
+    // past the threshold, still unacknowledged, nothing counted yet
+    const struct rocketnet_sent_packet_record_t * record = &endpoint->sent[late_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    rocketnet_check( record->sequence == late_sequence );
+    rocketnet_check( !record->acked );
+    rocketnet_check( endpoint->largest_acked_sequence >= late_sequence + ROCKETNET_LOSS_PACKET_THRESHOLD );
+
+    // it arrives, and the client's next ack block states it
+    rocketnet_test_lossy_path_release_held( path );
+    for ( int i = 0; i < 60; i++ )
+        rocketnet_test_lossy_path_step( path, 0, ROCKETNET_TEST_PATH_CARRY );
+    rocketnet_check( record->sequence == late_sequence );
+    rocketnet_check( record->acked );
+
+    // more than a lap of clean sends: the late packet's slot is rewritten
+    for ( int i = 0; i < ROCKETNET_SENT_PACKET_BUFFER_SIZE + 500; i++ )
+        rocketnet_test_lossy_path_step( path, 1, ROCKETNET_TEST_PATH_CARRY );
+    rocketnet_check( record->sequence > late_sequence );
+
+    rocketnet_check( path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] == 0 );
+    rocketnet_check( path->test.counters.values[ROCKETNET_COUNTER_SEND_HISTORY_LOST] == 0 );
+
+    rocketnet_test_lossy_path_teardown( path );
+    rocketnet_free( NULL, path );
+}
+
 void rocketnet_test_ack_rtt_freshness()
 {
     // rtt rides the acks continuously: the handshake seeds it, and every
@@ -12802,6 +13134,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
     { "test_ack_bad_block_refusals", rocketnet_test_ack_bad_block_refusals },
     { "test_ack_asymmetric_rate", rocketnet_test_ack_asymmetric_rate },
+    { "test_send_history_lossy_long_path", rocketnet_test_send_history_lossy_long_path },
+    { "test_send_history_silent_peer_overflows", rocketnet_test_send_history_silent_peer_overflows },
+    { "test_send_history_late_ack_before_eviction", rocketnet_test_send_history_late_ack_before_eviction },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_ack_rtt_freshness", rocketnet_test_ack_rtt_freshness },
