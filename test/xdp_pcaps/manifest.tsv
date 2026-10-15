@@ -1,0 +1,50 @@
+# The XDP corpus manifest: one row per frame, the expected verdict and the one
+# counter that frame moves ("-" for none). The rows are written from
+# STANDARD.md (The Prefilter Header, Structural checks, the Packet sizes
+# table) and from the filter's documented pass branches, never from what the
+# program returned: the crafted rows are printed by
+# `xdp_vm_replay craft test/xdp_pcaps`, and recorded captures get theirs from
+# `xdp_vm_replay classify`, the same standard-side judge.
+#
+# The #config line is what the attached server and the test run write into
+# server_xdp_config_map: the server end of the guest's veth, its port, and the
+# published development filter value at epoch 0.
+#
+# file	index	rx_queue	verdict	counter	label
+#config port=40000 ipv4=10.211.0.1 ipv6=fd00:211::1 filter=b7590100 epoch=0
+crafted_ipv4.pcap	0	0	XDP_REDIRECT	REDIRECTED	ipv4_payload_smallest
+crafted_ipv4.pcap	1	0	XDP_REDIRECT	REDIRECTED	ipv4_payload_at_ceiling
+crafted_ipv4.pcap	2	0	XDP_REDIRECT	REDIRECTED	ipv4_request
+crafted_ipv4.pcap	3	0	XDP_REDIRECT	REDIRECTED	ipv4_response
+crafted_ipv4.pcap	4	0	XDP_DROP	DROPPED_TOO_SMALL	ipv4_too_small
+crafted_ipv4.pcap	5	0	XDP_DROP	DROPPED_TOO_LARGE	ipv4_too_large
+crafted_ipv4.pcap	6	0	XDP_DROP	DROPPED_WRONG_EPOCH	ipv4_wrong_epoch
+crafted_ipv4.pcap	7	0	XDP_DROP	DROPPED_WRONG_FILTER	ipv4_wrong_filter
+crafted_ipv4.pcap	8	0	XDP_DROP	DROPPED_INVALID_TYPE	ipv4_challenge_is_server_to_client
+crafted_ipv4.pcap	9	0	XDP_DROP	DROPPED_INVALID_TYPE	ipv4_reserved_type
+crafted_ipv4.pcap	10	0	XDP_DROP	DROPPED_INVALID_TYPE	ipv4_request_one_byte_short
+crafted_ipv4.pcap	11	0	XDP_DROP	DROPPED_INVALID_TYPE	ipv4_keep_alive_below_floor
+crafted_ipv4.pcap	12	0	XDP_PASS	-	ipv4_other_port
+crafted_ipv4.pcap	13	0	XDP_PASS	-	ipv4_wrong_address
+crafted_ipv4.pcap	14	0	XDP_PASS	-	ipv4_options
+crafted_ipv4.pcap	15	0	XDP_PASS	-	ipv4_not_udp
+crafted_ipv4.pcap	16	0	XDP_DROP	-	ipv4_header_truncated
+crafted_ipv6.pcap	0	0	XDP_REDIRECT	REDIRECTED	ipv6_payload_smallest
+crafted_ipv6.pcap	1	0	XDP_REDIRECT	REDIRECTED	ipv6_payload_at_ceiling
+crafted_ipv6.pcap	2	0	XDP_REDIRECT	REDIRECTED	ipv6_request
+crafted_ipv6.pcap	3	0	XDP_DROP	DROPPED_TOO_SMALL	ipv6_too_small
+crafted_ipv6.pcap	4	0	XDP_DROP	DROPPED_TOO_LARGE	ipv6_too_large
+crafted_ipv6.pcap	5	0	XDP_DROP	DROPPED_WRONG_EPOCH	ipv6_wrong_epoch
+crafted_ipv6.pcap	6	0	XDP_DROP	DROPPED_WRONG_FILTER	ipv6_wrong_filter
+crafted_ipv6.pcap	7	0	XDP_DROP	DROPPED_INVALID_TYPE	ipv6_reserved_type
+crafted_ipv6.pcap	8	0	XDP_PASS	-	ipv6_other_port
+crafted_ipv6.pcap	9	0	XDP_PASS	-	ipv6_wrong_address
+crafted_ipv6.pcap	10	0	XDP_PASS	PASSED_IPV6_EXTENSION	ipv6_hop_by_hop
+crafted_ipv6.pcap	11	0	XDP_PASS	PASSED_IPV6_EXTENSION	ipv6_routing
+crafted_ipv6.pcap	12	0	XDP_PASS	PASSED_IPV6_EXTENSION	ipv6_fragment
+crafted_ipv6.pcap	13	0	XDP_PASS	PASSED_IPV6_EXTENSION	ipv6_destination_options
+crafted_ipv6.pcap	14	0	XDP_PASS	-	ipv6_icmpv6
+crafted_ipv6.pcap	15	0	XDP_DROP	-	ipv6_header_truncated
+crafted_other.pcap	0	0	XDP_PASS	-	vlan_tagged_ipv4
+crafted_other.pcap	1	0	XDP_PASS	-	vlan_tagged_ipv6
+crafted_other.pcap	2	0	XDP_PASS	-	arp_request

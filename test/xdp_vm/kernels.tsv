@@ -1,0 +1,21 @@
+# The XDP kernel tier's pinned matrix. run.sh fetches each artifact once into
+# its work directory, refuses any whose sha256 differs from the pinned value,
+# and never boots a refused kernel.
+#
+# name: the matrix column. version: the kernel release the guest reports in
+# uname -r. kind: deb-image and deb-modules are a distribution's prebuilt
+# packages, extracted without root; source is a kernel.org tarball built
+# with vng --build inside the work directory; tool is the pinned virtme-ng
+# release, installed with --require-hashes into a virtualenv inside the work
+# directory when the machine has no vng.
+#
+# The distribution kernel is the game server machine's kernel. The longterm
+# kernel is the newest longterm release kernel.org listed on 2026-10-15; its
+# sha256 is the one kernel.org's sha256sums.asc published for the tarball.
+# The virtme-ng release is the newest one at least two weeks old on that day.
+#
+# name	version	kind	url	sha256
+ubuntu-7.0.0-31	7.0.0-31-generic	deb-image	http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-image-unsigned-7.0.0-31-generic_7.0.0-31.31_amd64.deb	00a04fd3282ebe699af3a0afb423388a44e5e3c4b90255a9cd3f5a993c626852
+ubuntu-7.0.0-31	7.0.0-31-generic	deb-modules	http://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-modules-7.0.0-31-generic_7.0.0-31.31_amd64.deb	b5bad3bceadc8f275c6c0685ccfd32157c6f15871de071a3085385fdb175fbd2
+longterm-6.18.57	6.18.57	source	https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.57.tar.xz	5bd9acdc82ec5efc3790ae840e5aaa40dfde7efff261cf6dde902dc570acf98c
+virtme-ng	1.41	tool	https://files.pythonhosted.org/packages/41/f2/ca99d9bae0a227be4e09082b9dd9fe3bf931900e36aca6e05f85a4599aea/virtme_ng-1.41-py3-none-any.whl	2031f0f2c67947829e030d66b28950adcef351a17a8455483b57d27b6246f2d2
