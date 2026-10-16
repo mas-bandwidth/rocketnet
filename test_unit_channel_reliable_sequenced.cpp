@@ -1,0 +1,402 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// RNChannelTypes!Dispatch, !Drain and !ReceiveAck for code 4.
+#include <stdlib.h>
+#include <string.h>
+
+#include "test_unit_registry.h"
+#include "sdk/rocketnet_channel.h"
+#include "sdk/rocketnet_message_object.h"
+
+#define check rocketnet_unit_check
+
+struct rs_node_t
+{
+    rocketnet_counters_t counters;
+    rn_arena_t * arena;
+    rn_region_t * region;
+    rn_ordered_t ordered;
+};
+
+static void rs_init( rs_node_t * node )
+{
+    memset( node, 0, sizeof( *node ) );
+    node->arena = rn_arena_create( NULL, NULL, 1, &node->counters );
+    check( node->arena != NULL );
+    node->region = rn_arena_region( node->arena, 0 );
+    check( rn_ordered_init( &node->ordered, node->region, NULL, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+}
+
+static rocketnet_message_record_t rs_record( int code, uint32_t number, uint32_t ordering, uint32_t sequencing, const uint8_t * data )
+{
+    rocketnet_message_record_t record = {};
+    record.code = code;
+    record.number = number;
+    record.channel = 0;
+    record.ordering = ordering;
+    record.sequencing = sequencing;
+    record.ring = number * 2;
+    record.data = data;
+    record.bytes = 1;
+    return record;
+}
+
+static void stale_acked_then_discarded()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t fresh = 2, stale = 1;
+    rn_delivery_t out;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 1, &fresh );
+    uint32_t slot;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( out.data == &fresh && out.descriptor == slot );
+    rn_ordered_end_update( &receiver.ordered );
+    const uint64_t before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 0, 0, &stale );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == before + 1 );
+    check( receiver.region->receive_descriptors[slot].live == 0 );
+    check( receiver.ordered.channels.deliveries == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( stale_acked_then_discarded );
+
+static void shares_the_watermark_with_code_1()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t one = 1, four = 4, old = 0;
+    rn_delivery_t out;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &one );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 1, &four );
+    uint32_t slot;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &old );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( shares_the_watermark_with_code_1 );
+
+static void reliable_sequenced_c_api_start_finish()
+{
+    rn_message_link_t link = {};
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
+                                                               ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    check( object != NULL );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
+    uint8_t * data = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_SEQUENCED, 3 );
+    check( data != NULL );
+    if ( data )
+    {
+        memcpy( data, "rs!", 3 );
+        check( rocketnet_message_client_finish( client, 3 ) != 0 );
+        const uint32_t d = object->connections[0].region->channel_send[0].queue_head;
+        check( d != RN_DESCRIPTOR_NONE );
+        check( object->connections[0].region->send_descriptors[d].reliability == ROCKETNET_RELIABLE_SEQUENCED );
+    }
+    rn_message_object_destroy( object );
+}
+
+REGISTER_UNIT_TEST( reliable_sequenced_c_api_start_finish );
+
+struct rs_packet_t
+{
+    uint64_t id;
+    int bytes;
+    alignas( 16 ) uint8_t data[ROCKETNET_MAX_PAYLOAD_BYTES];
+};
+
+static void rs_send( rs_node_t * node, int type, const uint8_t * data, uint32_t bytes )
+{
+    uint8_t * pointer = rn_channels_start( &node->ordered.channels, 0, type, bytes );
+    check( pointer != NULL );
+    memcpy( pointer, data, bytes );
+    check( rn_channels_finish( &node->ordered.channels, bytes ) );
+}
+
+static int rs_write( rs_node_t * node, double now, rs_packet_t * packets, int capacity, uint64_t first_id )
+{
+    alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t * pointers[8];
+    check( capacity > 0 && capacity <= 8 );
+    for ( int i = 0; i < capacity; i++ )
+        pointers[i] = frames[i];
+    const int count = rn_ordered_write( &node->ordered, now, pointers, capacity );
+    for ( int i = 0; i < count; i++ )
+    {
+        packets[i].id = first_id + (uint64_t) i;
+        packets[i].bytes = (int) node->ordered.builder.packet[i].payload_bytes;
+        check( packets[i].bytes > 0 && packets[i].bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+        memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
+        rn_ordered_commit( &node->ordered, i, packets[i].id, now );
+    }
+    return count;
+}
+
+static void newest_delivered_under_loss_and_reorder()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint8_t old = 1, newest = 2, ordered = 3;
+    rn_delivery_t out;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0, &old );
+    uint32_t slot;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+    check( receiver.region->receive_ring[record.ring * 16] == old );
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 1, 1, &newest );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->receive_descriptors[0].live == 0 );
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2, 0, 0, &ordered );
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.ordered.channels.deliveries == 2 );
+    check( receiver.region->deliveries[1].code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED );
+    check( receiver.region->deliveries[1].data[0] == newest );
+    check( receiver.region->deliveries[1].data >= receiver.region->receive_ring &&
+           receiver.region->deliveries[1].data < receiver.region->receive_ring + receiver.region->ring_bytes );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
+    rn_ordered_end_update( &receiver.ordered );
+    check( receiver.region->receive_descriptors[1].live == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( newest_delivered_under_loss_and_reorder );
+
+static void resent_until_packet_acked()
+{
+    rs_node_t sender;
+    rs_init( &sender );
+    const uint8_t state = 9;
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &state, 1 );
+    check( sender.ordered.send.next == 0 ); // numbering is late
+    rs_packet_t first[1], retry[1];
+    check( rs_write( &sender, 1.0, first, 1, 11 ) == 1 );
+    check( sender.ordered.send.next == 1 );
+    check( rs_write( &sender, 10.0, retry, 1, 12 ) == 1 );
+    rocketnet_message_reader_t reader;
+    rocketnet_message_record_t record;
+    check( rocketnet_message_reader_begin( &reader, retry[0].data, retry[0].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rocketnet_message_reader_next( &reader, &record ) );
+    check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED && record.number == 0 );
+    check( rn_ordered_acks( &sender.ordered, &retry[0].id, 1, 10.01 ) == 1 );
+    check( rs_write( &sender, 20.0, retry, 1, 13 ) == 0 );
+    rn_arena_destroy( sender.arena );
+}
+
+REGISTER_UNIT_TEST( resent_until_packet_acked );
+
+static void stale_transport_ack_retires_resend_after_discard()
+{
+    rs_node_t sender, receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+    const uint8_t old = 1, newest = 2;
+    rs_packet_t old_packet[1], new_packet[1], retry[1];
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &old, 1 );
+    check( rs_write( &sender, 1.0, old_packet, 1, 31 ) == 1 );
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &newest, 1 );
+    check( rs_write( &sender, 1.01, new_packet, 1, 32 ) == 1 );
+
+    // RNChannelTypes!Dispatch: packet arrival is ACK-worthy even when the
+    // application later sees the reliable sequence as stale (study I12).
+    check( rn_ordered_receive( &receiver.ordered, new_packet[0].data, new_packet[0].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 1 );
+    check( receiver.region->deliveries[0].data[0] == newest );
+    rn_ordered_end_update( &receiver.ordered );
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    check( rn_ordered_receive( &receiver.ordered, old_packet[0].data, old_packet[0].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 0 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    rn_ordered_end_update( &receiver.ordered );
+
+    check( rn_ordered_acks( &sender.ordered, &old_packet[0].id, 1, 1.02 ) == 1 );
+    check( rs_write( &sender, 10.0, retry, 1, 33 ) == 1 );
+    rocketnet_message_reader_t reader;
+    rocketnet_message_record_t record;
+    check( rocketnet_message_reader_begin( &reader, retry[0].data, retry[0].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rocketnet_message_reader_next( &reader, &record ) );
+    check( record.number == 1 ); // only the newer unacked message resends
+    check( rn_ordered_acks( &sender.ordered, &retry[0].id, 1, 10.01 ) == 1 );
+    check( rs_write( &sender, 20.0, retry, 1, 34 ) == 0 );
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( stale_transport_ack_retires_resend_after_discard );
+
+static void reliable_sequenced_block_delivers_whole()
+{
+    rs_node_t sender, receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+    const uint32_t bytes = 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17;
+    uint8_t data[2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17];
+    for ( uint32_t i = 0; i < bytes; i++ )
+        data[i] = (uint8_t) ( i * 7 + 3 );
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, data, bytes );
+    rs_packet_t packets[3];
+    check( rs_write( &sender, 1.0, packets, 3, 41 ) == 3 );
+    for ( int i = 2; i >= 0; i-- )
+    {
+        rocketnet_message_reader_t reader;
+        rocketnet_message_record_t record;
+        check( rocketnet_message_reader_begin( &reader, packets[i].data, packets[i].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        check( rocketnet_message_reader_next( &reader, &record ) );
+        check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED && record.block );
+        check( rn_ordered_receive( &receiver.ordered, packets[i].data, packets[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        check( rn_ordered_deliveries( &receiver.ordered ) == ( i == 0 ? 1u : 0u ) );
+        if ( i == 0 )
+        {
+            const rn_delivery_t & delivery = receiver.region->deliveries[0];
+            check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && delivery.bytes == (int) bytes );
+            check( delivery.data >= receiver.region->receive_ring && delivery.data < receiver.region->receive_ring + receiver.region->ring_bytes );
+            check( memcmp( delivery.data, data, bytes ) == 0 );
+        }
+        rn_ordered_end_update( &receiver.ordered );
+    }
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_sequenced_block_delivers_whole );
+
+static void reliable_sequenced_block_ahead_drains_from_ring()
+{
+    rs_node_t sender, receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+    const uint8_t ordered = 3;
+    uint8_t data[ROCKETNET_MESSAGE_FRAGMENT_BYTES + 300];
+    for ( uint32_t i = 0; i < sizeof( data ); i++ )
+        data[i] = (uint8_t) ( i * 11 + 5 );
+    rs_send( &sender, ROCKETNET_RELIABLE_ORDERED, &ordered, 1 );
+    rs_packet_t packets[3];
+    check( rs_write( &sender, 1.0, packets, 1, 61 ) == 1 );
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, data, (uint32_t) sizeof( data ) );
+    check( rs_write( &sender, 1.01, packets + 1, 2, 62 ) == 2 );
+    check( rn_ordered_receive( &receiver.ordered, packets[2].data, packets[2].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    rn_ordered_end_update( &receiver.ordered );
+    check( rn_ordered_receive( &receiver.ordered, packets[1].data, packets[1].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+    check( rn_ordered_receive( &receiver.ordered, packets[0].data, packets[0].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( rn_ordered_deliveries( &receiver.ordered ) == 2 );
+    const rn_delivery_t & delivery = receiver.region->deliveries[1];
+    check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && delivery.bytes == (int) sizeof( data ) );
+    check( delivery.data >= receiver.region->receive_ring && delivery.data < receiver.region->receive_ring + receiver.region->ring_bytes );
+    check( memcmp( delivery.data, data, sizeof( data ) ) == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_sequenced_block_ahead_drains_from_ring );
+
+static void newer_state_releases_incomplete_block()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES] = {};
+    const uint8_t newest = 9;
+    rn_delivery_t out;
+    uint32_t slot;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 0, chunk );
+    record.bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    record.block = 1;
+    record.fragment = 0;
+    record.fragments = 1;
+    record.ring = 0;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->receive_descriptors[0].live != 0 );
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 2, 0, 1, &newest );
+    record.ring = 200;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( out.data == &newest && receiver.region->receive_descriptors[0].live == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 0, 0, chunk );
+    record.bytes = 20;
+    record.block = 1;
+    record.fragment = 1;
+    record.fragments = 1;
+    record.ring = ROCKETNET_MESSAGE_FRAGMENT_BYTES / 16;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.region->receive_descriptors[slot].live == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( newer_state_releases_incomplete_block );
+
+static void rnchannel_reliable_sequenced_witness_replays()
+{
+    // BrokenSequencedBackwards and BrokenHoldAllSequenced are rejected for
+    // numbered code 4 as for code 1; the ordered drain resets the watermark.
+    stale_acked_then_discarded();
+    stale_transport_ack_retires_resend_after_discard();
+    newest_delivered_under_loss_and_reorder();
+    shares_the_watermark_with_code_1();
+}
+
+REGISTER_UNIT_TEST( rnchannel_reliable_sequenced_witness_replays );
+
+static uint64_t rs_allocations;
+
+static void * rs_counted_malloc( void *, size_t bytes )
+{
+    rs_allocations++;
+    return malloc( bytes );
+}
+
+static void rs_counted_free( void *, void * memory )
+{
+    rs_allocations++;
+    free( memory );
+}
+
+static void reliable_sequenced_no_allocation_after_create()
+{
+    rocketnet_term();
+    check( rocketnet_allocator( rs_counted_malloc, rs_counted_free ) );
+    check( rocketnet_init() );
+    rs_node_t sender, receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+    const uint64_t created = rs_allocations;
+    const uint8_t state = 7;
+    rs_send( &sender, ROCKETNET_RELIABLE_SEQUENCED, &state, 1 );
+    rs_packet_t packet;
+    check( rs_write( &sender, 1.0, &packet, 1, 91 ) == 1 );
+    check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( receiver.region->deliveries[0].data >= packet.data &&
+           receiver.region->deliveries[0].data < packet.data + packet.bytes );
+    rn_ordered_end_update( &receiver.ordered );
+    check( rn_ordered_acks( &sender.ordered, &packet.id, 1, 1.01 ) == 1 );
+    check( rs_allocations == created );
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+    rocketnet_term();
+    check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+    check( rocketnet_init() );
+}
+
+REGISTER_UNIT_TEST( reliable_sequenced_no_allocation_after_create );
