@@ -26,9 +26,12 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-// the vendored two-file libsodium, by path: the test target is not given the
-// sodium/ include directory, and a system sodium.h would not be the one linked
+// Match the header to the sodium implementation linked into the SDK.
+#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#include <sodium.h>
+#else
 #include "sodium/sodium.h"
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
@@ -36,6 +39,10 @@
 
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 // ---------------------------------------------------------------------------
 // the vector inputs. integers are values; addresses are their wire bytes
@@ -424,7 +431,13 @@ static void vectors_regenerate_byte_identical()
     rocketnet_unit_check( file != NULL );
     rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
     rocketnet_unit_check( fclose( file ) == 0 );
+#if defined(_WIN32)
+    // The Windows CRT rename refuses to replace an existing destination.
+    rocketnet_unit_check( MoveFileExA( temp.c_str(), path.c_str(),
+                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
+#else
     rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
+#endif
 
     rocketnet_unit_check( existed );
     rocketnet_unit_check( existing == generated );

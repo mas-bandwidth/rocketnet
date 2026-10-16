@@ -78,7 +78,7 @@ keys, signatures, X25519 and AEAD across empty/block-boundary/large inputs;
 checks altered signatures/ciphertexts are refused; and opens each library's
 randomized sealed boxes with the other library. Fixed published vectors also
 run without that external dependency, including on Windows and big-endian
-s390x. The normal SDK suites, C# smoke, ABI export and installed/embedded
+s390x. The normal SDK suites, ABI export and installed/embedded
 consumer checks use the default vendor. CI instruments the C file as well as
 the C++ SDK under sanitizers and fuzz coverage. The separate pinned-system
 mode retains an independently built 1.0.20 backend compatibility check.

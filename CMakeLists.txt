@@ -13,7 +13,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
 option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
-option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
+option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
@@ -156,7 +156,7 @@ add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURC
 # production library refuses. Never installed: it is a build-tree dev aid.
 add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The development shared library: the same source with ROCKETNET_DEVELOPMENT=1,
-# for the C# binding smoke, whose loopback connect mints its own token. Never
+# for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -300,6 +300,10 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
+        rocketnet_use_sodium(test)
+    endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
     # directory of minimal kernel and libbpf headers, so the unit suite judges

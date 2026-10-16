@@ -200,6 +200,14 @@ def main():
               file=sys.stderr)
         return 1
 
+    # The three recorded findings occur with GCC 13, but GCC 15's analyzer
+    # emits none at the same source. Keep both compiler generations strict:
+    # GCC 13 must still match its known findings, and GCC 15+ must find zero.
+    if os.path.abspath(args.baseline) == os.path.abspath(BASELINE):
+        version = subprocess.check_output(["g++", "-dumpfullversion"], text=True).strip()
+        if int(version.split(".", 1)[0]) >= 15:
+            baseline = set()
+
     now = set(findings)
     new = sorted(now - baseline)
     gone = sorted(baseline - now)

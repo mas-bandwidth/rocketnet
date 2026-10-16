@@ -55,12 +55,17 @@
 #define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 20 - 8 )
 #define ROCKETNET_MAX_PACKET_BYTES_IPV6                ( 1500 - 40 - 8 )
 
-// a compile-time assert that builds as C11 and as C++
+// a compile-time assert that also builds in C compilers without C11 mode
 
 #ifdef __cplusplus
 #define ROCKETNET_STATIC_ASSERT( condition, message )  static_assert( condition, message )
-#else
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define ROCKETNET_STATIC_ASSERT( condition, message )  _Static_assert( condition, message )
+#else
+#define ROCKETNET_STATIC_ASSERT_JOIN_( a, b ) a##b
+#define ROCKETNET_STATIC_ASSERT_JOIN( a, b ) ROCKETNET_STATIC_ASSERT_JOIN_( a, b )
+#define ROCKETNET_STATIC_ASSERT( condition, message ) \
+    typedef char ROCKETNET_STATIC_ASSERT_JOIN( rocketnet_static_assert_, __LINE__ )[(condition) ? 1 : -1]
 #endif
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
@@ -1193,7 +1198,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_stats( struct rocketnet_frame_sy
 // Include serialize.h before this header and the stream forms of the
 // acquire/commit surface appear: the same calls, with a WriteStream bound
 // at the frame's aligned payload root on start and measured on finish, and
-// a ReadStream bound over each received payload. Plain C and C# see none
+// a ReadStream bound over each received payload. Plain C callers see none
 // of this; it compiles to nothing but the calls above.
 
 #if defined(__cplusplus) && defined(SERIALIZE_H)

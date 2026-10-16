@@ -1446,8 +1446,8 @@ static void test_channels_allocator_descriptor_pool()
 
     // a store refusal takes no descriptor, and is counted as itself
 
-    for ( int i = 0; i < 16; i++ )
-        rn_region_send_free( region, descriptors[i] );
+    // Carve reset the original 16 descriptors; only d is live now.
+    rn_region_send_free( region, d );
     check( region->descriptors_free == 16 );
     check( rn_region_send_alloc( region, config.max_message_bytes + 1 ) == RN_DESCRIPTOR_NONE );   // too large is a refusal, never a store attempt
     check( rn_counter( &counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );

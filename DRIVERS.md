@@ -1,8 +1,7 @@
 # Native transport drivers
 
-The public transport API in `rocketnet.h` is independent of the backend. C#
-uses that API, and will use the future client/server API above it. Native
-drivers implement `rocketnet_driver.h`; they do not add managed bindings or
+The public transport API in `rocketnet.h` is independent of the backend.
+Native drivers implement `rocketnet_driver.h`; they do not add binding or
 wire-format rules.
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
