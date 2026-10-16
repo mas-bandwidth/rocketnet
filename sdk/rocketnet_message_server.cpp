@@ -270,7 +270,8 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     rn_message_connection_t * connection = &object->connections[index];
     if ( object->pending_connection != index )
         return;
-    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
+    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
+         ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
         rn_channels_cancel( &connection->ordered.channels );
     else if ( ( connection->pending_type == ROCKETNET_UNRELIABLE || connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) &&
               connection->pending_descriptor != RN_DESCRIPTOR_NONE )
@@ -513,32 +514,49 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             return NULL;
         if ( (uint32_t) bytes > object->unreliable_limit )
         {
-            // an unreliable message is one record in one packet here: larger
-            // is the caller's refusal, never exhaustion
-            rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-            return NULL;
+            if ( reliability == ROCKETNET_UNRELIABLE )
+            {
+                // Plain unreliable remains one record in one packet.
+                rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+                return NULL;
+            }
+            // RNReceipts EffectiveKind: a large public type 5 reserves through
+            // the internal reliable code-2 block path; public type 6 stays off.
+            pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, ROCKETNET_RELIABLE, (uint32_t) bytes );
+            if ( !pointer )
+            {
+                if ( rn_region_exhausted( region ) )
+                    rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+                else
+                    rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+                return NULL;
+            }
+            connection->pending_descriptor = connection->ordered.channels.pending;
         }
-        if ( rn_region_exhausted( region ) )
+        else if ( rn_region_exhausted( region ) )
         {
             rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
             return NULL;
         }
-        const uint32_t d = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
-        if ( d == RN_DESCRIPTOR_NONE )
+        else
         {
-            // RNConnectionMemory Exhaust then Kick (R5): the region has no room
-            // for a send it must not drop
-            rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
-            return NULL;
+            const uint32_t d = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
+            if ( d == RN_DESCRIPTOR_NONE )
+            {
+                // RNConnectionMemory Exhaust then Kick (R5): the region has no room
+                // for a send it must not drop
+                rn_message_object_kick( object, index, ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+                return NULL;
+            }
+            rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+            descriptor->channel = (uint16_t) channel;
+            descriptor->reliability = (uint8_t) reliability;
+            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
+            descriptor->fragments = 1;
+            descriptor->next = RN_DESCRIPTOR_NONE;
+            connection->pending_descriptor = d;
+            pointer = rn_region_send_write_pointer( region, d );
         }
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        descriptor->channel = (uint16_t) channel;
-        descriptor->reliability = (uint8_t) reliability;
-        descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
-        descriptor->fragments = 1;
-        descriptor->next = RN_DESCRIPTOR_NONE;
-        connection->pending_descriptor = d;
-        pointer = rn_region_send_write_pointer( region, d );
     }
     else
     {
@@ -571,18 +589,33 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
     if ( serial == 0 )
         serial = 1;
 
-    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
+    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
+         ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE &&
+           (uint32_t) bytes > object->unreliable_limit ) )
     {
         const uint32_t d = connection->ordered.channels.pending;
         if ( !rn_channels_finish( &connection->ordered.channels, (uint32_t) bytes ) )
             return 0;
-        connection->region->send_descriptors[d].serial = serial;
+        rn_send_descriptor_t * descriptor = &connection->region->send_descriptors[d];
+        descriptor->serial = serial;
+        if ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
+            descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
     }
     else
     {
         rn_region_t * region = connection->region;
         const uint32_t d = connection->pending_descriptor;
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( connection->ordered.channels.pending == d )
+        {
+            // A caller may reserve a block and finish fewer bytes. Move the
+            // same region descriptor to the single-packet route without a copy.
+            rocketnet_assert( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            connection->ordered.channels.pending = RN_DESCRIPTOR_NONE;
+            descriptor->reliability = ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
+            descriptor->fragments = 1;
+        }
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
         descriptor->next = RN_DESCRIPTOR_NONE;

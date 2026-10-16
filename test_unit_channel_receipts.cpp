@@ -9,6 +9,7 @@
 #include "sdk/rocketnet.h"
 #include "sdk/rocketnet_allocator.h"
 #include "sdk/rocketnet_channel.h"
+#include "sdk/rocketnet_message.h"
 #include "sdk/rocketnet_message_object.h"
 #include "sdk/rocketnet_send_budget.h"
 #include "sdk/rocketnet_window_send.h"
@@ -136,6 +137,10 @@ static void receipt_ring_full_drops_oldest_and_counts()
 struct receipt_transport_t
 {
     alignas( 16 ) uint8_t frame[16 + ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t sent_payloads[4][ROCKETNET_MAX_PAYLOAD_BYTES];
+    int sent_bytes[4];
+    uint64_t sent_packets[4];
+    int sent_count;
     uint64_t next_packet;
     uint64_t sent_packet;
     uint64_t ack_packet;
@@ -181,6 +186,11 @@ static uint8_t * receipt_link_start( void * context, int, int bytes, rocketnet_p
 static int receipt_link_finish( void * context, rocketnet_packet_context_t * packet, int bytes )
 {
     receipt_transport_t * t = (receipt_transport_t *) context;
+    rocketnet_unit_check( t->sent_count < 4 && bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
+    const int slot = t->sent_count++;
+    t->sent_packets[slot] = packet->packet_id;
+    t->sent_bytes[slot] = bytes;
+    memcpy( t->sent_payloads[slot], packet->frame + packet->payload_index, (size_t) bytes );
     t->sent_packet = packet->packet_id;
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes );
 }
@@ -256,6 +266,85 @@ static void rnreceipts_code5_witness_replays()
     receipt_fixture_destroy( &f );
 }
 
+static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.window_messages = 1024;
+    config.receive_ring_bytes = 262144;
+    config.max_message_bytes = 262144;
+    config.send_buffer_bytes = 800000;
+
+    receipt_transport_t transport;
+    memset( &transport, 0, sizeof( transport ) );
+    rn_message_link_t link = receipt_link( &transport );
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
+                                                                                                     ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    rocketnet_unit_check( client != NULL );
+    rn_message_connection_t * connection = &client->object.connections[0];
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_MESSAGE_OK );
+    const int large = (int) client->object.unreliable_limit + 1;
+    uint8_t * payload = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, large );
+    rocketnet_unit_check( payload != NULL );
+    const uint32_t d = connection->pending_descriptor;
+    rocketnet_unit_check( d == connection->ordered.channels.pending );
+    rocketnet_unit_check( payload == rn_region_send_write_pointer( connection->region, d ) );
+    memset( payload, 0xA5, (size_t) large );
+    const uint32_t serial = rocketnet_message_client_finish( client, large );
+    rocketnet_unit_check( serial != 0 );
+    const rn_send_descriptor_t * descriptor = &connection->region->send_descriptors[d];
+    rocketnet_unit_check( descriptor->reliability == ROCKETNET_RELIABLE );
+    rocketnet_unit_check( ( descriptor->flags & RN_SEND_FLAG_RECEIPT_PROMOTED ) != 0 );
+    rocketnet_unit_check( descriptor->fragments == 2 && descriptor->serial == serial );
+
+    rocketnet_message_client_send_packets( client );
+    rocketnet_unit_check( transport.sent_count == 2 );
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_message_reader_t reader;
+        rocketnet_message_record_t record;
+        rocketnet_unit_check( rocketnet_message_reader_begin( &reader, transport.sent_payloads[i], transport.sent_bytes[i], &connection->ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
+        rocketnet_unit_check( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE && record.block );
+    }
+
+    // BrokenReliableLoss: an elapsed RTO does not turn a reliable block into LOSS.
+    rn_window_ack_receipt_sweep( &connection->ordered.ack, 10.0 );
+    rocketnet_message_receipt_t out[4];
+    rn_window_ack_receipt_end_update( &connection->ordered.ack );
+    rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
+
+    // BrokenLastIndexAck: the last fragment alone cannot complete the block.
+    transport.ack_packet = transport.sent_packets[1];
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.01 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
+    transport.ack_packet = transport.sent_packets[0];
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.02 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
+    rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    transport.ack_packet = transport.sent_packets[1];
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.03 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
+
+    // A large reservation finished short retains the single-packet code-5 semantics.
+    payload = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, large );
+    rocketnet_unit_check( payload != NULL );
+    payload[0] = 7;
+    const uint32_t short_serial = rocketnet_message_client_finish( client, 1 );
+    rocketnet_unit_check( short_serial != 0 );
+    rocketnet_message_client_send_packets( client );
+    rocketnet_unit_check( transport.sent_count == 3 );
+    rocketnet_message_reader_t reader;
+    rocketnet_message_record_t record;
+    rocketnet_unit_check( rocketnet_message_reader_begin( &reader, transport.sent_payloads[2], transport.sent_bytes[2], &connection->ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) && record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+    transport.ack_packet = transport.sent_packets[2];
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.04 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
+    rocketnet_unit_check( out[0].serial == short_serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rn_message_object_destroy( &client->object );
+}
+
 static uint64_t receipt_allocations;
 
 static void * receipt_malloc( void *, size_t bytes )
@@ -300,4 +389,5 @@ REGISTER_UNIT_TEST( unreliable_receipt_loss_on_sent_map_eviction );
 REGISTER_UNIT_TEST( receipt_ring_full_drops_oldest_and_counts );
 REGISTER_UNIT_TEST( receipts_listed_per_update_by_the_c_api );
 REGISTER_UNIT_TEST( rnreceipts_code5_witness_replays );
+REGISTER_UNIT_TEST( promoted_type5_block_replays_last_index_and_reliable_loss_witnesses );
 REGISTER_UNIT_TEST( no_allocation_after_create );

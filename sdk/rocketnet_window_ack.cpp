@@ -535,6 +535,12 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
                         chain_index++;
                 }
             }
+            // RNReceipts EmitAck/BlockAckedOnlyWhenAllFragmentsAcked: only the
+            // final distinct transport ACK completes a promoted type-5 block.
+            // Read the descriptor before its last fragment can free it.
+            if ( descriptor->in_use && ( descriptor->flags & RN_SEND_FLAG_RECEIPT_PROMOTED ) &&
+                 descriptor->fragments_acked + 1 == descriptor->fragments )
+                rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_ACKED );
             rn_region_send_free_fragment( region, d, chain_index );
         }
 
