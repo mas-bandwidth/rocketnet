@@ -108,6 +108,12 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
             record->channel = item->channel;
             record->ordering = item->ordering;
             record->sequencing = item->sequencing;
+            if ( item->block )
+            {
+                record->block = 1;
+                record->fragment = item->fragment;
+                record->fragments = item->fragments;
+            }
             break;
 
         default:
