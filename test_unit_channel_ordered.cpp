@@ -1154,6 +1154,52 @@ static void hostile_chunk_count_or_index_kicks()
     }
 }
 
+static void hostile_small_at_held_ordering_is_refused()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static uint8_t chunk[1152];
+    memset( chunk, 0x77, sizeof( chunk ) );
+    rn_delivery_t out;
+    rocketnet_message_record_t record;
+
+    node_t * b = node_new( &config, 4 );
+
+    // chunk 0 of a 4-chunk block at ordering 0 is held, still collecting chunks
+    chunk_record( &record, 0, 0, 0, 3, 0, chunk, (int) F );
+    check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    uint32_t held_before = 0;
+    for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+        held_before += b->region->held_index[i].used ? 1 : 0;
+    check( held_before == 1 );
+
+    // a small record at the same ordering index: refused, not delivered
+    const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    record.number = 1;
+    record.ordering = 0;
+    record.channel = 0;
+    record.data = chunk;
+    record.bytes = 16;
+    check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == before + 1 );
+    check( b->ordered.channels.deliveries == 0 );
+
+    // no held entry was leaked: only the blocks own entry remains
+    uint32_t held_after = 0;
+    for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+        held_after += b->region->held_index[i].used ? 1 : 0;
+    check( held_after == 1 );
+
+    node_free( b );
+}
+
 // ---------------------------------------------------------------------------
 // 8. zero copy: the start pointer is where the frame is copied from, and
 //    delivery is a view
@@ -1746,6 +1792,7 @@ REGISTER_UNIT_TEST( large_between_small_keeps_order );
 REGISTER_UNIT_TEST( chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( no_partial_delivery );
 REGISTER_UNIT_TEST( hostile_chunk_count_or_index_kicks );
+REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
 static void no_allocation_after_create()
 {
