@@ -54,7 +54,7 @@
 #define ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT    7
 #define ROCKETNET_CHANNEL_NUM_TYPES                             8
 
-// the first version's mask: UNRELIABLE and RELIABLE_ORDERED (7.5)
+// The enabled public send types; each type card adds only its own bit (7.5).
 
 #define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
 
