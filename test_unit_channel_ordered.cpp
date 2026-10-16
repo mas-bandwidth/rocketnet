@@ -1334,9 +1334,12 @@ static void start_pointer_is_the_frame_source()
     check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, 100 ) != NULL );
     check( !rn_channels_finish( &a->ordered.channels, 101 ) );
     check( rn_channels_cancel( &a->ordered.channels ) );
-    // a type outside the mask is refused and counted (7.5)
+    // Exercise refusal against a negotiated mask that excludes this type.
+    const uint32_t enabled_types = a->ordered.channels.enabled_types;
+    a->ordered.channels.enabled_types &= ~( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT );
     check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT, 100 ) == NULL );
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED ) == 1 );
+    a->ordered.channels.enabled_types = enabled_types;
     check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, 100 ) != NULL );
     check( rn_channels_cancel( &a->ordered.channels ) );
 
