@@ -468,6 +468,14 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 
     if ( delta == 0 )
     {
+        // A block still collecting chunks holds this ordering index: two messages
+        // with one ordering index, as on the held path below.
+        if ( rn_held_find( region, rn_held_key( record->channel, ordering ) ) != RN_DESCRIPTOR_NONE )
+        {
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            return ROCKETNET_CHANNEL_DISPATCH_NONE;
+        }
+
         // Its turn: delivered as a view into the batch (the record arrived this
         // update), then the coupling runs and the drain follows (7.2).
         // RNChannel!DeliverMessage.
