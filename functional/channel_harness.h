@@ -105,7 +105,7 @@ typedef struct rocketnet_channel_endpoint_t
     int payload_count;
     uint8_t frame[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS][ROCKETNET_FRAME_STRIDE];
     int frame_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS];
-    uint8_t payload[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS][ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t (* payload)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
     uint8_t * payload_ptr[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
     int payload_client_index[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
@@ -538,6 +538,16 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     }
     h->counting_allocator_installed = 1;
 
+    // Keep the large fixture payload slots off the caller's stack. Both
+    // endpoint buffers belong to this harness and are allocated before the
+    // no-allocation snapshot used by the functional cases.
+    h->client_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
+        rocketnet_malloc( NULL, sizeof( *h->client_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
+    h->server_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
+        rocketnet_malloc( NULL, sizeof( *h->server_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
+    if ( !h->client_endpoint.payload || !h->server_endpoint.payload )
+        goto failed;
+
     // addresses: the client and the server on the simulated wire
     if ( !rocketnet_address_parse( &h->client_addr, "198.51.100.7:56789" ) )
         goto failed;
@@ -707,6 +717,8 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->server.acks ) rocketnet_server_acks_destroy( h->server.acks );
     if ( h->server.reassembly ) rocketnet_reassembly_set_destroy( h->server.reassembly );
     if ( h->sim ) rocketnet_network_simulator_destroy( h->sim );
+    if ( h->client_endpoint.payload ) rocketnet_free( NULL, h->client_endpoint.payload );
+    if ( h->server_endpoint.payload ) rocketnet_free( NULL, h->server_endpoint.payload );
     rocketnet_channel_delivery_ring_destroy( &h->to_server );
     rocketnet_channel_delivery_ring_destroy( &h->to_client );
     if ( h->counting_allocator_installed )
