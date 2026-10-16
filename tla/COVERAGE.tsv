@@ -1,9 +1,2 @@
-code	function	model	element	kind	cases
-sdk/rocketnet_allocator.cpp	rn_span_round16	tla/RNSendSpans.tla	Round16	operator	MCRNSendSpans.cfg
-sdk/rocketnet_allocator.cpp	rn_span_place	tla/RNSendSpans.tla	Place	operator	MCRNSendSpans.cfg,MCRNSendSpansBrokenNoPadding.cfg
-sdk/rocketnet_allocator.cpp	rn_span_link	tla/RNSendSpans.tla	Alloc	action	MCRNSendSpans.cfg,MCRNSendSpansBrokenFloorAtNewest.cfg
-sdk/rocketnet_allocator.cpp	rn_span_unlink	tla/RNSendSpans.tla	Free	action	MCRNSendSpans.cfg,MCRNSendSpansBrokenFloorAtNewest.cfg
-sdk/rocketnet_allocator.cpp	rn_region_send_alloc_span	tla/RNSendSpans.tla	Alloc,Exhaust	action	MCRNSendSpans.cfg
-sdk/rocketnet_allocator.cpp	rn_region_send_free	tla/RNSendSpans.tla	Free	action	MCRNSendSpans.cfg
-sdk/rocketnet_allocator.cpp	rn_region_send_free_fragment	tla/RNSendSpans.tla	Free	action	MCRNSendSpans.cfg
-sdk/rocketnet_allocator.cpp	region reset (the send spans: empty)	tla/RNSendSpans.tla	Reset	action	MCRNSendSpans.cfg
+machine	code	module	status	owed_by	note
+send-span-ring	sdk/rocketnet_allocator.cpp	RNSendSpans	current	-	RNSendSpans models the send-span ring in sdk/rocketnet_allocator.cpp (rn_span_round16, rn_span_place, rn_span_link, rn_span_unlink, rn_region_send_alloc_span, rn_region_send_free, rn_region_send_free_fragment, and the empty-ring reset in rn_region_reset): head, tail, first and last, the list in allocation order, frees in any order, wrap padding, tail == head meaning full, and the reset to 0 when empty; actions Alloc(l, d), Exhaust(l), Free(d) and Reset; invariants TypeOK, LiveSpansDisjoint, SpanInsideRing, Aligned, HeadIsOldestStart, ListInAllocationOrder, EmptyIsZero, FullAdmitsNothing, IdleAdmitsAnyMessage and LiveBetweenHeadAndTail; passing control MCRNSendSpans.cfg and reversed witnesses MCRNSendSpansBrokenFloorAtNewest.cfg (LiveSpansDisjoint) and MCRNSendSpansBrokenNoPadding.cfg (SpanInsideRing).
