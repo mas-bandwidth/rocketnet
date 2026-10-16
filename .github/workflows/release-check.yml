@@ -101,21 +101,6 @@ jobs:
           check_branch "shipping" "$shipping_full" "$shipping_major" "$shipping_minor" "$shipping_patch"
           check_branch "development" "$dev_full" "$dev_major" "$dev_minor" "$dev_patch"
 
-          # the C# binding states the same version to its own consumers; it
-          # carries no version property today, and this check turns on by
-          # itself the moment one appears rather than waiting to be
-          # remembered
-          csharp_version=$(sed -nE 's|.*<Version>([0-9]+\.[0-9]+\.[0-9]+)</Version>.*|\1|p' csharp/RocketNet.csproj | head -n1)
-          if [ -n "$csharp_version" ]; then
-            echo "csharp: <Version>$csharp_version</Version>"
-            if [ "$csharp_version" != "$shipping_full" ]; then
-              echo "::error::csharp/RocketNet.csproj declares $csharp_version and sdk/rocketnet.h ships $shipping_full."
-              fail=1
-            fi
-          else
-            echo "csharp: no <Version> declared — nothing to compare."
-          fi
-
           case "${GITHUB_REF:-}" in
             refs/tags/*)
               tag_version="${GITHUB_REF_NAME#v}"

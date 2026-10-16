@@ -10,14 +10,15 @@ preference.
 
 * The zero copy machinery for sending and receiving packets quickly.
 
-* A C# interface, via a simple C API on top of the library underneath. The
-  library stays the loose C-like C++ we do — no rewrite in C; the nice C API
-  rides on top for a C# caller.
+* A public C API on top of the library underneath. The library stays the
+  loose C-like C++ we do — no rewrite in C.
 
   The C API is for C to call: an `extern "C"` interface with real,
   non-mangled symbols, consumable from many languages without C++ nonsense.
-  No C++ types cross that surface. C# is the first consumer, not the only
-  one it is shaped for.
+  No C++ types cross that surface. The public C API and ABI, including their
+  entry points, exports, calling conventions, layouts, version contract,
+  headers, build artifacts and tests, remain required. RocketNet does not
+  include a C# library integration.
 
 * Development works out of the box, with no backend, no configuration and no
   copying keys between machines. Run the server, point the client at its
@@ -31,7 +32,7 @@ preference.
   silently. Nothing else is relaxed; the development path runs the same
   handshake, sealing and replay protection that ships.
 
-* Example backend code, in Go and C#, for creating connect tokens. That is
+* Example backend code in Go for creating connect tokens. That is
   the backend integration story: a customer runs their own backend, and
   minting a token is the only thing it has to do for us. Go needs no
   dependency for the signing half — Ed25519 is in its standard library — and

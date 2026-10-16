@@ -59,7 +59,6 @@
 #                           Release row runs as two parallel legs.
 #   build-and-test-windows  the same suite under MSVC, Release, as two
 #                           parallel legs. The Debug row is in nightly.yml.
-#   csharp-smoke            the binding and its loopback smoke, three OSes
 #   sanitizers              asan + ubsan over the whole suite
 #   fuzz-smoke              a bounded, deterministic replay of the committed
 #                           regression corpus over the wire-facing parsers
@@ -914,112 +913,6 @@ jobs:
 
       - name: Verify STANDARD.md against the implementation
         run: python3 tools/conformance/check_standard.py
-
-  # The C# binding smoke: build the shared library (the target the binding
-  # loads at runtime), build the binding and its smoke test with the .NET 8
-  # SDK (the binding's TFM floor), and run the smoke against the built
-  # library. The smoke exits nonzero on any failure, which fails the job.
-  # On windows the shared library is rocketnet.dll under bin/Release (the
-  # multi-config generator), which the binding's resolver already handles;
-  # no additional crypto DLL is needed.
-
-  csharp-smoke:
-    name: csharp smoke / ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: macos-15 }
-          - { os: windows-2025 }
-    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
-    env:
-      # the pin and the cache key are the same string on purpose: bump this
-      # and the cache misses, which is the only way a stale SDK leaves.
-      DOTNET_VERSION: "8.0.x"
-      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.dotnet
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies (Linux)
-        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: brew install libsodium pkgconf || brew install libsodium pkg-config
-
-      # CACHE THE SDK INSTALL, NOT THE PACKAGE STORE. Measured on run
-      # 34781198031, actions/setup-dotnet was 41s on the windows leg: that is
-      # DOWNLOADING AND INSTALLING the pinned 8.0 SDK, and it is the largest
-      # single cost in this job.
-      #
-      # The obvious-looking cut is the wrong one. A NuGet cache would cache
-      # NOTHING HERE: both csproj files declare zero package references, and
-      # csharp/RocketNet.csproj says so deliberately -- "family value: zero
-      # third-party dependencies. no package references, ever." Smoke.csproj
-      # carries one ProjectReference to its sibling and nothing else. An
-      # actions/cache on ~/.nuget/packages, or setup-dotnet's own `cache:
-      # true` which is the same store, would save and restore an empty
-      # directory every run: a step that cannot fail, which this file's header
-      # calls decoration. So the cache below is pointed at the SDK tree.
-      #
-      # DOTNET_INSTALL_DIR moves the install into the workspace so the cache
-      # can own a directory the runner user owns; setup-dotnet finds the SDK
-      # already there on a hit and skips the download. A MISS IS HARMLESS --
-      # it installs exactly as before and the job is no slower than it was.
-      #
-      # THE TRADE, named: the key is the pin string, not the resolved patch,
-      # so a hit serves whatever 8.0.x patch was first cached until someone
-      # bumps DOTNET_VERSION. That is acceptable HERE and would not be
-      # everywhere: the binding has no package dependencies, so the patch
-      # level moves only the compiler, and the pin's actual job -- holding the
-      # net8.0 TFM floor so game servers on .NET 8 can reference the binding
-      # -- is unaffected by which 8.0 patch builds it.
-
-      - name: Cache the pinned .NET SDK install
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.DOTNET_INSTALL_DIR }}
-          key: dotnet-sdk-${{ runner.os }}-${{ env.DOTNET_VERSION }}
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Build the shared library
-        if: runner.os != 'Windows'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target rocketnet_shared rocketnet_shared_dev -j
-
-      - name: Build the shared library (Windows)
-        if: runner.os == 'Windows'
-        run: cmake -B build -A x64 && cmake --build build --config Release --target rocketnet_shared rocketnet_shared_dev --parallel
-
-      - name: Build the C# binding and smoke test
-        run: dotnet build csharp/smoke -c Release
-
-      - name: Build intentionally incompatible ABI fixtures
-        run: cmake --build build --config Release --target rocketnet_abi_mismatch rocketnet_abi_legacy --parallel
-
-      - name: Prove ABI refusal before struct writes
-        shell: bash
-        run: python3 tools/check_managed_abi.py ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
-
-      - name: Run the smoke test
-        shell: bash
-        env:
-          ROCKETNET_LIBRARY_PATH: ${{ runner.os == 'Windows' && 'bin/Release' || 'bin' }}
-        run: dotnet run --project csharp/smoke -c Release --no-build
-
-      - name: Run the C# smoke over IOCP
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          ROCKETNET_LIBRARY_PATH: bin/Release
-        run: dotnet run --project csharp/smoke -c Release --no-build -- --iocp
 
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
