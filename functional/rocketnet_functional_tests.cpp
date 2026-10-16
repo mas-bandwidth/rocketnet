@@ -4500,6 +4500,14 @@ struct rocketnet_functional_test_t
     void ( *function )();
 };
 
+// the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
+// the functional/channel_*.cpp glob)
+extern void harness_one_message_each_way_lossless();
+extern void harness_one_message_each_way_lossy();
+extern void harness_lossy_100_percent_negative_control();
+extern void harness_no_allocation_after_create();
+extern void harness_collect_preserves_other_channels();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
@@ -4576,6 +4584,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_client_driver", rocketnet_test_client_driver },
     { "test_lifecycle_driver", rocketnet_test_lifecycle_driver },
     { "test_message_objects_loopback_from_t1000", rocketnet_test_message_objects_loopback_from_t1000 },
+    { "harness_one_message_each_way_lossless", harness_one_message_each_way_lossless },
+    { "harness_one_message_each_way_lossy", harness_one_message_each_way_lossy },
+    { "harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control },
+    { "harness_no_allocation_after_create", harness_no_allocation_after_create },
+    { "harness_collect_preserves_other_channels", harness_collect_preserves_other_channels },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
