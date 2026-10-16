@@ -743,37 +743,52 @@ processes and two packets make it checked once.
 
 ## M13. XDP frame ownership and the send handoff
 
-**Files.** `sdk/rocketnet_server_socket_linux.cpp:2121-2229` (receive frames and pending
-return), `:2232-2247` (completions), `:2249-2356` (send batch), `:1762-1795, 1870-1897`
+**Files.** `sdk/rocketnet_server_socket_linux.cpp:1462-1492` (create: the receive
+allocator and the initial fill), `:2067-2176` (receive frames and pending return),
+`:2178-2193` (completions), `:2195-2306` (send batch), `:1708-1741, 1816-1844`
 (start, acquire, publish); `sdk/rocketnet_pending_frames.h:9-35`;
+`sdk/rocketnet_xdp_bind.h` (`rocketnet_xdp_prefill`);
 `sdk/rocketnet_send_handoff.h:9-44`. CLAUDE.md:100-106 ranks the pending-return spill
-first among known issues: it "has not been driven on hardware".
+first among known issues: it "has not been driven on hardware". (This section's line
+numbers were refreshed when the Init note below was added; the rest of the document
+is still at `5cb7613`.)
 
-**States.** Each receive frame is in one of `Fill` (kernel), `Rx` (kernel → user ring)
-or `Pending` (user, awaiting a fill reservation). Each send frame is in one of `Free`,
-`Batched`, `Tx` or `Completed`. Each send generation is `free | filling | queued`, with
-`head`, `count`, `filling` and the published `send_flow_index`.
+**States.** Each receive frame is in one of `Free` (the user's receive allocator),
+`Fill` (kernel), `Rx` (kernel → user ring) or `Pending` (user, awaiting a fill
+reservation). Each send frame is in one of `Free`, `Batched`, `Tx` or `Completed`.
+Each send generation is `free | filling | queued`, with `head`, `count`, `filling`
+and the published `send_flow_index`.
+
+**Init.** At create, per queue: every receive frame starts `Free`; then the 2048
+(`ROCKETNET_XDP_FILL_QUEUE_SIZE`) frames of `rocketnet_xdp_prefill` move to `Fill`,
+all or nothing, after `xsk_umem__create` and BEFORE `xsk_socket__create` (the bind,
+`:1503`) and before the worker thread exists (`:1570`). So the bind, the moment a
+zero-copy driver builds its Rx ring, already sees 2048 `Fill` frames, which covers
+the whole Rx ring only while the NIC's ring is at most 2048 entries (`ethtool -g`).
+`test_unit_xdp_bind.cpp` holds the order (its create-path audit) and the all-or-nothing
+fill.
 
 **Transitions.**
 - Worker receive: peek ≤ `pending.available()`; consume ≤ the staging room; release
   exactly the consumed count; append to pending; flush all-or-zero into the fill ring
-  (`:2141-2229`; `pending_frames.h:16-34`).
-- Worker send: complete-ring frames → free (`:2236-2247`). The front generation's packets
-  → frames; on exhaustion stop and retain `packet_start_index` (`:2287-2298`). Retire the
-  generation when every packet is copied (`:2318-2321`). TX reserve is all-or-zero; zero
-  keeps the batch (`:2334-2355`).
+  (`:2077-2176`; `pending_frames.h:16-34`).
+- Worker send: complete-ring frames → free (`:2182-2193`). The front generation's packets
+  → frames; on exhaustion stop and retain `packet_start_index` (`:2233-2242`). Retire the
+  generation when every packet is copied (`:2270-2271`). TX reserve is all-or-zero; zero
+  keeps the batch (`:2278-2306`).
 - Main thread: `send_packets` publishes a non-empty filling generation and acquires the
-  next (`:1883-1897`). A fill thread may acquire on the slow path when both are queued
-  (`:1766-1775`).
+  next (`:1829-1844`). A fill thread may acquire on the slow path when both are queued
+  (`:1712-1721`).
 
 **Rules.**
 - `INV FrameConservation`: every UMEM frame has exactly one owner at every step
-  (comment `:2159-2170`; `pending_frames.h:6-7`).
+  (comment `:2105-2116`; `pending_frames.h:6-7`). At Init it reads: `Free` + `Fill`
+  is every receive frame.
 - `INV ReleaseConsumedOnly`: the RX release covers exactly the consumed descriptors.
 - `INV HandoffNoOverwrite`: a full queue refuses new storage without overwriting a
   queued generation (`send_handoff.h:8`).
 - `INV RetireAfterCopy`: a generation is retired only after its last packet is in UMEM
-  (`:2318-2319`).
+  (`:2270-2271`).
 - `LIVE FramesReturn`: if the kernel drains the fill and TX rings fairly, every Pending
   frame returns to Fill and every Tx frame to Free.
 
