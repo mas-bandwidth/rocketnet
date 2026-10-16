@@ -257,6 +257,14 @@ working as loudly-logged deprecated aliases of `ROCKETNET_NUM_XDP_QUEUES` and
 suite, `./bin/test`, does not start a driver, so a driver pin does not change
 what it asserts.
 
+The xdp driver binds its AF_XDP sockets in copy mode. `ROCKETNET_XDP_ZEROCOPY=1`
+(exactly `1`) asks for zero-copy instead, and a NIC driver without zero-copy then
+refuses the bind loudly rather than silently copying. The create log names the
+mode per queue. Copy mode is the default since space's two kernel panics in the
+stock i40e's zero-copy receive path (2026-10-15 and 10-16); the fix for those is
+Intel's out-of-tree driver built from source (rowan-tools `fleet/nic-driver.yml`),
+and zero-copy is for a machine that runs it.
+
 The SDK test suite temporarily clears config overrides derived from both
 config tables and their legacy aliases, then restores them on return.
 `ROCKETNET_DRIVER` remains an intentional test pin; `ROCKETNET_TEST_VERBOSE`
