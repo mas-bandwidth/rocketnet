@@ -4373,6 +4373,46 @@ static void rocketnet_xdp_veth_enter( int netns_fd )
     rocketnet_check( setns( netns_fd, CLONE_NEWNET ) == 0 );
 }
 
+// every counter the case judges, printed by name: on the passing path and
+// before any failed check that follows the server's create, so a packet the
+// program redirected and userspace refused is named in the output, never
+// hidden behind the check that failed
+
+static bool rocketnet_xdp_veth_print_counters( const char * case_name, struct rocketnet_server_transport_t * server, uint64_t * xdp_counters, uint64_t * driver_counters, int & xdp_refusals )
+{
+    if ( !rocketnet_server_socket_live_counters( xdp_counters, driver_counters ) )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the xdp counters are unreadable", case_name );
+        return false;
+    }
+
+    // the stats map, every row by the table's name and class; a refusal is
+    // a drop in the kernel, so every refusal row must read zero
+
+    struct xdp_counter_row_t { int index; const char * name; const char * kind; };
+#define ROCKETNET_XDP_VETH_COUNTER_ROW( define, name, kind ) { define, name, kind },
+    static const xdp_counter_row_t xdp_counter_rows[] = { ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_XDP_VETH_COUNTER_ROW ) };
+#undef ROCKETNET_XDP_VETH_COUNTER_ROW
+    xdp_refusals = 0;
+    for ( const xdp_counter_row_t & row : xdp_counter_rows )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp stats map %s (%s) = %llu", case_name, row.name, row.kind, (unsigned long long) xdp_counters[row.index] );
+        if ( strcmp( row.kind, "refusal" ) == 0 && xdp_counters[row.index] != 0 )
+            xdp_refusals++;
+    }
+    for ( int i = 0; i < ROCKETNET_SERVER_SOCKET_NUM_COUNTERS; i++ )
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp driver %s = %llu", case_name, rocketnet_server_socket_counter_name( i ), (unsigned long long) driver_counters[i] );
+    const struct rocketnet_counters_t * transport_counters = rocketnet_server_transport_counters( server );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        const uint64_t value = rocketnet_counter_value( transport_counters, i );
+        if ( value != 0 )
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server transport %s = %llu", case_name, rocketnet_counter_name( i ), (unsigned long long) value );
+    }
+
+    return true;
+}
+
 static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name )
 {
     const char * opt_in = rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_VETH" );
@@ -4403,16 +4443,34 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     atexit( rocketnet_xdp_veth_teardown );
 
     // the pair: MTU 1500 both ends, documentation prefixes, nodad so
-    // duplicate address detection does not hold the IPv6 addresses back
+    // duplicate address detection does not hold the IPv6 addresses back.
+    // Only the family under test is configured, so the stats map counts the
+    // case's own traffic and not the kernel's: the IPv4 case turns IPv6 off
+    // on both ends (no multicast listener reports, no router solicitations),
+    // and the IPv6 case generates no link-local address and sends each
+    // multicast listener report and its retransmission at once when the
+    // link comes up, so the hop-by-hop reports a Linux host sends are all
+    // out before the XDP program attaches and PASSED_IPV6_EXTENSION judges
+    // only the case
 
     rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_SERVER_NETNS );
     rocketnet_xdp_veth_namespaces_created = true;
     rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_CLIENT_NETNS );
     rocketnet_xdp_veth_run( "ip link add veth-s netns " ROCKETNET_XDP_VETH_SERVER_NETNS " mtu 1500 type veth peer name veth-c netns " ROCKETNET_XDP_VETH_CLIENT_NETNS " mtu 1500" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " addr add 192.0.2.1/24 dev veth-s" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " addr add 2001:db8::1/64 dev veth-s nodad" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_CLIENT_NETNS " addr add 192.0.2.2/24 dev veth-c" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_CLIENT_NETNS " addr add 2001:db8::2/64 dev veth-c nodad" );
+    if ( ipv6 )
+    {
+        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_SERVER_NETNS " sh -c 'echo 1 > /proc/sys/net/ipv6/conf/veth-s/addr_gen_mode && echo 0 > /proc/sys/net/ipv6/conf/veth-s/mldv2_unsolicited_report_interval'" );
+        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_CLIENT_NETNS " sh -c 'echo 1 > /proc/sys/net/ipv6/conf/veth-c/addr_gen_mode && echo 0 > /proc/sys/net/ipv6/conf/veth-c/mldv2_unsolicited_report_interval'" );
+        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " addr add 2001:db8::1/64 dev veth-s nodad" );
+        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_CLIENT_NETNS " addr add 2001:db8::2/64 dev veth-c nodad" );
+    }
+    else
+    {
+        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_SERVER_NETNS " sh -c 'echo 1 > /proc/sys/net/ipv6/conf/veth-s/disable_ipv6'" );
+        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_CLIENT_NETNS " sh -c 'echo 1 > /proc/sys/net/ipv6/conf/veth-c/disable_ipv6'" );
+        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " addr add 192.0.2.1/24 dev veth-s" );
+        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_CLIENT_NETNS " addr add 192.0.2.2/24 dev veth-c" );
+    }
     rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " link set lo up" );
     rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_CLIENT_NETNS " link set lo up" );
     rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_SERVER_NETNS " link set veth-s up" );
@@ -4549,6 +4607,14 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
             break;
         rocketnet_platform_sleep( 0.001 );
     }
+    if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || rocketnet_server_transport_num_connected_clients( server ) != 1 )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the client did not connect (client state %d, server clients %d); the counters at the failure:", case_name, rocketnet_client_transport_state( client ), rocketnet_server_transport_num_connected_clients( server ) );
+        uint64_t xdp_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
+        uint64_t driver_counters[ROCKETNET_SERVER_SOCKET_NUM_COUNTERS];
+        int xdp_refusals = 0;
+        rocketnet_xdp_veth_print_counters( case_name, server, xdp_counters, driver_counters, xdp_refusals );
+    }
     rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
 
@@ -4605,6 +4671,14 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d of %d, client opened %d of %d", case_name, server_received, count, client_received, count );
+    if ( server_received != count || client_received != count )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: a payload did not open on the far side; the counters at the failure:", case_name );
+        uint64_t xdp_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
+        uint64_t driver_counters[ROCKETNET_SERVER_SOCKET_NUM_COUNTERS];
+        int xdp_refusals = 0;
+        rocketnet_xdp_veth_print_counters( case_name, server, xdp_counters, driver_counters, xdp_refusals );
+    }
     rocketnet_check( server_received == count );
     rocketnet_check( client_received == count );
 
@@ -4623,31 +4697,10 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
 
     uint64_t xdp_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
     uint64_t driver_counters[ROCKETNET_SERVER_SOCKET_NUM_COUNTERS];
-    rocketnet_check( rocketnet_server_socket_live_counters( xdp_counters, driver_counters ) );
-
-    // the stats map, every row by the table's name and class; a refusal is
-    // a drop in the kernel, so every refusal row must read zero
-
-    struct xdp_counter_row_t { int index; const char * name; const char * kind; };
-#define ROCKETNET_XDP_VETH_COUNTER_ROW( define, name, kind ) { define, name, kind },
-    static const xdp_counter_row_t xdp_counter_rows[] = { ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_XDP_VETH_COUNTER_ROW ) };
-#undef ROCKETNET_XDP_VETH_COUNTER_ROW
     int xdp_refusals = 0;
-    for ( const xdp_counter_row_t & row : xdp_counter_rows )
-    {
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp stats map %s (%s) = %llu", case_name, row.name, row.kind, (unsigned long long) xdp_counters[row.index] );
-        if ( strcmp( row.kind, "refusal" ) == 0 && xdp_counters[row.index] != 0 )
-            xdp_refusals++;
-    }
-    for ( int i = 0; i < ROCKETNET_SERVER_SOCKET_NUM_COUNTERS; i++ )
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: xdp driver %s = %llu", case_name, rocketnet_server_socket_counter_name( i ), (unsigned long long) driver_counters[i] );
+    rocketnet_check( rocketnet_xdp_veth_print_counters( case_name, server, xdp_counters, driver_counters, xdp_refusals ) );
+
     const struct rocketnet_counters_t * transport_counters = rocketnet_server_transport_counters( server );
-    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
-    {
-        const uint64_t value = rocketnet_counter_value( transport_counters, i );
-        if ( value != 0 )
-            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server transport %s = %llu", case_name, rocketnet_counter_name( i ), (unsigned long long) value );
-    }
 
     // every frame the program redirected reached the transport: none dropped
     // in the kernel, none refused in userspace, no extension-header pass
