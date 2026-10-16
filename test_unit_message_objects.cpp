@@ -531,6 +531,25 @@ static uint64_t mo_counter( const rocketnet_counters_t * counters, int which )
     return rocketnet_counter_value( counters, which );
 }
 
+static void message_send_refused_counts_bad_arguments()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    const uint64_t before = mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+    check( rocketnet_message_server_start( pair.server, 0, -1, ROCKETNET_RELIABLE_ORDERED, 1 ) == NULL );
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 0 ) == NULL );
+    check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == before + 2 );
+
+    uint8_t * valid = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 1 );
+    check( valid != NULL );
+    valid[0] = 42;
+    check( rocketnet_message_server_finish( pair.server, 0, 1 ) != 0 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    mo_pair_teardown( &pair );
+}
+
 // ---------------------------------------------------------------------------
 // R3: the pointer start returns is the region record the transport frame's
 // bytes are copied from: THE COPIES (a), the one copy on the send path
@@ -1637,3 +1656,4 @@ REGISTER_UNIT_TEST( budget_set_at_create_and_runtime );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );
+REGISTER_UNIT_TEST( message_send_refused_counts_bad_arguments );
