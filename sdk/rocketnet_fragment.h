@@ -34,8 +34,8 @@
 // make room. The receive-side maximum is the same arithmetic against the
 // fixed receive ceiling, and sizes each reassembly slot's staging buffer.
 
-#define ROCKETNET_MAX_FRAGMENT_BYTES            ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )            // 1193
-#define ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES    ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )        // 1387
+#define ROCKETNET_MAX_FRAGMENT_BYTES            ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )            // 1413
+#define ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES    ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES )        // 1433
 
 // the largest payload the sender can fragment: 256 fragments at the full
 // stride. a deployment's configured maximum payload must fit under it.
@@ -61,9 +61,10 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
-// Reassembly is per connection, keyed by payload id in a fixed-size sequence
-// buffer of slots -- the modulo-indexed structure this protocol already uses
-// for replay state. Each slot owns capacity for the configured maximum
+// Reassembly is one set per connection slot, created at create and reached
+// only from a connected slot (STANDARD.md _Fragmentation_), keyed by payload
+// id in a fixed-size sequence buffer of slots -- the modulo-indexed structure
+// this protocol already uses for replay state. Each slot owns capacity for the configured maximum
 // payload plus one staging buffer at the maximum receive fragment size, for
 // the one case that needs it: only the final fragment can arrive before the
 // stride is known, so a final arriving first is staged, checked against the
@@ -105,7 +106,8 @@ struct rocketnet_reassembly_counters_t
 };
 
 // One set serves one direction of reassembly: the client holds one
-// connection, the server one per client slot. The delivered arena is the
+// connection, the server one per connection slot, created at create and
+// reached only from a connected slot. The delivered arena is the
 // destination of the one copy fragmentation inherently costs -- a completed
 // payload is copied out of its slot at the moment of completion, so the slot
 // is immediately reusable while the delivered bytes stay valid until the

@@ -149,7 +149,7 @@ the one invariant.)
 
 Both counterexamples were replayed by hand through `sdk/rocketnet_replay.cpp` and
 `sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both are real: the code does what
-the trace says. Neither is fixed in this PR; each belongs to its fix card.
+the trace says. The F1 fix clears the whole ring; OV-34 belongs to its separate fix card.
 
 ### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
 
@@ -196,8 +196,9 @@ existing `rocketnet_test_replay_protection` (`sdk/rocketnet_tests.cpp:3503-3511`
 `W + 1`, all in word 0, so it passes today; that is why the fix card asks for a test
 written in terms of `ROCKETNET_REPLAY_WINDOW_BITS` that reaches past word 3.
 
-Fix: `memset( replay->window, 0, sizeof( replay->window ) )` in the long-skip branch,
-which is `ClearedWords = Words` in the model. The committed run is that rule and passes.
+The code now clears the whole ring in `sdk/rocketnet_replay.cpp`'s
+`rocketnet_replay_advance` — `memset( replay->window, 0, sizeof( replay->window ) )`
+in the long-skip branch — which is `ClearedWords = Words` in the model, the committed run.
 
 ### 2. OV-34: the server advances the session window before the slot check (real, `sdk/rocketnet_server_protocol.cpp:962` before `:967`)
 

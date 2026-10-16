@@ -260,6 +260,10 @@ land. The milestone view is issue #28; this file is the live ordering.
   Port-zero discovery became a ladder-enforced per-driver property (#109):
   the XDP rung refuses a port-zero address at create rather than binding
   something it cannot discover.
+- The sodium re-vendor landed: the gutted two-file flatten (`sodium/sodium.c`
+  and `sodium/sodium.h`) with Ed25519 and sealed boxes is the default build,
+  replacing brew libsodium. An independently supplied libsodium is opt-in for
+  integration testing.
 
 ## TODO
 
@@ -273,8 +277,8 @@ land. The milestone view is issue #28; this file is the live ordering.
 - The public surface above it all, ruled: the root header the customer sees is
   netcode-style pure C -- rocketnet_client_transport_t with functions,
   rocketnet_server_transport_t with functions, maybe the address type, nothing
-  else. Real non-mangled symbols, so C# lands on P/Invoke and every other
-  language binds the same way; whether the inside shims to C++ is an
+  else. Real non-mangled symbols allow C and other FFI consumers to bind to
+  the same API; whether the inside shims to C++ is an
   implementation privilege, not a surface concern. The public C API surface (#22)
   is this surface's usage spec.
 - The XDP server transport, remaining rungs: ipv6 in the kernel program
@@ -348,8 +352,6 @@ land. The milestone view is issue #28; this file is the live ordering.
   ladder — polite and garbage traffic, counters asserted while running,
   past 2^32 packets on one connection so sequence reconstruction's wrap is
   routine.
-- The sodium re-vendor: the gutted two-file flatten with Ed25519 and sealed
-  boxes, replacing brew libsodium before anything ships.
 - The public C API surface (#22): the outside-in C API design, an input to
   the top-layer client/server objects.
 - Step 3 (after transports): reliability, flows, broadcast.

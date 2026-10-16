@@ -228,17 +228,17 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
 }
 
-bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
-                                         uint64_t sequence, int wire_bytes,
-                                         uint64_t packet_id, int has_packet_id,
-                                         uint64_t aggregate_id, double time )
+enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
+                                                                                uint64_t sequence, int wire_bytes,
+                                                                                uint64_t packet_id, int has_packet_id,
+                                                                                uint64_t aggregate_id, double time )
 {
     rocketnet_assert( endpoint );
     rocketnet_assert( sequence != 0 );
     rocketnet_assert( !( has_packet_id && aggregate_id != 0 ) );        // a fragment's packet id lives in its aggregate
 
     if ( !sequence || !isfinite(time) )
-        return false;
+        return ROCKETNET_ACK_SENT_REFUSED_STALE;
     rocketnet_platform_spin_lock_u64( &endpoint->sent_lock );
     struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     if ( record->sequence >= sequence ||
@@ -246,9 +246,23 @@ bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
            sequence <= endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE ) )
     {
         rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
-        return false;
+        return ROCKETNET_ACK_SENT_REFUSED_STALE;
     }
-    const bool retained_without_loss = !record->sequence || record->acked;
+
+    // the record this write replaces: empty or acknowledged is a clean
+    // write; unacknowledged is an eviction, and the peer having
+    // acknowledged a sequence ROCKETNET_LOSS_PACKET_THRESHOLD above it is
+    // what makes the eviction a known path loss (RFC 9002 6.1.1) rather than
+    // an unknown fate. largest_acked_sequence is written by the update
+    // thread alone, which never overlaps the fill phase.
+
+    enum rocketnet_ack_sent_result_t result = ROCKETNET_ACK_SENT_RECORDED;
+    if ( record->sequence && !record->acked )
+    {
+        result = record->sequence + ROCKETNET_LOSS_PACKET_THRESHOLD <= endpoint->largest_acked_sequence
+                     ? ROCKETNET_ACK_SENT_EVICTED_LOST
+                     : ROCKETNET_ACK_SENT_EVICTED_UNKNOWN;
+    }
     record->sequence = sequence;
     record->packet_id = packet_id;
     record->aggregate_id = aggregate_id;
@@ -264,7 +278,35 @@ bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
 
     rocketnet_platform_atomic_max_u64( &endpoint->highest_sequence, sequence );
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
-    return retained_without_loss;
+    return result;
+}
+
+bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
+                                         uint64_t sequence, int wire_bytes,
+                                         uint64_t packet_id, int has_packet_id,
+                                         uint64_t aggregate_id, double time )
+{
+    return rocketnet_ack_endpoint_record_sent_classified( endpoint, sequence, wire_bytes, packet_id, has_packet_id,
+                                                          aggregate_id, time ) == ROCKETNET_ACK_SENT_RECORDED;
+}
+
+void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter )
+{
+    rocketnet_assert( lost_counter );
+    rocketnet_assert( overflow_counter );
+
+    switch ( result )
+    {
+        case ROCKETNET_ACK_SENT_RECORDED:
+            break;
+        case ROCKETNET_ACK_SENT_EVICTED_LOST:
+            rocketnet_platform_atomic_add_u64( lost_counter, 1 );
+            break;
+        case ROCKETNET_ACK_SENT_EVICTED_UNKNOWN:
+        case ROCKETNET_ACK_SENT_REFUSED_STALE:
+            rocketnet_platform_atomic_add_u64( overflow_counter, 1 );
+            break;
+    }
 }
 
 void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
@@ -348,21 +390,6 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     if ( low < window_low )
         low = window_low;
 
-    // Skip the entire walk if all records in range are already acked.
-    // Check from high downward: if all are acked, skip the loop entirely.
-    int all_acked = 1;
-    for ( uint64_t seq = high; seq >= low; seq-- )
-    {
-        struct rocketnet_sent_packet_record_t * rec = &endpoint->sent[seq % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
-        if ( rec->sequence == seq && !rec->acked )
-        {
-            all_acked = 0;
-            break;
-        }
-    }
-    if ( all_acked )
-        return 0;
-
     int newly_acked = 0;
 
     for ( uint64_t sequence = high; ; sequence-- )
@@ -395,6 +422,13 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
             {
                 record->acked = 1;
                 newly_acked++;
+
+                // the loss rule's evidence: the highest sequence the peer
+                // has acknowledged. update thread only, per the threading
+                // comment on the endpoint.
+
+                if ( sequence > endpoint->largest_acked_sequence )
+                    endpoint->largest_acked_sequence = sequence;
 
                 // the claim _Keep-alive generation_ turns on: this peer
                 // says it received a keep-alive, so it says it holds its

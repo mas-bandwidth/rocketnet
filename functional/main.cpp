@@ -20,8 +20,17 @@ int rocketnet_functional_run_named( const char * name );
 
 static int rocketnet_functional_worker( const char * name )
 {
+#if defined(_WIN32)
+    // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
+    // A 4096-byte buffer paired with explicit fflush keeps each worker's
+    // test-name line in a single pipe write so parallel workers never tear lines.
+    if ( setvbuf( stdout, NULL, _IOFBF, 4096 ) != 0 ||
+         setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
+        return 1;
+#else
     setvbuf( stdout, NULL, _IOLBF, 0 );
     setvbuf( stderr, NULL, _IOLBF, 0 );
+#endif
 
 #if defined(_WIN32)
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );

@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-profiles = [(1, 1192, 1), (2, 1192, 1), (1000, 1192, 1), (1000, 1192, 16), (1000, 4096, 16)]
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
 drivers = ['portable']
 if sys.platform == 'darwin':
     drivers.append('msgx')
@@ -38,12 +38,12 @@ for driver in drivers:
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
 assert large['planned_bytes'] > 100 * 1024**3
 if sys.platform.startswith('linux'):
-    xdp, = run(1000, 1192, 1, 'xdp', 7, '--plan-only')
+    xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
     assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 7
     assert xdp['sockets'] == 7
-refused = subprocess.run([str(binary), '1001', '1192', '1', 'portable', '0', '--plan-only'],
+refused = subprocess.run([str(binary), '1001', '1416', '1', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (
     refused.returncode, refused.stdout, refused.stderr)

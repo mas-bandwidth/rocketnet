@@ -8,6 +8,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
+#include "rocketnet_config.h"
 #include "rocketnet_hash.h"
 #include "rocketnet_packet_loss_tracker.h"
 #include "rocketnet_out_of_order_tracker.h"
@@ -19,6 +20,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>
 #include <math.h>
 #include <float.h>
 #include <string.h>
@@ -87,7 +89,71 @@ static int log_level = ROCKETNET_LOG_LEVEL_INFO;
 
 void rocketnet_log_level( int level )
 {
+    // the defined levels are NONE (0) through SPAM (5): a value outside that
+    // range is refused, leaving the level already in force. a caller that
+    // hands over a typo or a parsed-out-of-range number must not silence the
+    // library by accident.
+    if ( level < ROCKETNET_LOG_LEVEL_NONE || level > ROCKETNET_LOG_LEVEL_SPAM )
+        return;
     log_level = level;
+}
+
+// test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
+// they cannot link rocketnet_config_parse_int_value. the definition here is
+// that function's whole-string integer parse: a leading minus is allowed, and
+// a prefix, a plus and whitespace are refused. the library itself keeps the
+// one definition in rocketnet_config.cpp.
+
+#if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
+
+bool rocketnet_config_parse_int_value( const char * value, int * out )
+{
+    const char * cursor = value;
+    if ( cursor == NULL )
+        return false;
+    if ( *cursor == '-' )
+        cursor++;
+    if ( *cursor == '\0' )
+        return false;
+    for ( ; *cursor != '\0'; cursor++ )
+    {
+        if ( *cursor < '0' || *cursor > '9' )
+            return false;
+    }
+    char * end = NULL;
+    errno = 0;
+    long long parsed = strtoll( value, &end, 10 );
+    if ( end == value || *end != '\0' || errno == ERANGE )
+        return false;
+    if ( parsed < INT32_MIN || parsed > INT32_MAX )
+        return false;
+    *out = (int) parsed;
+    return true;
+}
+
+#endif // #if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
+
+// the ROCKETNET_LOG_LEVEL override's parse-and-apply step, factored out of
+// rocketnet_init so the suite can drive it with a string directly. it is
+// internal to the sdk, not part of the exported C surface. the value parses
+// strictly, with the same whole-string integer parse the transport config
+// overrides use: only a value inside NONE (0) .. SPAM (5) is applied, and
+// anything else -- a word, the empty string, an out-of-range number -- keeps
+// the current level and warns, naming the refused value, rather than letting
+// a mistyped environment variable silence the library.
+
+void rocketnet_log_level_override_apply( const char * value )
+{
+    int parsed;
+    if ( rocketnet_config_parse_int_value( value, &parsed ) &&
+         parsed >= ROCKETNET_LOG_LEVEL_NONE && parsed <= ROCKETNET_LOG_LEVEL_SPAM )
+    {
+        log_level = parsed;
+        rocketnet_info( "log level overridden to %d", log_level );
+        return;
+    }
+    rocketnet_warn( "ignoring ROCKETNET_LOG_LEVEL=\"%s\": not a level %d to %d, keeping %d",
+                    value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level );
 }
 
 int rocketnet_get_log_level( void )
@@ -151,6 +217,8 @@ void rocketnet_log_function( void (*function)( int level, const char * format, .
 
 void rocketnet_printf( int level, const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( level > log_level )
         return;
     va_list args;
@@ -163,6 +231,8 @@ void rocketnet_printf( int level, const char * format, ... )
 
 void rocketnet_info( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_INFO > log_level )
         return;
     va_list args;
@@ -175,6 +245,8 @@ void rocketnet_info( const char * format, ... )
 
 void rocketnet_warn( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_WARN > log_level )
         return;
     va_list args;
@@ -187,6 +259,8 @@ void rocketnet_warn( const char * format, ... )
 
 void rocketnet_error( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_ERROR > log_level )
         return;
     va_list args;
@@ -199,6 +273,8 @@ void rocketnet_error( const char * format, ... )
 
 void rocketnet_debug( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_DEBUG > log_level )
         return;
     va_list args;
@@ -211,6 +287,8 @@ void rocketnet_debug( const char * format, ... )
 
 void rocketnet_spam( const char * format, ... )
 {
+    if ( !rocketnet_api_null_guard( format ) )
+        return;
     if ( ROCKETNET_LOG_LEVEL_SPAM > log_level )
         return;
     va_list args;
@@ -243,6 +321,27 @@ static size_t rocketnet_allocations = 0; // includes allocator callbacks in flig
 static bool rocketnet_initialized = false;
 static bool rocketnet_transitioning = false;
 
+// every refused API misuse counts here: a create before init, a late or partial
+// allocator replacement, and any other call the SDK refuses. relaxed: the count
+// is a diagnostic and orders against nothing.
+static std::atomic<uint64_t> rocketnet_api_misuses{ 0 };
+
+uint64_t rocketnet_api_misuse_count()
+{
+    return rocketnet_api_misuses.load( std::memory_order_relaxed );
+}
+
+void rocketnet_api_misuse_record()
+{
+    rocketnet_api_misuses.fetch_add( 1, std::memory_order_relaxed );
+}
+
+bool rocketnet_library_initialized()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    return rocketnet_initialized;
+}
+
 struct rocketnet_allocation_header_t
 {
     void * base;
@@ -255,7 +354,7 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
-void rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
     bool refused;
     {
@@ -268,7 +367,12 @@ void rocketnet_allocator( void * (*malloc_function)( void * context, size_t byte
         }
     }
     if ( refused )
+    {
         rocketnet_error( "allocator replacement requires an uninitialized library with no live allocations" );
+        rocketnet_api_misuse_record();
+        return false;
+    }
+    return true;
 }
 
 void * rocketnet_malloc( void * context, size_t bytes )
@@ -334,6 +438,8 @@ void rocketnet_clear_and_free( void * context, void * p, size_t p_size )
 
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size )
 {
+    if ( !rocketnet_api_null_guard( buffer ) )
+        return NULL;
     snprintf( buffer, buffer_size, "%" PRIx64, user_id );
     return buffer;
 }
@@ -387,6 +493,8 @@ uint64_t rocketnet_random_uint64()
 
 void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 {
+    if ( !rocketnet_api_null_guard( data ) )
+        return;
     randombytes_buf( data, bytes );
 }
 
@@ -394,7 +502,11 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
 {
-    if ( !dest || !source || dest_size == 0 )
+    if ( !rocketnet_api_null_guard( dest ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( source ) )
+        return 0;
+    if ( dest_size == 0 )
         return 0;
     memset( dest, 0, dest_size );
     size_t i = 0;
@@ -476,10 +588,7 @@ bool rocketnet_init( void * context )
 
     const char * log_level_override = rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL" );
     if ( log_level_override )
-    {
-        log_level = atoi( log_level_override );
-        rocketnet_info( "log level overridden to %d", log_level );
-    }
+        rocketnet_log_level_override_apply( log_level_override );
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         rocketnet_initialized = true;

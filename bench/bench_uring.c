@@ -109,7 +109,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
     io_uring_buf_ring_advance( buf_ring, URING_NUM_BUFFERS );
 
     resubmit_multishot( &ring, fd );
-    io_uring_submit( &ring );
+    int submit_result = io_uring_submit( &ring );
+    if ( submit_result < 0 )
+        bench_fatal( "io_uring_submit", strerror(-submit_result) );
 
     struct bench_windows_t w;
     bench_windows_init( &w, warmup, window, windows );
@@ -175,7 +177,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
         if ( need_resubmit )
         {
             resubmit_multishot( &ring, fd );
-            io_uring_submit( &ring );
+            int submit_result = io_uring_submit( &ring );
+            if ( submit_result < 0 )
+                bench_fatal( "io_uring_submit", strerror(-submit_result) );
             batch_syscalls++;
         }
 

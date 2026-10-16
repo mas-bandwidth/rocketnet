@@ -100,7 +100,7 @@ int main(int argc, char ** argv)
     config.max_clients = 2;
     config.max_payload_bytes = 4096;
     strcpy(config.driver, "portable");
-    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config, rocketnet_time());
+    auto * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server && strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
     const size_t server_bytes = live_bytes.load();
     char address[64];
@@ -143,6 +143,10 @@ int main(int argc, char ** argv)
                     fprintf(stderr, "%s %s=%llu\n", side ? "server" : "client",
                             rocketnet_counter_name(counter), (unsigned long long)value);
             }
+        rocketnet_client_transport_destroy(client);
+        rocketnet_server_transport_destroy(server);
+        rocketnet_term();
+        CHECK(live_bytes.load() == 0);
         return 1;
     }
     const int batch_size = payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES ? 64 : 16;

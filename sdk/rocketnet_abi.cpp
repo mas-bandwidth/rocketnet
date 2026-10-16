@@ -74,6 +74,13 @@ static const abi_field_t packet_context_fields[] =
 };
 #undef ABI_TYPE
 
+#define ABI_TYPE rocketnet_message_config_t
+static const abi_field_t message_config_fields[] =
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE(INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD)
+};
+#undef ABI_TYPE
+
 #define ABI_TYPE rocketnet_frame_sync_stats_t
 static const abi_field_t frame_sync_stats_fields[] =
 {
@@ -96,6 +103,7 @@ static const abi_type_t types[] =
     TYPE(server_transport_client_stats)
     TYPE(packet_context)
     TYPE(frame_sync_stats)
+    TYPE(message_config)
 };
 
 static const abi_type_t * find_type(const char * name)
@@ -120,21 +128,33 @@ static const abi_field_t * find_field(const char * type_name, const char * field
 uint32_t rocketnet_abi_version(void) { return ROCKETNET_ABI_VERSION; }
 size_t rocketnet_abi_type_size(const char * name)
 {
+    if ( !rocketnet_api_null_guard( name ) )
+        return SIZE_MAX;
     const auto * type = find_type(name);
     return type ? type->size : SIZE_MAX;
 }
 int rocketnet_abi_field_count(const char * name)
 {
+    if ( !rocketnet_api_null_guard( name ) )
+        return -1;
     const auto * type = find_type(name);
     return type ? type->count : -1;
 }
 size_t rocketnet_abi_field_offset(const char * type_name, const char * field_name)
 {
+    if ( !rocketnet_api_null_guard( type_name ) )
+        return SIZE_MAX;
+    if ( !rocketnet_api_null_guard( field_name ) )
+        return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->offset : SIZE_MAX;
 }
 size_t rocketnet_abi_field_size(const char * type_name, const char * field_name)
 {
+    if ( !rocketnet_api_null_guard( type_name ) )
+        return SIZE_MAX;
+    if ( !rocketnet_api_null_guard( field_name ) )
+        return SIZE_MAX;
     const auto * field = find_field(type_name, field_name);
     return field ? field->size : SIZE_MAX;
 }

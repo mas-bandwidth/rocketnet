@@ -121,9 +121,10 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
         }
         else
         {
-            if ( snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port ) < 0 )
+            const int result = snprintf( buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "[%s]:%hu", address_string, address->port );
+            if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
             {
-                rocketnet_error( "address string truncated: [%s]:%hu", address_string, address->port );
+                rocketnet_error( "address formatting failed or string truncated: [%s]:%hu", address_string, address->port );
             }
             return buffer;
         }

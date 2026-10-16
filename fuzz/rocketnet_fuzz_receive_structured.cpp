@@ -321,7 +321,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             {
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
-                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, &delivered_bytes );
+                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes );
                 if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
                     abort();
             }

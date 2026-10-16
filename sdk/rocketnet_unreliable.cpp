@@ -24,7 +24,12 @@ static void rn_unreliable_count( rocketnet_counters_t * counters, int counter )
 
 static uint32_t rn_unreliable_chunk_bytes( const rn_send_store_t * store, uint32_t chunk )
 {
-    return store->classes[rn_send_store_chunk_class( chunk )].chunk_bytes;
+    // the same rule as rn_send_store_free_checked: no class for a handle the
+    // store did not issue, so no chunk bytes for it
+    const int c = rn_send_store_chunk_class( chunk );
+    if ( c >= RN_STORE_NUM_CLASSES )
+        return 0;
+    return store->classes[c].chunk_bytes;
 }
 
 // copies a whole chunk chain's bytes into out (at least bytes available)
@@ -34,9 +39,13 @@ static void rn_unreliable_chunk_read( const rn_send_store_t * store, uint32_t ch
     int offset = 0;
     while ( chunk != RN_CHUNK_NONE && offset < bytes )
     {
-        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < rn_unreliable_chunk_bytes( store, chunk )
-            ? (uint32_t) bytes - (uint32_t) offset : rn_unreliable_chunk_bytes( store, chunk );
-        memcpy( out + offset, rn_send_store_chunk_data( store, chunk ), take );
+        const uint8_t * data = rn_send_store_chunk_data( store, chunk );
+        if ( !data )
+            break;                              // a handle the store did not issue: stop the walk
+        const uint32_t chunk_bytes = rn_unreliable_chunk_bytes( store, chunk );
+        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < chunk_bytes
+            ? (uint32_t) bytes - (uint32_t) offset : chunk_bytes;
+        memcpy( out + offset, data, take );
         offset += (int) take;
         chunk = rn_send_store_chunk_next( store, chunk );
     }
@@ -63,9 +72,13 @@ static void rn_unreliable_chunk_write( const rn_send_store_t * store, uint32_t c
     int offset = 0;
     while ( chunk != RN_CHUNK_NONE && offset < bytes )
     {
-        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < rn_unreliable_chunk_bytes( store, chunk )
-            ? (uint32_t) bytes - (uint32_t) offset : rn_unreliable_chunk_bytes( store, chunk );
-        memcpy( rn_send_store_chunk_data( store, chunk ), src + offset, take );
+        uint8_t * data = rn_send_store_chunk_data( store, chunk );
+        if ( !data )
+            break;                              // a handle the store did not issue: stop the walk
+        const uint32_t chunk_bytes = rn_unreliable_chunk_bytes( store, chunk );
+        const uint32_t take = (uint32_t) bytes - (uint32_t) offset < chunk_bytes
+            ? (uint32_t) bytes - (uint32_t) offset : chunk_bytes;
+        memcpy( data, src + offset, take );
         offset += (int) take;
         chunk = rn_send_store_chunk_next( store, chunk );
     }
@@ -92,6 +105,15 @@ int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, in
     if ( bytes < 1 || (uint32_t) bytes > region->max_message_bytes || channel < 0 || (uint32_t) channel >= region->num_channels )
         return 0;
 
+    // an already-exhausted region refuses every send: exhaustion is the end of
+    // the connection (tla/RNConnectionMemory.tla, Exhaust), and the refusal is
+    // a store-full drop, counted as one (R1)
+    if ( rn_region_exhausted( region ) )
+    {
+        rn_unreliable_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        return 0;
+    }
+
     // a record's length is a u16, so a longer message can never be carried by
     // an unreliable record. It is dropped and counted now, not enqueued, so
     // the FIFO never holds a message that can never be sent (R1: unreliable
@@ -116,6 +138,7 @@ int rn_unreliable_send( rn_unreliable_t * u, const uint8_t * data, int bytes, in
     if ( chunk == RN_CHUNK_NONE )
     {
         rn_unreliable_count( region->counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
+        rn_region_exhaust( region );
         return 0;
     }
 
@@ -254,6 +277,15 @@ int rn_unreliable_receive( rn_unreliable_t * u, const uint8_t * payload, int byt
 {
     if ( out_count )
         *out_count = 0;
+
+    // an already-exhausted region refuses every receive: nothing is delivered
+    // (tla/RNConnectionMemory.tla, Exhaust), and the refusal is counted under
+    // the counter that names it
+    if ( rn_region_exhausted( u->region ) )
+    {
+        rn_unreliable_count( u->region->counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+        return ROCKETNET_MESSAGE_VIOLATION_NONE;
+    }
 
     struct rocketnet_message_reader_t reader;
     const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, limits );

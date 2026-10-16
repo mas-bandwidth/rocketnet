@@ -17,14 +17,22 @@
 // Layer 1 of the message layer: the region (docs/CHANNELS.md 4, sized by 14).
 //
 // One fixed region per connection: per server slot, and the client's one.
-// An arena is the one rocketnet_malloc an object makes at create, holding
-// its regions (max_clients for a server, 1 for a client); nothing in it is
-// allocated, freed or grown again until destroy. A region is carved at
-// connect -- every table reset, every free list threaded -- in its own
-// memory, allocating nothing. Every queue, window, buffer and block the
-// channel layers need is a typed carve-out of the region, sized from the
-// connection's config by section 14's formula. Exhaustion is a counted
-// refusal (MESSAGE_SEND_STORE_FULL, MESSAGE_SEND_QUEUE_FULL), never growth.
+// An arena is the one block an object holds from create, with its regions
+// (max_clients for a server, 1 for a client): the one rocketnet_malloc the
+// create makes, or a block the caller supplies. Nothing in it is allocated,
+// freed or grown again until destroy. A region is carved at connect -- every
+// table reset, every free list threaded -- in its own memory, allocating
+// nothing. Every queue, window, buffer and block the channel layers need is
+// a typed carve-out of the region, sized from the connection's config by
+// section 14's formula.
+//
+// Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
+// MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
+// region takes a sticky exhausted state with the reason
+// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
+// rn_connection_memory_decide and disconnects that connection (a server
+// kicks the slot, a client disconnects itself), and rn_region_reset gives
+// the slot's next client a fresh region (tla/RNConnectionMemory.tla).
 //
 // A region is one connection's, under the one-writer-per-connection rule
 // (16.1): nothing here locks. The counters it refuses into are its owner's,
@@ -39,6 +47,7 @@
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
 #define RN_CHUNK_NONE           0xFFFFFFFFu
+#define RN_RESEND_NONE          0xFFFFFFFFu
 
 struct rn_channel_send_t                // 32 bytes (7.1)
 {
@@ -102,11 +111,17 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint8_t reliability;
     uint8_t priority;
     uint8_t in_use;
-    uint8_t flags;
+    uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[22];               // layers 3 to 6's per-send state lands here, inside the pinned 64
+    uint8_t reserved[10];               // layer 3's first_send (8 bytes, then its flag byte) lands here, inside the pinned 64
+    uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
+    uint32_t span_prev, span_next;      // RN_SEND_FLAG_SPAN: the live spans, oldest first (RN_DESCRIPTOR_NONE ends)
 };
+
+// a send descriptor's flags
+
+#define RN_SEND_FLAG_SPAN       0x01    // the message lives in one contiguous span of the send spans, not in store chunks
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
@@ -138,10 +153,10 @@ struct rn_delivery_t                    // 24 bytes: one delivered message, vali
     uint8_t code;
     uint8_t pad;
     uint32_t serial;
-    uint32_t pad2;
+    uint32_t descriptor;                // the receive descriptor slot to release when the update ends, or RN_DESCRIPTOR_NONE (7.2, 8)
 };
 
-struct rn_sequenced_hold_t              // 1208 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
+struct rn_sequenced_hold_t              // 16 + ROCKETNET_MAX_PAYLOAD_BYTES = 1432 bytes: the newest unreliable sequenced message held ahead of its epoch (7.3)
 {
     uint32_t bytes;
     uint32_t ordering;
@@ -157,6 +172,12 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t serial;
     uint32_t status;                    // ROCKETNET_RECEIPT_*
     uint32_t reserved[2];
+};
+
+struct rn_resend_link_t                 // 8 bytes: the sender's resend FIFO links, indexed number % W (6.4)
+{
+    uint32_t prev;
+    uint32_t next;
 };
 
 // ----------------------------------------------------------------
@@ -178,8 +199,10 @@ enum
     RN_PART_SENT_INDEX,                 // 16 * 2P
     RN_PART_SENT_REFS,                  // 4 * 16P
     RN_PART_DELIVERIES,                 // 24 (W + Du)
-    RN_PART_SEQUENCED_HOLDS,            // 1208 Ru
+    RN_PART_SEQUENCED_HOLDS,            // 1432 Ru
     RN_PART_RECEIPTS,                   // 16 Rq
+    RN_PART_RESEND_FIFO,                // 8 W
+    RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
 };
 
@@ -304,29 +327,93 @@ struct rn_region_t
     uint8_t * store_memory;
     uint64_t store_bytes;
     rn_send_store_t store;
+    uint8_t * send_spans;               // the contiguous spans of messages above one store chunk (4)
+    uint32_t span_bytes;                // SR, the spans' size
+    uint32_t span_head;                 // the byte offset of the oldest live span's start
+    uint32_t span_tail;                 // the byte offset the next span is placed at
+    uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
     rn_delivery_t * deliveries;
     rn_sequenced_hold_t * sequenced_holds;
     rn_receipt_t * receipts;
+    rn_resend_link_t * resend_fifo;
 
     uint32_t descriptors_free_head;
     uint32_t descriptors_free;
+
+    uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
+    int32_t exhausted_reason;           // ROCKETNET_MESSAGE_ERROR_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 };
 
-// at connect: every table back to its empty state and every free list
-// threaded, in the region's own memory. Allocates nothing. The ring's and the
-// store's bytes are not cleared: nothing reads them before writing them.
+// at connect: every table back to its empty state, every free list
+// threaded and the exhausted state cleared, in the region's own memory.
+// Allocates nothing. The ring's and the store's bytes are not cleared:
+// nothing reads them before writing them.
 void rn_region_carve( rn_region_t * region );
+
+// the slot's region when its connection ends and before the slot is reused
+// (RNConnectionMemory Reuse): the carve, so a reused slot starts exactly as
+// a fresh one and nothing of the previous client is reachable.
+void rn_region_reset( rn_region_t * region );
 
 // one send's descriptor and store chunks, both or neither. The descriptor
 // index, or RN_DESCRIPTOR_NONE: a full pool counts MESSAGE_SEND_QUEUE_FULL,
-// a full store MESSAGE_SEND_STORE_FULL. bytes outside 1..max_message_bytes
-// is the caller's refusal to count, and takes nothing here.
+// a full store MESSAGE_SEND_STORE_FULL, and either exhausts the region
+// (rn_region_exhaust). bytes outside 1..max_message_bytes is the caller's
+// refusal to count, takes nothing here and is not exhaustion.
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes );
 
+// RNConnectionMemory Exhaust: an operation of this region's connection found
+// no room for something it must not drop (a send, a receive ring placement,
+// a hold). Sticky until rn_region_reset; the first call counts
+// MESSAGE_MEMORY_EXHAUSTED on the owner's counters, later calls nothing.
+void rn_region_exhaust( rn_region_t * region );
+
+bool rn_region_exhausted( const rn_region_t * region );
+
+int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_MESSAGE_ERROR_*
+
+// RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
+// owner every update. ROCKETNET_MESSAGE_ERROR_NONE, or the reason to end
+// this connection with: a server disconnects the slot
+// (rocketnet_server_transport_disconnect_client) and resets its region; a
+// client disconnects itself (rocketnet_client_transport_disconnect). An
+// exhausted connection does nothing else: no further send, delivery or
+// release is taken from its region before the kick.
+int rn_connection_memory_decide( const rn_region_t * region );
+
 void rn_region_send_free( rn_region_t * region, uint32_t descriptor );
+
+// The largest message that takes a store chunk is one block stride, 1152 bytes.
+// A message above it takes a contiguous span (rn_region_send_alloc_span): the
+// application writes it once, in place, and every fragment is copied from it
+// into a frame (4, 8).
+#define RN_SPAN_MIN_BYTES       ( RN_STORE_LARGE_BYTES + 1 )
+
+// One send's descriptor and a contiguous span of the send spans, both or
+// neither, for a message of 1 to max_message_bytes bytes. The span is placed
+// as RNRing places a holdable record (tla/RNRing.tla, PlaceSingle): at the
+// tail, or at the start of the ring when the tail leaves too little room
+// before the end, and admitted only when it stays clear of the oldest live
+// span's start. Spans are freed in any order; the head moves to the oldest
+// live span. A refusal counts MESSAGE_SEND_STORE_FULL (or QUEUE_FULL) and
+// exhausts the region like rn_region_send_alloc (R5). The descriptor index, or
+// RN_DESCRIPTOR_NONE.
+uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
+
+// The bytes of fragment `fragment` of a send, and their length: from the span
+// at fragment * F, or from the single store chunk. NULL for a descriptor not in
+// use or a fragment outside the send.
+const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t descriptor, uint32_t fragment, uint32_t * out_bytes );
+
+// The writable start of a send's bytes: the span's start, or the store chunk.
+uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t descriptor );
+
+// frees one fragment's store chunk from an in-use send descriptor's chain,
+// and returns the descriptor itself to Q when its last fragment is acked (6.4).
+void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor, uint32_t chain_index );
 
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );
 
@@ -339,9 +426,20 @@ bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uin
 
 struct rn_arena_t;
 
-// the one allocation: num_regions regions, each laid out and pointed but not
-// yet carved. NULL (allocating nothing) for a refused config or count.
+// the one allocation: num_regions regions, each laid out, pointed and
+// carved. NULL (allocating nothing) for a refused config or count.
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
+
+// the exact bytes of an arena of num_regions regions at config: its header,
+// its region structs and its regions. 0 for a refused config or count.
+uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int num_regions );
+
+// the same arena in the caller's block, allocating nothing: block must be
+// ROCKETNET_ALLOCATION_ALIGNMENT-aligned and block_bytes at least
+// rn_arena_required_bytes. A short, misaligned or NULL block is refused
+// (NULL), never truncated. Destroy then frees nothing; the block stays the
+// caller's, and must outlive the arena.
+rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters );
 
 void rn_arena_destroy( rn_arena_t * arena );
 
@@ -349,6 +447,6 @@ int rn_arena_num_regions( const rn_arena_t * arena );
 
 rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 
-uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the one allocation's size
+uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
 
 #endif // #ifndef ROCKETNET_ALLOCATOR_H

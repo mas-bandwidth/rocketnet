@@ -14,19 +14,28 @@ not a latency percentile. Select the driver, payload bytes, and measured batch
 count as arguments. The client uses portable I/O.
 
 Build the same source against each candidate's Release static library, with the
-same compiler, flags and dependencies. For example on macOS with pkg-config:
+same compiler, flags and dependencies. For example on macOS:
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++11 -ffp-contract=off -I sdk \
-  bench/transport_fill.cpp build/librocketnet.a $(pkg-config --libs libsodium) \
+  bench/transport_fill.cpp build/librocketnet.a \
   -framework CoreFoundation -framework SystemConfiguration -o fill
 ./fill portable 64 2000
 ./fill portable 1192 2000
 ./fill portable 64 2000 plant
+./fill portable 64 2000 drain
+./fill portable 1192 2000 drain
 ```
 
 The `plant` argument injects 4096 dependent volatile arithmetic steps per
 packet. It must move the timing substantially; it is only an instrument check.
+
+The `drain` argument times the client's receive cursor
+(`rocketnet_client_transport_receive_packet`) over the batches the server
+filled, and prints a second line: `drain_ns` is the mean steady-clock cost per
+drained payload. The fill line is unchanged in drain mode, so one process run
+reports both the send (acquire/write/commit) and the receive cursor costs over
+the same traffic.
 Alternate candidate order across repeated process runs. Report median and
 min/max, and treat overlapping ranges as tied. Clear `ROCKETNET_*` environment
 overrides when comparing the same configuration.

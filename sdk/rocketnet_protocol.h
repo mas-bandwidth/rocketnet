@@ -44,7 +44,7 @@ int rocketnet_prefilter_counter( int refusal_code );
 #define ROCKETNET_SEQUENCE_BYTES                    4
 #define ROCKETNET_SESSION_NONCE_BYTES               8
 #define ROCKETNET_PACKET_TAG_BYTES                  16
-#define ROCKETNET_PACKET_OVERHEAD_BYTES             26      // prefilter + sequence + tag
+#define ROCKETNET_PACKET_OVERHEAD_BYTES             ( ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES )      // 26
 #define ROCKETNET_RESPONSE_PADDING_BYTES            24
 #define ROCKETNET_COOKIE_FIELD_BYTES                24      // expire + mac, echoed in requests
 #define ROCKETNET_COOKIE_MAC_BYTES                  16

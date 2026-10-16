@@ -10,8 +10,37 @@
 
 #include "rocketnet.h"
 #include "rocketnet_history.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_protocol.h"
+
+// The packet size limits, each asserted against its derivation so a change
+// to the MTU in rocketnet_wire.h is one line and a failed assert names the
+// limit that no longer follows (STANDARD.md _Packet sizes_). The public
+// header carries its values as written numbers, since it cannot see the
+// internal constants; these asserts hold them to the derivation.
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_CEILING,
+                         "the public packet size is the receive ceiling: the IPv4 UDP payload of the link MTU" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 == ROCKETNET_SEND_BUDGET,
+                         "the public IPv6 packet size is the send budget: the IPv6 UDP payload of the link MTU" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SEND_BUDGET <= ROCKETNET_RECEIVE_CEILING,
+                         "a sender's largest packet is one every receiver accepts" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES ==
+                         ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 * 8,
+                         "the payload capacity is the send budget less the overhead and the minimum ack block, rounded down to eight" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES ==
+                         ROCKETNET_RECEIVE_CEILING - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES,
+                         "the receive payload is the receive ceiling less the overhead and the minimum ack block" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PAYLOAD_BYTES - 1,
+                         "the SINGLE message is the payload capacity less its form byte" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
+                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES_IPV6 == 1514,
+                         "one maximum IPv6 packet is exactly one 1500-MTU Ethernet frame" );
 
 #define ROCKETNET_FRAME_SIZE                                              2048
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
+                         "a send frame holds the 16-byte payload alignment slack and a full receive-ceiling packet" );
 
 #define ROCKETNET_RECEIVE_PACKETS_PER_CLIENT                                16
 
@@ -24,6 +53,10 @@
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_QUEUE_SIZE                                     2048
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
+                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
+                         "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
 
 #endif // #if ROCKETNET_XDP
 
@@ -42,8 +75,14 @@
 // the send budget.
 
 #define ROCKETNET_FRAME_WIRE_OFFSET                             15
-#define ROCKETNET_FRAME_PAYLOAD_OFFSET                          32          // wire offset + 10 header + 7 minimum block
-#define ROCKETNET_FRAME_STRIDE                                  1456        // 16-aligned; holds 15 slack + a full receive-ceiling wire packet
+#define ROCKETNET_FRAME_PAYLOAD_OFFSET                          ( ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES )     // 32
+#define ROCKETNET_FRAME_STRIDE                                  ( ( ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING + 15 ) / 16 * 16 )                                              // 1488
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_PAYLOAD_OFFSET % 16 == 0, "the payload root is 16-aligned inside a 16-aligned frame" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE % 16 == 0, "every frame slot root is 16-aligned" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET + ROCKETNET_RECEIVE_CEILING,
+                         "a frame slot holds the slack and a full receive-ceiling packet" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a frame slot fits a send frame" );
 
 // the most payloads one server update can deliver: what the receive path can
 // hand over in a single drain, so a burst is never silently discarded after
@@ -83,6 +122,14 @@
 #define ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE                             2048
 #define ROCKETNET_RTT_HISTORY_SIZE                                        2048
 
+// the packet threshold of RFC 9002 section 6.1.1 (kPacketThreshold): a sent
+// packet is known lost once the peer has acknowledged a sequence at least
+// this many above it. sequence based, so it needs no clock and fits the
+// sequence-distance windows of the standard's _Replay window sizing_.
+// tla/RNSentHistory.tla models the classification it drives.
+
+#define ROCKETNET_LOSS_PACKET_THRESHOLD                                   3
+
 // the AEAD integrity limit from the standard's _Replay Protection_: each end
 // counts the sealed packets that fail to open on a connection, across all of
 // that connection's keys, and disconnects it on reaching this many. 2^36 is
@@ -103,8 +150,8 @@
 #define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
 #define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30
 
-#define ROCKETNET_IPV4_HEADER_BYTES                                         20
-#define ROCKETNET_UDP_HEADER_BYTES                                           8
+// ROCKETNET_IPV4_HEADER_BYTES and ROCKETNET_UDP_HEADER_BYTES live in
+// rocketnet_wire.h, beside the MTU they derive the packet size from
 
 #define ROCKETNET_SOCKET_SEND_BUFFER_SIZE                              1000000
 #define ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE                           1000000

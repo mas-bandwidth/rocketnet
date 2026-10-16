@@ -160,6 +160,31 @@ value exhausts TLC's tableau.
 
 ## How to run it
 
+The model's operation sequences are also driven in C++ by
+`test_unit_window_sequences.cpp` (a unit-file test in `./bin/test`, registered
+with `REGISTER_UNIT_TEST`). An independent reference of count, `U'`, ring
+occupancy, descriptor ownership and delivery is compared with the sender and
+receiver window operations after every action. Those operations are
+`rn_window_send_*` and `rn_window_receive_*`. A tree that has
+`sdk/rocketnet_window_send.h` drives that code. This base does not have those
+files yet, so the test compiles the landed admit, `U'` and receive rules and
+drives them. The count bound and the ring floor both read `U'`, not `U`.
+Putting `U` in either place is the pre-fix sender: the partial-block count
+probe and the floor-at-`U` probe go red.
+
+Every sequence of write, block, ack, release and retransmit of length six at
+`W = 8` is walked (the operations take any power-of-two width; the message
+config's minimum is 64, so the exhaustive region is synthetic). A seeded
+million-step walk runs at the real constants (`W = 1024`, `B = 65536`) against
+the real descriptor pool. Directed probes cover `W - 1`, `W`, `W + 1`, the ring
+boundary, a partial-block ack floor, descriptor release only after the update
+has released a held record, and the 24-bit wrap. After every action the test
+asserts `n < U' + W`, that live ring spans are disjoint and inside `B`, that an
+ack does not free a held record, and that each reliable number is delivered
+once. A failed check prints a replayable seed and the action list. No open
+window-sequence defect card is known on this base, so the test carries no
+expected-fail marker.
+
 On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19 or later), from `tla/`:
 
 ```sh
@@ -315,11 +340,11 @@ bounded only by the transport. Its replay window refuses any packet
 `ROCKETNET_REPLAY_WINDOW_BITS = ROCKETNET_HISTORY_PACKETS` sequences or more behind the
 highest it has opened, and any packet it has seen before
 (`sdk/rocketnet_replay.cpp:32-39`, `sdk/rocketnet_replay.h:26`). That constant is 4096 by
-default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1192-byte payload carries
-at most 170 numbered records (a code 2 record is at least a 6-byte header and 1 data
+default and at most 32768 (`sdk/rocketnet_history.h:8,13`). A 1416-byte payload carries
+at most 202 numbered records (a code 2 record is at least a 6-byte header and 1 data
 byte, 13.2), and a block numbers up to 911 fragments at once. So in the worst case a copy
 that survives the replay window is
-`W + 32767 × 170 + 911 <= 6,619,877 ≈ 6.3 × 2^20` behind `R`, under `2^23`.
+`W + 32767 × 202 + 911 <= 7,668,421 ≈ 7.3 × 2^20` behind `R`, under `2^23`.
 This rests on transport sequences rising in packet write order. A sequence is taken at
 `start_packet` by an atomic increment (`sdk/rocketnet_client_protocol.cpp:1068`,
 `sdk/rocketnet_server_protocol.cpp:1524`), so this layer must fill a connection's

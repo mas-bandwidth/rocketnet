@@ -9,18 +9,39 @@ The family pattern (serialize's tools/conformance): the checker reads the
 specification AS A DOCUMENT -- the published tables, parsed as markdown,
 with no reference to the source tree -- and compares the rows it NAMES
 below against the same numbers as the COMPILER sees them, taken from
-dump_constants.cpp built through the real headers.
+dump_constants.cpp. Wire constants and config-table defaults come through
+the real headers. Timing defaults, sizing ratios and KDF context strings
+are macros in the translation unit that assigns or passes them; the dump
+includes that unit under ROCKETNET_CONFORMANCE_DEFAULTS_ONLY and expands
+the same macros, so editing the declaration changes this gate.
+
+WHAT IT COMPARES: the wire-format rows, the Timing table's rows, the glance
+table's timing, sizing and KDF rows, and the field names of the two
+transport configuration tables. A header macro, a macro the implementation
+assigns or passes and this dump expands, or a config-table default is compared
+directly. A row the document states and the code cannot produce -- the
+dump publishes no value, because the implementation declares no macro --
+is a mismatch too, and a mismatch is tolerated ONLY while its id is listed
+in known_divergences.tsv. A listed divergence whose document and code now
+agree is stale and also fails, so the file must shrink as fixes land.
 
 WHAT IT DOES NOT CHECK, so nobody reads more into a green than is there:
-the rows it names are the wire-format ones. The glance table's timing and
-sizing rows -- send rate, handshake deadline, cookie lifetime and rotation,
-redundant disconnects, replay buffer, used-token history, admitted-token
-set -- and the Magic and KDF context-string rows are NOT compared, because
-their values live in configuration defaults, in key derivation, or in a
-backend, rather than in a wire constant this file can expand. Adding a row
-here is cheap and every one of them is worth adding; until then a green
-means the named rows agree, and the count printed at the end says how many
-that is.
+the Magic row -- the standard publishes no default magic and the code ships
+none, so there is nothing to compare. Cookie key rotation is compared
+directly against ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS through
+DEFAULT_COOKIE_ROTATION_SECONDS on both the Timing table row and the glance
+table row. Connection timeout has no protocol-default macro; the timing
+row must name the token, and a published number with no matching macro
+fails. Fragment reassembly slot count is printed from the header macro
+ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, but STANDARD.md publishes no numeric
+default for it, so that print is not a comparison. max_token_lifetime and
+allow_negative_timeout are printed from the macros the create path assigns;
+STANDARD.md states no numeric default for either, so the checked
+disagreement is the missing config-table field, not a value. The
+encryption-map divergence compares the ratio macro against the prose rule
+"far above the slot count"; those two sides agree only when the rule text
+equals the printed ratio, which a numeric edit alone does not do. The
+count printed at the end says how many checks ran.
 
 That list is a promise and it has already been wrong once: the reader at
 PR #130's gate found Filter epoch missing from it, and missing for the
@@ -128,6 +149,12 @@ def main():
             failures.append("%s: STANDARD.md says %s, the implementation says %s"
                             % (what, published, implemented))
 
+    def require(name):
+        if name not in code:
+            failures.append("the dump does not publish %s; the implementation declares no such macro" % name)
+            return None
+        return code[name]
+
     # ---------------- constants at a glance ----------------
     #
     # each row is matched by its Constant cell and read with the parse its
@@ -218,6 +245,49 @@ def main():
     if cell is not None:
         compare("receive ceiling", ints(cell)[0], code["ROCKETNET_RECEIVE_CEILING"])
 
+    # the packet size and its derivations: the document's numbers against the
+    # compiler's, and each document number against the arithmetic the
+    # standard states for it, so neither side can drift from the one MTU
+
+    def floor8(value):
+        return value - value % 8
+
+    cell = row("Packet size")
+    if cell is not None:
+        published = ints(cell)
+        compare("link MTU", published[0], code["ROCKETNET_LINK_MTU_BYTES"])
+        compare("IPv4 packet size", published[1], code["ROCKETNET_MAX_PACKET_BYTES"])
+        compare("IPv6 packet size", published[2], code["ROCKETNET_MAX_PACKET_BYTES_IPV6"])
+        compare("IPv4 packet size is the MTU less 20 and 8", published[1], published[0] - 20 - 8)
+        compare("IPv6 packet size is the MTU less 40 and 8", published[2], published[0] - 40 - 8)
+        budget = row("Send budget")
+        ceiling = row("Receive ceiling")
+        if budget is not None:
+            compare("send budget is the IPv6 packet size", ints(budget)[0], published[2])
+        if ceiling is not None:
+            compare("receive ceiling is the IPv4 packet size", ints(ceiling)[0], published[1])
+
+    cell = row("Payload capacity")
+    if cell is not None:
+        published = ints(cell)
+        compare("payload capacity", published[0], code["ROCKETNET_MAX_PAYLOAD_BYTES"])
+        compare("receive payload", published[1], code["ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES"])
+        overhead = int(code["ROCKETNET_PACKET_OVERHEAD_BYTES"]) + int(code["ROCKETNET_ACK_BLOCK_MIN_BYTES"])
+        compare("payload capacity is the budget less overhead and block, floored to eight",
+                published[0], floor8(int(code["ROCKETNET_SEND_BUDGET"]) - overhead))
+        compare("receive payload is the ceiling less overhead and block",
+                published[1], int(code["ROCKETNET_RECEIVE_CEILING"]) - overhead)
+
+    cell = row("SINGLE message")
+    if cell is not None:
+        compare("SINGLE message bytes", ints(cell)[0], code["ROCKETNET_MESSAGE_SINGLE_BYTES"])
+
+    cell = row("Fragment stride")
+    if cell is not None:
+        published = ints(cell)
+        compare("fragment stride sent", published[0], code["ROCKETNET_MAX_FRAGMENT_BYTES"])
+        compare("fragment stride received", published[1], code["ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES"])
+
     cell = row("Connect token")
     if cell is not None:
         published = ints(cell)
@@ -233,6 +303,20 @@ def main():
     cell = row("Cookie key")
     if cell is not None:
         compare("cookie key bytes", ints(cell)[0], code["ROCKETNET_KEY_BYTES"])
+
+    cell = row("KDF context strings")
+    if cell is not None:
+        published = re.findall(r"`([A-Za-z0-9]+)`", cell)
+        implemented = [require(name) for name in (
+            "KDF_CONTEXT_HANDSHAKE_C2S",
+            "KDF_CONTEXT_HANDSHAKE_S2C",
+            "KDF_CONTEXT_SESSION_C2S",
+            "KDF_CONTEXT_SESSION_S2C",
+        )]
+        if published and None not in implemented:
+            compare("KDF context strings", " ".join(published), " ".join(implemented))
+        elif None not in implemented:
+            failures.append("STANDARD.md's KDF context strings row publishes no backtick-quoted strings")
 
     # ---------------- the packet size table ----------------
     #
@@ -262,6 +346,196 @@ def main():
         failures.append("the implementation defines packet type(s) %s that "
                         "STANDARD.md's packet size table does not publish"
                         % ", ".join(str(t) for t in missing))
+
+    # ---------------- known divergences ----------------
+    #
+    # a divergence is tolerated only while its id is listed in the checked-in
+    # file; the file must shrink as fixes land, so a listed id whose two
+    # sides now agree is a stale-entry failure.
+
+    divergences = {}
+    divergence_path = os.path.join(HERE, "known_divergences.tsv")
+    if os.path.exists(divergence_path):
+        with open(divergence_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                fields = line.split("\t")
+                divergences[fields[0]] = fields[1] if len(fields) > 1 else "unowned"
+
+    def stated_divergence(identifier, what, published, implemented):
+        nonlocal checked
+        checked += 1
+        if str(published) == str(implemented):
+            if identifier in divergences:
+                failures.append(
+                    "known divergence %r is stale: STANDARD.md and the "
+                    "implementation now agree on %s" % (identifier, what))
+            return
+        if identifier not in divergences:
+            failures.append("%s: STANDARD.md says %s, the implementation says %s"
+                            % (what, published, implemented))
+
+    # ---------------- the transport configuration tables ----------------
+    #
+    # the field names come from the real X-macro tables. A per-server
+    # timing value the standard calls configuration and the table does not
+    # declare is the drift the audit found: it lives hardcoded in the
+    # source and no operator can set it.
+
+    server_fields = {name[len("CFG_SERVER_FIELD_"):] for name in code
+                     if name.startswith("CFG_SERVER_FIELD_")}
+    client_fields = {name[len("CFG_CLIENT_FIELD_"):] for name in code
+                     if name.startswith("CFG_CLIENT_FIELD_")}
+
+    def config_field(identifier, table, fields, name):
+        nonlocal checked
+        checked += 1
+        if name in fields:
+            if identifier in divergences:
+                failures.append(
+                    "known divergence %r is stale: the %s config table now "
+                    "declares %s" % (identifier, table, name))
+        elif identifier not in divergences:
+            failures.append(
+                "the standard states a configurable %s timing value, but the "
+                "%s transport config table does not declare a %r field"
+                % (name, table, name))
+
+    config_field("timing.send_rate", "server", server_fields, "send_rate")
+    config_field("timing.handshake_deadline", "server", server_fields,
+                 "handshake_deadline_seconds")
+    config_field("timing.cookie_lifetime", "server", server_fields,
+                 "cookie_lifetime_seconds")
+    config_field("config.max_token_lifetime_seconds", "server", server_fields,
+                 "max_token_lifetime_seconds")
+    config_field("config.allow_negative_timeout", "server", server_fields,
+                 "allow_negative_timeout")
+
+    # ---------------- the timing table ----------------
+
+    assert "ROCKETNET_HISTORY_PACKETS" in code
+    timing = {row[0]: row[1] for row in read_table(text, "Timing", "Value")}
+
+    def timing_row(label):
+        if label not in timing:
+            failures.append("STANDARD.md's timing table has no %r row" % label)
+            return None
+        return timing[label]
+
+    cell = timing_row("Redundant disconnect packets")
+    if cell is not None:
+        compare("redundant disconnect packets (timing table)", ints(cell)[0],
+                code["REDUNDANT_DISCONNECT_PACKETS"])
+        compare("redundant disconnect packets (client)",
+                ints(cell)[0], code["CLIENT_REDUNDANT_DISCONNECT_PACKETS"])
+
+    # Timing values come from the macros the create path assigns. The
+    # divergence that send_rate, handshake_deadline and cookie_lifetime are
+    # missing from the transport configuration table is tracked above by
+    # config_field.
+
+    cell = timing_row("Send rate")
+    if cell is not None:
+        implemented = require("DEFAULT_SEND_RATE")
+        if implemented is not None:
+            compare("send rate (timing table)", ints(cell)[0], implemented)
+
+    cell = timing_row("Handshake deadline")
+    if cell is not None:
+        implemented = require("DEFAULT_HANDSHAKE_DEADLINE_SECONDS")
+        if implemented is not None:
+            compare("handshake deadline (timing table)", ints(cell)[0], implemented)
+
+    cell = timing_row("Cookie lifetime")
+    if cell is not None:
+        implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
+        if implemented is not None:
+            compare("cookie lifetime (timing table)", ints(cell)[0], implemented)
+
+    cell = timing_row("Cookie key rotation")
+    if cell is not None:
+        implemented = require("DEFAULT_COOKIE_ROTATION_SECONDS")
+        if implemented is not None:
+            compare("cookie key rotation (timing table)", ints(cell)[0], implemented)
+
+    cell = timing_row("Connection timeout")
+    if cell is not None:
+        numbers = ints(cell)
+        implemented = code.get("DEFAULT_CONNECTION_TIMEOUT")
+        if implemented is None:
+            checked += 1
+            if numbers:
+                failures.append(
+                    "connection timeout: STANDARD.md publishes %s, the implementation "
+                    "declares no protocol timeout default" % numbers[0])
+            elif "token" not in cell.lower():
+                failures.append(
+                    "connection timeout: STANDARD.md says %r, the implementation takes "
+                    "the token's timeout seconds and declares no protocol default" % cell)
+        else:
+            compare("connection timeout", numbers[0] if numbers else cell, implemented)
+
+    # ---------------- the glance table's timing and sizing rows ----------------
+
+    cell = row("Send rate")
+    if cell is not None:
+        implemented = require("DEFAULT_SEND_RATE")
+        if implemented is not None:
+            compare("send rate (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Handshake deadline")
+    if cell is not None:
+        implemented = require("DEFAULT_HANDSHAKE_DEADLINE_SECONDS")
+        if implemented is not None:
+            compare("handshake deadline (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Cookie lifetime / key rotation")
+    if cell is not None:
+        numbers = ints(cell)
+        implemented = require("DEFAULT_COOKIE_LIFETIME_SECONDS")
+        if implemented is not None:
+            compare("cookie lifetime (glance table)", numbers[0], implemented)
+        implemented = require("DEFAULT_COOKIE_ROTATION_SECONDS")
+        if implemented is not None:
+            compare("cookie key rotation (glance table)", numbers[1], implemented)
+
+    cell = row("Redundant disconnects")
+    if cell is not None:
+        compare("redundant disconnects (glance table)", ints(cell)[0],
+                code["REDUNDANT_DISCONNECT_PACKETS"])
+
+    cell = row("Replay buffer")
+    if cell is not None:
+        compare("replay buffer at least", ints(cell)[0],
+                code["ROCKETNET_HISTORY_PACKETS"])
+        compare("replay window bits", ints(cell)[0],
+                code["ROCKETNET_REPLAY_WINDOW_BITS"])
+
+    cell = row("Used-token history")
+    if cell is not None:
+        implemented = require("SIZING_USED_TOKEN_HISTORY_RATIO")
+        if implemented is not None:
+            compare("used-token history ratio", ints(cell)[0], implemented)
+
+    cell = row("Admitted-token set")
+    if cell is not None:
+        implemented = require("SIZING_ADMITTED_TOKEN_SET_RATIO")
+        if implemented is not None:
+            compare("admitted-token set ratio", ints(cell)[0], implemented)
+
+    # The mapping-table rule is prose, not a glance row: "Size the mapping
+    # table far above the slot count." The implemented side is the ratio
+    # macro the create path multiplies max_clients by.
+
+    mapping_rule = "far above the slot count"
+    ratio = require("SIZING_ENCRYPTION_MAP_RATIO")
+    if mapping_rule not in text:
+        failures.append("STANDARD.md no longer states the mapping-table sizing rule (%r)" % mapping_rule)
+    elif ratio is not None:
+        stated_divergence("sizing.encryption_map", "encryption map sizing",
+                          mapping_rule, "%s x max_clients" % ratio)
 
     # ---------------- verdict ----------------
 

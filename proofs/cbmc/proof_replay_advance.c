@@ -1,0 +1,231 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+
+    CBMC harness for rocketnet_replay_advance at the real window: 4096 bits,
+    64 words. The body below is the leaf in sdk/rocketnet_replay.cpp, including
+    the far branch that stores only window[0] through window[3].
+
+    Specification. After an advance with delta = sequence - highest_opened:
+      delta >= 4096 clears every word, then sets the new sequence bit;
+      a smaller delta clears exactly the vacated ring bits (the residues of
+      highest_opened+1 .. sequence-1) and sets the new sequence bit.
+
+    The near harness is the smaller-delta claim. The default make target
+    proves deltas 1, 2, and 3 only (delta strictly less than 4). Bound 4096
+    is not proved. The far harness is the whole-window claim. At this source
+    the far claim has a counterexample (four words cleared, not sixty-four).
+    That harness stays expected-fail; the marker file names the fix card.
+
+    Flags: --bounds-check --pointer-check --signed-overflow-check
+           --unsigned-overflow-check --div-by-zero-check --unwinding-assertions
+    Unwinding: the near clear loop runs at most delta-1 times. The default
+    near proof uses unwind 65 so all 64 symbolic words initialize. Bound
+    4096 unwinds 4096 and is not proved. The near harness checks one
+    arbitrary word, which quantifies all 64 words without a reference loop.
+    The far harness has no data-dependent loop; its check runs 64 times
+    (unwind 65).
+*/
+
+#include <stdint.h>
+
+#ifndef REPLAY_DELTA_BOUND
+#define REPLAY_DELTA_BOUND 4096
+#endif
+
+#define ROCKETNET_REPLAY_WINDOW_BITS 4096
+#define ROCKETNET_REPLAY_WINDOW_WORDS ( ROCKETNET_REPLAY_WINDOW_BITS / 64 )
+
+#ifndef __CPROVER__
+#define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
+#define __CPROVER_assume( c ) ( (void) ( c ) )
+static uint64_t nondet_uint64( void ) { return 0; }
+#else
+uint64_t nondet_uint64( void );
+#endif
+
+#define rocketnet_assert( c ) __CPROVER_assert( ( c ), "replay precondition" )
+
+struct rocketnet_replay_protection_t
+{
+    uint64_t highest_opened;
+    uint64_t window[ROCKETNET_REPLAY_WINDOW_WORDS];
+};
+
+static int rocketnet_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
+}
+
+static void rocketnet_replay_set_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    replay->window[bit / 64] |= 1ULL << ( bit % 64 );
+}
+
+static void rocketnet_replay_clear_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    replay->window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
+}
+
+static int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    rocketnet_assert( replay );
+    rocketnet_assert( sequence != 0 );
+
+    if ( sequence > replay->highest_opened )
+        return 0;
+
+    if ( replay->highest_opened >= ROCKETNET_REPLAY_WINDOW_BITS &&
+         sequence <= replay->highest_opened - ROCKETNET_REPLAY_WINDOW_BITS )
+        return 1;
+
+    return rocketnet_replay_bit( replay, sequence );
+}
+
+void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    rocketnet_assert( replay );
+    rocketnet_assert( sequence != 0 );
+    rocketnet_assert( !rocketnet_replay_already_received( replay, sequence ) );
+
+    if ( sequence > replay->highest_opened )
+    {
+        uint64_t skipped = sequence - replay->highest_opened;
+        if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
+        {
+            replay->window[0] = 0;
+            replay->window[1] = 0;
+            replay->window[2] = 0;
+            replay->window[3] = 0;
+        }
+        else
+        {
+            for ( uint64_t s = replay->highest_opened + 1; s < sequence; s++ )
+                rocketnet_replay_clear_bit( replay, s );
+        }
+        replay->highest_opened = sequence;
+    }
+
+    rocketnet_replay_set_bit( replay, sequence );
+}
+
+/* Bits [lo, hi] inclusive inside one word. lo and hi are in 0..63. */
+static uint64_t bits_from_to( int lo, int hi )
+{
+    uint64_t high_ones;
+    uint64_t low_ones;
+
+    if ( lo > hi )
+        return 0;
+    high_ones = ( hi == 63 ) ? ~0ULL : ( ( 1ULL << ( hi + 1 ) ) - 1ULL );
+    low_ones = ( lo == 0 ) ? ~0ULL : ( ~0ULL << (unsigned) lo );
+    return high_ones & low_ones;
+}
+
+/* Bits of this word that lie in the inclusive interval [a, b], a <= b. */
+static uint64_t mask_intersect( uint64_t a, uint64_t b, int word )
+{
+    uint64_t w0 = (uint64_t) word * 64ULL;
+    uint64_t w1 = w0 + 63ULL;
+    uint64_t lo = a > w0 ? a : w0;
+    uint64_t hi = b < w1 ? b : w1;
+
+    if ( lo > hi )
+        return 0;
+    return bits_from_to( (int) ( lo - w0 ), (int) ( hi - w0 ) );
+}
+
+static uint64_t reference_near_word( uint64_t old_word, uint64_t old_high,
+                                     uint64_t sequence, int word )
+{
+    uint64_t delta = sequence - old_high;
+    uint64_t vacated = 0;
+    uint64_t set_at = sequence % ROCKETNET_REPLAY_WINDOW_BITS;
+
+    if ( delta > 1 )
+    {
+        uint64_t a = ( old_high + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS;
+        uint64_t b = ( sequence - 1 ) % ROCKETNET_REPLAY_WINDOW_BITS;
+
+        if ( a <= b )
+            vacated = mask_intersect( a, b, word );
+        else
+            vacated = mask_intersect( a, ROCKETNET_REPLAY_WINDOW_BITS - 1, word ) |
+                      mask_intersect( 0, b, word );
+    }
+
+    uint64_t result = old_word & ~vacated;
+    if ( set_at / 64ULL == (uint64_t) word )
+        result |= 1ULL << ( set_at % 64ULL );
+    return result;
+}
+
+int harness_replay_near( void )
+{
+    struct rocketnet_replay_protection_t replay;
+    uint64_t old_word;
+    uint64_t expected_word;
+    uint64_t sequence;
+    uint64_t old_high;
+    uint64_t chosen_word;
+    int w;
+
+    sequence = nondet_uint64();
+    replay.highest_opened = nondet_uint64();
+    for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
+        replay.window[w] = nondet_uint64();
+
+    __CPROVER_assume( replay.highest_opened < UINT64_MAX );
+    __CPROVER_assume( sequence > replay.highest_opened );
+    __CPROVER_assume( sequence - replay.highest_opened < REPLAY_DELTA_BOUND );
+    __CPROVER_assume( REPLAY_DELTA_BOUND <= ROCKETNET_REPLAY_WINDOW_BITS );
+    chosen_word = nondet_uint64();
+    __CPROVER_assume( chosen_word < ROCKETNET_REPLAY_WINDOW_WORDS );
+
+    old_high = replay.highest_opened;
+    old_word = replay.window[chosen_word];
+
+    rocketnet_replay_advance( &replay, sequence );
+    expected_word = reference_near_word( old_word, old_high, sequence, (int) chosen_word );
+
+    __CPROVER_assert( replay.highest_opened == sequence,
+                      "highest_opened advances to the received sequence" );
+    __CPROVER_assert( replay.window[chosen_word] == expected_word,
+                      "a smaller delta clears exactly the vacated bits in every chosen word" );
+    return 0;
+}
+
+int harness_replay_far( void )
+{
+    struct rocketnet_replay_protection_t replay;
+    uint64_t sequence;
+    uint64_t set_at;
+    int w;
+
+    sequence = nondet_uint64();
+    replay.highest_opened = nondet_uint64();
+    for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
+        replay.window[w] = nondet_uint64();
+
+    __CPROVER_assume( replay.highest_opened <= UINT64_MAX - ROCKETNET_REPLAY_WINDOW_BITS );
+    __CPROVER_assume( sequence > replay.highest_opened );
+    __CPROVER_assume( sequence - replay.highest_opened >= ROCKETNET_REPLAY_WINDOW_BITS );
+
+    rocketnet_replay_advance( &replay, sequence );
+
+    set_at = sequence % ROCKETNET_REPLAY_WINDOW_BITS;
+    __CPROVER_assert( replay.highest_opened == sequence,
+                      "highest_opened advances on a far delta" );
+    for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
+    {
+        uint64_t word = 0;
+        if ( set_at / 64ULL == (uint64_t) w )
+            word = 1ULL << ( set_at % 64ULL );
+        __CPROVER_assert( replay.window[w] == word,
+                          "a delta at least the width clears every word" );
+    }
+    return 0;
+}

@@ -125,6 +125,7 @@ struct rocketnet_ack_endpoint_t
     // overlap, per the transports' threading contract
 
     uint64_t highest_sequence;                  // highest session sequence recorded as sent
+    uint64_t largest_acked_sequence;            // highest sent sequence the peer has acknowledged; update thread only
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
@@ -173,11 +174,51 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 // history overflow (an unacknowledged record was evicted, or this writer fell
 // behind the retained sequence). It is advisory: callers count it and still
 // transmit. It never imposes a send-rate or ACK-rate requirement.
+//
+// record_sent_classified says what the write did to the record it replaced,
+// the four outcomes of tla/RNSentHistory.tla:
+//
+//   RECORDED         the slot was empty or its record was acknowledged:
+//                    nothing was lost from the history.
+//   EVICTED_LOST     the evicted record was never acknowledged and the peer
+//                    has acknowledged a sequence at least
+//                    ROCKETNET_LOSS_PACKET_THRESHOLD above it (RFC 9002
+//                    6.1.1): the packet is known lost on the path. An outcome,
+//                    counted on SEND_HISTORY_LOST.
+//   EVICTED_UNKNOWN  the evicted record was never acknowledged and no such
+//                    later acknowledgment exists: its fate is unknown (a
+//                    silent peer, or a window too small for the path). A
+//                    refusal of history, counted on SEND_HISTORY_OVERFLOW.
+//   REFUSED_STALE    the write was not recorded: the slot already holds this
+//                    or a newer sequence, or the writer fell behind the
+//                    retained window. Counted on SEND_HISTORY_OVERFLOW.
+//
+// The packet is transmitted in every case. record_sent is the same call
+// reduced to whether the history lost nothing: true only for RECORDED.
+
+enum rocketnet_ack_sent_result_t
+{
+    ROCKETNET_ACK_SENT_RECORDED,
+    ROCKETNET_ACK_SENT_EVICTED_LOST,
+    ROCKETNET_ACK_SENT_EVICTED_UNKNOWN,
+    ROCKETNET_ACK_SENT_REFUSED_STALE
+};
+
+enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
+                                                                                uint64_t sequence, int wire_bytes,
+                                                                                uint64_t packet_id, int has_packet_id,
+                                                                                uint64_t aggregate_id, double time );
 
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
                                          uint64_t aggregate_id, double time );
+
+// counts a record_sent_classified outcome on the two history counters:
+// EVICTED_LOST on lost, EVICTED_UNKNOWN and REFUSED_STALE on overflow,
+// RECORDED on neither
+
+void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter );
 
 // opens one aggregate for a fragmented payload: fragment_count wire
 // packets stand between the payload's packet id and its acknowledgment.

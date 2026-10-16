@@ -6,6 +6,22 @@ free RocketNet allocations before `rocketnet_term`; termination with live
 allocations is refused and logged. Repeated termination is a no-op. Startup,
 shutdown and global configuration must be serialized with application activity.
 Set custom allocator callbacks before initialization, with no live allocations.
+Call `rocketnet_init` first: a create before it —
+`rocketnet_client_transport_create`, `rocketnet_server_transport_create` or
+`rocketnet_frame_sync_create` — returns NULL and allocates nothing. A refused
+`rocketnet_allocator` replacement (late, while transitioning, with live
+allocations, or with either callback NULL) returns false; an accepted
+replacement returns true. Every refused call logs one line and increments
+`rocketnet_api_misuse_count`, the process-wide count of refused API misuse.
+
+The public API is also NULL safe at the boundary. Every entry point checks each
+pointer argument it would dereference once, at the top of the call: a NULL is a
+no-op that returns the function's documented value (`0`, `NULL` or `false`; a
+void function returns nothing), increments `rocketnet_api_misuse_count`, and in
+a debug build fires `rocketnet_assert`. A NULL handle is refused before any
+I/O, so no socket opens. The check is one predictable branch at the top, never
+inside a loop and never on an internal call, so the send and receive hot paths
+pay nothing when their pointers are valid.
 
 Endpoint ports are decimal digits in `0..65535`; signs, whitespace, missing
 digits and trailing text are rejected. IPv6 with a port uses `[address]:port`.
@@ -54,6 +70,14 @@ update, send or ACK rate. What a caller owns is the
 guarantee, not a driver's eagerness: everything staged before `send_packets` is
 sent by it, and nothing is guaranteed sent without it.
 
+The `time` passed to `update` — and to `rocketnet_client_transport_create` — must
+be finite and non-decreasing: a game clock in seconds, monotonic. A NaN, an
+infinity or a step backwards is clamped to the last good time, counted once in
+`rocketnet_api_misuse_count`, and asserted (`rocketnet_assert`) in a debug build;
+a release build clamps and goes on rather than freezing a timeout or rewinding a
+deadline. The library never reads a clock of its own on these paths, so a game
+owns time and a test can hold it still.
+
 Driver eagerness above that floor differs, and it is a *server*-side difference:
 on the server the GSO rung flushes update's own staging — protocol responses,
 keep-alives — inline in update, and so do the portable and msgx rungs, which
@@ -82,7 +106,7 @@ the second is the one that hurts:
 
 **So replies stage after the drain, and in the loop that will drain the answer.**
 That is the shape of the pump above, and it is not stylistic. The failure it
-prevents is the C# smoke's first flake (#73): a reply staged from somewhere that
+prevents is the former C# loopback smoke's first flake (#73): a reply staged from somewhere that
 pumps its own updates — a helper, a nested wait loop, a second pump — puts a
 payload in flight toward a peer while nobody is positioned to drain the response,
 and the response is delivered into an update whose batch is then discarded. It
@@ -115,7 +139,7 @@ and stages it. Nothing is copied at any step — the packet is encrypted where i
 was written. `context.payload_capacity` is the frame's real capacity, never the
 request; write up to it and `finish_packet` routes on what you actually wrote.
 
-A request at or under `ROCKETNET_MAX_PAYLOAD_BYTES` (1192) is a real wire frame,
+A request at or under `ROCKETNET_MAX_PAYLOAD_BYTES` (1416) is a real wire frame,
 zero copies. A larger request — up to the configured maximum — routes through the
 transport's arena and `finish_packet` splits it into type 9 fragments, one copy,
 spent only where splitting makes it unavoidable. Either way the context's single
@@ -143,8 +167,8 @@ route, reserves `fragment_count - 1` more in a block
 `rocketnet_server_transport_finish_arena_packet`) — fragment 0 rides the sequence
 `start_packet` already spent, and the rest come from that block. So a fragmented
 payload occupies `fragment_count` consecutive sequences. At the default
-16384-byte maximum payload over a 1193-byte fragment budget, `fragment_count` is
-**14**.
+16384-byte maximum payload over a 1413-byte fragment budget, `fragment_count` is
+**12**.
 
 That matters because of where the failures are. A `finish_packet` that returns
 zero *after* the block is reserved — a seal failure inside the fragment loop —
@@ -206,6 +230,99 @@ seal failure. Those you have to know you caused.
 `send_packet` (the convenience form) exists on both ends. On the client it
 flushes the ring inline, which makes it main-thread only and never valid during
 an open fill; it is the simple form, not a fill-phase participant.
+
+## Counters
+
+Every transport owns a counters block, read through
+`rocketnet_client_transport_counters` and `rocketnet_server_transport_counters`
+and indexed by the `ROCKETNET_COUNTER_*` enum in `sdk/rocketnet_counters.h`.
+Counters are monotonic and never reset; rates are differences of snapshots.
+`rocketnet_num_counters`, `rocketnet_counter_name` and `rocketnet_counter_value`
+read the list and a block without assuming its length.
+
+**Every counter has a class**, what a clean run shows of it, and
+`rocketnet_counter_class` returns it (`rocketnet_counter_class_name` spells it:
+`"refusal"`, `"expected"`, `"path_loss"`, `"arrival"`):
+
+- `refusal` reads 0 on a clean path at any round trip. A packet refused for a
+  reason is a refusal, and so is a resource exhaustion (`SEND_RING_FULL`,
+  `MESSAGE_SEND_STORE_FULL`, `SEND_HISTORY_OVERFLOW`).
+- `expected` moves on a clean path by design: success outcomes, lifecycle
+  counters, and side counters such as `ACK_UNKNOWN_SEQUENCE`,
+  `CONNECTION_REQUEST_NO_COOKIE` (the first leg of the cookie exchange),
+  `DISCONNECT_NO_MAPPING` (the redundant disconnect burst), the
+  `ALREADY_CONNECTED` duplicates a round trip above 100 ms leaves, and the
+  session-end race (a session that ends with the other end's packets in flight
+  sends them to an end that is gone).
+- `path_loss` moves only when the path loses or reorders packets
+  (`MESSAGE_RESENT`, `FRAGMENT_PAYLOAD_ABANDONED`).
+- `arrival` is a `RECEIVED` counter: a packet of the type arrived.
+
+A load gate or a soak computes its zero-list from the classes: after a clean
+run every `refusal` reads 0, and a run that injects a fault lists the refusals
+the fault explains. No script keeps its own list of counter names.
+
+**Every packet type is conserved.** A `RECEIVED` counter is incremented once on
+entry, and then exactly one outcome counter is. `rocketnet_counters_conserved`
+checks that for every type at once: it returns 1 when each `RECEIVED` counter
+equals the sum of the outcomes that name it as their family, and otherwise 0,
+with the first unbalanced family written to the report buffer as
+`<RECEIVED name> received=<n> outcomes=<m>`. Call it on a block read at a
+quiescent point, on the thread that owns it (after an update returns, when every
+arrival has taken its outcome). Side counters (`ACK_UNKNOWN_SEQUENCE`, the
+fragment payload counters) and the packet entry's `PACKETS_RECEIVED` sit outside
+every family. An outcome belongs to one family only: the connection response
+ladder's internal error is `CONNECTION_RESPONSE_INTERNAL_ERROR`, not the request
+ladder's.
+
+```c
+char report[256];
+if ( !rocketnet_counters_conserved( rocketnet_server_transport_counters( server ), report, sizeof(report) ) )
+    printf( "counters out of balance: %s\n", report );
+```
+
+## Messages
+
+The message objects sit on the transports and carry reliable ordered and
+unreliable messages, each a pointer and a length. One client object or one
+server object per endpoint, created once; nothing is allocated after create.
+
+    struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "0.0.0.0:40000", &server_config, NULL, NULL, 0, 0 );
+
+    // each frame, on the main thread
+    rocketnet_message_server_update( server, time );        // ROCKETNET_ERROR_MESSAGE_NOT_RELEASED if a view was kept
+
+    for ( int client_index = 0; client_index < max_clients; client_index++ )
+    {
+        const uint8_t * data;
+        int bytes;
+        while ( rocketnet_message_server_receive( server, client_index, channel, &data, &bytes ) )
+        {
+            handle( data, bytes );                           // copy what is kept past the next update
+            rocketnet_message_server_release( server, client_index, data );
+        }
+    }
+
+    uint8_t * p = rocketnet_message_server_start( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, max_bytes );
+    if ( p )
+    {
+        int written = write_message( p, max_bytes );         // written once, in place
+        rocketnet_message_server_finish( server, client_index, written );
+    }
+
+    rocketnet_message_server_send_packets( server );
+
+The client is the same with no client index, and takes the connect token at
+create but no time: its connect attempt starts at its first update, at
+whatever the game's clock reads then. Every received message is released
+before the next update. `start` returning NULL for a connected client with a valid
+channel and size means its memory was exhausted: that connection has ended
+with `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`, readable from
+`rocketnet_message_*_disconnect_reason`. An unreliable message arrives on
+channel 0 and is at most 1411 bytes. Each connection's send budget is in
+kbps, 0 at create meaning 1000 for the client and 10000 per server slot,
+and `rocketnet_message_*_set_send_kbps` changes it at runtime. The design is
+docs/CHANNELS.md, section 11.5 for what is built.
 
 ## Connection quality
 
@@ -285,8 +402,16 @@ up to 32,768 entries with `-DROCKETNET_HISTORY_PACKETS=...` (a multiple of 64).
 This is a memory budget, not a packets-per-frame, packets-per-second or ACK-rate
 requirement. Records do not expire with elapsed time. Returned ACK batches cover
 the entire retained window for every configured client. Sending beyond that
-window overwrites older delivery history, counts `SEND_HISTORY_OVERFLOW`, and
-continues transmitting. Missing a notification therefore does not prove that a
+window overwrites older delivery history and continues transmitting. An
+overwritten record that was never acknowledged is counted by what the sender
+knows of it. `SEND_HISTORY_LOST` counts a packet known lost on the path: the
+peer has acknowledged a sequence at least `ROCKETNET_LOSS_PACKET_THRESHOLD` (3,
+the packet threshold of RFC 9002 section 6.1.1) above it. It is an outcome,
+and a lossy path raises it. `SEND_HISTORY_OVERFLOW` counts a record whose fate
+is unknown (the peer has been silent, or the window is too small for the path)
+and a writer that fell behind the retained window. It is a refusal of history
+and reads zero on a healthy path, however long the connection runs and however
+long the round trip is. Missing a notification therefore does not prove that a
 payload was lost. The remote peer's receive-history depth and the ACK block's
 255-range encoding bound also limit what it can describe after extreme loss.
 
@@ -306,6 +431,12 @@ One X-macro table per transport in `rocketnet.h` derives the struct, the default
 the environment variable names, the parse and the validation. For everything in
 the table, there is one declaration and the rest is generated from it.
 
+The server field `handshake_deadline_seconds` defaults to 5 seconds and accepts
+1 to 60. It fixes the half-open mapping deadline when the challenge is created;
+requests never refresh it, and connecting discharges it. Set it in the server
+config or with `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS`. It is independent
+of the connect token's connected idle timeout.
+
 **The table is not the whole environment surface**, and the difference matters
 because only the table's variables get the precedence, logging and validation
 described below. Reading every `getenv` in `sdk/`, these sit outside it:
@@ -313,32 +444,45 @@ described below. Reading every `getenv` in `sdk/`, these sit outside it:
 - `ROCKETNET_PUMP` — see below, it has the sharpest edge;
 - `ROCKETNET_LOG_LEVEL`, read once at process init;
 - `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, read by the XDP driver;
-- `ROCKETNET_SERVER_NUM_QUEUES`, `ROCKETNET_SERVER_NUM_OS_CPUS` and
-  `ROCKETNET_SERVER_PUBLIC_ADDRESS` — deprecated but fully functional aliases of
-  the table's `ROCKETNET_NUM_XDP_QUEUES`, `ROCKETNET_NUM_OS_CPUS` and
-  `ROCKETNET_PUBLIC_ADDRESS`. Each is honored only where its successor is unset,
-  and every use is logged naming the successor.
+- `ROCKETNET_SERVER_NUM_QUEUES` — the one surviving deprecated alias, of the
+  server table's `ROCKETNET_SERVER_NUM_XDP_QUEUES`. It is honored only where
+  its successor is unset, and every use is logged naming the successor.
+
+Every config field has **one name per endpoint**: the server table reads
+`ROCKETNET_SERVER_<FIELD>` and the client table reads `ROCKETNET_CLIENT_<FIELD>`,
+so a server and a client in one process never share a variable.
+`ROCKETNET_SERVER_NUM_OS_CPUS` and `ROCKETNET_SERVER_PUBLIC_ADDRESS` are the
+canonical names of their fields. The old process-wide spelling
+`ROCKETNET_<FIELD>` is **no longer applied**: a variable set under it is
+refused with one error naming its per-endpoint replacement, once per create,
+so an operator is never silently ignored.
 
 **`ROCKETNET_PUMP=portable` refuses the Darwin msgx candidate**, including
 an explicit msgx pin. The deprecated switch retains its original pump-disable
 meaning: `auto` may continue to portable, while `driver = "msgx"` fails loudly
 because its only candidate refused. It never silently changes a pin to portable.
-Unset the legacy variable to allow msgx, or use `ROCKETNET_DRIVER=portable` to
-request portable through the current driver selector. The refusal log names
-both the old switch and its successor.
+Unset the legacy variable to allow msgx, or use `ROCKETNET_SERVER_DRIVER` /
+`ROCKETNET_CLIENT_DRIVER` `=portable` to request portable through the current
+driver selector. The refusal log names both the old switch and its successor.
 
-**Precedence is default < struct < env.** The struct you pass is the middle layer,
-and the environment overlays it. Every environment override is logged loudly,
+**Precedence is default < struct < env, evaluated per endpoint.** The struct you
+pass is the middle layer, and the environment overlays it.
+
+Every environment override is logged loudly,
 naming the variable, the new value and the value it displaced — with secret fields
 redacted on both sides, so a key's encoding never reaches a log line. Validation
 **refuses and never clamps**: an out-of-range value fails the create with an error
 naming the field and its range.
 
-Environment names are mechanical: `ROCKETNET_` plus the field name uppercased.
-`max_clients` is `ROCKETNET_MAX_CLIENTS`, `driver` is `ROCKETNET_DRIVER`,
-`public_address` is `ROCKETNET_PUBLIC_ADDRESS`. Byte fields (keys, filter value)
-are base64. An environment variable set to the empty string is treated as unset,
-with a log line saying so.
+Environment names are mechanical: `ROCKETNET_` plus the endpoint plus the field
+name uppercased. On the server `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`,
+`driver` is `ROCKETNET_SERVER_DRIVER`, `public_address` is
+`ROCKETNET_SERVER_PUBLIC_ADDRESS`; on the client `driver` is
+`ROCKETNET_CLIENT_DRIVER`. A field's old process-wide spelling
+(`ROCKETNET_MAX_CLIENTS`, `ROCKETNET_DRIVER`, `ROCKETNET_PUBLIC_ADDRESS`) is
+refused aloud with the per-endpoint name to use instead. Byte fields (keys,
+filter value) are base64. An environment variable set to the empty string is
+treated as unset, with a log line saying so.
 
 **Passing `NULL` for the config is the default shape** — and on the two ends that
 means different things:
@@ -347,15 +491,15 @@ means different things:
   the ordinary path. The token names the server and carries the keys; the config
   only carries what the token does not.
 
-- **Server:** `rocketnet_server_transport_create( context, address, NULL, time )`
+- **Server:** `rocketnet_server_transport_create( context, address, NULL )`
   gets the default shape, which has **no keys** — and a server with no keys is
   refused, never defaulted, because default keys are how every deployment of a
   protocol ends up sharing one identity. So a NULL config succeeds on the server
   only when the environment supplies all three keys. For development, fill
   `rocketnet_server_transport_dev_config`, which installs the published
   development keys loudly. For production, fill the struct or set
-  `ROCKETNET_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SECRET_KEY` and
-  `ROCKETNET_BACKEND_PUBLIC_KEY`.
+  `ROCKETNET_SERVER_SERVER_PUBLIC_KEY`, `ROCKETNET_SERVER_SERVER_SECRET_KEY`
+  and `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`.
 
 `config.public_address`, when set, displaces the address parameter passed to
 `create` — so the address the driver ladder verifies, the address the driver binds
@@ -370,7 +514,8 @@ variable. It is consumed only after a create that fully succeeds.
 Selection is **runtime**, not compile time (#106): one build carries every driver
 its platform has, and the transport walks an ordered candidate list at create,
 left to right, **first grant wins**. The list rides `config.driver` or
-`ROCKETNET_DRIVER`, under the usual precedence.
+`ROCKETNET_SERVER_DRIVER` (server) / `ROCKETNET_CLIENT_DRIVER` (client), under
+the usual precedence.
 
     driver = "auto"            the platform's recommended order for this endpoint
     driver = "gso"             a one-element list is a PIN: that driver or failure

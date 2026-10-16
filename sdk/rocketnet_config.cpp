@@ -31,6 +31,8 @@
 
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_client_transport_config_t) );
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
@@ -38,6 +40,8 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
 
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_server_transport_config_t) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
@@ -45,6 +49,8 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
 
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
 {
+    if ( !rocketnet_api_null_guard( config ) )
+        return;
     rocketnet_assert( config );
     memset( config, 0, sizeof(struct rocketnet_message_config_t) );
     ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
@@ -204,6 +210,37 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
     return true;
 }
 
+// the per-endpoint derivation: ROCKETNET_<TRANSPORT>_<FIELD>, both parts
+// uppercased. the transport name is short ("server", "client"), so the
+// prefix is assembled first and the same field walk appends the field.
+
+bool rocketnet_config_env_var_name_for( const char * transport_name, const char * field_name, char * buffer, int buffer_size )
+{
+    rocketnet_assert( transport_name );
+    rocketnet_assert( field_name );
+    rocketnet_assert( buffer );
+
+    char prefix[64];
+    const int written = snprintf( prefix, sizeof(prefix), "ROCKETNET_%s_", transport_name );
+    if ( written <= 0 || written >= (int) sizeof(prefix) )
+        return false;
+    for ( int i = 0; prefix[i] != '\0'; i++ )
+        prefix[i] = (char) toupper( (unsigned char) prefix[i] );
+
+    const int prefix_length = (int) strlen( prefix );
+    const int name_length = (int) strlen( field_name );
+
+    if ( prefix_length + name_length + 1 > buffer_size )
+        return false;
+
+    memcpy( buffer, prefix, (size_t) prefix_length );
+    for ( int i = 0; i < name_length; i++ )
+        buffer[prefix_length + i] = (char) toupper( (unsigned char) field_name[i] );
+    buffer[prefix_length + name_length] = '\0';
+
+    return true;
+}
+
 // strict full-string numeric parses: the whole value or a loud failure,
 // never a prefix silently accepted. the charset is checked BEFORE the
 // strto* call, because strtoll/strtoull quietly skip leading whitespace
@@ -315,11 +352,27 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         const struct rocketnet_config_field_t * field = &fields[i];
 
         char env_name[128];
-        if ( !rocketnet_config_env_var_name( field->name, env_name, sizeof(env_name) ) )
+        if ( !rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof(env_name) ) )
         {
             rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
             return false;
         }
+
+        // the old process-wide spelling is refused aloud, naming its
+        // per-endpoint replacement, once per create: an operator who still
+        // exports ROCKETNET_<FIELD> is never silently ignored -- their value
+        // is NOT applied, and the error tells them the name to use now.
+
+        char legacy_name[128];
+        if ( !rocketnet_config_env_var_name( field->name, legacy_name, sizeof(legacy_name) ) )
+        {
+            rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field->name );
+            return false;
+        }
+
+        const char * legacy_value = rocketnet_platform_getenv( legacy_name );
+        if ( legacy_value && legacy_value[0] != '\0' )
+            rocketnet_error( "%s config ignores the process-wide %s: use the per-endpoint %s instead", transport_name, legacy_name, env_name );
 
         const char * value = rocketnet_platform_getenv( env_name );
         if ( !value )

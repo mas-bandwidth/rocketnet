@@ -44,10 +44,20 @@ const struct rocketnet_config_field_t * rocketnet_client_transport_config_fields
 
 const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields( int * num_fields );
 
-// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER".
-// returns false when the buffer cannot hold the derived name.
+// the mechanical env var derivation: "driver" -> "ROCKETNET_DRIVER". this
+// is the pre-ruling process-wide spelling; it is kept only to NAME the old
+// variable a create refuses aloud (see rocketnet_config_apply_env). returns
+// false when the buffer cannot hold the derived name.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
+
+// the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
+// "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
+// "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES". each transport table's field is read
+// under its own endpoint's name, so a server and a client in one process
+// never share a variable. returns false when the buffer cannot hold it.
+
+bool rocketnet_config_env_var_name_for( const char * transport_name, const char * field_name, char * buffer, int buffer_size );
 
 // the strict integer parse, exposed for the deprecated env alias reads
 // (the pre-#106 spellings kept working under the ROCKETNET_PUMP pattern):
@@ -58,10 +68,14 @@ bool rocketnet_config_parse_int_value( const char * value, int * out );
 // overlay the environment onto a config struct, field by field from the
 // descriptors: unset vars leave the struct value; set vars parse under the
 // field's kind, log the override loudly with the displaced value (secret
-// fields redacted), and assign. an env var set to the empty string is
-// ignored as unset, with a log line. returns false -- loudly -- on any
-// value that does not parse. transport_name flavors the log lines
-// ("client", "server").
+// fields redacted), and assign. each field is read under its PER-ENDPOINT
+// name, ROCKETNET_<TRANSPORT>_<FIELD> (ruling 11); an old process-wide
+// ROCKETNET_<FIELD> that is set is never applied and logs one error naming
+// its replacement, once per create, so an operator is never silently
+// ignored. an env var set to the empty string is ignored as unset, with a
+// log line. returns false -- loudly -- on any value that does not parse.
+// transport_name flavors the log lines and the derived names ("client",
+// "server").
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 

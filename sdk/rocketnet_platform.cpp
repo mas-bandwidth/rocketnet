@@ -111,8 +111,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 
@@ -744,7 +747,7 @@ template <typename T> struct rocketnet_vector_t
         clear();
     }
 
-    inline void clear() 
+    inline void clear()
     {
         if ( data )
         {
@@ -909,6 +912,77 @@ static int classify_connection_type( rocketnet_vector_t<rocketnet_ifforward4_t> 
     }
 }
 
+// reads the kernel route table replies over netlink until an NLMSG_DONE
+// message ends the dump. receive is called for each read; in the real probe
+// it is recvmsg, and tests pass a fake. returns true when the dump was read
+// in full; false when a receive failed or returned zero (the caller falls
+// back to ROCKETNET_CONNECTION_TYPE_UNKNOWN).
+bool rocketnet_platform_read_route_table(
+    int sock,
+    struct sockaddr_nl * kernel,
+    rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
+    ssize_t (*receive)( int, struct msghdr *, int ) )
+{
+    bool done = false;
+    while ( !done )
+    {
+        struct msghdr rtnl_reply;
+        struct iovec io_reply;
+
+        memset( &io_reply, 0, sizeof( io_reply ) );
+        memset( &rtnl_reply, 0, sizeof( rtnl_reply ) );
+
+        const size_t IFLIST_REPLY_BUFFER = 8192;
+        char reply[IFLIST_REPLY_BUFFER];
+        io_reply.iov_base = reply;
+        io_reply.iov_len = IFLIST_REPLY_BUFFER;
+        rtnl_reply.msg_iov = &io_reply;
+        rtnl_reply.msg_iovlen = 1;
+        rtnl_reply.msg_name = kernel;
+        rtnl_reply.msg_namelen = sizeof( *kernel );
+
+        ssize_t len = receive( sock, &rtnl_reply, 0 );
+
+        // a receive interrupted by a signal is retried once; the other exits
+        // are named below.
+        if ( len == -1 && errno == EINTR )
+        {
+            len = receive( sock, &rtnl_reply, 0 );
+        }
+
+        if ( len > 0 )
+        {
+            for ( struct nlmsghdr * msg_ptr = (struct nlmsghdr *)( reply ); NLMSG_OK( msg_ptr, len ); msg_ptr = NLMSG_NEXT( msg_ptr, len ) )
+            {
+                if ( msg_ptr->nlmsg_type == 24 )
+                {
+                    rocketnet_ifforward4_t route;
+                    if ( parse_kernel_route( msg_ptr, &route ) )
+                    {
+                        if ( !route_table->add( route ) )
+                        {
+                            // allocation failure: the dump cannot be kept.
+                            return false;
+                        }
+                    }
+                }
+                else if ( msg_ptr->nlmsg_type == 3 )
+                {
+                    // NLMSG_DONE: the dump is complete.
+                    done = true;
+                }
+            }
+        }
+        else
+        {
+            // len is 0 or -1: no data read; the dump cannot be completed.
+            return false;
+        }
+    }
+    // the loop exited on NLMSG_DONE: the route table was read in full.
+    return true;
+}
+
 static int get_connection_type()
 {
     rocketnet_vector_t<rocketnet_iftable_t> interface_list;
@@ -1052,49 +1126,12 @@ static int get_connection_type()
         // send request
         sendmsg( sock, (struct msghdr *)( &rtnl_msg ), 0 );
 
-        // read reply
-
-        bool done = false;
-        while ( !done )
+        // read reply; a receive that fails or returns zero ends the probe
+        // instead of spinning, and the connection type falls back to UNKNOWN.
+        if ( !rocketnet_platform_read_route_table( sock, &kernel, &route_table, recvmsg ) )
         {
-            struct msghdr rtnl_reply;
-            struct iovec io_reply;
-
-            memset( &io_reply, 0, sizeof( io_reply ) );
-            memset( &rtnl_reply, 0, sizeof( rtnl_reply ) );
-
-            const size_t IFLIST_REPLY_BUFFER = 8192;
-            char reply[IFLIST_REPLY_BUFFER];
-            io_reply.iov_base = reply;
-            io_reply.iov_len = IFLIST_REPLY_BUFFER;
-            rtnl_reply.msg_iov = &io_reply;
-            rtnl_reply.msg_iovlen = 1;
-            rtnl_reply.msg_name = &kernel;
-            rtnl_reply.msg_namelen = sizeof( kernel );
-
-            int len = recvmsg( sock, &rtnl_reply, 0 );
-            if ( len )
-            {
-                for ( struct nlmsghdr * msg_ptr = (struct nlmsghdr *)( reply ); NLMSG_OK( msg_ptr, len ); msg_ptr = NLMSG_NEXT( msg_ptr, len ) )
-                {
-                    if ( msg_ptr->nlmsg_type == 24 )
-                    {
-                        rocketnet_ifforward4_t route;
-                        if ( parse_kernel_route( msg_ptr, &route ) )
-                        {
-                            if ( !route_table.add( route ) )
-                            {
-                                close( sock );
-                                return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
-                            }
-                        }
-                    }
-                    else if ( msg_ptr->nlmsg_type == 3 )
-                    {
-                        done = true;
-                    }
-                }
-            }
+            close( sock );
+            return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
         }
 
         close( sock );
@@ -1225,12 +1262,12 @@ bool rocketnet_platform_init()
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
     SCDynamicStoreRef dynamic_store = SCDynamicStoreCreate( kCFAllocatorDefault, CFSTR( "FindCurrentInterfaceIpMac" ), NULL, NULL );
-    CFPropertyListRef global = SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) );
+    CFPropertyListRef global = dynamic_store ? SCDynamicStoreCopyValue( dynamic_store, CFSTR( "State:/Network/Global/IPv4" ) ) : NULL;
     if ( global )
     {
         CFStringRef primary_interface_name = (CFStringRef)( CFDictionaryGetValue( (CFDictionaryRef)( global ), CFSTR( "PrimaryInterface" ) ) );
         CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
-        CFIndex count = CFArrayGetCount( interfaces );
+        CFIndex count = interfaces ? CFArrayGetCount( interfaces ) : 0;
         for ( CFIndex i = 0; i < count; i++ )
         {   
             SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)( CFArrayGetValueAtIndex( interfaces, i ) );
@@ -1253,10 +1290,12 @@ bool rocketnet_platform_init()
                 break;
             }
         }
-        CFRelease( interfaces );
+        if ( interfaces )
+            CFRelease( interfaces );
         CFRelease( global );
     }
-    CFRelease( dynamic_store );
+    if ( dynamic_store )
+        CFRelease( dynamic_store );
 
 #endif // ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS
 
@@ -1301,8 +1340,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 
@@ -1716,14 +1758,27 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
     rocketnet_assert( max_packet_size > 0 );
 
     sockaddr_storage sockaddr_from;
-    socklen_t from_length;
+    // Darwin reports bytes copied, not the original size on truncation.
+    // Scatter the prefix into caller storage and discard the rest locally.
+    // This covers a complete ordinary UDP datagram without shared state.
+    uint8_t overflow[65535];
+    struct iovec iov[2];
+    iov[0].iov_base = packet_data;
+    iov[0].iov_len = (size_t) max_packet_size;
+    iov[1].iov_base = overflow;
+    iov[1].iov_len = sizeof(overflow);
 
     int result;
     for ( ;; )
     {
-        from_length = sizeof( sockaddr_from );
+        struct msghdr msg;
+        memset( &msg, 0, sizeof(msg) );
+        msg.msg_name = &sockaddr_from;
+        msg.msg_namelen = sizeof(sockaddr_from);
+        msg.msg_iov = iov;
+        msg.msg_iovlen = 2;
 
-        result = int( recvfrom( socket->handle, (char*) packet_data, max_packet_size, MSG_TRUNC, (sockaddr*) &sockaddr_from, &from_length ) );
+        result = int( recvmsg( socket->handle, &msg, 0 ) );
 
         if ( result < 0 )
         {
@@ -1744,9 +1799,9 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
             continue;
         }
 
-        // result may exceed max_packet_size: MSG_TRUNC reports the true
-        // datagram size. deliver it, not the truncated prefix, so the
-        // transport's prefilter drops it as PREFILTER_TOO_LARGE.
+        // The overflow iovec preserves the datagram size even when only
+        // its prefix fits the caller's slot. The transport rejects oversize
+        // packets before inspecting their truncated payload.
         break;
     }
 
@@ -2074,6 +2129,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
     rocketnet_assert( packet_bytes );
     rocketnet_assert( max_packets > 0 );
 
+    // Each message keeps its prefix in its own slot. The discarded tails
+    // may overlap: none are read after this synchronous syscall returns.
+    uint8_t overflow[65535];
     int total = 0;
 
     if ( !rocketnet_msgx_active( socket ) )
@@ -2088,21 +2146,23 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         const int chunk_base = total;
 
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
-        struct iovec iov[ROCKETNET_MSGX_BATCH];
+        struct iovec iov[ROCKETNET_MSGX_BATCH][2];
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
         memset( msg, 0, sizeof(msg) );
         for ( int i = 0; i < want; i++ )
         {
-            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
-            iov[i].iov_len = (size_t) packet_stride;
+            iov[i][0].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            iov[i][0].iov_len = (size_t) packet_stride;
+            iov[i][1].iov_base = overflow;
+            iov[i][1].iov_len = sizeof(overflow);
             msg[i].msg_name = &addresses[i];
             msg[i].msg_namelen = sizeof(addresses[i]);
-            msg[i].msg_iov = &iov[i];
-            msg[i].msg_iovlen = 1;
+            msg[i].msg_iov = iov[i];
+            msg[i].msg_iovlen = 2;
         }
 
         errno = 0;
-        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, MSG_TRUNC );
+        ssize_t result = rocketnet_recvmsg_x( socket->handle, msg, (u_int) want, 0 );
         if ( result < 0 )
         {
             if ( errno == EINTR )
@@ -2537,8 +2597,11 @@ uint16_t rocketnet_platform_htons( uint16_t in )
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out )
 {
     sockaddr_in sockaddr4;
+    memset( &sockaddr4, 0, sizeof( sockaddr4 ) );
     bool success = inet_pton( AF_INET, address_string, &sockaddr4.sin_addr ) == 1;
-    *address_out = sockaddr4.sin_addr.s_addr;
+    // A failed parse writes nothing: only hand back the address on success.
+    if ( success )
+        *address_out = sockaddr4.sin_addr.s_addr;
     return success;
 }
 
@@ -2894,24 +2957,40 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
     sockaddr_storage sockaddr_from;
     socklen_t from_length;
+    uint8_t overflow[65535];
+    WSABUF buffers[2];
+    buffers[0].buf = (char*) packet_data;
+    buffers[0].len = (ULONG) max_packet_size;
+    buffers[1].buf = (char*) overflow;
+    buffers[1].len = sizeof(overflow);
 
     int result;
     for ( ;; )
     {
         from_length = sizeof( sockaddr_from );
+        DWORD bytes_received = 0;
+        DWORD flags = 0;
 
-        result = recvfrom( socket->handle, (char*) packet_data, max_packet_size, 0, (sockaddr*) &sockaddr_from, &from_length );
+        int status = WSARecvFrom( socket->handle, buffers, 2, &bytes_received, &flags, (sockaddr*) &sockaddr_from, &from_length, NULL, NULL );
 
-        if ( result == SOCKET_ERROR )
+        if ( status == SOCKET_ERROR )
         {
             int error = WSAGetLastError();
 
+            if ( error == WSAEMSGSIZE )
+            {
+                result = max_packet_size + 1;
+                break;
+            }
+
             if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT && error != WSAECONNRESET )
             {
-                rocketnet_debug( "recvfrom failed with error %d", error );
+                rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }
             return 0;
         }
+
+        result = (int) bytes_received;
 
         if ( result == 0 )
         {

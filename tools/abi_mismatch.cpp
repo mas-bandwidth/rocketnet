@@ -1,4 +1,4 @@
-// Deliberately incompatible library for the managed load gate. Never shipped.
+// Deliberately incompatible library for native ABI regression checks. Never shipped.
 #define rocketnet_abi_version real_abi_version
 #define rocketnet_abi_type_size real_abi_type_size
 #define rocketnet_abi_field_count real_abi_field_count
@@ -11,6 +11,12 @@
 #undef rocketnet_abi_field_offset
 #undef rocketnet_abi_field_size
 #include <stdlib.h>
+
+// The fixture has no SDK lifecycle or diagnostic counter. Invalid ABI query
+// arguments must fail loudly instead of depending on the production library.
+void rocketnet_api_misuse_record() { abort(); }
+static void fixture_assert( const char *, const char *, const char *, int ) { abort(); }
+void (*rocketnet_assert_function_pointer)( const char *, const char *, const char *, int ) = fixture_assert;
 
 static bool mode(const char * name)
 {

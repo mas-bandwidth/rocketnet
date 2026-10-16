@@ -51,16 +51,31 @@
 
 #define ROCKETNET_TEST_FILTER_VALUE             { 0xb7, 0x59, 0x01, 0x00 }
 
-// the receive ceiling: fixed for every receiver, whatever its send budget
+// The packet size, from the one number it derives from: the MTU of a plain
+// 1500-byte link, less the IP header and the 8-byte UDP header. The two
+// address families give two sizes (RFC 8200 section 5 forbids in-transit
+// fragmentation on IPv6; RFC 8085 section 3.2 asks a UDP sender to stay
+// inside the path MTU), and each limit takes the one its job needs.
 
-#define ROCKETNET_RECEIVE_CEILING               1426
+#define ROCKETNET_LINK_MTU_BYTES                1500
+#define ROCKETNET_ETHERNET_HEADER_BYTES         14
+#define ROCKETNET_IPV4_HEADER_BYTES             20
+#define ROCKETNET_IPV6_HEADER_BYTES             40
+#define ROCKETNET_UDP_HEADER_BYTES              8
 
-// the send budget: a sender never emits a packet larger than this. 1232 is
-// the only value safe with no knowledge of the network (IPv6 minimum MTU
-// less headers); the standard lets a deployment that knows its paths raise
-// it, to at most the receive ceiling.
+// the receive ceiling: fixed for every receiver, whatever its send budget --
+// anything one 1500-MTU IPv4 datagram can carry, 1472 bytes
 
-#define ROCKETNET_SEND_BUDGET                   1232
+#define ROCKETNET_RECEIVE_CEILING               ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV4_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
+
+// the send budget: a sender never emits a packet larger than this. It is the
+// smaller family's packet, the IPv6 UDP payload of a 1500-byte MTU, 1452
+// bytes, so one budget serves both families: a maximum packet crosses a
+// 1500-MTU path over IPv4 with 20 bytes spare and over IPv6 exactly at the
+// limit. A path below MTU 1500 (an IPv6 tunnel at the 1280 minimum, PPPoE at
+// 1492) drops a maximum-size IPv6 packet.
+
+#define ROCKETNET_SEND_BUDGET                   ( ROCKETNET_LINK_MTU_BYTES - ROCKETNET_IPV6_HEADER_BYTES - ROCKETNET_UDP_HEADER_BYTES )
 
 // The ack block, at the front of every session type's sealed plaintext:
 // largest received (u32) + range count (1 byte) + first range length (u16)
@@ -116,7 +131,9 @@
 // The kernel filter's configuration, written by userspace at server start
 // and read per-packet in the XDP program. One definition serves both sides
 // of the map, and the padding is explicit so the layout cannot depend on
-// either compiler: 4 + 2 + 4 + 1 + 1 = 12 bytes, no implicit holes.
+// either compiler: 4 + 2 + 4 + 1 + 5 + 16 = 32 bytes, no implicit holes.
+// The IPv6 destination sits at offset 16 so the program reads it as four
+// aligned 32-bit words.
 
 struct rocketnet_server_xdp_config_t
 {
@@ -124,14 +141,30 @@ struct rocketnet_server_xdp_config_t
     uint16_t public_port;                       // big endian
     uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES];
     uint8_t filter_epoch;                       // the only epoch this server accepts; 0 in 1.0
-    uint8_t pad[1];
+    uint8_t pad[5];                             // zero; fills offsets 11 to 15, up to the IPv6 destination
+    uint8_t public_address_ipv6[16];            // network order; all zero = accept any IPv6 destination address
 };
+
+#ifdef __cplusplus
+static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
+static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
+static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
+#else // #ifdef __cplusplus
+_Static_assert( sizeof(struct rocketnet_server_xdp_config_t) == 32, "the XDP config map value is 32 bytes" );
+_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) == 11, "the XDP config pad follows the epoch" );
+_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
+#endif // #ifdef __cplusplus
 
 // The kernel filter's counters, incremented in the XDP program per verdict
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the five drop reasons.
+// received == redirected + the five drop reasons. PASSED_IPV6_EXTENSION
+// counts the IPv6 frames the program hands to the kernel stack because their
+// next header is an extension header (hop-by-hop, routing, fragment,
+// destination options, AH, ESP): the program never walks that chain, so it
+// cannot say whether such a frame was for this server, and it counts them on
+// any port.
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -139,7 +172,8 @@ struct rocketnet_server_xdp_config_t
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER       3
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE       4
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       6
+#define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION      6
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       7
 
 struct rocketnet_server_xdp_stats_t
 {

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 
 static volatile int quit;
 
@@ -40,7 +41,7 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = 256;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config, rocketnet_time() );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, public_address, &config);
     if ( !server )
     {
         rocketnet_term();
@@ -90,6 +91,20 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_stop( server );
     while ( rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED )
         rocketnet_server_transport_update( server, rocketnet_time() );
+
+    // ROCKETNET_SERVER_PRINT_COUNTERS=1: every server counter at stop, one
+    // line each, through the public counter API. unset, output is unchanged.
+
+    const char * print_counters = getenv( "ROCKETNET_SERVER_PRINT_COUNTERS" );
+    if ( print_counters && strcmp( print_counters, "1" ) == 0 )
+    {
+        const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+        const int num_counters = rocketnet_num_counters();
+        for ( int i = 0; i < num_counters; i++ )
+            printf( "rocketnet counter %s %llu\n", rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( counters, i ) );
+        fflush( stdout );
+    }
+
     rocketnet_server_transport_destroy( server );
 
     rocketnet_term();

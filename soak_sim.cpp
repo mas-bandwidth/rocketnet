@@ -72,6 +72,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <cerrno>
 #include <sodium.h>
 
 static volatile int quit;
@@ -363,7 +364,18 @@ int main( int argc, char ** argv )
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
-    const uint64_t max_iterations = argc > 1 ? strtoull( argv[1], NULL, 10 ) : 0;
+    uint64_t max_iterations = 0;
+    if ( argc > 1 )
+    {
+        char * end = NULL;
+        errno = 0;
+        max_iterations = strtoull( argv[1], &end, 10 );
+        if ( argv[1][0] < '0' || argv[1][0] > '9' || !end || *end || errno || !max_iterations )
+        {
+            fprintf( stderr, "soak_sim: iteration count must be a positive integer\n" );
+            return 1;
+        }
+    }
 
     // the profile, and its negative control
 
@@ -399,12 +411,44 @@ int main( int argc, char ** argv )
     rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" );
     randombytes_buf( server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server.cookie_lifetime_seconds = 3;
+    server.cookie_rotation_seconds = 60;
+    server.cookie_key_rotation_time = 100.0 + (double) server.cookie_rotation_seconds;
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, 32 );
+    if ( !server.encryption_map )
+    {
+        printf( "soak_sim: failed to create the encryption map\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
+    if ( !server.used_token_history )
+    {
+        printf( "soak_sim: failed to create the used token history\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 256 );
+    if ( !server.admitted_token_set )
+    {
+        printf( "soak_sim: failed to create the admitted token set\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
+    if ( !server.client_slots )
+    {
+        printf( "soak_sim: failed to create the client slots\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
+    if ( !server.reassembly )
+    {
+        printf( "soak_sim: failed to create the reassembly set\n" );
+        rocketnet_term();
+        return 1;
+    }
     server.counters = &server_counters;
 
     #define SOAK_NUM_CLIENTS 8
@@ -697,7 +741,7 @@ int main( int argc, char ** argv )
                 int delivered_bytes = 0;
                 bool processed = false;
                 SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, &delivered_bytes ) );
+                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes ) );
                 if ( processed && delivered_bytes > 0 )
                 {
                     if ( verify_payload( delivered, delivered_bytes ) )
@@ -722,28 +766,83 @@ int main( int argc, char ** argv )
 
     const double soak_elapsed = rocketnet_platform_time() - soak_started;
 
-    // The counter discipline at exit: this wire injects loss, so abandoned
-    // payloads are the specified semantics and may be nonzero -- every
-    // other fragment refusal means a defect in the sender or the
-    // reassembly, and must be exactly zero however long the soak ran.
+    // The counter discipline at exit, computed from the counter list and
+    // never kept as a second list here. Two rules, on both ends:
+    //
+    //   conservation: every family balances, RECEIVED == the sum of its
+    //   outcomes, at the server and across the clients' shared block. The
+    //   run has ended between updates, so every arrival has taken its outcome.
+    //
+    //   clean-run: every REFUSAL counter reads 0, except the refusals the
+    //   faults this wire injects explain. The wire loses 2% of packets,
+    //   duplicates 2%, and jitters delivery by 20 ms around a 50 ms latency,
+    //   so the exceptions are the refusals that loss, duplication and
+    //   reordering cause by themselves, each row naming the fault. A refusal
+    //   not in the table that moved is a defect in the sender or the
+    //   receiver, however long the soak ran.
 
-    const int must_stay_zero[] = {
-        ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
-        ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
-        ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
-        ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
-        ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
-        ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
-        ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
-        ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL,
-    };
-    for ( int i = 0; i < (int) ( sizeof(must_stay_zero) / sizeof(must_stay_zero[0]) ); i++ )
+    struct soak_explained_refusal_t
     {
-        if ( server_counters.values[must_stay_zero[i]] != 0 )
+        int counter;
+        const char * fault;
+    };
+
+    // Found by running the pinned and 24 random seeds with the table empty, and
+    // confirmed one fault at a time: loss alone moves only the history
+    // overflow, duplication alone moves only the ALREADY_RECEIVED rows, and
+    // jitter alone moves nothing.
+
+    static const soak_explained_refusal_t soak_explained_refusals[] =
+    {
+        { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW,              "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
+        { ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED,        "duplication: the wire delivers a keep-alive twice, the second is a replay" },
+        { ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,           "duplication: the wire delivers a payload twice, the second is a replay" },
+        { ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,          "duplication: the wire delivers a fragment twice, the second is a replay" },
+        { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
+        { -1, NULL }
+    };
+
+    struct soak_end_t
+    {
+        const char * name;
+        const struct rocketnet_counters_t * counters;
+    };
+
+    const soak_end_t soak_ends[2] = { { "server", &server_counters }, { "clients", &client_counters } };
+
+    int conservation_ok = 1;
+    for ( int e = 0; e < 2; e++ )
+    {
+        char report[256];
+        if ( !rocketnet_counters_conserved( soak_ends[e].counters, report, sizeof(report) ) )
         {
-            printf( "MUST-STAY-ZERO COUNTER FIRED: %s = %llu\n",
-                    rocketnet_counter_name( must_stay_zero[i] ),
-                    (unsigned long long) server_counters.values[must_stay_zero[i]] );
+            printf( "CONSERVATION FAILED at %s: %s\n", soak_ends[e].name, report );
+            conservation_ok = 0;
+            failures++;
+        }
+    }
+    if ( conservation_ok )
+        printf( "soak_sim: conservation ok (server and clients)\n" );
+
+    for ( int e = 0; e < 2; e++ )
+    {
+        for ( int i = 0; i < rocketnet_num_counters(); i++ )
+        {
+            const uint64_t value = rocketnet_counter_value( soak_ends[e].counters, i );
+            if ( value == 0 || rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
+                continue;
+            const char * fault = NULL;
+            for ( int j = 0; soak_explained_refusals[j].fault; j++ )
+                if ( soak_explained_refusals[j].counter == i )
+                    fault = soak_explained_refusals[j].fault;
+            if ( fault )
+            {
+                printf( "soak_sim: explained refusal at %s: %s = %llu (%s)\n", soak_ends[e].name,
+                        rocketnet_counter_name( i ), (unsigned long long) value, fault );
+                continue;
+            }
+            printf( "UNEXPLAINED REFUSAL at %s: %s = %llu\n", soak_ends[e].name,
+                    rocketnet_counter_name( i ), (unsigned long long) value );
             failures++;
         }
     }

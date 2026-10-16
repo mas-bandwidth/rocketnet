@@ -273,6 +273,15 @@ int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, ui
 
 struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate )
 {
+    // the lifecycle state is read once here, before any allocation; a create
+    // before rocketnet_init is refused, logged and counted
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_frame_sync_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+
     if ( !( frame_rate > 0.0 ) || frame_rate > ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE )
     {
         rocketnet_error( "frame sync: invalid frame rate %.1f", frame_rate );
@@ -321,6 +330,8 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
 void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
     rocketnet_assert( frame_sync );
 
     if ( frame_sync->first_wait_done )
@@ -337,6 +348,8 @@ void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
 
 void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
     rocketnet_assert( frame_sync );
 
     const uint64_t entry_ns = rocketnet_frame_sync_now_ns();
@@ -387,6 +400,10 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 
 void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats )
 {
+    if ( !rocketnet_api_null_guard( frame_sync ) )
+        return;
+    if ( !rocketnet_api_null_guard( stats ) )
+        return;
     rocketnet_assert( frame_sync );
     rocketnet_assert( stats );
     stats->frame = frame_sync->frame;

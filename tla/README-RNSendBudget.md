@@ -1,0 +1,104 @@
+# RNSendBudget: the per-connection send budget
+
+`tla/RNSendBudget.tla` is the send budget every connection keeps (the
+client's one connection and each server client slot): a rate in kilobits per
+second, counted in the transport's wire bytes, enforced as a token bucket the
+packet writer asks before it writes each item. The code is
+`sdk/rocketnet_send_budget.h`; each of its functions names the action it
+implements. The model was written before the code.
+
+`tla/MCRNSendBudget.tla` and `tla/MCRNSendBudget.cfg` are the small instance.
+The two `tla/MCRNSendBudgetBroken*.cfg` files are the reversed witnesses. The
+cases are rows of `tla/CASES.tsv` (group `rnsendbudget`) with measured
+records in `tla/RUNS.tsv`.
+
+## The rule
+
+- **The unit.** 1 kbps = 1000 bit/s, the unit of the transport's
+  `bandwidth_sent_kbps`. K kbps is K x 125 bytes per second.
+- **The bytes.** A packet's wire bytes as the transport records them
+  (`rocketnet_ack_endpoint_record_sent`'s `wire_bytes`):
+  `ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes`, the
+  value `rocketnet_write_sealed_payload_in_place` returns.
+- **The bucket.** Refilled at each update with rate x elapsed time (time is an
+  argument), capped at the depth: the larger of one maximum packet
+  (`ROCKETNET_SEND_BUDGET` wire bytes) and 100 ms of budget. Every packet
+  spends its wire bytes, and only what fits is spent.
+- **The order.** Within an update the writer offers retransmits and ordered
+  progress first, then new reliable items, then unreliable items. A reliable
+  item that does not fit waits for a later update and is never dropped; once
+  one waits, no lower class spends the bucket this update. An unreliable item
+  that does not fit the bytes left to its class is dropped and counted.
+- **Defaults.** 1000 kbps for the client, 10000 kbps for each server client
+  slot; settable at create and at runtime, from 1 kbps to 10000000 kbps.
+
+## What the module covers
+
+State:
+
+| Variable | Meaning |
+|---|---|
+| `tokens` | the bucket, in bytes, `0..Depth` |
+| `hist`, `cur` | bytes sent in each of the previous `W - 1` ticks, and in this one: the sliding window |
+| `phase` | `"idle"` between updates, `"send"` while the writer runs |
+| `rtx`, `rel`, `unrel` | the queued retransmits (and ordered progress), new reliable ids, unreliable items for this update |
+| `nextRel`, `inflight`, `acked` | reliable arrivals, ids whose carrying packet is in flight, ids the transport acked |
+| `losses`, `drops` | transport losses so far (bounded), unreliable drops counted |
+| `orderBad`, `dropBad` | ghosts: a class sent while a higher class waited; an unreliable drop that fit |
+
+Actions:
+
+| Action | Code | What |
+|---|---|---|
+| `Init` | `rocketnet_send_budget_init` | a full bucket |
+| `Tick(run)` | `rocketnet_send_budget_refill`, `rocketnet_send_budget_begin_update` | one update: refill capped at the depth, slide the window; with `run`, arrivals and a send phase; without, a stalled update |
+| `Send` | `rocketnet_send_budget_admit` returning SEND (`can_send`, then `spend`) | the next class's head fits: spent and written |
+| `Drop` | `admit` returning DROP | the next class is unreliable and its head does not fit: dropped, counted |
+| `EndUpdate` | `admit` returning WAIT | nothing more fits: every queue empty, or a reliable head waits; unreliable items behind it are dropped, counted |
+| `Ack(r)` | the transport's packet ack (R1) | the packet that carried `r` was acked |
+| `Lose(r)` | the transport's loss | that packet was lost: `r` queues again as a retransmit |
+
+Properties:
+
+- `NeverOverspend`: bytes sent in any window of `W` ticks are at most
+  `Budget + Depth`, where `Budget = Rate * W` is one window's budget.
+- `ReliableNeverDropped`: every reliable id that arrived is queued, in flight
+  or acked.
+- `UnreliableDroppedOnlyOverBudget`: an unreliable item is dropped only when it
+  does not fit the bytes its class may spend (none while a reliable item
+  waits).
+- `ClassOrder`: no class is sent while a class ahead of it is queued.
+- `TypeOK`.
+- LIVE `EveryReliableEventuallySent`: with a positive rate and finite reliable
+  arrivals, every reliable id that arrives is eventually acked. Fairness: weak
+  on `Tick(TRUE)` (the writer runs infinitely often), on `Send`, `Drop` and
+  `EndUpdate`, and on each `Ack(r)`. Unreliable arrivals are unbounded and
+  chosen by the environment, so a steady unreliable load is among the checked
+  behaviours.
+
+## Abstractions
+
+- Time is in ticks and bytes are abstract units; one tick is one update. The
+  code refills by rate x elapsed time for any spacing; the model's `Tick(FALSE)`
+  covers uneven spacing and stalls (time passing while the writer does not run).
+- All reliable items have one size and all unreliable items another. The code
+  checks each item on its own size; the tests drive mixed sizes.
+- The runtime rate change is not modelled; `set_kbps` refills at the old rate up
+  to the change and the new one after it, and the unit test
+  `runtime_change_takes_effect_next_window` checks that.
+- The admit-at-bound-then-settle step (`rocketnet_send_budget_max_wire_bytes`,
+  `rocketnet_send_budget_settle`) is not modelled: settling only returns bytes
+  the sealed packet did not use, so what was sent never exceeds what was spent.
+
+## The small instance
+
+`W = 2`, `Rate = 1` (so `Budget = 2`), `Depth = 2 = MaxPkt`, `RelSize = 2`
+(larger than one tick's refill, so a reliable item can be starved),
+`UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`.
+
+## Reversed witnesses
+
+| Case | Flip | Must fail | The counterexample, checked by hand |
+|---|---|---|---|
+| `MCRNSendBudgetBrokenOverspend.cfg` | `CheckBudget = FALSE`: spend without the check, the bucket saturating at zero | `NeverOverspend` (exit 12) | In the first update a reliable item (2) and an unreliable item (1) arrive; the reliable item spends the bucket to 0 and the unreliable one is sent anyway; the reliable packet is lost and retransmitted in the same update (2 more): 5 bytes in one tick, above `Budget + Depth = 4`. In the code this is `spend` without `can_send`; the unit test `never_exceeds_budget_per_window` fails under that mutation. |
+| `MCRNSendBudgetBrokenUnreliableFirst.cfg` | `ReliableFirst = FALSE`: the writer offers unreliable items first | `EveryReliableEventuallySent` (exit 13) | After the first reliable item is acked, the second waits with the bucket at 0. Each update refills 1, an unreliable item arrives and is sent first, spending it; the reliable item (2) never fits. The lasso repeats forever. `ClassOrder` is the safety face of the same flaw and is left out of this cfg so the liveness failure is the one checked. |

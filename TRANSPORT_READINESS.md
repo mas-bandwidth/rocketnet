@@ -7,14 +7,12 @@ checks below validate this repair branch in their stated environments; they do
 not replace or negate the existing production evidence. Changes to the XDP and
 ownership paths should be regression-tested against that baseline.
 
-Wire version 1.0.0 does not freeze the native or managed ABI. This is a repair
+Wire version 1.0.0 does not freeze the native ABI. This is a repair
 record for the existing #143–159 findings; independent review of the changes
 is still pending.
 
 ## Repairs and checks
 
-- Checked exact-size managed token buffers, with negative checks before native
-  initialization and complete managed loopback smoke on three platforms.
 - Explicit production sources and public exports; no test suite in production
   archives. CI compares the shared export list on Linux, macOS and Windows.
 - Strict endpoint port parsing, including IPv6 bracket and truncation cases.
@@ -27,8 +25,8 @@ is still pending.
   Bench campaigns require successful children, complete valid windows, and
   independent known-rate controls; malformed/empty results cannot pass.
 - Packet contexts are checked against private, single-consumption leases before
-  native payload access, finish or abort. Managed payload spans require their
-  owner. Tests cover metadata changes, copies, stale phases, wrong owners,
+  native payload access, finish or abort. Tests cover metadata changes, copies,
+  stale phases, wrong owners,
   same-frame reuse and concurrent consumption. Raw memory views still expire
   at finish/abort/update/flush/destroy; callers must respect that lifetime.
 - ACK/replay history has a 4096 minimum/default and an explicit build-time budget
@@ -42,10 +40,8 @@ is still pending.
   resolution. Tests cover 16 through 10000 updates and repeated frozen time.
 - Counter count and bounded-value introspection are available to FFI callers.
 - SDK ABI revision and compiler-derived layout queries preserve existing native
-  layouts. C# validates all seven struct layouts before resolving any native
-  entry point, including calls made before init. Intentionally incompatible and
-  legacy libraries prove refusal before struct writes; missing explicit library
-  paths cannot silently select a different binary.
+  layouts. Intentionally incompatible and legacy native libraries remain
+  buildable for ABI regression checks.
 - Installable CMake static/shared targets resolve dependencies on the consumer's
   machine. Separate C and C++ consumers build and run after relocating the SDK;
   embedded builds default to libraries only and retain an explicitly static
@@ -61,7 +57,7 @@ is still pending.
   without a single allocation; component budgets are not host-RAM estimates.
 
 The existing CI matrix includes native Debug/Release on Linux/macOS/Windows,
-portable and automatic driver selection, serialization, .NET 8 smoke, s390x,
+portable and automatic driver selection, serialization, s390x,
 ASan/UBSan/LSan, TSan, bounded simulated soak, corpus replay and standard-value
 conformance. A green matrix proves those scopes only. Test executables forbid
 privileged XDP commit; they do not validate privileged production traffic.
@@ -72,8 +68,8 @@ privileged XDP commit; they do not validate privileged production traffic.
   existing game and 10 Gbps baseline. Targeted syscall-failure and frame
   conservation tests cover different failure conditions from throughput tests;
   this branch's CI does not run privileged XDP traffic.
-- Sized APIs for compatible public-struct evolution, complete binding generation, a
-  lifetime-owning managed layer, structured create errors and FFI-safe logging.
+- Sized APIs for compatible public-struct evolution, structured create errors
+  and FFI-safe logging for C ABI consumers.
 - Whole-transport memory estimates and operator budgets that include all
   components, kernel buffers, thread stacks, allocator overhead and application
   memory. Component limits prevent the documented oversized geometry but do not
