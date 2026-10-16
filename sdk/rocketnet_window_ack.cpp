@@ -217,9 +217,10 @@ static void rn_window_ack_reclaim_head( rn_window_ack_t * ack )
         rn_sent_packet_t * head = &region->sent_packets[ack->pkt_head % P];
         if ( head->packet_id != 0 )
             break;
-        ack->ref_head += head->ref_count;
+        ack->ref_head += head->ref_count + head->unreliable_receipts;
         head->ref_first = 0;
         head->ref_count = 0;
+        head->unreliable_receipts = 0;
         ack->pkt_head++;
     }
     if ( ack->pkt_head == ack->pkt_tail )
@@ -325,6 +326,11 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->pkt_tail = 0;
     ack->ref_head = 0;
     ack->ref_tail = 0;
+    ack->receipt_sweep = 0;
+    ack->receipt_head = 0;
+    ack->receipt_tail = 0;
+    ack->receipt_visible_head = 0;
+    ack->receipt_visible_tail = 0;
     ack->oldest_number = send->U;
     ack->oldest_first_send = 0.0;
 }
@@ -333,18 +339,60 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
 // and W-entry resend FIFO (docs/CHANNELS.md 6.4 "On send" and "Eviction";
 // tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
-void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now )
+// RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
+// message-level ACK. A full ring discards its oldest event, never its history.
+static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, uint32_t status )
+{
+    if ( serial == 0 )
+        return;
+    rn_region_t * region = ack->region;
+    rocketnet_assert( status == ROCKETNET_RECEIPT_ACKED || status == ROCKETNET_RECEIPT_LOSS );
+    rn_window_ack_count( region, status == ROCKETNET_RECEIPT_ACKED ? ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED : ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
+    const uint32_t capacity = region->receipt_entries;
+    rocketnet_assert( capacity > 0 );
+    if ( ack->receipt_tail - ack->receipt_head == capacity )
+    {
+        ack->receipt_head++;
+        rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL );
+    }
+    rn_receipt_t * event = &region->receipts[ack->receipt_tail % capacity];
+    event->serial = serial;
+    event->status = status;
+    ack->receipt_tail++;
+}
+
+void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial )
 {
     rocketnet_assert( ack );
-    if ( count == 0 || packet_id == 0 )
+    rn_window_ack_receipt_emit( ack, serial, ROCKETNET_RECEIPT_LOSS );
+}
+
+static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet_t * entry, uint32_t status )
+{
+    const uint32_t max_refs = ack->region->sent_ref_entries;
+    for ( uint32_t i = 0; i < entry->unreliable_receipts; i++ )
+    {
+        uint32_t * serial = &ack->region->sent_refs[( entry->receipt_first + i ) % max_refs];
+        rn_window_ack_receipt_emit( ack, *serial, status );
+        *serial = 0;                 // RNReceipts ExactlyOneOutcome: a late ACK stutters
+    }
+}
+
+static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
+                                  const uint32_t * serials, uint32_t receipt_count, double now )
+{
+    rocketnet_assert( ack );
+    if ( ( count == 0 && receipt_count == 0 ) || packet_id == 0 )
         return;
-    rocketnet_assert( numbers );
+    rocketnet_assert( count == 0 || numbers );
+    rocketnet_assert( receipt_count == 0 || serials );
 
     rn_region_t * region = ack->region;
     const uint32_t W = region->window;
     const uint32_t P = region->packets;
     const uint32_t max_refs = region->sent_ref_entries;
-    rocketnet_assert( count <= max_refs );
+    rocketnet_assert( count + receipt_count <= 16 ); // one packet holds at most sixteen records
+    const uint32_t total = count + receipt_count;
 
     // 1. Update each referenced number's last_send (and first_send on its
     //    first send) and link/move it to the tail of the resend FIFO.
@@ -367,19 +415,21 @@ void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, con
     //    "Eviction": numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry).
     rn_window_ack_reclaim_head( ack );
-    while ( ack->pkt_tail - ack->pkt_head >= P || ( ack->ref_tail - ack->ref_head ) + count > max_refs )
+    while ( ack->pkt_tail - ack->pkt_head >= P || ( ack->ref_tail - ack->ref_head ) + total > max_refs )
     {
         rocketnet_assert( ack->pkt_head < ack->pkt_tail );
         rn_sent_packet_t * oldest = &region->sent_packets[ack->pkt_head % P];
         if ( oldest->packet_id != 0 )
         {
+            rn_window_ack_receipt_resolve( ack, oldest, ROCKETNET_RECEIPT_LOSS ); // RNReceipts EvictMap
             rn_sent_index_remove( region, oldest->packet_id );
             oldest->packet_id = 0;
             rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED );
         }
-        ack->ref_head += oldest->ref_count;
+        ack->ref_head += oldest->ref_count + oldest->unreliable_receipts;
         oldest->ref_first = 0;
         oldest->ref_count = 0;
+        oldest->unreliable_receipts = 0;
         ack->pkt_head++;
         rn_window_ack_reclaim_head( ack );
     }
@@ -390,19 +440,31 @@ void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t ref_first = (uint32_t) ( ack->ref_tail % max_refs );
     for ( uint32_t i = 0; i < count; i++ )
         region->sent_refs[( ack->ref_tail + i ) % max_refs] = (uint32_t) numbers[i];
-    ack->ref_tail += count;
+    for ( uint32_t i = 0; i < receipt_count; i++ )
+        region->sent_refs[( ack->ref_tail + count + i ) % max_refs] = serials[i];
+    ack->ref_tail += total;
 
     rn_sent_packet_t * entry = &region->sent_packets[entry_index];
     entry->packet_id = packet_id;
     entry->send_time = now;
     entry->ref_first = ref_first;
     entry->ref_count = (uint16_t) count;
-    entry->unreliable_receipts = 0;
-    entry->receipt_first = 0;
+    entry->unreliable_receipts = (uint16_t) receipt_count;
+    entry->receipt_first = ( ref_first + count ) % max_refs;
     entry->flags = 0;
     ack->pkt_tail++;
 
     rn_sent_index_insert( region, packet_id, entry_index );
+}
+
+void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now )
+{
+    rn_window_ack_commit( ack, packet_id, numbers, count, NULL, 0, now );
+}
+
+void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint32_t * serials, uint32_t count, double now )
+{
+    rn_window_ack_commit( ack, packet_id, NULL, 0, serials, count, now );
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
@@ -422,6 +484,8 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     rocketnet_assert( entry_index < region->packets );
     rn_sent_packet_t * entry = &region->sent_packets[entry_index];
     rocketnet_assert( entry->packet_id == packet_id );
+
+    rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_ACKED ); // RNReceipts ReceiveAck, EmitAck
 
     // 1. One unambiguous RTT sample per acked packet_id (RFC 6298, CHANNELS 6.4).
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
@@ -473,6 +537,12 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
                         chain_index++;
                 }
             }
+            // RNReceipts EmitAck/BlockAckedOnlyWhenAllFragmentsAcked: only the
+            // final distinct transport ACK completes a promoted type-5 block.
+            // Read the descriptor before its last fragment can free it.
+            if ( descriptor->in_use && ( descriptor->flags & RN_SEND_FLAG_RECEIPT_PROMOTED ) &&
+                 descriptor->fragments_acked + 1 == descriptor->fragments )
+                rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_ACKED );
             rn_region_send_free_fragment( region, d, chain_index );
         }
 
@@ -488,6 +558,61 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         rn_window_ack_refresh_oldest( ack, now );
 
     return 1;
+}
+
+void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
+{
+    rocketnet_assert( ack );
+    // RNReceipts TakeReceipt: the prior update's list expires; losses made by
+    // send_packets since then remain queued for this update.
+    if ( ack->receipt_head < ack->receipt_visible_tail )
+        ack->receipt_head = ack->receipt_visible_tail;
+    ack->receipt_visible_head = ack->receipt_head;
+    ack->receipt_visible_tail = ack->receipt_head;
+}
+
+void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
+{
+    rocketnet_assert( ack );
+    ack->receipt_visible_head = ack->receipt_head;
+    ack->receipt_visible_tail = ack->receipt_tail;
+}
+
+void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
+{
+    rocketnet_assert( ack );
+    // RNReceipts SweepLoss: sent order makes the first unexpired entry the
+    // stopping point. Reliable references remain in the map for late ACKs.
+    if ( ack->receipt_sweep < ack->pkt_head )
+        ack->receipt_sweep = ack->pkt_head;
+    while ( ack->receipt_sweep < ack->pkt_tail )
+    {
+        rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
+        if ( entry->packet_id != 0 && now < entry->send_time + ack->rto )
+            break;
+        if ( entry->packet_id != 0 )
+            rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_LOSS );
+        ack->receipt_sweep++;
+    }
+}
+
+int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
+{
+    if ( !ack || !out || capacity < 1 )
+        return 0;
+    uint64_t first = ack->receipt_visible_head;
+    if ( first < ack->receipt_head )
+        first = ack->receipt_head;
+    uint64_t count = ack->receipt_visible_tail > first ? ack->receipt_visible_tail - first : 0;
+    if ( count > (uint64_t) capacity )
+        count = (uint64_t) capacity;
+    for ( uint64_t i = 0; i < count; i++ )
+    {
+        const rn_receipt_t * event = &ack->region->receipts[( first + i ) % ack->region->receipt_entries];
+        out[i].serial = event->serial;
+        out[i].status = event->status;
+    }
+    return (int) count;
 }
 
 uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )

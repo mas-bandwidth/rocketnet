@@ -514,9 +514,6 @@ struct counters_exception_t
 
 static const counters_exception_t counters_no_code_path[] =
 {
-    { "MESSAGE_RECEIPT_RING_FULL",      "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
-    { "MESSAGE_RECEIPT_ACKED",          "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
-    { "MESSAGE_RECEIPT_LOSS",           "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
     { NULL, NULL }
 };
 
