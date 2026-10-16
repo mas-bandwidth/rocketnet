@@ -288,11 +288,13 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
 
     // RNChannel!DeliverMessage, the sequenced guard: only in this epoch.
     const rn_channel_receive_t * receive = channels->region->channel_receive + channel;
-    if ( ordering != receive->ordered_read || sequencing < receive->sequenced_watermark )
+    const uint32_t sequence_gap = ( sequencing - receive->sequenced_watermark ) & ROCKETNET_MESSAGE_U24_MASK;
+    if ( ( ordering & ROCKETNET_MESSAGE_U24_MASK ) != ( receive->ordered_read & ROCKETNET_MESSAGE_U24_MASK ) ||
+         sequence_gap >= ( 1u << 23 ) )
         return false;
 
     rn_channel_receive_t * slot = channels->region->channel_receive + channel;
-    slot->sequenced_watermark = sequencing + 1;
+    slot->sequenced_watermark = ( sequencing + 1 ) & ROCKETNET_MESSAGE_U24_MASK;
 
     return true;
 }
@@ -397,6 +399,9 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 
     for ( ;; )
     {
+        // RNChannelTypes!Drain: a current-epoch sequenced hold is released
+        // before the ordered successor, then the next epoch is considered.
+        rn_channels_drain_sequenced( channels, channel );
         const uint32_t held = rn_held_find( region, rn_held_key( channel, rx->ordered_read ) );
         if ( held == RN_DESCRIPTOR_NONE || region->held_index[held].used != RN_HELD_COMPLETE )
             break;                                              // not here yet, or a block still short of fragments
@@ -719,6 +724,8 @@ void rn_channels_end_update( struct rn_channels_t * channels )
         if ( slot != RN_DESCRIPTOR_NONE )
             rn_channels_release( channels, slot );
     }
+
+    rn_channels_end_update_sequenced( channels );
 
     channels->unreliable_delivered = 0;
     channels->deliveries = 0;

@@ -37,6 +37,11 @@ static int rn_client_link_acked( void * transport, const int ** client_index, co
     return rocketnet_client_transport_acked_packets( (rocketnet_client_transport_t *) transport, packet_ids );
 }
 
+static int rn_client_link_max_payload_bytes( void * transport )
+{
+    return rocketnet_client_transport_max_payload_bytes( (rocketnet_client_transport_t *) transport );
+}
+
 static uint8_t * rn_client_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     (void) client_index;
@@ -87,6 +92,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
     link->acked = rn_client_link_acked;
+    link->max_payload_bytes = rn_client_link_max_payload_bytes;
     link->start_packet = rn_client_link_start_packet;
     link->finish_packet = rn_client_link_finish_packet;
     link->abort_packet = rn_client_link_abort_packet;
