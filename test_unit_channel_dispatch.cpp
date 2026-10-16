@@ -305,7 +305,10 @@ static void rnchannel_witness_replays()
     dispatch_record( &behind, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
     behind.ordering = 0;
     rocketnet_unit_check( rn_channels_dispatch( &channels, &behind, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
-    rocketnet_unit_check( region->channel_receive[0].ordered_read == 1 );
+
+    // the record held ahead is released by the drain in the same call (7.2)
+    rocketnet_unit_check( region->channel_receive[0].ordered_read == 2 );
+    rocketnet_unit_check( channels.deliveries == 2 );
 
     struct rocketnet_message_record_t late;
     dispatch_record( &late, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );

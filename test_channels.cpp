@@ -231,14 +231,14 @@ static void channels_test_vectors()
 
     {
         static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x09, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
-                                            0x00, 0x00, 0x01, 0x00, 0x00, 0x80, 0x00, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+                                            0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
         struct rocketnet_message_config_body_t body;
         body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
         body.enabled = 0x09;
         body.num_channels = 32;
         body.window_messages = 1024;
-        body.receive_ring_bytes = 65536;
-        body.max_message_bytes = 32768;
+        body.receive_ring_bytes = 262144;
+        body.max_message_bytes = 262144;
         body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         uint8_t config[ROCKETNET_MESSAGE_CONFIG_BYTES];
         rocketnet_message_write_config_body( config, &body );
@@ -1011,22 +1011,23 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 457,216 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 1,588,480 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     check( config.num_channels == 32 );
     check( config.window_messages == 1024 );
-    check( config.receive_ring_bytes == 65536 );
+    check( config.receive_ring_bytes == 262144 );
+    check( config.max_message_bytes == 262144 );
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 460800 );
-    check( layout.region_bytes == 460800 );
-    check( rocketnet_message_connection_bytes( &config ) == 460800 );
-    check( rocketnet_message_connection_bytes( NULL ) == 460800 );
+    check( layout.formula_bytes == 1588480 );
+    check( layout.region_bytes == 1588480 );
+    check( rocketnet_message_connection_bytes( &config ) == 1588480 );
+    check( rocketnet_message_connection_bytes( NULL ) == 1588480 );
 
-    const uint64_t C = 32, W = 1024, B = 65536, Q = 1024, S = 131072, P = 256, Du = 256, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 262144, Q = 1024, S = 800000, P = 256, Du = 256, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 48 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1040,6 +1041,7 @@ static void test_channels_allocator_layout()
     check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PAYLOAD_BYTES ) * Ru );
     check( layout.bytes[RN_PART_RECEIPTS] == 16 * Rq );
     check( layout.bytes[RN_PART_RESEND_FIFO] == 8 * W );
+    check( layout.bytes[RN_PART_SEND_SPANS] == B );
 
     // every part 64-aligned, in order, disjoint, inside the region
 
@@ -1057,10 +1059,10 @@ static void test_channels_allocator_layout()
     // the store's classes at the defaults, as section 4 records them: 64-aligned
     // thirds of S, each chunk with its u32 link inside its third
 
-    check( layout.store_chunks[RN_STORE_SMALL] == 330 );
-    check( layout.store_chunks[RN_STORE_MEDIUM] == 84 );
-    check( layout.store_chunks[RN_STORE_LARGE] == 37 );
-    check( layout.store_chunks[RN_STORE_LARGE] >= ( 32768 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    check( layout.store_chunks[RN_STORE_SMALL] == 2019 );
+    check( layout.store_chunks[RN_STORE_MEDIUM] == 516 );
+    check( layout.store_chunks[RN_STORE_LARGE] == 230 );
+    check( layout.store_chunks[RN_STORE_LARGE] >= ( 262144 + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
 
     // odd shapes pad, and the padding is all the region adds to the formula
 
@@ -1104,8 +1106,8 @@ static void test_channels_allocator_validation()
         { "num_channels above the compile-time max", (int) offsetof( rocketnet_message_config_t, num_channels ), ROCKETNET_MAX_CHANNELS + 1 },
         { "window not a power of two",              (int) offsetof( rocketnet_message_config_t, window_messages ), 1000 },
         { "window below its minimum",               (int) offsetof( rocketnet_message_config_t, window_messages ), 32 },
-        { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_ring_bytes ), 65536 + 8 },
-        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 65536 + 16 },
+        { "ring not a multiple of 16",              (int) offsetof( rocketnet_message_config_t, receive_ring_bytes ), 262144 + 8 },
+        { "max message above the ring",             (int) offsetof( rocketnet_message_config_t, max_message_bytes ), 262144 + 16 },
         { "store too small for a maximal block",    (int) offsetof( rocketnet_message_config_t, send_buffer_bytes ), 12288 },
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
@@ -1524,9 +1526,9 @@ static void test_channels_allocator_arena()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
     check( rn_region_ring_span_valid( region, 0, 16 ) );
-    check( rn_region_ring_span_valid( region, 65536 - 1152, 1152 ) );
-    check( !rn_region_ring_span_valid( region, 65536 - 1152, 1153 ) );
-    check( !rn_region_ring_span_valid( region, 65536, 1 ) );
+    check( rn_region_ring_span_valid( region, 262144 - 1152, 1152 ) );
+    check( !rn_region_ring_span_valid( region, 262144 - 1152, 1153 ) );
+    check( !rn_region_ring_span_valid( region, 262144, 1 ) );
     check( !rn_region_ring_span_valid( region, 8, 16 ) );                  // placements are multiples of 16
     check( !rn_region_ring_span_valid( region, 0xFFFFFFFFFFFFFFF0ULL, 32 ) ); // no wrap past 2^64
 
@@ -1559,9 +1561,9 @@ static void test_channels_allocator_sizing()
     check( length > 0 && length < (int) sizeof(text) );
     check( (int) strlen( text ) == length );
     check( strstr( text, "48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 460800" ) != NULL );
-    check( strstr( text, "formula bytes 460800" ) != NULL );
-    check( strstr( text, "1000 connections 460800000" ) != NULL );
+    check( strstr( text, "region bytes 1588480" ) != NULL );
+    check( strstr( text, "formula bytes 1588480" ) != NULL );
+    check( strstr( text, "1000 connections 1588480000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1581,7 +1583,7 @@ static void test_channels_allocator_sizing()
     const int old_level = rocketnet_get_log_level();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
     const int lines_before = rn_log_lines;
-    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 460800 );
+    check( rocketnet_message_print_connection_sizing( &config, 16 ) == 1588480 );
     rocketnet_log_level( old_level );
     check( rn_log_lines - lines_before >= 10 );
     check( strstr( rn_log_last, "16 connections" ) != NULL );
@@ -3144,6 +3146,7 @@ static void channels_window_receive_setup( channels_window_receive_rig_t * rig, 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.window_messages = 64;
+    config.max_message_bytes = 32768;       // a block is at most W = 64 fragments (the cross rule of 14)
     rig->arena = rn_arena_create( NULL, &config, 1, &rig->counters );
     check( rig->arena );
     rig->region = rn_arena_region( rig->arena, 0 );
