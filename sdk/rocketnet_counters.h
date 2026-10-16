@@ -404,6 +404,17 @@ enum
     ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD,
     ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION,
 
+    // the message objects (sdk/rocketnet_message_server.cpp, tla/RNSlots.tla):
+    // a send refused for a bad argument (no connection, a bad channel or size,
+    // a start already pending); a transport batch entry -- a payload or an
+    // acked packet id -- discarded because its slot's connection changed in
+    // the update (RNSlots Admit); and each received message still held when
+    // update was called (RejectUnreleasedUpdate). appended: indices are the
+    // contract.
+    ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED,
+    ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY,
+    ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED,
+
     ROCKETNET_NUM_COUNTERS
 };
 

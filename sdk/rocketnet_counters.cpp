@@ -240,6 +240,9 @@ const char * rocketnet_counter_name( int counter )
         case ROCKETNET_COUNTER_MESSAGE_BAD_RING:                               return "MESSAGE_BAD_RING";
         case ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD:                         return "MESSAGE_ORDERING_AHEAD";
         case ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION:                     return "MESSAGE_PROTOCOL_VIOLATION";
+        case ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED:                           return "MESSAGE_SEND_REFUSED";
+        case ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY:                 return "MESSAGE_STALE_CONNECTION_ENTRY";
+        case ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED:                           return "MESSAGE_NOT_RELEASED";
         default:
             rocketnet_assert( 0 );
             return "???";
