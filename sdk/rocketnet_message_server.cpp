@@ -35,6 +35,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_packet_builder.h"
@@ -272,7 +273,8 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
         return;
     if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
         rn_channels_cancel( &connection->ordered.channels );
-    else if ( connection->pending_type == ROCKETNET_UNRELIABLE && connection->pending_descriptor != RN_DESCRIPTOR_NONE )
+    else if ( ( connection->pending_type == ROCKETNET_UNRELIABLE || connection->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ) &&
+              connection->pending_descriptor != RN_DESCRIPTOR_NONE )
         rn_region_send_free( connection->region, connection->pending_descriptor );
     connection->pending_type = -1;
     connection->pending_descriptor = RN_DESCRIPTOR_NONE;
@@ -496,14 +498,22 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         }
         connection->pending_descriptor = connection->ordered.channels.pending;
     }
-    else if ( reliability == ROCKETNET_UNRELIABLE )
+    else if ( reliability == ROCKETNET_UNRELIABLE || reliability == ROCKETNET_UNRELIABLE_SEQUENCED )
     {
-        if ( rn_channels_send_check( &connection->ordered.channels, ROCKETNET_CHANNEL_TYPE_UNRELIABLE, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
+        if ( rn_channels_send_check( &connection->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
             return NULL;
-        if ( (uint32_t) bytes > object->unreliable_limit )
+        // Code 1 may occupy one large RECORDS payload. Its u16 length and
+        // the transport's configured payload cap are permanent refusal
+        // boundaries; checking here keeps an impossible send off the FIFO.
+        const int header = 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );
+        const int transport_max = object->link.max_payload_bytes ?
+            object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PAYLOAD_BYTES;
+        const bool too_large = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
+            bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES || bytes > object->config.max_message_bytes ||
+            bytes + header + 1 > transport_max : (uint32_t) bytes > object->unreliable_limit;
+        if ( too_large )
         {
-            // an unreliable message is one record in one packet here: larger
-            // is the caller's refusal, never exhaustion
+            // An unreliable refusal is the caller's, never exhaustion.
             rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             return NULL;
         }
@@ -522,7 +532,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         }
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         descriptor->channel = (uint16_t) channel;
-        descriptor->reliability = ROCKETNET_CHANNEL_TYPE_UNRELIABLE;
+        descriptor->reliability = (uint8_t) reliability;
         descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
         descriptor->fragments = 1;
         descriptor->next = RN_DESCRIPTOR_NONE;
@@ -531,7 +541,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     }
     else
     {
-        // the other six types are refused until their cards enable them (7.5)
+        // Types not enabled by their cards are refused before taking room (7.5).
         if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
             rn_channels_send_check( &connection->ordered.channels, reliability, (uint32_t) channel );
         else
@@ -575,6 +585,12 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
         descriptor->next = RN_DESCRIPTOR_NONE;
+        if ( connection->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED )
+        {
+            // RNChannelTypes!Enqueue: a sequenced send stays in the unreliable
+            // queue and takes no reliable number or resend entry.
+            descriptor->sequencing = rn_channels_send_sequenced( &connection->ordered.channels, descriptor->channel, &descriptor->ordering );
+        }
         if ( connection->unreliable_tail == RN_DESCRIPTOR_NONE )
             connection->unreliable_head = d;
         else
@@ -658,6 +674,87 @@ static void rn_message_unreliable_drop_all( rn_message_object_t * object, rn_mes
         rn_message_count( object, counter, count - already_counted );
 }
 
+static int rn_message_sequenced_payload_bytes( const rn_send_descriptor_t * descriptor )
+{
+    const int header = 3 + 3 + 3 + ( descriptor->channel >= 256 ? 2 : 1 );
+    return (int) descriptor->bytes + header + 1; // one RECORDS record and form byte
+}
+
+// RNChannelTypes!WritePacket: a large code-1 state is one unreliable RECORDS
+// payload. The existing transport splits it into type-9 fragments; no layer-6
+// block or reliable number is created. Charge the whole fragment plan before
+// writing, so an over-budget state cannot send only a prefix of its fragments.
+static bool rn_message_write_large_sequenced( rn_message_object_t * object, int index, rn_message_connection_t * connection )
+{
+    rn_region_t * region = connection->region;
+    const uint32_t d = connection->unreliable_head;
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    const int payload_bytes = rn_message_sequenced_payload_bytes( descriptor );
+    int fragment_count, stride;
+    if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &stride ) )
+    {
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
+        return true;
+    }
+
+    int admitted_wire_bytes = 0;
+    for ( int i = 0; i < fragment_count; i++ )
+    {
+        const int fragment_bytes = i + 1 < fragment_count ? stride : payload_bytes - stride * ( fragment_count - 1 );
+        const int maximum = rocketnet_send_budget_max_wire_bytes( fragment_bytes + ROCKETNET_FRAGMENT_HEADER_BYTES );
+        if ( maximum == 0 )
+            return false;
+        admitted_wire_bytes += maximum;
+    }
+
+    rocketnet_send_budget_t * budget = &connection->budget;
+    if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
+        budget->rank_reached = rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE );
+    if ( budget->reliable_waiting || (double) admitted_wire_bytes > budget->tokens )
+    {
+        budget->unreliable_dropped++;
+        budget->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
+        return true;
+    }
+
+    rocketnet_packet_context_t context;
+    uint8_t * frame = object->link.start_packet( object->link.transport, index, payload_bytes, &context );
+    if ( !frame )
+        return false; // transient transport room shortage; keep the queue head
+
+    rocketnet_message_record_t record = {};
+    record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
+    record.channel = descriptor->channel;
+    record.ordering = descriptor->ordering & ROCKETNET_MESSAGE_U24_MASK;
+    record.sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
+    record.data = rn_region_send_write_pointer( region, d );
+    record.bytes = (int) descriptor->bytes;
+    rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, frame + context.payload_index, payload_bytes );
+    if ( !rocketnet_message_writer_add( &writer, &record ) || rocketnet_message_writer_finish( &writer ) != payload_bytes )
+    {
+        object->link.abort_packet( object->link.transport, &context );
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
+        return true;
+    }
+
+    // The plan's maximum wire charge is conservative; settle with the sum
+    // returned by the transport after it stages every sealed fragment.
+    budget->tokens -= (double) admitted_wire_bytes;
+    budget->bytes_spent += (uint64_t) admitted_wire_bytes;
+    const int actual_wire_bytes = object->link.finish_packet( object->link.transport, &context, payload_bytes );
+    if ( actual_wire_bytes > 0 )
+        rocketnet_send_budget_settle( budget, admitted_wire_bytes, actual_wire_bytes );
+    else
+        rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+    rn_message_unreliable_unlink( connection, d, RN_DESCRIPTOR_NONE );
+    return true;
+}
+
 // RNChannel WritePacket with RNSendBudget Send, Wait and Drop, for one
 // connection: one frame from the transport at a time, written by layer 6 in
 // place (THE COPIES (a)), finished, and its packet id committed to the sent
@@ -732,12 +829,24 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     rn_region_t * region = connection->region;
     while ( written < max_packets && connection->unreliable_count > 0 )
     {
+        const rn_send_descriptor_t * first = &region->send_descriptors[connection->unreliable_head];
+        if ( first->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
+             rn_message_sequenced_payload_bytes( first ) > ROCKETNET_MAX_PAYLOAD_BYTES )
+        {
+            if ( !rn_message_write_large_sequenced( object, index, connection ) )
+                break;
+            written++;
+            continue;
+        }
         rn_packet_item_t items[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
         uint32_t descriptors[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
         int count = 0;
         for ( uint32_t d = connection->unreliable_head; d != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; d = region->send_descriptors[d].next )
         {
             const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+            if ( descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED &&
+                 rn_message_sequenced_payload_bytes( descriptor ) > ROCKETNET_MAX_PAYLOAD_BYTES )
+                break; // send the preceding small records first
             rn_packet_item_t * item = &items[count];
             memset( item, 0, sizeof( *item ) );
             item->data = rn_region_send_write_pointer( region, d );
@@ -745,7 +854,10 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
             item->number = ROCKETNET_PACKET_NUMBER_NONE;
             item->descriptor = d;
             item->channel = descriptor->channel;
-            item->code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+            item->code = descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ?
+                         ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED : ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+            item->ordering = descriptor->ordering & ROCKETNET_MESSAGE_U24_MASK;
+            item->sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
             item->send_class = ROCKETNET_SEND_CLASS_UNRELIABLE;
             descriptors[count] = d;
             count++;
@@ -909,6 +1021,11 @@ static int rn_server_link_acked( void * transport, const int ** client_index, co
     return rocketnet_server_transport_acked_packets( (rocketnet_server_transport_t *) transport, client_index, packet_ids );
 }
 
+static int rn_server_link_max_payload_bytes( void * transport )
+{
+    return rocketnet_server_transport_max_payload_bytes( (rocketnet_server_transport_t *) transport );
+}
+
 static uint8_t * rn_server_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     return rocketnet_server_transport_start_packet( (rocketnet_server_transport_t *) transport, client_index, request_bytes, context );
@@ -960,6 +1077,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->update = rn_server_link_update;
     link->payloads = rn_server_link_payloads;
     link->acked = rn_server_link_acked;
+    link->max_payload_bytes = rn_server_link_max_payload_bytes;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = rn_server_link_finish_packet;
     link->abort_packet = rn_server_link_abort_packet;
