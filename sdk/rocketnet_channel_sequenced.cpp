@@ -105,6 +105,14 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     // RNChannelTypes!HoldNewest: only one future state per channel is retained.
     // The copy is necessary because the transport's receive batch dies at the
     // update boundary. The in-turn path above remains a pointer-identical view.
+    if ( record->bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
+    {
+        // A fragmented unreliable state is legal. It cannot fit the fixed
+        // future-state slot, so drop it without treating the peer as invalid.
+        rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
     const uint32_t current = rx->held_sequenced;
     if ( current != RN_DESCRIPTOR_NONE )
     {
@@ -117,14 +125,6 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
             return ROCKETNET_CHANNEL_DISPATCH_STALE;
         }
         rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
-    }
-
-    if ( record->bytes > ROCKETNET_MAX_PAYLOAD_BYTES )
-    {
-        // A fragmented unreliable state is legal. It cannot fit the fixed
-        // future-state slot, so drop it without treating the peer as invalid.
-        rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
     uint32_t slot = current;

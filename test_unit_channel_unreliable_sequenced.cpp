@@ -157,6 +157,16 @@ static void large_future_state_drops_without_violation()
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 1 );
     rocketnet_unit_check( channels.violations == 0 );
     rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    const uint8_t small = 9;
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, &small );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint64_t superseded = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 2, payload );
+    record.bytes = (int) sizeof( payload );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 2 );
+    rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
+    rocketnet_unit_check( region->sequenced_holds[region->channel_receive[0].held_sequenced].data[0] == small );
     rn_region_reset( region );
 }
 
