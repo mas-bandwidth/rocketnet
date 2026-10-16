@@ -109,7 +109,7 @@ uint64_t rocketnet_message_client_required_memory( const struct rocketnet_messag
 struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
                                                                      const struct rocketnet_client_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
-                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps, double time )
+                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps )
 {
     if ( !rocketnet_api_null_guard( connect_token ) )
         return NULL;
@@ -123,13 +123,17 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
         return NULL;
     }
 
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create( context, connect_token, transport_config, time );
+    // the transport's clock is seeded at 0.0, the server form's seed: the
+    // connect timers start at the first send, so the first update's time is
+    // the first time anything reads. time comes in only through update.
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create( context, connect_token, transport_config, 0.0 );
     if ( !transport )
         return NULL;
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
-    return (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, time );
+    return (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0 );
 }
 
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client )

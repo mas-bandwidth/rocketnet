@@ -8102,7 +8102,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         int view_bytes = 0;
 
         before = rocketnet_api_misuse_count();
-        rocketnet_check( rocketnet_message_client_create( NULL, NULL, NULL, NULL, NULL, 0, 0, 0.0 ) == NULL );
+        rocketnet_check( rocketnet_message_client_create( NULL, NULL, NULL, NULL, NULL, 0, 0 ) == NULL );
         rocketnet_message_client_destroy( NULL );
         rocketnet_check( rocketnet_message_client_transport( NULL ) == NULL );
         rocketnet_check( rocketnet_message_client_state( NULL ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
