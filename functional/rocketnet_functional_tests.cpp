@@ -4511,6 +4511,7 @@ extern void unreliable_receipts_over_lossy_link();
 extern void promoted_receipts_over_lossy_reliable_blocks();
 extern void reliable_receipts_over_lossy_link();
 extern void state_stream_never_goes_backwards_over_lossy_link();
+extern void reliable_state_stream_over_lossy_link();
 extern void large_unreliable_sequenced_uses_transport_fragments();
 extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
@@ -4601,6 +4602,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "promoted_receipts_over_lossy_reliable_blocks", promoted_receipts_over_lossy_reliable_blocks },
     { "reliable_receipts_over_lossy_link", reliable_receipts_over_lossy_link },
     { "state_stream_never_goes_backwards_over_lossy_link", state_stream_never_goes_backwards_over_lossy_link },
+    { "reliable_state_stream_over_lossy_link", reliable_state_stream_over_lossy_link },
     { "large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments },
     { "ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link },
     { "ordered_small_and_large_interleaved", ordered_small_and_large_interleaved },

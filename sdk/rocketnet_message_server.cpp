@@ -272,6 +272,7 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     if ( object->pending_connection != index )
         return;
     if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
+         connection->pending_type == ROCKETNET_RELIABLE_SEQUENCED ||
          rn_channels_reliable_receipt_base( connection->pending_type ) >= 0 ||
          ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
         rn_channels_cancel( &connection->ordered.channels );
@@ -499,6 +500,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     uint8_t * pointer = NULL;
 
     if ( reliability == ROCKETNET_RELIABLE || reliability == ROCKETNET_RELIABLE_ORDERED ||
+         reliability == ROCKETNET_RELIABLE_SEQUENCED ||
          rn_channels_reliable_receipt_base( reliability ) >= 0 )
     {
         pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, reliability, (uint32_t) bytes );
@@ -605,6 +607,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         serial = 1;
 
     if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED ||
+         connection->pending_type == ROCKETNET_RELIABLE_SEQUENCED ||
          rn_channels_reliable_receipt_base( connection->pending_type ) >= 0 ||
          ( connection->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && connection->ordered.channels.pending != RN_DESCRIPTOR_NONE &&
            (uint32_t) bytes > object->unreliable_limit ) )
