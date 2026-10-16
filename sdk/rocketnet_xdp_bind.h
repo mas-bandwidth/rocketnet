@@ -55,4 +55,60 @@ static inline uint16_t rocketnet_xdp_bind_flags( const char * env_value )
                         ( rocketnet_xdp_want_zerocopy( env_value ) ? ROCKETNET_XDP_BIND_ZEROCOPY : ROCKETNET_XDP_BIND_COPY ) );
 }
 
+// The AF_XDP socket config for one queue, built in one place so the call site
+// cannot drift from the tested choice: rx/tx ring sizes, xdp_flags 0 (libxdp's
+// attach mode for its own program, which inhibit_prog_load turns off), the
+// bind mode above in bind_flags, and the inhibit flag. Config is libxdp's
+// xsk_socket_config at the call site, and any struct with those fields in the
+// unit test (test_unit_xdp_bind.cpp), so this header needs no kernel header.
+template<class Config> static inline void rocketnet_xdp_socket_config_init( Config * config, uint32_t rx_size, uint32_t tx_size,
+                                                                            uint32_t inhibit_prog_load, const char * zerocopy_env )
+{
+    memset( config, 0, sizeof(*config) );
+    config->rx_size = rx_size;
+    config->tx_size = tx_size;
+    config->xdp_flags = 0;
+    config->bind_flags = rocketnet_xdp_bind_flags( zerocopy_env );
+    config->libbpf_flags = inhibit_prog_load;
+}
+
+// The umem config, every field explicit. libxdp before 1.5 copies a caller's
+// config as given (xdp-tools v1.4.2 lib/libxdp/xsk.c:154-171), so a zeroed
+// fill_size or comp_size reaches the kernel, which refuses a 0-entry ring
+// (EINVAL from XDP_UMEM_FILL_RING); 1.5 and later substitute the defaults.
+template<class UmemConfig> static inline void rocketnet_xdp_umem_config_init( UmemConfig * config, uint32_t fill_size, uint32_t comp_size,
+                                                                              uint32_t frame_size )
+{
+    memset( config, 0, sizeof(*config) );
+    config->fill_size = fill_size;
+    config->comp_size = comp_size;
+    config->frame_size = frame_size;
+    config->frame_headroom = 0;
+    config->flags = 0;
+}
+
+// The initial fill, run at create after xsk_umem__create and BEFORE
+// xsk_socket__create: `count` receive frames go onto the fill ring, so the
+// driver finds them when the bind sets up its Rx ring. All or nothing:
+// reserve( count, &index ) must return count (libxdp reserves all or zero);
+// alloc() returns a frame or `invalid`; write( index, frame ) fills one slot;
+// submit( count ) publishes them. Returns false, with nothing submitted, when
+// the reservation or any allocation fails (create then destroys the socket).
+template<class Reserve, class Alloc, class Write, class Submit>
+static inline bool rocketnet_xdp_prefill( uint32_t count, uint64_t invalid, Reserve reserve, Alloc alloc, Write write, Submit submit )
+{
+    uint32_t index = 0;
+    if ( reserve( count, &index ) != count )
+        return false;
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        const uint64_t frame = alloc();
+        if ( frame == invalid )
+            return false;
+        write( index + i, frame );
+    }
+    submit( count );
+    return true;
+}
+
 #endif // #ifndef ROCKETNET_XDP_BIND_H
