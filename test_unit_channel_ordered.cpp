@@ -1335,7 +1335,7 @@ static void start_pointer_is_the_frame_source()
     check( !rn_channels_finish( &a->ordered.channels, 101 ) );
     check( rn_channels_cancel( &a->ordered.channels ) );
     // a type outside the mask is refused and counted (7.5)
-    check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE, 100 ) == NULL );
+    check( rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, 100 ) == NULL );
     check( counter( a, ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED ) == 1 );
 
     // SMALL: a store chunk of the region. The planner reads the message from exactly this pointer.

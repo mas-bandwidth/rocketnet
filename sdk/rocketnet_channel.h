@@ -30,11 +30,11 @@
 // the first version and run even though no sequenced type is enabled
 // (CHANNELS.md 7.1, RNChannel's OrderedTraceUnchangedBySequenced).
 //
-// A record's dispatch is a switch over all eight types. Codes 0 and 3 are
-// enabled; every other type is refused on send
+// A record's dispatch is a switch over all eight types. The enabled mask of
+// 7.5 admits a type; a disabled type is refused on send
 // (ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED) and counted as a violation
-// on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED), behind the enabled
-// mask of 7.5. Each later type's case lives in its own file so its card runs
+// on receive (ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED). Each later type's
+// case lives in its own file so its card runs
 // without touching this one:
 //
 //   sdk/rocketnet_channel_reliable.cpp    code 2
@@ -54,9 +54,9 @@
 #define ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT    7
 #define ROCKETNET_CHANNEL_NUM_TYPES                             8
 
-// the first version's mask: UNRELIABLE and RELIABLE_ORDERED (7.5)
+// the enabled application types (7.5)
 
-#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
+#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
 
 // a receipt type's base type: 5 travels as code 0, 6 as code 2, 7 as code 3
 
@@ -160,7 +160,9 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
 // (RNChannel!Enqueue's ordering assignment, 7.1); `bytes` may be less than
 // start reserved, never more.
 //
-// Only RELIABLE_ORDERED (type 3) travels this path today. NULL (and no
+// RELIABLE (type 2, received on channel 0) and RELIABLE_ORDERED (type 3)
+// travel this path.
+// NULL (and no
 // message) for a type that is not enabled (counted MESSAGE_SEND_TYPE_NOT_ENABLED),
 // a bad channel or size, a start already pending, a region already exhausted,
 // or no room: no room is region exhaustion (R5, tla/RNConnectionMemory.tla
@@ -203,9 +205,8 @@ bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t ch
 //
 // Code 0 (UNRELIABLE) is complete here: at most once per update, a view into
 // the batch, never a reliable number (I3), never blocked by the window (I13).
-// Code 3 (RELIABLE_ORDERED) reaches rn_channels_dispatch_ordered; the other six
-// reach their own file's function and are refused there while their type is
-// disabled.
+// Code 2 reaches rn_channels_dispatch_reliable; code 3 reaches
+// rn_channels_dispatch_ordered. The other codes reach their own file's function.
 
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
 
@@ -298,7 +299,7 @@ void rn_channels_end_update( struct rn_channels_t * channels );
 
 #define ROCKETNET_CHANNEL_VIOLATION     ROCKETNET_MESSAGE_NUM_VIOLATIONS
 
-// What a connection owns to send and receive RELIABLE_ORDERED: the dispatch
+// What a connection owns to send and receive RELIABLE and RELIABLE_ORDERED: the dispatch
 // (layer 4), the sender's numbering and acks (layer 3), the receiver's window
 // (layer 3), and the packet builder (layer 6). A plain struct the owner embeds
 // in its connection state; it allocates nothing (R2), and all its memory is the
