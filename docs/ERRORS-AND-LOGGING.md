@@ -2,16 +2,17 @@
 
 This document specifies the design for structured failure reporting on lifecycle
 and object creation entry points, a preformatted FFI-safe logging callback, and
-the runtime counter inspection contract across the C SDK and the C# binding
+the runtime counter inspection contract for C SDK consumers
 (`issue-157`). Every statement of current behavior cites exact `file:line`
 locations at commit `2507f11c383580f73241563fded80b35e2d2d4e6`.
 
 Read this document beside `docs/ABI-EVOLUTION.md` (`issue-149`), which governs
 shared-library symbol versioning, header installation boundaries, and the
-managed/native ABI gate (`sdk/rocketnet_abi.cpp`, `csharp/RocketNet.Abi.cs`,
-`tools/check_managed_abi.py`).
+native ABI queries and version contract (`sdk/rocketnet_abi.cpp`).
 
-**Status: design for review before Layer 1 implementation begins.**
+**Status: historical design for review before Layer 1 implementation begins.**
+The former C# binding and its smoke/managed ABI gate have been removed;
+C API/ABI design and native verification remain in scope.
 
 ---
 
@@ -23,19 +24,18 @@ At commit `2507f11`, the shared-library C ABI (`tools/exports.txt:1-143`) and
 public headers (`sdk/rocketnet.h`, `sdk/rocketnet_platform.h`) expose the
 following initialization, creation, teardown, and configuration validation
 entry points. None of the object-creating functions returns a structured error
-code: every failure collapses to `NULL` (`IntPtr.Zero` / `IsInvalid` in C#) or
-`false` / `0` / `void`, and the specific refusal reason is either written only
-to `rocketnet_error` (varargs-only and unbound in C#, `csharp/RocketNet.cs:10-12`)
+code: every failure collapses to `NULL` or `false` / `0` / `void`, and the specific refusal reason is either written only
+to `rocketnet_error` (a varargs-only C callback)
 or omitted from `ERROR`-level logs altogether.
 
 | Public Entry Point | Declaration & Export | Implementation | Return & Failure Signal | How Failure Reasons Surface Today |
 | :--- | :--- | :--- | :--- | :--- |
-| `rocketnet_init(context)` | `sdk/rocketnet.h:248`, `tools/exports.txt:52`, `csharp/RocketNet.cs:646` | `sdk/rocketnet.cpp:446-489` | `bool` (`false` on failure) | Re-entry or concurrent transition returns `false` **silently** (`sdk/rocketnet.cpp:450-451`); platform or sodium init failure logs via `rocketnet_error` (`:469`) and returns `false`. |
-| `rocketnet_term()` | `sdk/rocketnet.h:253`, `tools/exports.txt:134`, `csharp/RocketNet.cs:656` | `sdk/rocketnet.cpp:491-512` | `void` | Call when uninitialized or transitioning returns **silently** (`:495-496`); call while `rocketnet_live_allocations != 0` logs via `rocketnet_error` (`:501`) without terminating. |
+| `rocketnet_init(context)` | `sdk/rocketnet.h:248`, `tools/exports.txt:52` | `sdk/rocketnet.cpp:446-489` | `bool` (`false` on failure) | Re-entry or concurrent transition returns `false` **silently** (`sdk/rocketnet.cpp:450-451`); platform or sodium init failure logs via `rocketnet_error` (`:469`) and returns `false`. |
+| `rocketnet_term()` | `sdk/rocketnet.h:253`, `tools/exports.txt:134` | `sdk/rocketnet.cpp:491-512` | `void` | Call when uninitialized or transitioning returns **silently** (`:495-496`); call while `rocketnet_live_allocations != 0` logs via `rocketnet_error` (`:501`) without terminating. |
 | `rocketnet_allocator(malloc_fn, free_fn)` | `sdk/rocketnet.h:319`, `tools/exports.txt:12` | `sdk/rocketnet.cpp:258-272` | `void` | Mismatched NULL/non-NULL pair (`:261`), call while initialized (`:264`), or call with live allocations (`:266`) logs via `rocketnet_error` (`:268`) and keeps prior callbacks. |
-| `rocketnet_client_transport_create(ctx, token, cfg, time)` | `sdk/rocketnet.h:548`, `tools/exports.txt:20`, `csharp/RocketNet.cs:769-825` | `sdk/rocketnet_client_transport.cpp:155-371` | `rocketnet_client_transport_t *` (`NULL` on failure) | 11 failure exits return `NULL` (Section 1.2). Nine log via `rocketnet_error`; reassembly budget refusal (`:186`) and connect-token refusals (`:254`, `DEBUG`/`INFO` only at `sdk/rocketnet_client_protocol.cpp:146,153`) emit **no `ERROR` log line**. |
-| `rocketnet_server_transport_create(ctx, addr, cfg, time)` | `sdk/rocketnet.h:751`, `tools/exports.txt:109`, `csharp/RocketNet.cs:920-946` | `sdk/rocketnet_server_transport.cpp:462-876` | `rocketnet_server_transport_t *` (`NULL` on failure) | 14 failure exits return `NULL` (Section 1.3). Eleven log via `rocketnet_error`; reassembly budget refusal (`:520`), outer struct malloc (`:622`), and sub-table mallocs (`:861`) emit **no outer `ERROR` log line**. |
-| `rocketnet_frame_sync_create(ctx, rate)` | `sdk/rocketnet.h:1019`, `tools/exports.txt:45`, `csharp/RocketNet.cs:1122` | `sdk/rocketnet_frame_sync.cpp:274-320` | `rocketnet_frame_sync_t *` (`NULL` on failure) | 3 failure exits return `NULL` (Section 1.4): invalid `frame_rate` (`:278`) and Windows timer failure (`:311`) log via `rocketnet_error`; malloc failure (`:287`) returns `NULL` **silently**. |
+| `rocketnet_client_transport_create(ctx, token, cfg, time)` | `sdk/rocketnet.h:548`, `tools/exports.txt:20` | `sdk/rocketnet_client_transport.cpp:155-371` | `rocketnet_client_transport_t *` (`NULL` on failure) | 11 failure exits return `NULL` (Section 1.2). Nine log via `rocketnet_error`; reassembly budget refusal (`:186`) and connect-token refusals (`:254`, `DEBUG`/`INFO` only at `sdk/rocketnet_client_protocol.cpp:146,153`) emit **no `ERROR` log line**. |
+| `rocketnet_server_transport_create(ctx, addr, cfg, time)` | `sdk/rocketnet.h:751`, `tools/exports.txt:109` | `sdk/rocketnet_server_transport.cpp:462-876` | `rocketnet_server_transport_t *` (`NULL` on failure) | 14 failure exits return `NULL` (Section 1.3). Eleven log via `rocketnet_error`; reassembly budget refusal (`:520`), outer struct malloc (`:622`), and sub-table mallocs (`:861`) emit **no outer `ERROR` log line**. |
+| `rocketnet_frame_sync_create(ctx, rate)` | `sdk/rocketnet.h:1019`, `tools/exports.txt:45` | `sdk/rocketnet_frame_sync.cpp:274-320` | `rocketnet_frame_sync_t *` (`NULL` on failure) | 3 failure exits return `NULL` (Section 1.4): invalid `frame_rate` (`:278`) and Windows timer failure (`:311`) log via `rocketnet_error`; malloc failure (`:287`) returns `NULL` **silently**. |
 | `rocketnet_message_validate_config(cfg)` | `sdk/rocketnet.h:1195`, `tools/exports.txt:61` | `sdk/rocketnet_config.cpp:98-167` | `int` (`0` on refusal, `1` on valid) | Logs the violated field or cross-field rule via `rocketnet_error` (`sdk/rocketnet_config.cpp:109,120,127,134,141,149,156,162`) and returns `0`. |
 | `rocketnet_platform_socket_create(...)` | `sdk/rocketnet_platform.h:53`, `tools/exports.txt:82` | `sdk/rocketnet_platform.cpp:226,1414,2632` | `rocketnet_platform_socket_t *` (`NULL` on failure) | Logs socket/bind/fcntl/setsockopt failure via `rocketnet_error` and returns `NULL`. |
 | `rocketnet_platform_socket_create_with_pump(..., pump)` | `sdk/rocketnet_platform.h:60`, `tools/exports.txt:83` | `sdk/rocketnet_platform.cpp:3096-3160` | `rocketnet_platform_socket_t *` (`NULL` on failure) | Logs unknown/unsupported pump name or socket failure via `rocketnet_error` and returns `NULL`. |
@@ -49,7 +49,7 @@ has 11 failure exits that all return `NULL`:
 
 | # | Location (`2507f11`) | Condition | Log Output Today | Cleanup / Side Effects |
 | :--- | :--- | :--- | :--- | :--- |
-| C1 | `sdk/rocketnet_client_transport.cpp:157` | `connect_token == NULL` | `rocketnet_assert(connect_token)` (aborts in debug; dereferences `NULL` at `sdk/rocketnet_client_protocol.cpp:136` in release) | C# guards null/length before P/Invoke (`csharp/RocketNet.cs:773-776`); C has no release-mode check. |
+| C1 | `sdk/rocketnet_client_transport.cpp:157` | `connect_token == NULL` | `rocketnet_assert(connect_token)` (aborts in debug; dereferences `NULL` at `sdk/rocketnet_client_protocol.cpp:136` in release) | The C API has no release-mode check. |
 | C2 | `sdk/rocketnet_client_transport.cpp:174-175` | `!rocketnet_config_apply_env("client", ...)` (`sdk/rocketnet_config.cpp:307-418`) | `rocketnet_error` naming the `ROCKETNET_*` variable (`sdk/rocketnet_config.cpp:320,353,364,380,386,397,406`) | None. |
 | C3 | `sdk/rocketnet_client_transport.cpp:177-178` | `!rocketnet_config_validate("client", ...)` (`sdk/rocketnet_config.cpp:420-487`) | `rocketnet_error` naming the out-of-range int or unterminated string (`sdk/rocketnet_config.cpp:442,472,480`) | None. |
 | C4 | `sdk/rocketnet_client_transport.cpp:186-187` | `!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, ROCKETNET_NUM_CLIENT_PACKETS / 2)` | None at call site | Refuses cross-field reassembly allocation above `ROCKETNET_REASSEMBLY_MEMORY_MIB` (`CMakeLists.txt:47`). |
@@ -189,7 +189,6 @@ F2 `OUT_OF_MEMORY`, F3 `TIMER_CREATE_FAILED`; `rocketnet_message_validate_config
 | Dimension | Option A: `_create_ex(..., int * status)` Out-Param | Option B: Per-Thread `rocketnet_last_error()` | Option C: `int *_create(..., handle ** out)` |
 | :--- | :--- | :--- | :--- |
 | **C Callers** | **Zero migration cost** for existing callers; callers wanting the status pass `&status`. Pure data flow; cannot be clobbered by teardown callbacks. | Existing call sites unchanged, but implicit TLS can be overwritten if a custom allocator or log callback runs inside mid-create teardown (`rocketnet_*_transport_destroy` at `sdk/rocketnet_client_transport.cpp:256,339`). | **Breaks every existing C call site** (`client.c`, `server.c`, `soak.c`, `soak_sim.cpp`, `functional/`, `sdk/rocketnet_tests.cpp`, `tools/package_consumer/main.c`), or requires parallel `_ex` names anyway. |
-| **C# Bindings (`csharp/RocketNet.cs`)** | **Fits `.NET SafeHandle` marshalling natively**: the P/Invoke return value stays `ClientTransportHandle` / `ServerTransportHandle` (`SafeHandleZeroOrMinusOneIsInvalid` at `csharp/RocketNet.cs:1293,1315`), while `out Status status` is populated in the **same** P/Invoke crossing. | Requires a **second P/Invoke crossing** (`rocketnet_last_error()`) after `IsInvalid` is observed and relies on CLR thread affinity across two separate P/Invoke calls. | Changes the return type of `ClientTransportCreate`, `ServerTransportCreate`, and `FrameSyncCreate` (`csharp/RocketNet.cs:769,920,1122`), breaking existing C# callers (`csharp/smoke/Program.cs`). |
 | **ABI Stability (`tools/exports.txt`, `ROCKETNET_ABI_VERSION`)** | **Purely additive**: all 142 existing exports in `tools/exports.txt` preserve their exact signatures; `_ex` symbols append without forcing a `ROCKETNET_ABI_VERSION` break. | Additive in `tools/exports.txt`, but introduces cross-DLL `thread_local` runtime state on Linux, macOS, BSD, and Windows. | **Immediate ABI break** on `rocketnet_client_transport_create`, `rocketnet_server_transport_create`, and `rocketnet_frame_sync_create`, requiring a `ROCKETNET_ABI_VERSION` bump. |
 
 ### 2.3 Recommendation
@@ -235,9 +234,8 @@ also emits a `rocketnet_error` line (closing the silent refusal gaps at
 
 1. **Varargs callback signature**: `sdk/rocketnet.h:299` exposes
    `void rocketnet_log_function( void (*function)( int level, const char * format, ... ) )`.
-   Because C variadic function pointers cannot be portably implemented as
-   reverse-P/Invoke callbacks in C#, `csharp/RocketNet.cs:10-12` leaves logging
-   unbound.
+   C variadic function pointers are not a portable callback form across
+   language boundaries; a preformatted C callback is the proposed addition.
 2. **Redundant formatting (`sdk/rocketnet.cpp:114-222`)**: Every log wrapper
    (`rocketnet_printf` at `:152`, `rocketnet_info` at `:164`, `rocketnet_warn` at
    `:176`, `rocketnet_error` at `:188`, `rocketnet_debug` at `:200`, `rocketnet_spam`
@@ -306,26 +304,6 @@ in `sdk/rocketnet.cpp`:
 4. **Last registration wins**: Setting a non-NULL callback on either entry point
    replaces the active sink; passing `NULL` restores `default_log_callback`.
 
-### 3.4 C# Binding (`csharp/RocketNet.cs`)
-
-```csharp
-[UnmanagedFunctionPointer( CallingConvention.Cdecl )]
-unsafe delegate void NativeLogCallback( IntPtr context, int level, byte* message, nuint length );
-
-public delegate void LogSpanCallback( int level, ReadOnlySpan<byte> utf8Message );
-```
-
-1. **Pinned static trampoline**: `RocketNet` roots a static `NativeLogCallback`
-   delegate (`OnNativeLog`) for the process lifetime so the GC never collects a
-   function pointer held by native code.
-2. **Two overloads**: `RocketNet.SetLogCallback(LogSpanCallback? callback)`
-   passes `new ReadOnlySpan<byte>(message, (int)length)` with **zero managed
-   allocations** per log line; `RocketNet.SetLogCallback(Action<int, string>? callback)`
-   marshals `Marshal.PtrToStringUTF8((IntPtr)message, (int)length) ?? string.Empty`.
-   Passing `null` resets the native sink before clearing the managed delegate.
-3. **Exception firewall**: `OnNativeLog` catches any managed exception inside
-   the trampoline so user logging code never unwinds across a native C++ frame.
-
 ---
 
 ## 4. COUNTERS
@@ -337,32 +315,19 @@ Three runtime counter introspection functions are exported in
 `int rocketnet_num_counters()` (`sdk/rocketnet_counters.cpp:9`),
 `uint64_t rocketnet_counter_value(const struct rocketnet_counters_t * counters, int counter)`
 (`sdk/rocketnet_counters.cpp:11-15`), and `const char * rocketnet_counter_name(int counter)`
-(`sdk/rocketnet_counters.cpp:17-225`), bound in `csharp/RocketNet.cs:1114,1169,1173,1177`.
+(`sdk/rocketnet_counters.cpp:17-225`).
 
 ### 4.2 What Remains Open at Commit `2507f11`
 
-1. **Live C/C# counter enum drift (`sdk/rocketnet_counters.h:82,349` vs `csharp/RocketNet.cs:113,153-155`)**:
-   - `sdk/rocketnet_counters.h:82` inserted `ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE`
-     at index `33`, increasing `ROCKETNET_NUM_COUNTERS` to `200` (`sdk/rocketnet_counters.h:349`).
-   - `csharp/RocketNet.cs:113` still declares `public const int NumCounters = 199;`,
-     and `csharp/RocketNet.cs:153-155` omits `ConnectionResponseWrongSize`.
-   - Every C# `RocketNet.Counter` enumerator from `ConnectionResponseNoMapping`
-     (C# `33` vs C `34`) through `MessageUnreliableSendFailed` (C# `198` vs C
-     `199`) is shifted by `-1`, breaking `CountersSpan` indexing and
-     `RocketNet.CounterName` checks in `csharp/smoke/Program.cs:518-529`.
-   - `CheckNativeAbi` (`csharp/RocketNet.Abi.cs:90-131`) checks only struct
-     layouts and `ROCKETNET_ABI_VERSION`, so `tools/check_managed_abi.py` misses
-     the enum drift.
-2. **Debug-mode abort on out-of-range `rocketnet_counter_name` (`sdk/rocketnet_counters.cpp:221-224`)**:
+1. **Debug-mode abort on out-of-range `rocketnet_counter_name` (`sdk/rocketnet_counters.cpp:221-224`)**:
    - `rocketnet_counter_name` executes `rocketnet_assert( 0 ); return "???";`
      (`sdk/rocketnet_counters.cpp:222-223`), aborting debug builds when a caller
      probes `< 0` or `>= ROCKETNET_NUM_COUNTERS`.
-3. **Non-counter state inside `struct rocketnet_counters_t` (`sdk/rocketnet_counters.h:352-362`)**:
+2. **Non-counter state inside `struct rocketnet_counters_t` (`sdk/rocketnet_counters.h:352-362`)**:
    - `struct rocketnet_counters_t` contains `uint64_t values[ROCKETNET_NUM_COUNTERS]`
      (`:354`) **plus** `uint64_t handshakes_processed_this_update` (`:361`),
-     which is mutable per-update server budget state, while `csharp/RocketNet.cs:1177-1182`
-     casts `const struct rocketnet_counters_t *` directly to `(void*)counters`.
-4. **No public C/C# snapshot helper for opaque `rocketnet_counters_t`**:
+     which is mutable per-update server budget state and not a counter value.
+3. **No public C snapshot helper for opaque `rocketnet_counters_t`**:
    - External callers that only include `sdk/rocketnet.h` have no batch copy
      function to snapshot counters without looping `rocketnet_counter_value` 200 times.
 
@@ -371,7 +336,7 @@ Three runtime counter introspection functions are exported in
 1. **Single-source X-macro table (`ROCKETNET_COUNTERS_TABLE`)**: Define the
    counter list once in `sdk/rocketnet_counters.h` to generate both the enum and
    `rocketnet_counter_name`, and resolve the `CONNECTION_RESPONSE_WRONG_SIZE`
-   drift (Section 6, `Q4`).
+   count in the native API.
 2. **Keep `struct rocketnet_counters_t` pure**: Move
    `handshakes_processed_this_update` (`sdk/rocketnet_counters.h:361`) onto
    `struct rocketnet_server_protocol_t` (`sdk/rocketnet_server_protocol.h`), and
@@ -395,11 +360,6 @@ Three runtime counter introspection functions are exported in
    (leaving the `ROCKETNET_COUNTER_*` enum public and using `rocketnet_counters_snapshot`
    / `rocketnet_counter_value` across the ABI) prevents new counters from
    changing any public struct size.
-2. **Managed/Native ABI verification (`csharp/RocketNet.Abi.cs:90-131`, `tools/check_managed_abi.py`)**:
-   Extending `CheckNativeAbi` to verify `rocketnet_num_counters() >= NumCounters`
-   and that every `Counter` and `Status` enum member name matches
-   `rocketnet_counter_name` / `rocketnet_status_string` catches any future
-   enum drift at library load time.
 
 ---
 
@@ -407,11 +367,10 @@ Three runtime counter introspection functions are exported in
 
 | Layer | Name | Files Owned | What It Guarantees | How It Is Checked |
 | :--- | :--- | :--- | :--- | :--- |
-| **Layer 1** | Counter Table & C/C# Parity | `sdk/rocketnet_counters.h`, `sdk/rocketnet_counters.cpp`, `sdk/rocketnet_server_protocol.h`, `sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet.h`, `tools/exports.txt`, `csharp/RocketNet.cs`, `csharp/RocketNet.Abi.cs` | Single `ROCKETNET_COUNTERS_TABLE` generates the C enum and `rocketnet_counter_name`; `handshakes_processed_this_update` moves to `rocketnet_server_protocol_t`; `rocketnet_counter_name` never asserts on out-of-range indices; `rocketnet_counters_snapshot` copies bounded prefixes; C# `RocketNet.Counter` matches C 1-for-1 and is verified by `CheckNativeAbi`. | `test_unit_counters.cpp` in `./bin/test` (bijective `0 .. rocketnet_num_counters() - 1` names, out-of-range bounds, snapshot checks, `sizeof(rocketnet_counters_t)`); `python3 tools/check_managed_abi.py ./bin` and `csharp/smoke`. |
+| **Layer 1** | Counter Table & C API | `sdk/rocketnet_counters.h`, `sdk/rocketnet_counters.cpp`, `sdk/rocketnet_server_protocol.h`, `sdk/rocketnet_server_protocol.cpp`, `sdk/rocketnet.h`, `tools/exports.txt` | Single `ROCKETNET_COUNTERS_TABLE` generates the C enum and `rocketnet_counter_name`; `handshakes_processed_this_update` moves to `rocketnet_server_protocol_t`; `rocketnet_counter_name` never asserts on out-of-range indices; `rocketnet_counters_snapshot` copies bounded prefixes. | `test_unit_counters.cpp` in `./bin/test` (bijective `0 .. rocketnet_num_counters() - 1` names, out-of-range bounds, snapshot checks, `sizeof(rocketnet_counters_t)`). |
 | **Layer 2** | Preformatted Log Callback | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `tools/exports.txt` | `log_quiet` and `log_level` use atomic loads before `vsnprintf`; `rocketnet_set_log_callback(cb, ctx)` delivers `(ctx, level, message, length)` with `message[length] == '\0'` and `length <= 1023` in one `vsnprintf` pass; `default_log_function` double-formatting is removed; `rocketnet_log_function` coexists. | `test_unit_logging.cpp` in `./bin/test` (level filtering before format, `log_quiet`, `context` forwarding, exact `length` and NUL termination at `0`, `1023`, `1024`, `2048`, sink switching, multi-thread logging). |
 | **Layer 3** | Status Enum & Plumbing | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_client_protocol.h`, `sdk/rocketnet_client_protocol.cpp`, `tools/exports.txt` | `enum rocketnet_status_t` (`0 .. ROCKETNET_NUM_STATUS_CODES - 1`), `rocketnet_status_string`, and `rocketnet_num_status_codes` are defined; internal config, ladder, and token helpers accept `int * status` and log at `ROCKETNET_LOG_LEVEL_ERROR` on every refusal. | `test_unit_status.cpp` in `./bin/test` verifying every status string, out-of-range `rocketnet_status_string` queries, and exact status codes from config, driver ladder, and connect-token validation. |
 | **Layer 4** | Public `*_create_ex` Entry Points | `sdk/rocketnet.h`, `sdk/rocketnet.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_frame_sync.cpp`, `tools/exports.txt` | `rocketnet_init_ex`, `rocketnet_term_ex`, `rocketnet_allocator_ex`, `rocketnet_client_transport_create_ex`, `rocketnet_server_transport_create_ex`, `rocketnet_frame_sync_create_ex`, and `rocketnet_message_validate_config_ex` report exact `rocketnet_status_t` codes on all branches (C1–C11, S1–S14, F1–F3) while keeping non-`_ex` signatures unchanged. | `test_lifecycle.cpp` and `test_unit_status.cpp` exercising every failure branch, including a fault-injecting allocator (`rocketnet_allocator_ex`) failing at each sequential allocation site to prove `ROCKETNET_STATUS_OUT_OF_MEMORY` and zero leaks at `rocketnet_term_ex`. |
-| **Layer 5** | Managed C# Binding | `csharp/RocketNet.cs`, `csharp/RocketNet.Abi.cs`, `csharp/smoke/Program.cs`, `tools/check_managed_abi.py` | `RocketNet.Status`, `RocketNet.StatusString`, `out Status` overloads on `Init`, `ClientTransportCreate`, `ServerTransportCreate`, and `FrameSyncCreate`, `RocketNet.SetLogCallback`, and `RocketNet.CountersSnapshot` are bound and ABI-checked on load. | `python3 tools/check_managed_abi.py ./bin` and `dotnet run --project csharp/smoke -c Release` asserting exact `Status` codes and captured log lines on negative controls (`csharp/smoke/Program.cs:186,594`). |
 
 ---
 
@@ -437,29 +396,19 @@ Three runtime counter introspection functions are exported in
    granularity, or should OS primitive failures (`MUTEX_CREATE_FAILED`,
    `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED`) collapse into a single
    `ROCKETNET_STATUS_PLATFORM_ERROR`?
-4. **`Q4` (Resolving the live `ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE` index shift)**:
-   `ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE` was inserted at index `33`
-   in `sdk/rocketnet_counters.h:82`, shifting C indices `34..199` relative to
-   `csharp/RocketNet.cs:154-319`. Should `ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE`
-   move to index `199` at the end of `sdk/rocketnet_counters.h` (restoring the
-   pre-existing indices `33..198`), or should `33` stand as canonical and
-   `csharp/RocketNet.cs` insert `ConnectionResponseWrongSize = 33` with
-   `NumCounters = 200`?
-5. **`Q5` (Out-of-range return value for `rocketnet_counter_name` and `rocketnet_status_string`)**:
+4. **`Q4` (Out-of-range return value for `rocketnet_counter_name` and `rocketnet_status_string`)**:
    When `rocketnet_counter_name(counter)` or `rocketnet_status_string(status)`
    is called with an out-of-range integer (with `rocketnet_assert(0)` removed so
    debug builds do not abort), should it return `NULL` or the literal `"???"`
    currently returned in release builds (`sdk/rocketnet_counters.cpp:223`)?
-6. **`Q6` (`struct rocketnet_counters_t` visibility in installed `sdk/rocketnet_counters.h`)**:
+5. **`Q5` (`struct rocketnet_counters_t` visibility in installed `sdk/rocketnet_counters.h`)**:
    `CMakeLists.txt:332` installs `sdk/rocketnet_counters.h`. Should
    `struct rocketnet_counters_t` (`sdk/rocketnet_counters.h:352-362`) be gated
    behind `#ifdef ROCKETNET_IMPLEMENTATION` so external C consumers rely on the
    opaque pointer plus `rocketnet_counter_value` / `rocketnet_counters_snapshot`
    (preventing new counters from changing a public struct size), or remain
    publicly defined?
-7. **`Q7` (Timing of `rocketnet_set_log_callback` registration)**:
+6. **`Q6` (Timing of `rocketnet_set_log_callback` registration)**:
    Should `rocketnet_set_log_callback` allow live replacement at any time via the
-   atomic spin lock in Section 3.2 (which `csharp/smoke/Program.cs` can use to
-   capture expected refusal logs around negative controls instead of calling
-   `RocketNet.Quiet(true)` at `csharp/smoke/Program.cs:593`), or restrict
-   registration to when no transports are active?
+   atomic spin lock in Section 3.2, or restrict registration to when no
+   transports are active?

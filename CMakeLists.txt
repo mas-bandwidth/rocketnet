@@ -13,7 +13,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
 option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
-option(ROCKETNET_BUILD_TESTS "Build the native tests and managed ABI fixtures" ${ROCKETNET_TOP_LEVEL})
+option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_EXAMPLES "Build the client/server examples" ${ROCKETNET_TOP_LEVEL})
 option(ROCKETNET_BUILD_TOOLS "Build keygen and soak tools" ${ROCKETNET_TOP_LEVEL})
 set(ROCKETNET_DRIVER_REGISTRY_HEADER "" CACHE FILEPATH "Additional native driver registry rows (.inc)")
@@ -109,6 +109,8 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_hash.cpp
     sdk/rocketnet_keys.cpp
     sdk/rocketnet_message.cpp
+    sdk/rocketnet_message_client.cpp
+    sdk/rocketnet_message_server.cpp
     sdk/rocketnet_channel.cpp
     sdk/rocketnet_channel_reliable.cpp
     sdk/rocketnet_channel_sequenced.cpp
@@ -154,7 +156,7 @@ add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURC
 # production library refuses. Never installed: it is a build-tree dev aid.
 add_library(rocketnet_dev STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 # The development shared library: the same source with ROCKETNET_DEVELOPMENT=1,
-# for the C# binding smoke, whose loopback connect mints its own token. Never
+# for native development-mode loopback and ABI checks. Never
 # installed; the production shared library must not carry the minting symbol.
 add_library(rocketnet_shared_dev SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -298,6 +300,42 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
+        rocketnet_use_sodium(test)
+    endif()
+    # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
+    # compiled unchanged with the BPF build's defines behind a shadow include
+    # directory of minimal kernel and libbpf headers, so the unit suite judges
+    # its decisions with no kernel, no root and no BPF syscall
+    # (test_unit_xdp_filter_host.cpp). The shim directory is on this one C
+    # target's include path only. The filter is GNU C and the shim models a
+    # little-endian host, so the target is built for GCC or Clang on a
+    # little-endian, non-Windows host; elsewhere the cases print SKIPPED.
+    # ROCKETNET_XDP_FILTER_HOST_SOURCE names the filter source to compile; the
+    # default is the shipped file, and another value is for reproducing a
+    # historical filter.
+    set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c" CACHE FILEPATH
+        "XDP filter source the host-C unit target compiles")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN" AND NOT WIN32)
+        get_filename_component(ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH "${ROCKETNET_XDP_FILTER_HOST_SOURCE}" ABSOLUTE)
+        add_library(rocketnet_xdp_filter_host STATIC test/xdp_host/server_xdp_host.c)
+        set_source_files_properties(test/xdp_host/server_xdp_host.c PROPERTIES
+            OBJECT_DEPENDS "${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}")
+        target_include_directories(rocketnet_xdp_filter_host BEFORE PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/xdp_host" "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+        target_compile_definitions(rocketnet_xdp_filter_host PRIVATE __linux__ __BPF__
+            "ROCKETNET_XDP_FILTER_SOURCE=\"${ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH}\"")
+        target_compile_options(rocketnet_xdp_filter_host PRIVATE -ffreestanding -ffp-contract=off)
+        target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
+        target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
+        # xdp_host_every_counter_has_a_case reads sdk/rocketnet_wire.h and its
+        # own source for the counters and the cases that name them.
+        set_property( SOURCE test_unit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+            "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    else()
+        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
+    endif()
     # test_dev_token_minting_absent_in_release probes the shared release
     # library, so the test target must build it: CI legs build `test` alone,
     # and without this the shared library is missing and the probe goes red.
@@ -326,6 +364,32 @@ if(ROCKETNET_BUILD_TESTS)
         target_compile_options(test_xdp PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
         rocketnet_use_sodium(test_xdp)
         target_link_libraries(test_xdp PRIVATE RocketNet::Bpf RocketNet::Xdp Threads::Threads)
+        # test_xdp_filter loads server_xdp/server_xdp.c and runs crafted frames
+        # through it with BPF_PROG_TEST_RUN (root or CAP_BPF + CAP_NET_ADMIN to
+        # run). The object is built with the command server_xdp/Makefile uses.
+        find_program(ROCKETNET_CLANG clang)
+        if(ROCKETNET_CLANG)
+            execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+                OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            set(ROCKETNET_XDP_FILTER_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/server_xdp_filter_test.o")
+            add_custom_command(OUTPUT "${ROCKETNET_XDP_FILTER_OBJECT}"
+                COMMAND "${ROCKETNET_CLANG}" -D__linux__ -D__BPF__ -ffreestanding -O2 -g
+                    "-I/usr/include/${ROCKETNET_MULTIARCH}" "-I${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+                    -target bpf -c "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c"
+                    -o "${ROCKETNET_XDP_FILTER_OBJECT}"
+                DEPENDS ${ROCKETNET_XDP_SOURCES}
+                VERBATIM)
+            add_custom_target(rocketnet_xdp_filter_object DEPENDS "${ROCKETNET_XDP_FILTER_OBJECT}")
+            add_executable(test_xdp_filter test_xdp_filter.cpp)
+            add_dependencies(test_xdp_filter rocketnet_xdp_filter_object)
+            target_compile_definitions(test_xdp_filter PRIVATE
+                "ROCKETNET_XDP_FILTER_OBJECT=\"${ROCKETNET_XDP_FILTER_OBJECT}\"")
+            target_include_directories(test_xdp_filter PRIVATE sdk)
+            target_compile_features(test_xdp_filter PRIVATE cxx_std_11)
+            target_link_libraries(test_xdp_filter PRIVATE RocketNet::Bpf)
+        else()
+            message(STATUS "clang not found: test_xdp_filter is not built")
+        endif()
     endif()
     if(APPLE)
         add_executable(test_msgx test_msgx.cpp)
@@ -344,10 +408,12 @@ if(ROCKETNET_BUILD_TESTS)
         rocketnet_use_sodium(test_iocp)
         target_link_libraries(test_iocp PRIVATE Threads::Threads)
     endif()
+    file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/functional/channel_*.cpp" )
     add_executable(functional
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
-        functional/lifecycle_driver.cpp)
+        functional/lifecycle_driver.cpp
+        ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

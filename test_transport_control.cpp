@@ -43,6 +43,8 @@ struct control_fixture_t
     int acks[ROCKETNET_MAX_CLIENTS];
     int capacity;
     int used;
+    uint8_t * lease_frames;
+    int lease_starts;
     rocketnet_address_t reserved_to;
     uint8_t frame[ROCKETNET_FRAME_STRIDE];
     rocketnet_server_socket_process_packets_t received;
@@ -85,6 +87,13 @@ static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, i
 static uint8_t * start_packet(void * p, const rocketnet_address_t * to, uint64_t * id)
 {
     auto * f = (control_fixture_t*)p;
+    if (f->lease_frames)
+    {
+        if (f->lease_starts == f->capacity) return NULL;
+        f->reserved_to = *to;
+        *id = (uint64_t) f->lease_starts;
+        return f->lease_frames + (size_t) f->lease_starts++ * ROCKETNET_FRAME_STRIDE;
+    }
     if (f->used == f->capacity) return NULL;
     f->reserved_to = *to; *id = f->used;
     return f->frame;
@@ -259,6 +268,32 @@ static void test_single_frame_arena()
     printf("test_single_frame_arena_seal_and_abort\n");
 }
 
+static void test_staged_lease_table_full()
+{
+    // Keep every staged frame outstanding. Distinct 16-aligned frames make
+    // this a real lease-capacity check rather than a hash-collision stress.
+    const int lease_limit = 131072 / 2;
+    auto * f = new control_fixture_t();
+    f->capacity = lease_limit + 1;
+    f->lease_frames = (uint8_t*) rocketnet_malloc(NULL, (size_t) f->capacity * ROCKETNET_FRAME_STRIDE);
+    CHECK(f->lease_frames);
+    rocketnet_server_driver_operations_t operations;
+    auto * server = make_server(f, &operations, 1, true);
+    for (int i = 0; i < lease_limit; ++i)
+    {
+        rocketnet_packet_context_t context;
+        CHECK(rocketnet_server_transport_start_packet(server, 0, 64, &context));
+    }
+    rocketnet_packet_context_t refused;
+    CHECK(!rocketnet_server_transport_start_packet(server, 0, 64, &refused));
+    CHECK(server->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL] == 1);
+    CHECK(f->aborts == 1);
+    rocketnet_server_transport_destroy(server);
+    rocketnet_free(NULL, f->lease_frames);
+    delete f;
+    printf("test_staged_lease_table_full\n");
+}
+
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -279,5 +314,6 @@ int main(int argc, char ** argv)
     test_disconnect_burst_next_send(true);
     test_staged_control_fairness();
     test_single_frame_arena();
+    test_staged_lease_table_full();
     rocketnet_term();
 }

@@ -12,7 +12,6 @@
 
 #include "rocketnet.h"
 #include "rocketnet_allocator.h"
-#include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
@@ -37,6 +36,9 @@
 
 #define ROCKETNET_PACKET_BUILDER_MAX_PACKETS            16      // the packets one builder call tracks, config max_packets_per_update at most this
 #define ROCKETNET_PACKET_BUILDER_MAX_NUMBERS            16      // the reliable numbers one packet carries (layer 3's reference ring takes 16 per packet)
+#define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
+
+#define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // RakNet's four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
 
 #define ROCKETNET_PACKET_NUMBER_NONE                    0xFFFFFFFFFFFFFFFFull   // an item that takes no reliable number (I3)
 
@@ -51,11 +53,17 @@ struct rn_packet_item_t
     uint32_t ordering;              // codes 1, 3, 4
     uint32_t sequencing;            // codes 1, 4
     uint32_t descriptor;            // the send descriptor, or RN_DESCRIPTOR_NONE
+    uint32_t ring;                  // codes 3, 4 and a block: the receive ring offset in 16-byte units
+    uint32_t fragment;              // a block: this fragment's index
+    uint32_t fragments;             // a block: the fragment count - 1 (the wire field)
     uint16_t channel;
     uint8_t code;                   // the wire code the record carries
     uint8_t send_class;             // ROCKETNET_SEND_CLASS_*: the budget's class order
     uint8_t taken;                  // the builder sets this on an item it wrote
-    uint8_t pad[3];
+    uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
+    uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
+    uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
+    uint8_t resend;                 // nonzero: an RTO resend, counted and backed off by the caller
 };
 
 struct rn_packet_builder_t
@@ -68,9 +76,12 @@ struct rn_packet_builder_t
     int payload_capacity;                       // the bytes a frame's payload area holds
 
     uint32_t num_channels;                      // the round robin's modulus (17.3 item 4)
-    uint32_t round_robin;                       // the channel the last packet took from
+    uint32_t round_robin;                       // the channel the last item was taken from
     uint32_t packets;                           // packets written by the last call
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
+
+    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (RakNet's weights, 5.3)
+    uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
 
     struct
     {
@@ -89,15 +100,30 @@ struct rn_packet_builder_t
 
 bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int max_packets_per_update, int payload_capacity );
 
-// RNChannel!WritePacket with RNSendBudget!Send, !Wait and !Drop.
+// RNChannel!WritePacket with RNSendBudget!Send, !Wait and !Drop, taking items
+// in RNScheduler!Write's order.
 //
 // Writes at most max_packets_per_update packets into the caller's payload
 // areas (each payload_capacity bytes; the caller owns the frames and passes
-// frame + payload_index). Items are taken in the budget's class order --
-// retransmits and ordered progress, then new reliable, then unreliable --
-// round robin across channels within a class (17.3 item 4), packing several
-// small records per packet (9.3). A record that does not fit ends the packet;
-// it is never split.
+// frame + payload_index). Items are taken in three nested orders
+// (tla/RNScheduler.tla, docs/CHANNELS.md 9.2):
+//
+// 1. the budget's class order, the outer rule -- retransmits, ordered
+//    progress, new reliable, unreliable -- whatever the priorities;
+// 2. within a class, RakNet's four priority levels: the level with the
+//    smallest clock goes next and its clock advances by its stride (1, 5, 14,
+//    35 for IMMEDIATE to LOW), so under a backlog no level starves;
+// 3. within a level, round robin across channels, one item each (17.3 item
+//    4).
+//
+// Within a channel the caller's order is kept: only a channel's first item of
+// a class is offered, at the best priority among that channel's items of the
+// class, so a priority boosts the whole channel and never reorders it (17.3
+// item 3). The caller lists each channel's items in the order the
+// application queued them. An item whose priority is not 0 to 3 is never
+// taken. Several small records pack per packet (9.3). A record that does not
+// fit ends the packet; it is never split. When every item is taken the clocks
+// reset to RakNet's seeds.
 //
 // Each finished packet is admitted against the budget at its own class, at
 // rocketnet_send_budget_max_wire_bytes of its payload. A packet the budget

@@ -1,8 +1,7 @@
 # Native transport drivers
 
-The public transport API in `rocketnet.h` is independent of the backend. C#
-uses that API, and will use the future client/server API above it. Native
-drivers implement `rocketnet_driver.h`; they do not add managed bindings or
+The public transport API in `rocketnet.h` is independent of the backend.
+Native drivers implement `rocketnet_driver.h`; they do not add binding or
 wire-format rules.
 
 `rocketnet_drivers.inc` is the built-in registry. Each row supplies a name,
@@ -106,6 +105,37 @@ hardware failure tests or per-platform line-rate measurements.
 Dispatch measurements and their limits are recorded in
 [bench/transport_fill.md](bench/transport_fill.md).
 
+## The XDP receive filter
+
+`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
+before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
+UDP directly behind it. Both families then run one shared function: the
+destination port and address against the config map, the wire size bounds, the
+filter epoch and value, `ROCKETNET_WIRE_SERVER_PACKET_VALID`, and the redirect
+into the XSKMAP for the receive queue. The counters are the same for both
+families. The IPv6 destination is `public_address_ipv6` in
+`rocketnet_server_xdp_config_t`; all zero accepts any destination, as a zero
+`public_address` does for IPv4.
+
+An IPv6 frame whose next header is an extension header (hop-by-hop 0, routing
+43, fragment 44, destination options 60, AH 51 or ESP 50) passes to the kernel
+stack through one named branch and increments
+`ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION`. The program never walks
+an extension chain and never drops one, so IPv6 fragments pass. Every other
+non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
+as non-UDP IPv4 does.
+
+`test_xdp_filter` judges the program with the kernel. It loads the object
+through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
+returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
+DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
+reads the stats map back after each frame. It needs root, or CAP_BPF and
+CAP_NET_ADMIN; `-v` prints the verifier's last log line:
+
+```sh
+sudo ./bin/test_xdp_filter -v
+```
+
 ## Embedded XDP source maintenance
 
 The XDP frame codec (`sdk/rocketnet_xdp_frame.h`) synthesises Ethernet + IP +
@@ -114,6 +144,40 @@ UDP for both address families: IPv4 byte-identical to the historical builder
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
 or later) is a follow-up, not yet used.
+
+The filter's decisions also run as ordinary host C in the unit suite, with no
+kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
+compiles `test/xdp_host/server_xdp_host.c`, which includes
+`server_xdp/server_xdp.c` unchanged, with the BPF build's defines
+(`-D__linux__ -D__BPF__ -ffreestanding`) and `test/xdp_host/` first on that
+one target's include path. That directory is a shim: minimal `linux/*.h` and
+`bpf/bpf_helpers.h` with only the types, constants and map macros the filter
+uses. `struct xdp_md` carries `data` and `data_end` as `unsigned long` so they
+hold host pointers. The maps are host storage, and the two helpers are host
+functions. `bpf_redirect_map` copies the kernel's semantics, cited beside it
+(`__bpf_xdp_redirect_map` in `include/linux/filter.h`, reached through
+`xsk_map_redirect`): `XDP_REDIRECT` for a populated slot below `max_entries`,
+otherwise the flags' action bits, so `BPF_F_INGRESS` gives `XDP_DROP`.
+`test_unit_xdp_filter_host.cpp` drives it with frames written byte by byte,
+one table row per frame (bytes, receive queue, wanted verdict, wanted
+counter). Each row checks its verdict, its counter, and that every other
+counter stayed at zero. Each frame is copied into a heap allocation of
+exactly its length, so the sanitizer legs catch a read past `data_end`.
+
+The host tier covers both address families, the address and port match, the
+size bounds, the epoch and filter value, every type at every size against the
+STANDARD.md size table, the IPv6 extension and fragment passes, and the
+redirect decision per receive queue. It also covers the `config == NULL`
+branch, which the kernel's one-entry array never reaches. Only the kernel
+tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
+behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
+GCC or Clang on a little-endian, non-Windows host. Elsewhere, including the
+MSVC unit suite on Windows, the cases print `SKIPPED`. When the filter adopts
+a new kernel header, helper or map, the shim follows in the same change, with
+the helper's kernel source cited. `xdp_host_every_counter_has_a_case` fails
+when a `ROCKETNET_SERVER_XDP_COUNTER_*` has no row that moves it. To reproduce
+a historical filter, configure with
+`-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
 `cmake/XdpSources.cmake` is the source list for staging, archiving, CMake rebuild
 dependencies and verification. Add a new runtime BPF source/header there; archive

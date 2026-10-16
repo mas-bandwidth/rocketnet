@@ -2848,7 +2848,7 @@ void rocketnet_test_server_port_zero_driver()
         // it an operator debugs a cookie gate that never matches.
         //
         // captured at the ERROR level ON PURPOSE, because that is the
-        // level a deployed binary, this suite and the C# smoke all run at:
+        // level a deployed binary and this suite run at:
         // the per-rung warn is invisible there, so if the rule were only a
         // warn a pinned port-zero create would return NULL with nothing
         // anywhere saying why. The exhausted-ladder path restates it as an
@@ -4128,6 +4128,188 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+// The message objects over real sockets: a message server and a message
+// client through loopback, through the C API alone. The game clock starts at
+// T=1000.0, never 0.0, and the first update of each object is at exactly
+// 1000.0: a time field left at a zero seed shows up as a handshake timeout or
+// an expired token here instead of passing by accident. Real clocks and a real
+// socket, so this case lives in the functional tier.
+
+void rocketnet_test_message_objects_loopback_from_t1000()
+{
+    const double game_start = 1000.0;
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 2;
+
+    struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "127.0.0.1", &server_config, NULL, NULL, 0, 0 );
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, NULL, NULL, NULL, 0, 0 );
+    rocketnet_check( client );
+
+    // the game's clock: 1000.0 at the first update, then real seconds on top
+    const double wall_start = rocketnet_platform_time();
+    double now = game_start;
+
+    // the first updates, both at exactly T=1000.0
+    rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_check( rocketnet_message_client_state( client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    rocketnet_message_client_send_packets( client );
+    rocketnet_message_server_send_packets( server );
+
+    // connect, bounded by the wall clock
+    while ( rocketnet_platform_time() - wall_start < 5.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        now = game_start + ( rocketnet_platform_time() - wall_start );
+        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_message_client_send_packets( client );
+        rocketnet_message_server_send_packets( server );
+        if ( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_message_server_client_connected( server, 0 ) )
+            break;
+        if ( rocketnet_message_client_state( client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            break;
+    }
+    rocketnet_check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_message_server_client_connected( server, 0 ) );
+    rocketnet_check( now >= game_start );
+
+    // reliable ordered both ways, written in place through start and finish,
+    // and one unreliable message each way per round until one lands
+    const int num_reliable = 20;
+    int client_sent = 0;
+    int server_sent = 0;
+    int server_got = 0;
+    int client_got = 0;
+    int server_got_unreliable = 0;
+    int client_got_unreliable = 0;
+
+    const double send_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - send_start < 5.0 )
+    {
+        if ( client_sent < num_reliable )
+        {
+            uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+            rocketnet_check( p );
+            for ( int i = 0; i < 8; i++ )
+                p[i] = (uint8_t) ( client_sent + i );
+            rocketnet_check( rocketnet_message_client_finish( client, 8 ) != 0 );
+            client_sent++;
+        }
+        if ( server_sent < num_reliable )
+        {
+            uint8_t * p = rocketnet_message_server_start( server, 0, 0, ROCKETNET_RELIABLE_ORDERED, 8 );
+            rocketnet_check( p );
+            for ( int i = 0; i < 8; i++ )
+                p[i] = (uint8_t) ( 100 + server_sent + i );
+            rocketnet_check( rocketnet_message_server_finish( server, 0, 8 ) != 0 );
+            server_sent++;
+        }
+        if ( server_got_unreliable == 0 )
+        {
+            const uint8_t ping[4] = { 'p', 'i', 'n', 'g' };
+            rocketnet_check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, ping, 4 ) != 0 );
+        }
+        if ( client_got_unreliable == 0 )
+        {
+            const uint8_t pong[4] = { 'p', 'o', 'n', 'g' };
+            rocketnet_check( rocketnet_message_server_send( server, 0, 0, ROCKETNET_UNRELIABLE, pong, 4 ) != 0 );
+        }
+
+        rocketnet_message_client_send_packets( client );
+        rocketnet_message_server_send_packets( server );
+
+        rocketnet_platform_sleep( 0.001 );
+        now = game_start + ( rocketnet_platform_time() - wall_start );
+        rocketnet_check( rocketnet_message_client_update( client, now ) == ROCKETNET_MESSAGE_OK );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_message_server_receive( server, 0, 0, &data, &bytes ) )
+        {
+            if ( bytes == 4 )
+            {
+                rocketnet_check( memcmp( data, "ping", 4 ) == 0 );
+                server_got_unreliable++;
+            }
+            else
+            {
+                rocketnet_check( bytes == 8 );
+                for ( int i = 0; i < 8; i++ )
+                    rocketnet_check( data[i] == (uint8_t) ( server_got + i ) );          // in order, intact
+                server_got++;
+            }
+            rocketnet_message_server_release( server, 0, data );
+        }
+        while ( rocketnet_message_client_receive( client, 0, &data, &bytes ) )
+        {
+            if ( bytes == 4 )
+            {
+                rocketnet_check( memcmp( data, "pong", 4 ) == 0 );
+                client_got_unreliable++;
+            }
+            else
+            {
+                rocketnet_check( bytes == 8 );
+                for ( int i = 0; i < 8; i++ )
+                    rocketnet_check( data[i] == (uint8_t) ( 100 + client_got + i ) );
+                client_got++;
+            }
+            rocketnet_message_client_release( client, data );
+        }
+
+        if ( server_got == num_reliable && client_got == num_reliable && server_got_unreliable > 0 && client_got_unreliable > 0 )
+            break;
+    }
+    rocketnet_check( server_got == num_reliable );
+    rocketnet_check( client_got == num_reliable );
+    rocketnet_check( server_got_unreliable > 0 );
+    rocketnet_check( client_got_unreliable > 0 );
+    rocketnet_check( rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    rocketnet_check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    // the deliberate disconnect crosses the wire and the server's slot empties
+    rocketnet_client_transport_disconnect( rocketnet_message_client_transport( client ) );
+    const double disconnect_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - disconnect_start < 2.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        now = game_start + ( rocketnet_platform_time() - wall_start );
+        rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_MESSAGE_OK );
+        if ( !rocketnet_message_server_client_connected( server, 0 ) )
+            break;
+    }
+    rocketnet_check( !rocketnet_message_server_client_connected( server, 0 ) );
+
+    rocketnet_message_client_destroy( client );
+
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( server );
+    rocketnet_server_transport_stop( server_transport );
+    const double stop_start = rocketnet_platform_time();
+    while ( rocketnet_server_transport_state( server_transport ) != ROCKETNET_SERVER_TRANSPORT_STOPPED &&
+            rocketnet_platform_time() - stop_start < 5.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        now = game_start + ( rocketnet_platform_time() - wall_start );
+        rocketnet_message_server_update( server, now );
+    }
+    rocketnet_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
+    rocketnet_message_server_destroy( server );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 // a test a platform's build compiles out still registers its name, printing a
@@ -4318,6 +4500,23 @@ struct rocketnet_functional_test_t
     void ( *function )();
 };
 
+// the channel harness smoke cases (functional/channel_smoke.cpp, picked up by
+// the functional/channel_*.cpp glob)
+extern void harness_one_message_each_way_lossless();
+extern void harness_one_message_each_way_lossy();
+extern void harness_lossy_100_percent_negative_control();
+extern void harness_no_allocation_after_create();
+extern void harness_collect_preserves_other_channels();
+extern void unreliable_receipts_over_lossy_link();
+extern void promoted_receipts_over_lossy_reliable_blocks();
+extern void reliable_receipts_over_lossy_link();
+extern void state_stream_never_goes_backwards_over_lossy_link();
+extern void reliable_state_stream_over_lossy_link();
+extern void large_unreliable_sequenced_uses_transport_fragments();
+extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
+extern void ordered_small_and_large_interleaved();
+extern void reliable_mixed_sizes_over_lossy_link();
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
@@ -4393,6 +4592,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_config_env_aliases", rocketnet_test_config_env_aliases },
     { "test_client_driver", rocketnet_test_client_driver },
     { "test_lifecycle_driver", rocketnet_test_lifecycle_driver },
+    { "test_message_objects_loopback_from_t1000", rocketnet_test_message_objects_loopback_from_t1000 },
+    { "harness_one_message_each_way_lossless", harness_one_message_each_way_lossless },
+    { "harness_one_message_each_way_lossy", harness_one_message_each_way_lossy },
+    { "harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control },
+    { "harness_no_allocation_after_create", harness_no_allocation_after_create },
+    { "harness_collect_preserves_other_channels", harness_collect_preserves_other_channels },
+    { "unreliable_receipts_over_lossy_link", unreliable_receipts_over_lossy_link },
+    { "promoted_receipts_over_lossy_reliable_blocks", promoted_receipts_over_lossy_reliable_blocks },
+    { "reliable_receipts_over_lossy_link", reliable_receipts_over_lossy_link },
+    { "state_stream_never_goes_backwards_over_lossy_link", state_stream_never_goes_backwards_over_lossy_link },
+    { "reliable_state_stream_over_lossy_link", reliable_state_stream_over_lossy_link },
+    { "large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments },
+    { "ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link },
+    { "ordered_small_and_large_interleaved", ordered_small_and_large_interleaved },
+    { "reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

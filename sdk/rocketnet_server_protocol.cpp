@@ -105,6 +105,14 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 
 thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
+// Read the receive thread's tally in the TU that owns its TLS definition.
+// An external TLS read from the test object can leave a weak initializer
+// unresolved in optimized sanitizer builds.
+uint64_t rocketnet_server_cookie_mac_count()
+{
+    return rocketnet_server_cookie_mac_calls;
+}
+
 static int rocketnet_server_request_cookie_mac( uint8_t * mac,
                                                 const struct rocketnet_address_t * from,
                                                 const uint8_t * connection_salt,

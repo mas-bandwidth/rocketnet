@@ -279,6 +279,14 @@ static const char * const counters_appended_names[] =
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
     "CONNECTION_REQUEST_MAPPING_SALT_MISMATCH",
     "SEND_HISTORY_LOST",
+    "MESSAGE_BAD_CHANNEL",
+    "MESSAGE_BAD_BLOCK",
+    "MESSAGE_BAD_RING",
+    "MESSAGE_ORDERING_AHEAD",
+    "MESSAGE_PROTOCOL_VIOLATION",
+    "MESSAGE_SEND_REFUSED",
+    "MESSAGE_STALE_CONNECTION_ENTRY",
+    "MESSAGE_NOT_RELEASED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -377,6 +385,9 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_RESPONSE_ALREADY_CONNECTED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_RESENT ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
 }
@@ -503,31 +514,14 @@ struct counters_exception_t
 
 static const counters_exception_t counters_no_code_path[] =
 {
-    { "MESSAGE_SEQUENCED_STALE",        "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
-    { "MESSAGE_SEQUENCED_SUPERSEDED",   "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
-    { "MESSAGE_SEQUENCED_HOLD_FULL",    "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
-    { "MESSAGE_RECEIPT_RING_FULL",      "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
-    { "MESSAGE_RECEIPT_ACKED",          "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
-    { "MESSAGE_RECEIPT_LOSS",           "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
     { NULL, NULL }
 };
 
-// Reachable counters no test names yet: NOT DONE, and reported as such. This
-// is not an exemption. The counting site is real and the counter belongs to
-// the card's reachable set; every run prints one NOT-DONE line per row with
-// the reason, and an entry leaves this list the day a test names the counter
-// (the audit fails if one is named while it is still listed, and fails if a
-// listed counter has no code path, so the list only shrinks and never holds a
-// counter that belongs in counters_no_code_path).
+// Keep this list empty while every reachable counter has a test witness.
+// A future unreachable-by-test counter can only enter with its code-path
+// reason; the audit rejects an exception once a test names that counter.
 
-static const counters_exception_t counters_reachable_not_done[] =
-{
-    { "SEND_LEASE_FULL", "the lease table admits Capacity/2 starts per fill phase (65536 on the server, 512 on the client) and an abort gives none back; "
-                         "the portable fill is capped at 272 (ring 256, arena 16) and the gso fill at 16400, so only a staged driver that hands out 65537 frames "
-                         "reaches the server site, and the one seam that fakes such a driver below root is test_transport_control.cpp, which this card's PATHS do not name; "
-                         "the client sites have no driver seam and a fixed 256-slot ring" },
-    { NULL, NULL }
-};
+static const counters_exception_t counters_reachable_not_done[] = { { NULL, NULL } };
 
 static bool counters_in_list( const counters_exception_t * list, const std::string & name )
 {
@@ -743,6 +737,15 @@ static int counters_first_outcome( int received )
     return -1;
 }
 
+#if ROCKETNET_ASSERTS
+static int counters_expected_null_asserts = 0;
+
+static void counters_expected_null_assert( const char *, const char *, const char *, int )
+{
+    counters_expected_null_asserts++;
+}
+#endif
+
 static void counters_conservation_reports_the_first_unbalanced_family()
 {
     char report[256];
@@ -824,7 +827,16 @@ static void counters_conservation_reports_the_first_unbalanced_family()
 
     // a NULL block is not conserved
     const uint64_t misuse_before = rocketnet_api_misuse_count();
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    counters_expected_null_asserts = 0;
+    rocketnet_assert_function( counters_expected_null_assert );
+#endif
     check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( counters_expected_null_asserts == 1 );
+#endif
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
 }
 

@@ -120,7 +120,7 @@ starts.
 | 6 | **Scheduler** | Four priority levels with RakNet's strides, round robin of channels within a level, FIFO within a channel, and the packet builder that aggregates | Within a channel, the first send of each record follows ordering order. No level starves. A stalled window never blocks unreliable traffic. | `RNScheduler` |
 | 7 | **Endpoint machine** and **slots machine** | One connection's composition of layers 3 to 6, its error state and deadline; the server's slot-to-endpoint map | The pure-module rule. End to end, over a lossy link, delivery is exactly-once for reliable, at-most-once for unreliable, and no state hangs. | `RNEndpoint`, `RNSlots`; socketless unit tests |
 | 8 | **Objects** | `rocketnet_server_t` and `rocketnet_client_t`: transport plus endpoints plus regions plus time | The update order, the thread rules, the delivered list's lifetime | functional tests over loopback; the swarm soak |
-| 9 | **C API** | `sdk/rocketnet.h`, `extern "C"`, no C++ types | The surface section 12 lists, usable from C#. | binding smoke; header compile test |
+| 9 | **C API** | `sdk/rocketnet.h`, `extern "C"`, no C++ types | The surface section 12 lists for C consumers. | native header compile and package-consumer tests |
 
 The order of work is in section 18.
 
@@ -149,6 +149,9 @@ no slot ever allocates again. A region holds:
 3. **The receive ring.** `B` bytes with no allocator logic at all. Placement is
    decided by the *sender*: each holdable record carries its ring offset (layer
    3). The receiver only checks bounds.
+4. **The send spans.** `SR = B` bytes of one ring for the messages above one
+   chunk, each a contiguous span the application writes once, in place (see
+   "Departure from the chained block" below).
 
 **Guarantees.** After create the region never changes size. Every pointer the
 region hands out lies inside it. Allocation and free are O(1). Refusal is
@@ -185,7 +188,7 @@ the design these points:
   (`floor(S/3)` rounded down to 64). Each holds its chunks, then one u32 link
   per chunk, so a class has `floor(third / (chunk + 4))` chunks and nothing
   lies outside `S`.
-  - At the defaults the classes are 330 × 128, 84 × 512 and 37 × 1152.
+  - At the defaults the classes are 2019 × 128, 516 × 512 and 230 × 1152.
   - A free chunk's link names the next free chunk.
   - An allocated chunk's link carries `IN_USE`, `HEAD` on a chain's first
     chunk, and the next chunk of its block. A block's chain therefore costs no
@@ -194,19 +197,20 @@ the design these points:
 - **No fallback to a larger class.** A message takes the smallest class that
   fits, or it is refused. Fallback would make one class's exhaustion drain the
   others and blur which counter means what.
-- **At the defaults, `MESSAGE_SEND_QUEUE_FULL` cannot fire.** The store's 451
-  chunks run out before the 1024 descriptors can. The queue bound only binds
-  when `Q` is below the store's chunk count (for example a client with
-  `send_queue_messages = 64`, which is how the soak reaches it). Whether the
+- **At the defaults, the descriptors bind first for messages of 128 bytes or
+  less** (1024 descriptors against 2019 small chunks); the 516 medium chunks
+  and the 230 large chunks bind first above that, and a message above one chunk
+  takes a span instead (below). A client with `send_queue_messages = 64` reaches
+  `MESSAGE_SEND_QUEUE_FULL` sooner, which is how the soak reaches it. Whether the
   default `Q` should drop to the store's chunk count is choice G7 (18.2).
 - **The lean profile is refused by the store rule.** At `S = 65536` the large
-  class holds 18 chunks. The default `max_message_bytes` of 32768 needs 29.
+  class holds 18 chunks. The default `max_message_bytes` of 262144 needs 228.
   The lean profile therefore also needs `max_message_bytes <= 20,736`.
 - **One validation rule more:** `rto_min_ms <= rto_initial_ms <= rto_max_ms`.
   The clamp in 6.4 needs `min <= max`, and a first timeout outside the clamp
   has no meaning.
 - **The exact region** is the formula plus at most 63 bytes of alignment per
-  part. At the defaults the padding is 0, and the region is 460,800 bytes,
+  part. At the defaults the padding is 0, and the region is 1,588,480 bytes,
   which is section 14's figure to the byte.
 - **Every entry type is pinned** to its section 14 size by a static assert.
   `rn_delivery_t` holds its pointer in a union with a u64, so it is 24 bytes on
@@ -234,6 +238,39 @@ the design these points:
     when it lands. The two size macros (`ROCKETNET_MESSAGE_SINGLE_BYTES`,
     `ROCKETNET_MESSAGE_FRAGMENT_BYTES`) are defined once in `sdk/rocketnet.h`;
     the codec header uses those.
+
+**Departure from the chained block: the send spans** (`sdk/rocketnet_allocator.h`,
+`rn_region_send_alloc_span`; `test_unit_channel_ordered.cpp`). The first
+version of this section chained a block's chunks through the store, one 1152-byte
+chunk per fragment. A chain gives the application no contiguous pointer for
+the message, so the send API of the objects card (`start(connection, channel, bytes)` returns a pointer, `finish(bytes)` enqueues, like the transport's
+`start_packet` and `finish_packet`) could not hand a 256 KiB message out to be
+written once, in place (owner rule R3). A message of one chunk or less still
+takes a store chunk of the smallest class that fits. A message above one chunk
+(1153 bytes and up, including a message whose record fits one packet) takes a
+**span**:
+
+- One more part of the region, `SR = B` bytes, 64-aligned, so every span
+  starts 16-aligned, and every fragment starts at `span + i·F`, a multiple of
+  16.
+- Placed as RNRing places a holdable record on the sender's side
+  (`tla/RNRing.tla`, `PlaceSingle`): at the tail, or, when the tail leaves too
+  little room before the end, at the start of the ring, the skipped bytes being
+  padding; admitted only when it ends at or before the oldest live span's start,
+  the floor. No span crosses the end of the ring.
+- Freed when its message is fully acked (every fragment, `rn_region_send_free_fragment`),
+  in any order. The floor moves only when the oldest live span is freed. A younger
+  span's bytes wait for it, as they do in `tla/RNRing.tla`'s `Ack`. The live
+  spans are a doubly linked list through the send descriptors (`span_prev`,
+  `span_next`), so freeing is O(1) and the floor is the first node's start.
+- A start with no room is region exhaustion (`MESSAGE_SEND_STORE_FULL`, then
+  `MESSAGE_MEMORY_EXHAUSTED`): the connection is kicked, as for any other
+  exhaustion. An application with more than `SR` bytes of large messages in
+  flight sizes `B` (and so `SR`) for it, or paces its sends.
+- The store's large class is still checked by validation to hold one maximal
+  block (14). The span makes that rule stricter than it needs to be, since no
+  block is stored in the large class now; relaxing it is a change to
+  `sdk/rocketnet_config.cpp`, proposed beside this card.
 
 **Who owns each region, and exhaustion kicks** (`tla/RNConnectionMemory.tla`,
 `tla/README-RNConnectionMemory.md`; `test_unit_connection_memory.cpp`).
@@ -577,7 +614,7 @@ details explicit:
   (`{prev, next}`, 8 bytes each, `RN_RESEND_NONE = UINT32_MAX`), indexed by
   `n % W`. That gives O(1) unlink on out-of-order ack and O(1) move-to-tail on
   commit or resend without scanning `W`, and adds `8W` to section 14's region
-  formula (`104.125W`, `460,800` bytes at the defaults).
+  formula (`104.125W`).
 - **Commit and eviction.** `rn_window_ack_commit_packet` writes
   `{packet_id, send_time, ref_start, ref_count}` into the circular `P`-entry
   `sent_packets` ring, inserts `packet_id -> ring_slot` into the open-addressed
@@ -739,8 +776,30 @@ the dispatch: `sdk/rocketnet_channel_reliable.cpp` (code 2),
 `sdk/rocketnet_channel_receipts.cpp` (codes 5, 6 and 7). Each holds its
 enabled flag (false today) and its refusal; `rn_channels_dispatch` calls into
 them and counts `MESSAGE_TYPE_NOT_ENABLED` on the way back. Code 0's path is
-complete and code 3's reaches `rn_channels_dispatch_ordered`, which delivers a
-record whose ordering is its channel's turn and holds nothing yet.
+complete, and so is code 3's, in `rn_channels_dispatch_ordered`:
+
+- **Order in 24 bits.** The ordering index is 24 bits on the wire, so a record's
+  place is `(o − ordered_read) mod 2^24`: 0 is its turn, under `W` is ahead, and
+  the upper half is behind. A record `W` or more ahead cannot come from a correct
+  sender (a sender numbers fewer than `W` records at once) and is a violation,
+  `MESSAGE_ORDERING_AHEAD`. A record behind is `MESSAGE_ORDERING_BEHIND`.
+- **In turn:** delivered as a view into the batch (no copy), `ordered_read`
+  and `sequenced_watermark` move together in `rn_channels_deliver_ordered`, and
+  the drain runs.
+- **Ahead:** copied once into the ring at the record's own offset (THE COPIES
+  (b)), keyed `(channel, ordering)` in the held index (open addressed, `2W`
+  entries, backward-shift deletion), its descriptor kept live.
+- **Drain:** the held message whose ordering is now next is delivered from the
+  ring where it lies, and so on until the next one is missing or short of
+  fragments.
+- **Every delivery** is appended in order to the region's delivery table, with
+  the descriptor to release when the update ends (`rn_channels_end_update`):
+  a number is live while held or delivered in the current update (6.3).
+- **A wire violation** (an ordering index out of range, a bad channel, a block
+  or ring span that breaks 8) sets the connection's sticky error and counts it
+  (`MESSAGE_ORDERING_AHEAD`, `MESSAGE_BAD_CHANNEL`, `MESSAGE_BAD_BLOCK`,
+  `MESSAGE_BAD_RING`, and `MESSAGE_PROTOCOL_VIOLATION` once per connection);
+  the owner reads `rn_ordered_decide` and disconnects the peer (17.3 item 11).
 
 **Drain** runs after each ordered delivery on channel `c`:
 
@@ -855,6 +914,36 @@ A reliable message is a **block** when its single record would not fit in
 part of a block is ever delivered; a block is never mixed with another block
 after numbers wrap; and the `U'` rule prevents slot reuse.
 
+**As built** (`sdk/rocketnet_channel.cpp`, `sdk/rocketnet_packet_builder.cpp`;
+`test_unit_channel_ordered.cpp`; `tla/RNChannel.tla`). RELIABLE_ORDERED, code 3:
+
+- **Small and chunked.** A message whose record fits one packet is SMALL: one
+  number, packed with others, up to `payload_capacity − 14` bytes (1401 for a
+  1415-byte payload; 13 is the longest code 3 header and 1 the form byte). A
+  larger message is a block of `ceil(bytes / F)` chunks, consecutive numbers,
+  ONE ordering index. Every chunk travels in a packet of its own
+  (`rn_packet_item_t::alone`), and a packet tracks at most 16 records so every
+  number it carries is committed under the transport's packet id.
+- **Late and whole numbering.** `rn_ordered_write` numbers a block's chunks at
+  once from the channel's FIFO head, channels taking turns one message each,
+  while the update has room; a bound that stops it stops all numbering (no
+  message overtakes a block) and counts `MESSAGE_WINDOW_STALL` once. Every
+  number joins the resend FIFO as due now, behind the numbers already waiting to
+  be sent, so a chunk or a message the update had no packet or budget for goes
+  next update ahead of anything newer. Resends use the same FIFO: an RTO,
+  backed off, per number.
+- **Pacing is the send budget** (`sdk/rocketnet_send_budget.h`): a chunk that
+  does not fit waits for the next window. A fixed 60 chunks a second is gone.
+- **Receive.** A chunk is copied to `ring + index·F` (placement by index), the
+  first chunk seen is the block's anchor (its descriptor holds the count, the
+  chunks in and the block's first number; the held index finds it by
+  `(channel, ordering)`), and the block is dispatched as one message when every
+  chunk is in, in place from the ring. A count or first number or ring base that
+  disagrees with the anchor, an index at or past the count, a count above
+  `ceil(max_message_bytes / F)` or `W`, a chunk that is not `F` bytes (the last:
+  1 to `F`), or a span outside the ring is `MESSAGE_BAD_BLOCK` or
+  `MESSAGE_BAD_RING`, and the connection is disconnected.
+
 ## 9. Layer 6: the scheduler and packet builder
 
 ### 9.1 What it owns
@@ -912,6 +1001,8 @@ connection, at most `max_packets_per_update` packets:
    (`MESSAGE_UNRELIABLE_OVER_BUDGET`). Either way the update stops there.
    `rocketnet_send_budget_settle` refunds the ack block the packet did not use
    after sealing.
+   A record that travels alone (a chunk) starts a packet and ends it, and a
+   packet carries at most 16 records.
 4. **Commit** the packet (6.4) under the packet id the transport assigned when
    it finished the packet, never an invented counter, so the sent map's keys
    are the ids `rocketnet_*_transport_acked_packets` returns and a resend's ack
@@ -1117,6 +1208,72 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
   send is a loop over subscribers. Nothing here forecloses that.
 - **The game's own clock:** time is always passed in (`sdk/rocketnet.h:542-544`).
 
+### 11.5 As built: `rocketnet_message_client_t` and `rocketnet_message_server_t`
+
+The objects in the tree (`sdk/rocketnet_message_client.cpp`,
+`sdk/rocketnet_message_server.cpp`, `sdk/rocketnet_message_object.h`) are the
+first cut of 11.1 to 11.3, condensed to the two shipped types. Their C API is
+the `message objects` section of `sdk/rocketnet.h`; section 12 below remains
+the full plan.
+
+- **One block.** Create makes one allocation (or takes a caller block of
+  `rocketnet_message_*_required_memory` bytes, 64-aligned): the object, its
+  connections, each connection's receive bookkeeping and the arena of regions.
+  Nothing is allocated after create (R2).
+- **The send.** `start( channel, reliability, bytes )` returns a pointer into
+  the connection's region; the application writes the message there once;
+  `finish( bytes_written )` queues it and returns its receipt serial, nonzero.
+  `abort` gives the room back, and `send` is the copying convenience. The one
+  copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
+- **The receive.** `receive( channel )` hands out the update's next message on
+  the channel as a const view and a length; `release` gives it back. Every view
+  is released before the next update: update with one held asserts in a debug
+  build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in a release build,
+  counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
+  The views are taken back either way, so memory never grows from a held view.
+- **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
+  message is received on channel 0. It is one record in one packet, up to the
+  payload capacity less the form byte and the record's three header bytes
+  (1411). It shares the region's send descriptors and store with the ordered
+  path, and is written after it, under the same budget; when a reliable packet
+  waits for budget, or the budget refuses an unreliable packet, the update's
+  queued unreliable messages are dropped and counted
+  (`MESSAGE_UNRELIABLE_OVER_BUDGET`).
+- **The update** runs RNSlots' order: the held-view check, the last update's
+  EndUpdate and the reset of any kicked connection's region, the transport's
+  update, Observe (the server reads every slot's connection id), the acked
+  packet ids (R1), the payloads, then the kick decision (exhaustion, then a wire
+  violation, then a reliable timeout). `send_packets` writes each connection's
+  packets one frame at a time from the transport's `start_packet`, ordered
+  progress and retransmits first, then unreliable, and calls the transport's
+  `send_packets`.
+- **Admission.** The transport's batches carry a client index but no
+  connection tag. An entry is admitted only for a slot bound before this
+  update's transport update and still bound to the same connection after it;
+  a slot bound or dropped by this update discards its entries, counted as
+  `MESSAGE_STALE_CONNECTION_ENTRY`. The connection id is the transport's
+  `client_id` for the slot, so a reconnect of the same client id into the same
+  slot inside one transport update is not told apart; a per-entry connection
+  tag from the transport (P9b) closes it.
+- **Exhaustion** (R5). A start the region has no room for, or a record the
+  receive side cannot place, ends the connection with
+  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
+  the slot, the client disconnects itself. The region is reset at the next
+  update, before the transport can hand the slot to another client.
+- **Budgets** (R6) are per connection, in kbps, set at create (0 is the
+  default: 1000 for the client, 10000 per server slot) and at runtime with
+  `set_send_kbps`. A reused slot starts at the server's default.
+- **Time.** Create takes no time. The object's clock is the game's time from
+  the first update on. The client's transport is seeded at 0.0 at create and
+  is handed the time since the first update, so its connect timers and the
+  token's lifetime start at the first update whatever the game's clock reads
+  then (a game clock at 1000.0 connects). The server's transport reads the
+  game's time as it is.
+- **Not here yet:** CONFIG (10.3), so two builds with different message
+  configs do not refuse each other; events, receipts and stats lists; the
+  zero-copy SINGLE form (11.2); `write_packets` from fill threads; the
+  six later types.
+
 ## 12. Layer 9: the C API, as it will appear in `sdk/rocketnet.h`
 
 ```c
@@ -1177,9 +1334,9 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
     INT_FIELD( window_messages,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
-    INT_FIELD( receive_ring_bytes,      65536,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,       32768,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_ring_bytes */     \
-    INT_FIELD( send_buffer_bytes,      131072,  12288, 1 << 28,                0 )                                         \
+    INT_FIELD( receive_ring_bytes,     262144,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
+    INT_FIELD( max_message_bytes,      262144,   ROCKETNET_MESSAGE_SINGLE_BYTES, 1 << 20, 0 )   /* WIRE, <= receive_ring_bytes */     \
+    INT_FIELD( send_buffer_bytes,      800000,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
     INT_FIELD( packets_in_flight,         256,     16, 1 << 16,                0 )                                         \
     INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                         \
@@ -1325,17 +1482,18 @@ counters this document names are `MESSAGE_SEND_STORE_FULL`,
 `MESSAGE_MEMORY_EXHAUSTED`, plus one
 counter for each violation in section 13.3.
 
-**The C# shim.** The study's §13 is provisional until the shim arrives. This
-API covers each provisional need:
+**Consumer adapter boundary.** The RakNet-style adapter discussed in the
+study's §13 is outside RocketNet's library deliverable. The native C API
+covers the following protocol needs:
 
 - RakNet's `Send` maps to `send_message`, which returns a nonzero serial.
 - `Receive` and `DeallocatePacket` become iteration over the update's list, or
   the client's copying cursor.
-- Receipts and connection notices are lists. A shim can merge them into
+- Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.
-- This layer does not reserve the first payload byte for a message id. It
-  stays the shim's (study §13).
+- This layer does not reserve the first payload byte for a message id. That
+  remains a consumer adapter choice (study §13).
 
 ## 13. The wire, to the bit, ready for STANDARD.md
 
@@ -1549,7 +1707,7 @@ The CONFIG vector:
 - length 28, then number 0.
 - kind 1, version 1.
 - enabled `0x09`: types 0 and 3.
-- 32 channels, `W` 1024, `B` 65536, max 32768, F 1152.
+- 32 channels, `W` 1024, `B` 262144, max 262144, F 1152.
 
 Card C2 regenerates every vector from the codec and diffs it byte for byte.
 
@@ -1576,37 +1734,46 @@ exact figure.
 | receive ring | `B` |
 | send descriptors | `64·Q` |
 | send store (slab) | `S` |
+| send spans | `SR = B` |
 | sent-packet ring, its index and its references | `32·P + 16·2P + 4·16P` = `128·P` |
 | delivered entries (on the server, the object's list) | `24·(W + Du)` |
 | sequenced holds | `1432·Ru` |
 | receipt ring | `16·Rq` |
 
 ```
-connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq
+connection_bytes = 48C + 104.125W + B + 64Q + S + 128P + 24(W + Du) + 1432Ru + 16Rq + SR
 ```
 
-At the defaults, `C=32, W=1024, B=65536, S=131072, Q=1024, P=256, Du=256,
-Ru=16, Rq=256`:
+At the defaults, `C=32, W=1024, B=262144, S=800000, Q=1024, P=256, Du=256, Ru=16, Rq=256` (`max_message_bytes = 262144`, which space's 256 chunks of 1024
+bytes fit; `S` is the least round figure whose large class holds 228
+chunks, one maximal block):
 
 | term | value |
 |---|---|
 | 48·32 | 1,536 |
 | 104.125·1024 | 106,624 |
-| B | 65,536 |
+| B | 262,144 |
 | 64·1024 | 65,536 |
-| S | 131,072 |
+| S | 800,000 |
 | 128·256 | 32,768 |
 | 24·1280 | 30,720 |
 | 1432·16 | 22,912 |
 | 16·256 | 4,096 |
-| **total** | **460,800** bytes, 450.0 KiB |
+| SR | 262,144 |
+| **total** | **1,588,480** bytes, 1.51 MiB |
 
-That is about 439 MiB for a 1000-client server, on top of the transport's own
-memory (`rocketnet_server_transport_required_memory`).
+`104.125W` already holds the resend FIFO links (`8·W`). Listing them again
+would put the sum 8,192 above the region.
+
+The 460,800 bytes of the first version (`B` 65,536, `S` 131,072, no spans) become
+1,588,480. That is about 1.48 GiB for a 1000-client server, on top of the
+transport's own memory (`rocketnet_server_transport_required_memory`). A game
+whose messages are small sets `max_message_bytes`, `B` and `S` lower, and the
+region follows.
 
 - **Lean profile:** `W=256, B=32768, S=65536, Q=256, P=64, Du=128` comes to
-  about 179 KiB per connection (or **161,312** bytes, 157.5 KiB, with
-  `Ru=4, Rq=64`). As built, its store holds 18 large chunks, so it also needs
+  about 211 KiB per connection (or **194,080** bytes, 189.5 KiB, with
+  `Ru=4, Rq=64`; the spans add `B`). As built, its store holds 18 large chunks, so it also needs
   `max_message_bytes <= 20,736` (section 4).
 - **Channel cost:** 48 bytes per channel. 1024 channels cost 48 KiB per
   connection, and 10,000 channels cost 469 KiB (458 MiB at 1000 clients). No
@@ -1921,6 +2088,10 @@ visible effect, and it is the intended one.
     (study §4.2), but here the transport has already acked the packet.
 12. **The application's messages carry no message-id byte.** The shim decides
     that.
+13. **A message above one chunk is written once, in a contiguous span** of
+    the send spans, and every fragment is copied from it into a frame (4).
+14. **The ordering index is compared modulo 2^24 and bounded by `W`.** A record
+    a window or more ahead is a violation, `MESSAGE_ORDERING_AHEAD` (7.2).
 
 ## 18. Order of work, open choices, not done
 
@@ -1951,7 +2122,7 @@ requires.
   `RNEndpoint`, `RNSlots`.
 - **C8.** Layer 8: objects, loopback functional tests, the swarm soak with
   messages.
-- **C9.** Layer 9: the C API and the C# binding smoke. **The space game
+- **C9.** Layer 9: the C API and native consumer checks. **The space game
   integrates here.**
 - **C10 onward**, one card per type, in this order: 2, 6, 7, 1, 4, 5. Each
   card adds `RNReceipts` and the dispatch tests where needed.
@@ -2016,5 +2187,6 @@ requires.
   loopback), card C0b, commit `bec3ed5`.
 - The RTO behaviour when acks are paced only by keep-alives was reasoned, not
   measured.
-- The C# shim surface is still the study's provisional §13.
+- The RakNet-style consumer adapter surface remains the study's provisional §13;
+  it is outside RocketNet's library deliverable.
 - The layer list (section 3) has not yet gone to Glenn for correction.
