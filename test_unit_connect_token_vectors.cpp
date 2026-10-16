@@ -26,9 +26,12 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-// the vendored two-file libsodium, by path: the test target is not given the
-// sodium/ include directory, and a system sodium.h would not be the one linked
+// Match the header to the sodium implementation linked into the SDK.
+#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#include <sodium.h>
+#else
 #include "sodium/sodium.h"
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
