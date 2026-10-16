@@ -98,6 +98,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `replaywindow` | 2 | Existing control and long-skip `WindowIsTruth` witness |
 | `rnsendstore` | 1 | Existing committed control |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
+| `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described

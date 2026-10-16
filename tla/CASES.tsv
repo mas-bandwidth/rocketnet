@@ -39,6 +39,9 @@ MCRNRingBrokenFloorAtU.cfg	MCRNRing.tla	invariant	LiveSpansDisjoint	check	rnring
 MCRNRingBrokenNoPadding.cfg	MCRNRing.tla	invariant	SpanInsideRing	check	rnring	required	-
 MCRNRingBrokenNoRounding.cfg	MCRNRing.tla	invariant	Aligned	check	rnring	required	-
 MCRNRingBrokenIdleFloor.cfg	MCRNRing.tla	invariant	IdleAdmitsAnyMessage	check	rnring	required	-
+MCRNSendSpans.cfg	MCRNSendSpans.tla	pass	-	check	rnsendspans	required	-
+MCRNSendSpansBrokenFloorAtNewest.cfg	MCRNSendSpans.tla	invariant	LiveSpansDisjoint	check	rnsendspans	required	-
+MCRNSendSpansBrokenNoPadding.cfg	MCRNSendSpans.tla	invariant	SpanInsideRing	check	rnsendspans	required	-
 MCRNWindow.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowSafety.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowBrokenBlockUPrime.cfg	MCRNWindow.tla	invariant	NoSlotCollision	check	rnwindow	required	-
