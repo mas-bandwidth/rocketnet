@@ -48,12 +48,18 @@ die() { say "run.sh: $*" >&2; exit 2; }
 # preflight: every tool is named before anything is fetched or booted
 
 missing=()
-for tool in qemu-system-x86_64 clang cc make pkg-config python3 curl sha256sum flock tar xz ip timeout; do
+for tool in qemu-system-x86_64 clang cc make pkg-config python3 curl sha256sum flock tar xz ip timeout bpftool sysctl diff; do
     command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 command -v dpkg-deb >/dev/null 2>&1 || command -v ar >/dev/null 2>&1 || missing+=("dpkg-deb or ar")
 pkg-config --atleast-version=1.0 libbpf 2>/dev/null || missing+=("libbpf >= 1.0")
 pkg-config --exists libxdp 2>/dev/null || missing+=("libxdp")
+if ! command -v vng >/dev/null 2>&1; then
+    python3 -m ensurepip --version >/dev/null 2>&1 || missing+=("Python venv/ensurepip for pinned virtme-ng")
+    for module in argcomplete requests; do
+        python3 -c "import $module" >/dev/null 2>&1 || missing+=("existing Python $module for pinned virtme-ng (no dependency downloads)")
+    done
+fi
 
 kvm_flags=()
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
@@ -95,6 +101,31 @@ snapshot() {
 }
 
 snapshot "$run/host_before.txt"
+snapshot_checked=0
+host="FAIL host snapshot not compared"
+finish_snapshot() {
+    if [ "$snapshot_checked" = 0 ]; then
+        snapshot "$run/host_after.txt"
+        if diff -u "$run/host_before.txt" "$run/host_after.txt" > "$run/host_diff.txt"; then
+            host="PASS byte-identical"
+        else
+            host="FAIL the host snapshot changed: $run/host_diff.txt"
+        fi
+        printf '%s\n' "$host" > "$run/host_untouched.txt"
+        snapshot_checked=1
+    fi
+    [[ "$host" = PASS* ]]
+}
+# Refusals and failed builds still owe an after-snapshot. The original
+# failure status is preserved; a changed host can never turn into success.
+on_exit() {
+    local status=$?
+    trap - EXIT
+    finish_snapshot || { [ "$status" != 0 ] || status=1; }
+    say "host_untouched: $host"
+    exit "$status"
+}
+trap on_exit EXIT
 
 # ---------------------------------------------------------------------------
 # pinned artifacts: fetched once under a lock, refused on a sha256 mismatch
@@ -129,7 +160,7 @@ if [ -z "$vng" ]; then
     (
         flock 9
         if [ ! -x "$work/vng-venv/bin/vng" ]; then
-            python3 -m venv "$work/vng-venv" && "$work/vng-venv/bin/pip" install --quiet --no-deps --no-index "$wheel"
+            python3 -m venv --system-site-packages "$work/vng-venv" && "$work/vng-venv/bin/pip" install --quiet --no-deps --no-index "$wheel"
         fi
     ) 9>"$work/kernels/.lock" || die "could not install virtme-ng $version into $work/vng-venv"
     vng="$work/vng-venv/bin/vng"
@@ -301,7 +332,7 @@ for kernel in $kernel_names; do
     fi
 done
 
-snapshot "$run/host_after.txt"
+finish_snapshot || true
 
 if [ "$mode" = record ]; then
     say "recorded captures, with manifest rows written from STANDARD.md:"
@@ -314,11 +345,7 @@ if [ "$mode" = record ]; then
 fi
 
 # host_untouched, judged once per run and reported against every kernel
-if diff -u "$run/host_before.txt" "$run/host_after.txt" > "$run/host_diff.txt"; then
-    host="PASS byte-identical"
-else
-    host="FAIL the host snapshot changed: $run/host_diff.txt"
-fi
+finish_snapshot || true
 for kernel in $kernel_names; do
     printf '%s\t%s\t%s\n' "$kernel" host_untouched "$host" >> "$run/$kernel/rows.tsv"
 done

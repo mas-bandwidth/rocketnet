@@ -36,7 +36,10 @@ toolchain is missing or a pinned artifact was refused.
 An artifact whose sha256 differs from the pinned value is moved aside as
 `.refused` and its kernel is never booted. The pinned virtme-ng release is
 installed from its pinned wheel into a virtualenv in the work directory when
-the machine has no `vng`. These are the only downloads the tier makes.
+the machine has no `vng`. Bootstrap requires existing Python venv/ensurepip,
+argcomplete and requests; preflight refuses if any are absent. The virtualenv
+can read installed system packages; installation fetches no dependencies.
+These are the only downloads the tier makes.
 
 ## The rows
 
@@ -52,7 +55,10 @@ Each row prints PASS or FAIL per kernel, with its evidence.
 | `detach_leaves_no_program` | After detach and socket close, the veth carries no XDP program, nothing is pinned under the guest's `/sys/fs/bpf`, and no XDP program stays loaded. |
 | `host_untouched` | The host snapshot taken before the run (`ip -d link`, `ip netns`, `bpftool prog show`, `bpftool net`, `ls -laR /sys/fs/bpf`, `sysctl net.core net.ipv4`) is byte-identical after it. |
 
-`host_untouched` is judged once per run. The snapshot is taken as the user
+`host_untouched` is judged once per run, including failures after the first
+snapshot. An EXIT handler retains the after-snapshot and diff on early
+refusal or build failure, preserves that failure status, and prevents a
+changed host from returning success. The snapshot is taken as the user
 who runs it: where that user cannot list BPF programs, the bpftool sections
 record the refusal itself, so a change in them still shows. Anything else on
 the machine that changes a link or a sysctl during the run fails the row
