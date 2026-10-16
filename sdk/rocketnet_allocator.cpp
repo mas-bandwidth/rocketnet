@@ -432,7 +432,7 @@ void rn_region_carve( rn_region_t * region )
     // the store's free lists, rethreaded in place
     rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
 
-    // the send spans: empty, nothing live
+    // the send spans: empty, nothing live (tla/RNSendSpans.tla, Reset)
     region->span_head = 0;
     region->span_tail = 0;
     region->span_first = RN_DESCRIPTOR_NONE;
@@ -570,12 +570,18 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 // oldest first, so the floor is the first node's start. A span is freed when
 // its message is fully acked, in any order; the floor moves only when the
 // oldest one goes, and the bytes of a younger freed span wait for it.
+//
+// This representation (offsets in 0..SR-1, head/tail, the first..last list)
+// is modelled in tla/RNSendSpans.tla, checked by tla/MCRNSendSpans.cfg with
+// the reversed witnesses MCRNSendSpansBrokenFloorAtNewest.cfg and
+// MCRNSendSpansBrokenNoPadding.cfg (tla/CASES.tsv group rnsendspans).
 
 static uint64_t rn_span_round16( uint64_t bytes )
 {
     return ( bytes + 15 ) & ~(uint64_t) 15;
 }
 
+// tla/RNSendSpans.tla, Place (PadOnWrap is the wrap branch below)
 static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t * out_start )
 {
     const uint64_t SR = region->span_bytes;
@@ -614,6 +620,7 @@ static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t 
     return false;
 }
 
+// tla/RNSendSpans.tla, Alloc (FloorAtOldest: head moves only for the first span)
 static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint64_t len16 )
 {
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
@@ -634,6 +641,7 @@ static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint
     region->span_tail = end == region->span_bytes ? 0 : (uint32_t) end;
 }
 
+// tla/RNSendSpans.tla, Free (any order; head follows the oldest, EmptyIsZero)
 static void rn_span_unlink( rn_region_t * region, uint32_t d )
 {
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
