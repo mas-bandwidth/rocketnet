@@ -76,6 +76,8 @@ static void unreliable_receipt_acked_or_loss_exactly_once()
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 2 );
     rocketnet_unit_check( out[0].serial == 11 && out[0].status == ROCKETNET_RECEIPT_ACKED );
     rocketnet_unit_check( out[1].serial == 12 && out[1].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 2 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     rn_window_ack_receipt_begin_update( &f.ack );
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 0 );
     receipt_fixture_destroy( &f );
@@ -95,6 +97,8 @@ static void unreliable_receipt_loss_at_deadline_sweep()
     rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 201, 10.01 ) == 1 ); // late ACK stutters
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
     rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_LOSS );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 1 );
     receipt_fixture_destroy( &f );
 }
 
@@ -110,10 +114,12 @@ static void unreliable_receipt_loss_on_sent_map_eviction()
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
     rocketnet_unit_check( out[0].serial == 1 && out[0].status == ROCKETNET_RECEIPT_LOSS );
     rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED] == 1 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 1 );
     rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 601, 1.01 ) == 0 );
     rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 602, 1.01 ) == 1 );
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 2 );
     rocketnet_unit_check( out[1].serial == 2 && out[1].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 1 );
     receipt_fixture_destroy( &f );
 }
 
@@ -131,6 +137,7 @@ static void receipt_ring_full_drops_oldest_and_counts()
     rocketnet_unit_check( receipt_list( &f, out, 16 ) == 16 );
     rocketnet_unit_check( out[0].serial == 2 && out[15].serial == 17 );
     rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL] == 1 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 17 );
     receipt_fixture_destroy( &f );
 }
 
@@ -242,6 +249,8 @@ static void receipts_listed_per_update_by_the_c_api()
     rocketnet_unit_check( rocketnet_message_client_update( client, 0.01 ) == ROCKETNET_MESSAGE_OK );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
     rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 1 );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
     rocketnet_unit_check( rocketnet_message_client_update( client, 0.02 ) == ROCKETNET_MESSAGE_OK );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
@@ -322,6 +331,8 @@ static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses(
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.02 ) == ROCKETNET_MESSAGE_OK );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
     rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 1 );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     transport.ack_packet = transport.sent_packets[1];
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.03 ) == ROCKETNET_MESSAGE_OK );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
@@ -342,6 +353,8 @@ static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses(
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.04 ) == ROCKETNET_MESSAGE_OK );
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 1 );
     rocketnet_unit_check( out[0].serial == short_serial && out[0].status == ROCKETNET_RECEIPT_ACKED );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 2 );
+    rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     rn_message_object_destroy( &client->object );
 }
 

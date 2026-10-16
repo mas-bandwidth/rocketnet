@@ -346,6 +346,8 @@ static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, 
     if ( serial == 0 )
         return;
     rn_region_t * region = ack->region;
+    rocketnet_assert( status == ROCKETNET_RECEIPT_ACKED || status == ROCKETNET_RECEIPT_LOSS );
+    rn_window_ack_count( region, status == ROCKETNET_RECEIPT_ACKED ? ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED : ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS );
     const uint32_t capacity = region->receipt_entries;
     rocketnet_assert( capacity > 0 );
     if ( ack->receipt_tail - ack->receipt_head == capacity )
