@@ -129,12 +129,12 @@ queries expose the SDK revision, compiler-derived struct sizes, field counts,
 offsets and widths for both configs, packet context and all four stats structs.
 They are safe before init and write no caller-owned struct. Unknown names return
 `SIZE_MAX` for size/offset, or `-1` for count. Native dynamic loaders may use
-these before calling struct-writing functions; the C# binding does so automatically.
+these before calling struct-writing functions.
 
 An incompatible layout or calling-contract change must increment
-`ROCKETNET_ABI_VERSION` and update the matching binding. Additive functions alone
+`ROCKETNET_ABI_VERSION` and update native ABI regression checks. Additive functions alone
 do not require a revision change. Changes to public fields must also update the
-ABI metadata and binding checks. The existing unsized C entry points still
+ABI metadata and native regression checks. The existing unsized C entry points still
 require matching headers and library; this does not make an old native binary
 safe to use with an arbitrary newer library. Sized evolution APIs remain a
 separate compatibility project.
@@ -283,8 +283,8 @@ unavailable to the next fill, even after an application flush.
 
 IOCP is currently an explicit selection; Windows `auto` keeps portable first
 while this new driver is reviewed. Windows CI runs both configurations, plus
-completion-lifetime, allocation-failure and shutdown tests, and the C# smoke
-with IOCP selected. Compilation and loopback correctness do not establish NIC
+completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
+Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.
 The current implementation shares one UDP socket between completion workers.
 Its receive-queue contention must be measured before choosing whether Windows
