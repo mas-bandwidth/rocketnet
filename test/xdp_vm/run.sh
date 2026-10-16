@@ -89,30 +89,42 @@ say "run: $run"
 # ---------------------------------------------------------------------------
 # the host snapshot: what a run must never change
 
-snapshot() {
-    {
-        echo "## ip -d link"; ip -d link show 2>&1
-        echo "## ip netns"; ip netns list 2>&1
-        echo "## bpftool prog show"; bpftool prog show 2>&1
-        echo "## bpftool net"; bpftool net show 2>&1
-        echo "## ls -laR /sys/fs/bpf"; ls -laR /sys/fs/bpf 2>&1
-        echo "## sysctl net.core net.ipv4"; sysctl net.core net.ipv4 2>&1 | LC_ALL=C sort
-    } > "$1"
+snapshot_command() {
+    printf '## %s\n' "$*" || return 1
+    "$@" 2>&1
 }
 
-snapshot "$run/host_before.txt"
+snapshot() {
+    local failed=0
+    {
+        snapshot_command ip -d link show || failed=1
+        snapshot_command ip netns list || failed=1
+        snapshot_command bpftool prog show || failed=1
+        snapshot_command bpftool net show || failed=1
+        snapshot_command ls -laR /sys/fs/bpf || failed=1
+        snapshot_command sysctl net.core net.ipv4 | LC_ALL=C sort || failed=1
+    } > "$1" || return 1
+    return "$failed"
+}
+
+before_status=1
 snapshot_checked=0
 host="FAIL host snapshot not compared"
 finish_snapshot() {
     if [ "$snapshot_checked" = 0 ]; then
-        snapshot "$run/host_after.txt"
-        if diff -u "$run/host_before.txt" "$run/host_after.txt" > "$run/host_diff.txt"; then
+        local after_status=0
+        snapshot "$run/host_after.txt" || after_status=$?
+        if [ "$before_status" != 0 ] || [ "$after_status" != 0 ]; then
+            host="FAIL incomplete host snapshot (before=$before_status after=$after_status); see host_before.txt and host_after.txt"
+        elif diff -u "$run/host_before.txt" "$run/host_after.txt" > "$run/host_diff.txt"; then
             host="PASS byte-identical"
         else
-            host="FAIL the host snapshot changed: $run/host_diff.txt"
+            host="FAIL the host snapshot changed or comparison failed: $run/host_diff.txt"
         fi
-        printf '%s\n' "$host" > "$run/host_untouched.txt"
         snapshot_checked=1
+        if ! printf '%s\n' "$host" > "$run/host_untouched.txt"; then
+            host="FAIL could not save host snapshot verdict"
+        fi
     fi
     [[ "$host" = PASS* ]]
 }
@@ -126,6 +138,8 @@ on_exit() {
     exit "$status"
 }
 trap on_exit EXIT
+snapshot "$run/host_before.txt" && before_status=0
+[ "$before_status" = 0 ] || die "host before-snapshot is incomplete; nothing was fetched or booted"
 
 # ---------------------------------------------------------------------------
 # pinned artifacts: fetched once under a lock, refused on a sha256 mismatch

@@ -58,9 +58,12 @@ Each row prints PASS or FAIL per kernel, with its evidence.
 `host_untouched` is judged once per run, including failures after the first
 snapshot. An EXIT handler retains the after-snapshot and diff on early
 refusal or build failure, preserves that failure status, and prevents a
-changed host from returning success. The snapshot is taken as the user
-who runs it: where that user cannot list BPF programs, the bpftool sections
-record the refusal itself, so a change in them still shows. Anything else on
+changed host from returning success. Every snapshot command must succeed:
+permission refusals, partial captures and output or comparison errors fail
+closed, even when the two files contain identical error text. An incomplete
+before-snapshot refuses before fetching or booting. The snapshot runs as the
+ordinary user; a bench unable to expose the required read-only state cannot
+prove this row. Anything else on
 the machine that changes a link or a sysctl during the run fails the row
 too; `runs/<id>/host_diff.txt` names the bytes.
 
@@ -98,10 +101,11 @@ Structural checks, the Packet sizes table) through the judge in
 rather than copying it.
 
 The judge applies the standard to the address families the program
-receives. `server_xdp.c` receives IPv4 only, so every IPv6 frame, the
-well-formed ones included, is `XDP_PASS` with no counter: it is the kernel
-stack's business. `run.sh` builds the judge with `RECEIVE_IPV6=1` once
-`server_xdp.c` tests for the IPv6 ethertype, crafts the corpus again into the
+receives. `server_xdp.c` receives IPv4 and IPv6. Eligible IPv6 packets
+redirect; malformed or rejected packets take their named drop branches,
+while extension headers and fragments pass with `PASSED_IPV6_EXTENSION`.
+`run.sh` detects the IPv6 ethertype and builds the judge with `RECEIVE_IPV6=1`,
+crafts the corpus again into the
 run directory, and boots nothing when the committed captures or the
 manifest's crafted rows differ from that output; the fix is to regenerate
 them with `xdp_vm_replay craft test/xdp_pcaps`.
