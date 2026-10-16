@@ -73,7 +73,7 @@
 // started: defined in rocketnet_server_protocol.cpp, read here as the
 // gate-cost test's instrument.
 
-extern thread_local uint64_t rocketnet_server_cookie_mac_calls;
+extern uint64_t rocketnet_server_cookie_mac_count();
 
 // visit counter for testing: defined in rocketnet_ack.cpp
 extern unsigned long long g_ack_visit_count;
@@ -3051,10 +3051,10 @@ void rocketnet_test_cookie_zero_field_hashes_once()
     int response_bytes = 0;
 
     struct rocketnet_counters_t counters_before = test.counters;
-    uint64_t hashes_before = rocketnet_server_cookie_mac_calls;
+    uint64_t hashes_before = rocketnet_server_cookie_mac_count();
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_test_expect_reason( &test, &counters_before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE );
-    rocketnet_check( rocketnet_server_cookie_mac_calls - hashes_before == 1 );
+    rocketnet_check( rocketnet_server_cookie_mac_count() - hashes_before == 1 );
 
     rocketnet_test_server_teardown( &test );
 }

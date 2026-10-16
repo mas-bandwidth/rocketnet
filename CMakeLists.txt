@@ -300,6 +300,10 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
+        rocketnet_use_sodium(test)
+    endif()
     # The XDP filter as host C (test/xdp_host/): server_xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
     # directory of minimal kernel and libbpf headers, so the unit suite judges

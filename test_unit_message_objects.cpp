@@ -1318,8 +1318,11 @@ static void message_objects_no_allocation_after_create()
         mo_net_t * net = mo_net_new();
         const uint64_t bytes = rocketnet_message_client_required_memory( &config );
         check( bytes > 0 );
-        void * block = NULL;
-        check( posix_memalign( &block, ROCKETNET_ALLOCATION_ALIGNMENT, (size_t) bytes ) == 0 );
+        const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
+        check( bytes <= SIZE_MAX - ( alignment - 1 ) );
+        void * allocation = malloc( (size_t) bytes + alignment - 1 );
+        check( allocation != NULL );
+        void * block = (void *) ( ( (uintptr_t) allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
         const uint64_t before_block = mo_mallocs;
         rocketnet_message_client_t * in_block = mo_client_create( net, 0, &config, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, block, bytes );
         check( in_block != NULL );
@@ -1362,7 +1365,7 @@ static void message_objects_no_allocation_after_create()
 
         mo_pair_teardown( &pair );
         mo_net_free( net );
-        free( block );
+        free( allocation );
     }
 
     rocketnet_term();

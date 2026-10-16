@@ -66,3 +66,25 @@ std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Ident
 std::_Rb_tree_node<unsigned long>* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:1901:10
 posix_spawn (bin/test)
 
+
+# Clang 18/21 on the current libstdc++: these ten reports trace to
+# uninstrumented std::string/std::set operations or the suite custom new.
+# Exact-head hulk origin traces are retained in the repair report.
+xdp_host_read_file[abi:cxx11](char const*) test_unit_xdp_filter_host.cpp:934:19
+counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:433:19
+counters_find(char const*) test_unit_counter_classes.cpp:298:14
+std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
+ctv_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_connect_token_vectors.cpp:314:19
+ctv_unhex(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned char*, int) test_unit_connect_token_vectors.cpp:219:18
+vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:430:19
+vectors_regenerate_byte_identical() test_unit_connect_token_vectors.cpp:432:5
+std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
+std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:782:9
+
+# The CI runner's GCC 15 libstdc++ moves those same three tree navigation
+# reads to these source lines. CI run 38935877797 retains each full origin:
+# suite operator new -> std::allocator_traits -> _M_get_node -> _M_create_node
+# -> _Alloc_node -> _M_insert_. No SDK storage is in the origin.
+std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
+std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1437:9
+std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_S_left(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:1425:9

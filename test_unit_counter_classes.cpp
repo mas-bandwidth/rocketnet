@@ -523,22 +523,11 @@ static const counters_exception_t counters_no_code_path[] =
     { NULL, NULL }
 };
 
-// Reachable counters no test names yet: NOT DONE, and reported as such. This
-// is not an exemption. The counting site is real and the counter belongs to
-// the card's reachable set; every run prints one NOT-DONE line per row with
-// the reason, and an entry leaves this list the day a test names the counter
-// (the audit fails if one is named while it is still listed, and fails if a
-// listed counter has no code path, so the list only shrinks and never holds a
-// counter that belongs in counters_no_code_path).
+// Keep this list empty while every reachable counter has a test witness.
+// A future unreachable-by-test counter can only enter with its code-path
+// reason; the audit rejects an exception once a test names that counter.
 
-static const counters_exception_t counters_reachable_not_done[] =
-{
-    { "SEND_LEASE_FULL", "the lease table admits Capacity/2 starts per fill phase (65536 on the server, 512 on the client) and an abort gives none back; "
-                         "the portable fill is capped at 272 (ring 256, arena 16) and the gso fill at 16400, so only a staged driver that hands out 65537 frames "
-                         "reaches the server site, and the one seam that fakes such a driver below root is test_transport_control.cpp, which this card's PATHS do not name; "
-                         "the client sites have no driver seam and a fixed 256-slot ring" },
-    { NULL, NULL }
-};
+static const counters_exception_t counters_reachable_not_done[] = { { NULL, NULL } };
 
 static bool counters_in_list( const counters_exception_t * list, const std::string & name )
 {
@@ -754,6 +743,15 @@ static int counters_first_outcome( int received )
     return -1;
 }
 
+#if ROCKETNET_ASSERTS
+static int counters_expected_null_asserts = 0;
+
+static void counters_expected_null_assert( const char *, const char *, const char *, int )
+{
+    counters_expected_null_asserts++;
+}
+#endif
+
 static void counters_conservation_reports_the_first_unbalanced_family()
 {
     char report[256];
@@ -835,7 +833,16 @@ static void counters_conservation_reports_the_first_unbalanced_family()
 
     // a NULL block is not conserved
     const uint64_t misuse_before = rocketnet_api_misuse_count();
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    counters_expected_null_asserts = 0;
+    rocketnet_assert_function( counters_expected_null_assert );
+#endif
     check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( counters_expected_null_asserts == 1 );
+#endif
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
 }
 
