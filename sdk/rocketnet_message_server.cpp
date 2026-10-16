@@ -352,6 +352,16 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         time = object->time;
     object->time = time;
 
+    // the transport's clock: a client transport seeded at 0.0 at create starts
+    // counting at this first update, so its connect timers and token lifetime
+    // run from the first update the game makes, whatever its clock reads then.
+    // The object's own clock (budgets, resends, timeouts) is the game's time.
+    if ( !object->clock_started )
+    {
+        object->clock_started = 1;
+        object->clock_origin = object->link.clock_from_first_update ? time : 0.0;
+    }
+
     for ( int i = 0; i < object->num_connections; i++ )
     {
         rn_message_connection_t * connection = &object->connections[i];
@@ -375,7 +385,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    object->link.update( object->link.transport, time );
+    object->link.update( object->link.transport, time - object->clock_origin );
 
     // RNSlots Observe: the server reads every slot's connection after the
     // transport's update; a changed connection resets the slot (Connect,

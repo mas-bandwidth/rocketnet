@@ -1264,6 +1264,12 @@ the full plan.
 - **Budgets** (R6) are per connection, in kbps, set at create (0 is the
   default: 1000 for the client, 10000 per server slot) and at runtime with
   `set_send_kbps`. A reused slot starts at the server's default.
+- **Time.** Create takes no time. The object's clock is the game's time from
+  the first update on. The client's transport is seeded at 0.0 at create and
+  is handed the time since the first update, so its connect timers and the
+  token's lifetime start at the first update whatever the game's clock reads
+  then (a game clock at 1000.0 connects). The server's transport reads the
+  game's time as it is.
 - **Not here yet:** CONFIG (10.3), so two builds with different message
   configs do not refuse each other; events, receipts and stats lists; the
   zero-copy SINGLE form (11.2); `write_packets` from fill threads; the

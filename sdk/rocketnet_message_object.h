@@ -70,6 +70,13 @@ struct rn_message_link_t
 
     // NULL: the object does not own the transport
     void (*destroy)( void * transport );
+
+    // 1 for a transport whose clock was seeded at 0.0 at create (the client's,
+    // whose create takes no time): its clock starts at the object's first
+    // update, and each update hands it time - the first update's time. 0 for a
+    // transport that reads the game's time as it is (the server's, the unit
+    // suite's).
+    int clock_from_first_update;
 };
 
 // ---------------------------------------------------------------
@@ -131,6 +138,8 @@ struct rn_message_object_t
     uint32_t default_kbps;                      // a new connection's send budget
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
+    double clock_origin;                        // the game's time the transport's 0.0 stands for
+    int clock_started;                          // 1 from the first update on
     int pending_connection;                     // the connection with a start pending, or -1
     void * block;
     int owns_block;

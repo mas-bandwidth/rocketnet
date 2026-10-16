@@ -95,6 +95,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->disconnect = rn_client_link_disconnect;
     link->state = rn_client_link_state;
     link->destroy = rn_client_link_destroy;
+    link->clock_from_first_update = 1;
 }
 
 // ---------------------------------------------------------------
@@ -123,9 +124,11 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
         return NULL;
     }
 
-    // the transport's clock is seeded at 0.0, the server form's seed: the
-    // connect timers start at the first send, so the first update's time is
-    // the first time anything reads. time comes in only through update.
+    // create takes no time: the transport is seeded at 0.0, and the object
+    // hands it time relative to the first update (clock_from_first_update),
+    // so the connect attempt's timers and the token's lifetime start at the
+    // first update, whatever the game's clock reads then. time comes in only
+    // through update.
 
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create( context, connect_token, transport_config, 0.0 );
     if ( !transport )

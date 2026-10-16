@@ -262,9 +262,10 @@ server object per endpoint, created once; nothing is allocated after create.
 
     rocketnet_message_server_send_packets( server );
 
-The client is the same with no client index, and takes the connect token and
-the game's time at create. Every received message is released before the
-next update. `start` returning NULL for a connected client with a valid
+The client is the same with no client index, and takes the connect token at
+create but no time: its connect attempt starts at its first update, at
+whatever the game's clock reads then. Every received message is released
+before the next update. `start` returning NULL for a connected client with a valid
 channel and size means its memory was exhausted: that connection has ended
 with `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`, readable from
 `rocketnet_message_*_disconnect_reason`. An unreliable message arrives on

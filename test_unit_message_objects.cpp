@@ -367,6 +367,11 @@ static void mo_config( rocketnet_message_config_t * config )
     config->reliable_timeout_ms = 120000;
 }
 
+// the clock every case starts at: never 0.0, so a time field left at zero
+// shows up as an immediate timeout instead of passing by accident
+
+#define MO_T0 1000.0
+
 struct mo_pair_t
 {
     mo_net_t * net;
@@ -379,14 +384,14 @@ struct mo_pair_t
 static rocketnet_message_server_t * mo_server_create( mo_net_t * net, const rocketnet_message_config_t * config, int slots, uint32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     rn_message_link_t link = mo_link( net->server );
-    return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, slots, config, memory, memory_bytes, kbps, 100.0 );
+    return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, slots, config, memory, memory_bytes, kbps, MO_T0 );
 }
 
 static rocketnet_message_client_t * mo_client_create( mo_net_t * net, int slot, const rocketnet_message_config_t * config, uint32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     mo_endpoint_t * e = mo_net_client( net, slot );
     rn_message_link_t link = mo_link( e );
-    return (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, config, memory, memory_bytes, kbps, 100.0 );
+    return (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, config, memory, memory_bytes, kbps, MO_T0 );
 }
 
 static void mo_pair_setup( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config = NULL,
@@ -409,7 +414,7 @@ static void mo_pair_setup( mo_pair_t * pair, int num_clients, const rocketnet_me
         check( pair->clients[i] );
         mo_net_connect( pair->net, i );
     }
-    pair->time = 100.0;
+    pair->time = MO_T0;
 }
 
 static void mo_pair_teardown( mo_pair_t * pair )
@@ -1177,7 +1182,7 @@ static void budget_set_at_create_and_runtime()
         rocketnet_message_server_destroy( s );
         // an invalid rate is refused at create
         rn_message_link_t link = mo_link( net->server );
-        check( rn_message_object_create( NULL, &link, 1, 2, &config, NULL, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1, 100.0 ) == NULL );
+        check( rn_message_object_create( NULL, &link, 1, 2, &config, NULL, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1, MO_T0 ) == NULL );
         mo_net_free( net );
     }
 
@@ -1525,6 +1530,101 @@ static void rnslots_witness_replays()
     }
 }
 
+// The client's transport clock starts at the first update. The public client
+// create takes no time and seeds its transport and its object at 0.0; the
+// game's clock then starts at T=1000.0. The client's transport is handed
+// time relative to the first update (0.0 at the first update, the elapsed
+// seconds after), so its connect timers and token lifetime run from there and
+// a seed of 0.0 never reads as 1000 seconds without a packet. The server's
+// transport, and the object's own clock, read the game's time as it is.
+
+static void message_objects_client_clock_starts_at_first_update()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    mo_net_t * net = mo_net_new();
+
+    // seeded at 0.0, the public create's seed
+    rn_message_link_t server_link = mo_link( net->server );
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &server_link, 1, 2, &config, NULL, 0, ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS, 0.0 );
+    check( server );
+    mo_endpoint_t * e = mo_net_client( net, 0 );
+    rn_message_link_t client_link = mo_link( e );
+    client_link.clock_from_first_update = 1;                    // as rn_message_client_link binds it
+    rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1, &config, NULL, 0, ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
+    check( client );
+    mo_net_connect( net, 0 );
+
+    // the public client binds the flag; the server does not
+    {
+        rn_message_link_t bound;
+        rn_message_client_link( &bound, NULL );
+        check( bound.clock_from_first_update == 1 );
+        rn_message_server_link( &bound, NULL );
+        check( bound.clock_from_first_update == 0 );
+    }
+
+    double time = MO_T0;
+    check( rocketnet_message_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
+    check( rocketnet_message_client_update( client, time ) == ROCKETNET_MESSAGE_OK );
+    check( e->time == 0.0 );                                    // the client transport's first update is its 0.0
+    check( net->server->time == MO_T0 );                        // the server transport reads the game's time
+    check( client->object.time == MO_T0 );                      // the object's own clock is the game's time
+    check( server->object.time == MO_T0 );
+
+    // a reliable message each way still flows, from T=1000.0 on
+    uint8_t * up = rocketnet_message_client_start( client, 1, ROCKETNET_RELIABLE_ORDERED, 16 );
+    check( up != NULL );
+    mo_fill( up, 7, 16 );
+    check( rocketnet_message_client_finish( client, 16 ) != 0 );
+    uint8_t * down = rocketnet_message_server_start( server, 0, 1, ROCKETNET_RELIABLE_ORDERED, 16 );
+    check( down != NULL );
+    mo_fill( down, 9, 16 );
+    check( rocketnet_message_server_finish( server, 0, 16 ) != 0 );
+    rocketnet_message_server_send_packets( server );
+    rocketnet_message_client_send_packets( client );
+
+    bool server_got = false;
+    bool client_got = false;
+    for ( int step = 1; step <= 20 && !( server_got && client_got ); step++ )
+    {
+        time = MO_T0 + 0.25 * step;
+        check( rocketnet_message_server_update( server, time ) == ROCKETNET_MESSAGE_OK );
+        check( rocketnet_message_client_update( client, time ) == ROCKETNET_MESSAGE_OK );
+        check( e->time == 0.25 * step );                        // elapsed since the first update
+        check( net->server->time == time );
+
+        const uint8_t * data = NULL;
+        int bytes = 0;
+        while ( rocketnet_message_server_receive( server, 0, 1, &data, &bytes ) )
+        {
+            std::vector<uint8_t> got( data, data + bytes );
+            uint32_t id = 0;
+            check( bytes == 16 && mo_verify( got, &id ) && id == 7 );
+            server_got = true;
+            rocketnet_message_server_release( server, 0, data );
+        }
+        while ( rocketnet_message_client_receive( client, 1, &data, &bytes ) )
+        {
+            std::vector<uint8_t> got( data, data + bytes );
+            uint32_t id = 0;
+            check( bytes == 16 && mo_verify( got, &id ) && id == 9 );
+            client_got = true;
+            rocketnet_message_client_release( client, data );
+        }
+        rocketnet_message_server_send_packets( server );
+        rocketnet_message_client_send_packets( client );
+    }
+    check( server_got );
+    check( client_got );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    rocketnet_message_client_destroy( client );
+    rocketnet_message_server_destroy( server );
+    mo_net_free( net );
+}
+
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
@@ -1536,3 +1636,4 @@ REGISTER_UNIT_TEST( acks_only_from_transport_acked_packets );
 REGISTER_UNIT_TEST( budget_set_at_create_and_runtime );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
+REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );

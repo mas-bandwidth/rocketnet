@@ -1458,7 +1458,7 @@ struct rocketnet_message_server_t;
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
-// create reads no clock: the client's clock starts at 0.0 and every time comes in through update.
+// create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update.
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
                                                                                          const struct rocketnet_client_transport_config_t * transport_config,
                                                                                          const struct rocketnet_message_config_t * message_config,
