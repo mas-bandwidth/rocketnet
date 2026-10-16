@@ -185,6 +185,10 @@ static inline int rocketnet_xdp_frame_build(
     rocketnet_xdp_frame_write_be16( f + payload_index - 4, (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + payload_bytes ) );
     if ( ipv6 )
     {
+        // the checksum sums the UDP header with its checksum field zero: a
+        // reused frame still holds the previous datagram's checksum there
+        f[payload_index - 2] = 0;
+        f[payload_index - 1] = 0;
         uint16_t udp_check = rocketnet_xdp_frame_ipv6_udp_checksum(
             f + 22, f + 38, ROCKETNET_UDP_HEADER_BYTES + payload_bytes,
             f + payload_index - 8, payload_bytes );
@@ -238,7 +242,9 @@ static inline bool rocketnet_xdp_frame_parse(
     }
     else if ( ethertype == ROCKETNET_ETHERTYPE_IPV6 )
     {
-        if ( f[14] != ROCKETNET_IPV6_VERSION || f[15] != 0 || f[16] != 0 || f[17] != 0 )
+        // the version nibble only: the traffic class and the 20-bit flow label
+        // carry any value (Linux sets a flow label by default)
+        if ( ( f[14] & 0xF0 ) != ROCKETNET_IPV6_VERSION )
             return false;
         if ( f[20] != ROCKETNET_UDP_PROTOCOL )
             return false;

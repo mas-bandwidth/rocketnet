@@ -39,6 +39,7 @@
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_xdp_frame.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
@@ -13103,6 +13104,128 @@ static void rocketnet_test_skip_linux_only_connection_type_probe_ends_on_receive
     rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_connection_type_probe_ends_on_receive_error [SKIPPED linux only: the netlink route-table probe is not built on this platform]" );
 }
 
+// the AF_XDP frame codec on IPv6. No sockets, no wall clock: the frames are
+// built by hand in memory and the checksums recomputed here, independent of
+// the codec's own checksum routine.
+
+static void rocketnet_test_xdp_frame_write_ipv6_udp( uint8_t * f, uint32_t flow_label, const uint8_t * payload, int payload_bytes )
+{
+    static const uint8_t src[16] = { 0x20,0x01,0x0d,0xb8,0,0,0,0, 0,0,0,0,0,0,0,0x01 };
+    static const uint8_t dst[16] = { 0x20,0x01,0x0d,0xb8,0,0,0,0, 0,0,0,0,0,0,0,0x02 };
+    const uint16_t udp_length = (uint16_t) ( 8 + payload_bytes );
+    memset( f, 0, 62 );
+    f[12] = 0x86; f[13] = 0xDD;
+    // version 6, traffic class 0, then the 20-bit flow label
+    f[14] = 0x60;
+    f[15] = (uint8_t) ( ( flow_label >> 16 ) & 0x0F );
+    f[16] = (uint8_t) ( ( flow_label >> 8 ) & 0xFF );
+    f[17] = (uint8_t) ( flow_label & 0xFF );
+    f[18] = (uint8_t) ( udp_length >> 8 ); f[19] = (uint8_t) ( udp_length & 0xFF );
+    f[20] = 17;
+    f[21] = 64;
+    memcpy( f + 22, src, 16 );
+    memcpy( f + 38, dst, 16 );
+    f[54] = 0x9c; f[55] = 0x40; // source port 40000
+    f[56] = 0x9c; f[57] = 0x41; // destination port 40001
+    f[58] = (uint8_t) ( udp_length >> 8 ); f[59] = (uint8_t) ( udp_length & 0xFF );
+    memcpy( f + 62, payload, payload_bytes );
+}
+
+void rocketnet_test_xdp_frame_ipv6_parse_accepts_any_flow_label()
+{
+    static const uint8_t payload[5] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x42 };
+    static const uint32_t flow_labels[2] = { 0xABCDE, 0 };
+
+    rocketnet_address_t expected;
+    rocketnet_check( rocketnet_address_parse( &expected, "[2001:db8::1]:40000" ) );
+
+    for ( int i = 0; i < 2; ++i )
+    {
+        uint8_t frame[128];
+        rocketnet_test_xdp_frame_write_ipv6_udp( frame, flow_labels[i], payload, (int) sizeof(payload) );
+        const uint32_t word = ( (uint32_t) frame[14] << 24 ) | ( (uint32_t) frame[15] << 16 ) | ( (uint32_t) frame[16] << 8 ) | frame[17];
+        rocketnet_check( ( word >> 28 ) == 6 );
+        rocketnet_check( ( word & 0xFFFFF ) == flow_labels[i] );
+
+        rocketnet_address_t from;
+        const uint8_t * out_payload = NULL;
+        int out_length = -1;
+        rocketnet_check( rocketnet_xdp_frame_parse( frame, 62 + sizeof(payload), &from, &out_payload, &out_length ) );
+        rocketnet_check( from.type == ROCKETNET_ADDRESS_IPV6 );
+        rocketnet_check( rocketnet_address_equal( &from, &expected ) );
+        rocketnet_check( from.port == 40000 );
+        rocketnet_check( out_payload == frame + 62 );
+        rocketnet_check( out_length == (int) sizeof(payload) );
+        rocketnet_check( memcmp( out_payload, payload, sizeof(payload) ) == 0 );
+
+        // the version check stays: a version 4 nibble in an IPv6 ethertype is refused
+        frame[14] = (uint8_t) ( 0x40 | ( frame[14] & 0x0F ) );
+        rocketnet_check( !rocketnet_xdp_frame_parse( frame, 62 + sizeof(payload), &from, &out_payload, &out_length ) );
+    }
+}
+
+// RFC 8200 section 8.1: the pseudo-header is source, destination, the 32-bit
+// upper-layer length and three zero bytes then next header 17, followed by
+// the UDP header with its checksum field zero and the payload (RFC 768,
+// RFC 1071). Assembled as bytes and summed here, never by the codec.
+
+static uint16_t rocketnet_test_xdp_frame_rfc8200_udp_checksum( const uint8_t * frame, int payload_bytes )
+{
+    uint8_t buffer[40 + 8 + 2048];
+    const int udp_length = 8 + payload_bytes;
+    int n = 0;
+    memcpy( buffer + n, frame + 22, 16 ); n += 16;
+    memcpy( buffer + n, frame + 38, 16 ); n += 16;
+    buffer[n++] = (uint8_t) ( ( udp_length >> 24 ) & 0xFF );
+    buffer[n++] = (uint8_t) ( ( udp_length >> 16 ) & 0xFF );
+    buffer[n++] = (uint8_t) ( ( udp_length >> 8 ) & 0xFF );
+    buffer[n++] = (uint8_t) ( udp_length & 0xFF );
+    buffer[n++] = 0; buffer[n++] = 0; buffer[n++] = 0; buffer[n++] = 17;
+    memcpy( buffer + n, frame + 54, 6 ); n += 6;
+    buffer[n++] = 0; buffer[n++] = 0;
+    memcpy( buffer + n, frame + 62, payload_bytes ); n += payload_bytes;
+    if ( n & 1 )
+        buffer[n++] = 0;
+    uint64_t sum = 0;
+    for ( int i = 0; i < n; i += 2 )
+        sum += (uint64_t) ( ( buffer[i] << 8 ) | buffer[i + 1] );
+    while ( sum > 0xFFFF )
+        sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+    uint16_t result = (uint16_t) ( ~sum & 0xFFFF );
+    return result == 0 ? 0xFFFF : result;
+}
+
+void rocketnet_test_xdp_frame_ipv6_checksum_reused_buffer()
+{
+    static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
+    static const uint8_t first[7] = { 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD };
+    static const uint8_t second[12] = { 0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 0x78, 0x69, 0x5A, 0x4B };
+    const uint8_t * payloads[2] = { first, second };
+    const int payload_bytes[2] = { (int) sizeof(first), (int) sizeof(second) };
+
+    rocketnet_address_t src, dst;
+    rocketnet_check( rocketnet_address_parse( &src, "[2001:db8::1]:40000" ) );
+    rocketnet_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
+
+    // one frame buffer, cleared once and reused for both sends as a ring frame is
+    uint8_t frame[256];
+    memset( frame, 0, sizeof(frame) );
+    const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_check( header_bytes == 62 );
+
+    for ( int i = 0; i < 2; ++i )
+    {
+        memcpy( frame + header_bytes, payloads[i], payload_bytes[i] );
+        const int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, payload_bytes[i] );
+        rocketnet_check( len == header_bytes + payload_bytes[i] );
+        const uint16_t on_wire = (uint16_t) ( ( frame[60] << 8 ) | frame[61] );
+        const uint16_t expected = rocketnet_test_xdp_frame_rfc8200_udp_checksum( frame, payload_bytes[i] );
+        rocketnet_check( on_wire != 0 );
+        rocketnet_check( on_wire == expected );
+    }
+}
+
 void rocketnet_test_dev_token_minting_absent_in_release();
 
 static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
@@ -13118,6 +13241,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_xdp_free_list_refuses_overflow", rocketnet_test_skip_linux_only_xdp_free_list },
 #endif
+    { "test_xdp_frame_ipv6_parse_accepts_any_flow_label", rocketnet_test_xdp_frame_ipv6_parse_accepts_any_flow_label },
+    { "test_xdp_frame_ipv6_checksum_reused_buffer", rocketnet_test_xdp_frame_ipv6_checksum_reused_buffer },
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
     { "test_read_bytes_bounded_refuses_negative", rocketnet_test_read_bytes_bounded_refuses_negative },
