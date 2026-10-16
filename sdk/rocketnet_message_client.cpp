@@ -37,6 +37,11 @@ static int rn_client_link_acked( void * transport, const int ** client_index, co
     return rocketnet_client_transport_acked_packets( (rocketnet_client_transport_t *) transport, packet_ids );
 }
 
+static int rn_client_link_max_payload_bytes( void * transport )
+{
+    return rocketnet_client_transport_max_payload_bytes( (rocketnet_client_transport_t *) transport );
+}
+
 static uint8_t * rn_client_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     (void) client_index;
@@ -87,6 +92,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->update = rn_client_link_update;
     link->payloads = rn_client_link_payloads;
     link->acked = rn_client_link_acked;
+    link->max_payload_bytes = rn_client_link_max_payload_bytes;
     link->start_packet = rn_client_link_start_packet;
     link->finish_packet = rn_client_link_finish_packet;
     link->abort_packet = rn_client_link_abort_packet;
@@ -213,6 +219,13 @@ int rocketnet_message_client_receive( struct rocketnet_message_client_t * client
     if ( !rocketnet_api_null_guard( bytes ) )
         return 0;
     return rn_message_object_receive( &client->object, 0, channel, data, bytes );
+}
+
+int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
+        return 0;
+    return rn_window_ack_receipts( &client->object.connections[0].ordered.ack, out, capacity );
 }
 
 void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data )

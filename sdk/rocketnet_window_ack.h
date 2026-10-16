@@ -69,6 +69,12 @@ struct rn_window_ack_t
     uint64_t ref_head;              // start of pkt_head's references in sent_refs
     uint64_t ref_tail;              // next slot to write in sent_refs (ref_tail - ref_head <= 16P)
 
+    uint64_t receipt_sweep;         // RNReceipts SweepLoss: next sent-packet entry to examine
+    uint64_t receipt_head;          // oldest outcome still in the Rq ring
+    uint64_t receipt_tail;          // next outcome slot
+    uint64_t receipt_visible_head;  // this update's first outcome
+    uint64_t receipt_visible_tail;  // this update's end; later send-side losses wait for the next update
+
     uint64_t oldest_number;         // message number U whose first_send is cached below
     double oldest_first_send;       // first_send time of oldest_number
 };
@@ -87,6 +93,18 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
 // ring or 16P-entry reference ring needs room, and inserts packet_id -> entry
 // into the 2P open-addressed sent_index.
 void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now );
+
+// RNReceipts WritePacket: commit a packet containing code-5 serials to the
+// same sent map as reliable numbers. Pure unreliable packets use count=0.
+void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint32_t * serials, uint32_t count, double now );
+
+// RNReceipts EmitAck/SweepLoss/TakeReceipt. Outcomes share the region's Rq
+// ring; they are listed for one update without allocating or resending.
+void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack );
+void rn_window_ack_receipt_end_update( rn_window_ack_t * ack );
+void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now );
+void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
+int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`
 // (docs/CHANNELS.md 6.4 "On ack" and "RTT, RTO and backoff"; tla/RNWindow.tla
