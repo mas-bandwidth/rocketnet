@@ -270,7 +270,7 @@ static void rn_message_connection_cancel_pending( rn_message_object_t * object, 
     rn_message_connection_t * connection = &object->connections[index];
     if ( object->pending_connection != index )
         return;
-    if ( connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
+    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
         rn_channels_cancel( &connection->ordered.channels );
     else if ( connection->pending_type == ROCKETNET_UNRELIABLE && connection->pending_descriptor != RN_DESCRIPTOR_NONE )
         rn_region_send_free( connection->region, connection->pending_descriptor );
@@ -483,9 +483,9 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     rn_region_t * region = connection->region;
     uint8_t * pointer = NULL;
 
-    if ( reliability == ROCKETNET_RELIABLE_ORDERED )
+    if ( reliability == ROCKETNET_RELIABLE || reliability == ROCKETNET_RELIABLE_ORDERED )
     {
-        pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, (uint32_t) bytes );
+        pointer = rn_channels_start( &connection->ordered.channels, (uint32_t) channel, reliability, (uint32_t) bytes );
         if ( !pointer )
         {
             if ( rn_region_exhausted( region ) )
@@ -560,7 +560,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
     if ( serial == 0 )
         serial = 1;
 
-    if ( connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
+    if ( connection->pending_type == ROCKETNET_RELIABLE || connection->pending_type == ROCKETNET_RELIABLE_ORDERED )
     {
         const uint32_t d = connection->ordered.channels.pending;
         if ( !rn_channels_finish( &connection->ordered.channels, (uint32_t) bytes ) )

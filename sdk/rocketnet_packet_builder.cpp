@@ -80,6 +80,13 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE:
             record->number = item->number == ROCKETNET_PACKET_NUMBER_NONE ? 0 : (uint32_t) ( item->number & ROCKETNET_MESSAGE_U24_MASK );
+            if ( item->block )
+            {
+                record->block = 1;
+                record->ring = item->ring;
+                record->fragment = item->fragment;
+                record->fragments = item->fragments;
+            }
             break;
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED:
