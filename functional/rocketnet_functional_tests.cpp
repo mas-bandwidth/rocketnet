@@ -4507,6 +4507,8 @@ extern void harness_one_message_each_way_lossy();
 extern void harness_lossy_100_percent_negative_control();
 extern void harness_no_allocation_after_create();
 extern void harness_collect_preserves_other_channels();
+extern void state_stream_never_goes_backwards_over_lossy_link();
+extern void large_unreliable_sequenced_uses_transport_fragments();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -4589,6 +4591,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control },
     { "harness_no_allocation_after_create", harness_no_allocation_after_create },
     { "harness_collect_preserves_other_channels", harness_collect_preserves_other_channels },
+    { "state_stream_never_goes_backwards_over_lossy_link", state_stream_never_goes_backwards_over_lossy_link },
+    { "large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

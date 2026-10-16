@@ -53,6 +53,9 @@ struct rn_message_link_t
     // The client's link leaves *client_index NULL.
     int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 
+    // The configured payload limit, after transport defaults. A large
+    // unreliable record is refused before enqueue if it cannot fit an arena.
+    int (*max_payload_bytes)( void * transport );
     uint8_t * (*start_packet)( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
     int (*finish_packet)( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
     void (*abort_packet)( void * transport, struct rocketnet_packet_context_t * context );

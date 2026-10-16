@@ -56,7 +56,7 @@
 
 // the first version's mask: UNRELIABLE and RELIABLE_ORDERED (7.5)
 
-#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
+#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
 
 // a receipt type's base type: 5 travels as code 0, 6 as code 2, 7 as code 3
 
@@ -248,6 +248,11 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
 // Codes 1 and 4's case (sdk/rocketnet_channel_sequenced.cpp).
 
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
+
+// RNChannelTypes!Drain: release the newest held code-1 record when its ordered
+// epoch opens. Returns true if it appended a delivery.
+bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel );
+void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 
 // Codes 5, 6 and 7's case (sdk/rocketnet_channel_receipts.cpp).
 
