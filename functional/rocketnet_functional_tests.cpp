@@ -4504,6 +4504,7 @@ struct rocketnet_functional_test_t
 // the functional/channel_*.cpp glob)
 extern void harness_one_message_each_way_lossless();
 extern void harness_one_message_each_way_lossy();
+extern void harness_lossy_100_percent_negative_control();
 extern void harness_no_allocation_after_create();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
@@ -4584,6 +4585,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_message_objects_loopback_from_t1000", rocketnet_test_message_objects_loopback_from_t1000 },
     { "harness_one_message_each_way_lossless", harness_one_message_each_way_lossless },
     { "harness_one_message_each_way_lossy", harness_one_message_each_way_lossy },
+    { "harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control },
     { "harness_no_allocation_after_create", harness_no_allocation_after_create },
 };
 

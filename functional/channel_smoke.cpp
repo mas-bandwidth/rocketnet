@@ -131,6 +131,56 @@ void harness_one_message_each_way_lossy()
     rocketnet_channel_harness_destroy( &h );
 }
 
+// the negative control: the link knobs are honored. After the connection is
+// up, a 100% loss link must deliver nothing; if the loss is ignored the
+// exchange completes and this case fails loudly with the measured numbers.
+void harness_lossy_100_percent_negative_control()
+{
+    rocketnet_channel_harness_t h;
+    if ( !rocketnet_channel_harness_create( &h ) )
+    {
+        rocketnet_check( 0 );
+        return;
+    }
+    if ( !rocketnet_channel_harness_connect( &h, 60 * 10 ) )
+    {
+        rocketnet_check( 0 );
+        rocketnet_channel_harness_destroy( &h );
+        return;
+    }
+
+    rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 100.0f, 0.0f );
+
+    const uint8_t to_server[4] = { 'n', 'o', 'p', 'e' };
+    const uint8_t to_client[4] = { 'n', 'o', 'p', 'e' };
+    rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, to_server, 4 ) != 0 );
+    rocketnet_check( rocketnet_channel_harness_server_send( &h, 0, to_client, 4 ) != 0 );
+
+    const double t0 = h.now;
+    int server_got = 0, client_got = 0;
+    for ( int i = 0; i < 60 * 30; i++ )
+    {
+        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+        rocketnet_channel_delivery_t d;
+        if ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
+            server_got++;
+        if ( rocketnet_channel_harness_client_collect( &h, 0, &d ) )
+            client_got++;
+    }
+
+    const double completion = h.now - t0;
+    if ( server_got != 0 || client_got != 0 )
+    {
+        rocketnet_channel_harness_read_counters( &h );
+        printf( "negative control failed: loss not honored server_got=%d client_got=%d completion_ms=%.1f resends=%llu\n",
+                server_got, client_got, completion * 1000.0, (unsigned long long) h.resends );
+    }
+    rocketnet_check( server_got == 0 );
+    rocketnet_check( client_got == 0 );
+
+    rocketnet_channel_harness_destroy( &h );
+}
+
 // the allocator sees no calls after create
 void harness_no_allocation_after_create()
 {
