@@ -759,8 +759,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
         // #109 asked for an error naming the rule, and the per-rung warn
-        // above is not that: a deployed binary, the test suite and the C#
-        // smoke all run at the ERROR level, where a warn is invisible. So
+        // above is not that: a deployed binary and the test suite run at
+        // the ERROR level, where a warn is invisible. So
         // the rule is restated HERE, at the level the failure itself is
         // reported -- on the fall it stays a warn, because a fall is not a
         // failure and an error line would be a lie about the outcome.

@@ -1,4 +1,4 @@
-// Deliberately incompatible library for the managed load gate. Never shipped.
+// Deliberately incompatible library for native ABI regression checks. Never shipped.
 #define rocketnet_abi_version real_abi_version
 #define rocketnet_abi_type_size real_abi_type_size
 #define rocketnet_abi_field_count real_abi_field_count
