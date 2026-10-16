@@ -49,8 +49,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES 128
-#define ROCKETNET_CHANNEL_HARNESS_MAX_PAYLOAD   ROCKETNET_MAX_PAYLOAD_BYTES
+#define ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES 32
+#define ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS 256
 #define ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS   32
 
 static uint64_t rocketnet_channel_allocator_calls;
@@ -83,10 +83,15 @@ typedef struct rocketnet_channel_delivery_t
 typedef struct rocketnet_channel_delivery_ring_t
 {
     int head;
+    int tail;
     int count;
+    int free_head;
     int channel[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
-    uint8_t data[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES][ROCKETNET_CHANNEL_HARNESS_MAX_PAYLOAD];
     int len[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    int next[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    uint8_t * slot_data[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    uint8_t * storage;
+    int max_payload;
 } rocketnet_channel_delivery_ring_t;
 
 struct rocketnet_channel_harness_t;
@@ -100,10 +105,10 @@ typedef struct rocketnet_channel_endpoint_t
     int payload_count;
     uint8_t frame[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS][ROCKETNET_FRAME_STRIDE];
     int frame_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS];
-    uint8_t payload[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES][ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
-    uint8_t * payload_ptr[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
-    int payload_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
-    int payload_client_index[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    uint8_t payload[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS][ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    uint8_t * payload_ptr[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
+    int payload_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
+    int payload_client_index[ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS];
 } rocketnet_channel_endpoint_t;
 
 typedef struct rocketnet_channel_harness_t
@@ -129,6 +134,7 @@ typedef struct rocketnet_channel_harness_t
     int client_slot;               // the connected server slot (0)
     int connected;
     int server_connected;
+    uint64_t overflow_count;
 
     // link knobs, held here and applied to the simulator
     double latency;
@@ -156,29 +162,86 @@ static inline uint64_t rocketnet_channel_hash( const uint8_t * data, int bytes )
     return h;
 }
 
-static inline void rocketnet_channel_delivery_ring_push( rocketnet_channel_delivery_ring_t * ring, int channel, const uint8_t * data, int bytes )
+static inline int rocketnet_channel_delivery_ring_init( rocketnet_channel_delivery_ring_t * ring, int max_payload )
 {
-    if ( ring->count >= ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES )
-        return;
-    const int len = bytes > ROCKETNET_CHANNEL_HARNESS_MAX_PAYLOAD ? ROCKETNET_CHANNEL_HARNESS_MAX_PAYLOAD : bytes;
-    const int slot = ( ring->head + ring->count ) % ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES;
-    ring->channel[slot] = channel;
-    ring->len[slot] = len;
-    if ( len > 0 )
-        memcpy( ring->data[slot], data, (size_t) len );
-    ring->count++;
+    memset( ring, 0, sizeof(*ring) );
+    ring->head = -1;
+    ring->tail = -1;
+    ring->free_head = 0;
+    ring->max_payload = max_payload;
+    for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+    {
+        ring->next[i] = i + 1;
+        ring->slot_data[i] = NULL;
+    }
+    ring->next[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES - 1] = -1;
+    const size_t storage_bytes = (size_t) ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES * (size_t) max_payload;
+    ring->storage = (uint8_t *) rocketnet_channel_counting_malloc( NULL, storage_bytes );
+    if ( !ring->storage )
+        return 0;
+    for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+        ring->slot_data[i] = ring->storage + (size_t) i * (size_t) max_payload;
+    return 1;
 }
 
-static inline int rocketnet_channel_delivery_ring_pop( rocketnet_channel_delivery_ring_t * ring, rocketnet_channel_delivery_t * out )
+static inline void rocketnet_channel_delivery_ring_destroy( rocketnet_channel_delivery_ring_t * ring )
 {
-    if ( ring->count == 0 )
+    if ( ring->storage )
+        rocketnet_channel_counting_free( NULL, ring->storage );
+    memset( ring, 0, sizeof(*ring) );
+}
+
+static inline int rocketnet_channel_delivery_ring_push( rocketnet_channel_harness_t * h, rocketnet_channel_delivery_ring_t * ring, int channel, const uint8_t * data, int bytes )
+{
+    if ( bytes < 0 || bytes > ring->max_payload || ring->free_head < 0 )
+    {
+        h->overflow_count++;
         return 0;
-    out->channel = ring->channel[ring->head];
-    out->data = ring->data[ring->head];
-    out->bytes = ring->len[ring->head];
-    out->hash = rocketnet_channel_hash( ring->data[ring->head], ring->len[ring->head] );
-    ring->head = ( ring->head + 1 ) % ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES;
+    }
+    const int slot = ring->free_head;
+    ring->free_head = ring->next[slot];
+    ring->channel[slot] = channel;
+    ring->len[slot] = bytes;
+    if ( bytes > 0 )
+        memcpy( ring->slot_data[slot], data, (size_t) bytes );
+    ring->next[slot] = -1;
+    if ( ring->tail >= 0 )
+        ring->next[ring->tail] = slot;
+    else
+        ring->head = slot;
+    ring->tail = slot;
+    ring->count++;
+    return 1;
+}
+
+static inline int rocketnet_channel_delivery_ring_pop_channel( rocketnet_channel_harness_t * h, rocketnet_channel_delivery_ring_t * ring, int channel, rocketnet_channel_delivery_t * out )
+{
+    int previous = -1;
+    int slot = ring->head;
+    while ( slot >= 0 && ring->channel[slot] != channel )
+    {
+        previous = slot;
+        slot = ring->next[slot];
+    }
+    if ( slot < 0 )
+        return 0;
+    const int after = ring->next[slot];
+    if ( previous >= 0 )
+        ring->next[previous] = after;
+    else
+        ring->head = after;
+    if ( ring->tail == slot )
+        ring->tail = previous;
+    out->channel = ring->channel[slot];
+    out->data = ring->slot_data[slot];
+    out->bytes = ring->len[slot];
+    out->hash = rocketnet_channel_hash( ring->slot_data[slot], ring->len[slot] );
+    ring->next[slot] = ring->free_head;
+    ring->free_head = slot;
     ring->count--;
+    if ( ring->count == 0 )
+        ring->head = ring->tail = -1;
+    (void) h;
     return 1;
 }
 
@@ -187,10 +250,20 @@ static inline int rocketnet_channel_harness_connected( const rocketnet_channel_h
     return h->connected;
 }
 
+// Endpoint or delivery-capacity exhaustion is a harness failure, never a
+// silent transport drop. Type tests should assert this remains zero.
+static inline uint64_t rocketnet_channel_harness_overflows( const rocketnet_channel_harness_t * h )
+{
+    return h->overflow_count;
+}
+
 static inline void rocketnet_channel_endpoint_payload( rocketnet_channel_endpoint_t * endpoint, int client_index, const uint8_t * data, int bytes )
 {
-    if ( endpoint->payload_count >= ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES || bytes <= 0 || bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    if ( endpoint->payload_count >= ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS || bytes <= 0 || bytes > ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES )
+    {
+        endpoint->harness->overflow_count++;
         return;
+    }
     const int index = endpoint->payload_count++;
     memcpy( endpoint->payload[index], data, (size_t) bytes );
     endpoint->payload_ptr[index] = endpoint->payload[index];
@@ -513,6 +586,9 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     rocketnet_server_protocol_update( server, h->now );
 
     rocketnet_message_default_config( &h->message_config );
+    if ( !rocketnet_channel_delivery_ring_init( &h->to_server, h->message_config.max_message_bytes ) ||
+         !rocketnet_channel_delivery_ring_init( &h->to_client, h->message_config.max_message_bytes ) )
+        goto failed;
     rocketnet_channel_endpoint_link( &client_link, &h->client_endpoint );
     rocketnet_channel_endpoint_link( &server_link, &h->server_endpoint );
     h->message_client = (struct rocketnet_message_client_t *) rn_message_object_create( NULL, &client_link, 0, 1,
@@ -564,12 +640,12 @@ static inline int rocketnet_channel_harness_pump( rocketnet_channel_harness_t * 
         int bytes;
         while ( rocketnet_message_server_receive( h->message_server, h->client_slot, channel, &data, &bytes ) )
         {
-            rocketnet_channel_delivery_ring_push( &h->to_server, channel, data, bytes );
+            rocketnet_channel_delivery_ring_push( h, &h->to_server, channel, data, bytes );
             rocketnet_message_server_release( h->message_server, h->client_slot, data );
         }
         while ( rocketnet_message_client_receive( h->message_client, channel, &data, &bytes ) )
         {
-            rocketnet_channel_delivery_ring_push( &h->to_client, channel, data, bytes );
+            rocketnet_channel_delivery_ring_push( h, &h->to_client, channel, data, bytes );
             rocketnet_message_client_release( h->message_client, data );
         }
     }
@@ -603,30 +679,12 @@ static inline uint32_t rocketnet_channel_harness_server_send( rocketnet_channel_
 // message was delivered, 0 when none is pending.
 static inline int rocketnet_channel_harness_server_collect( rocketnet_channel_harness_t * h, int channel, rocketnet_channel_delivery_t * out )
 {
-    rocketnet_channel_delivery_t d;
-    while ( rocketnet_channel_delivery_ring_pop( &h->to_server, &d ) )
-    {
-        if ( d.channel == channel )
-        {
-            *out = d;
-            return 1;
-        }
-    }
-    return 0;
+    return rocketnet_channel_delivery_ring_pop_channel( h, &h->to_server, channel, out );
 }
 
 static inline int rocketnet_channel_harness_client_collect( rocketnet_channel_harness_t * h, int channel, rocketnet_channel_delivery_t * out )
 {
-    rocketnet_channel_delivery_t d;
-    while ( rocketnet_channel_delivery_ring_pop( &h->to_client, &d ) )
-    {
-        if ( d.channel == channel )
-        {
-            *out = d;
-            return 1;
-        }
-    }
-    return 0;
+    return rocketnet_channel_delivery_ring_pop_channel( h, &h->to_client, channel, out );
 }
 
 // Refresh the measured counters from the protocol engines. The protocol
@@ -649,6 +707,8 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->server.acks ) rocketnet_server_acks_destroy( h->server.acks );
     if ( h->server.reassembly ) rocketnet_reassembly_set_destroy( h->server.reassembly );
     if ( h->sim ) rocketnet_network_simulator_destroy( h->sim );
+    rocketnet_channel_delivery_ring_destroy( &h->to_server );
+    rocketnet_channel_delivery_ring_destroy( &h->to_client );
     if ( h->counting_allocator_installed )
     {
         rocketnet_term();

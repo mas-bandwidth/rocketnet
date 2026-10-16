@@ -76,6 +76,7 @@ void harness_one_message_each_way_lossless()
     }
     rocketnet_check( server_got == 1 );
     rocketnet_check( client_got == 1 );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
 
     rocketnet_channel_harness_destroy( &h );
@@ -133,6 +134,7 @@ void harness_one_message_each_way_lossy()
     }
     rocketnet_check( server_got == 1 );
     rocketnet_check( client_got == 1 );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
 
     rocketnet_channel_harness_destroy( &h );
@@ -185,6 +187,7 @@ void harness_lossy_100_percent_negative_control()
     }
     rocketnet_check( server_got == 0 );
     rocketnet_check( client_got == 0 );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
 
     rocketnet_channel_harness_destroy( &h );
@@ -218,9 +221,51 @@ void harness_no_allocation_after_create()
             got++;
     }
     rocketnet_check( got == 1 );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
 
     // The counting allocator records every SDK allocation. The snapshot
     // assertion proves the exchange touched only storage carved at create.
+    rocketnet_channel_harness_destroy( &h );
+}
+
+// Collecting one channel must preserve messages queued on every other channel.
+void harness_collect_preserves_other_channels()
+{
+    rocketnet_channel_harness_t h;
+    if ( !rocketnet_channel_harness_create( &h ) )
+    {
+        rocketnet_check( 0 );
+        return;
+    }
+    const uint8_t channel_zero[] = { 'c', 'h', '0' };
+    const uint8_t channel_one[] = { 'c', 'h', '1' };
+    uint8_t large_payload[ROCKETNET_MAX_PAYLOAD_BYTES + 1];
+    for ( int i = 0; i < (int) sizeof(large_payload); i++ )
+        large_payload[i] = (uint8_t) i;
+    // Unreliable message objects route to channel 0 on receive. Populate the
+    // collector's bounded queue directly to prove filtering channel 0 cannot
+    // discard an unrelated channel's already-delivered view. The third view
+    // is larger than one wire payload, ensuring collection does not truncate a
+    // reassembled reliable message to the packet size.
+    rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 1, channel_one, sizeof(channel_one) ) );
+    rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 0, channel_zero, sizeof(channel_zero) ) );
+    rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 2, large_payload, sizeof(large_payload) ) );
+    rocketnet_channel_delivery_t d;
+    rocketnet_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) );
+    rocketnet_check( d.bytes == (int) sizeof(channel_zero) );
+    rocketnet_check( memcmp( d.data, channel_zero, sizeof(channel_zero) ) == 0 );
+    rocketnet_check( rocketnet_channel_harness_server_collect( &h, 1, &d ) );
+    rocketnet_check( d.bytes == (int) sizeof(channel_one) );
+    rocketnet_check( memcmp( d.data, channel_one, sizeof(channel_one) ) == 0 );
+    rocketnet_check( rocketnet_channel_harness_server_collect( &h, 2, &d ) );
+    rocketnet_check( d.bytes == (int) sizeof(large_payload) );
+    rocketnet_check( d.hash == rocketnet_channel_hash( large_payload, sizeof(large_payload) ) );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+    for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+        rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof(channel_zero) ) );
+    rocketnet_check( !rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof(channel_zero) ) );
+    rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 1 );
+    rocketnet_check( rocketnet_channel_allocator_calls == h.allocation_snapshot );
     rocketnet_channel_harness_destroy( &h );
 }

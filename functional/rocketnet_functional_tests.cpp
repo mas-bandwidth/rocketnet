@@ -4506,6 +4506,7 @@ extern void harness_one_message_each_way_lossless();
 extern void harness_one_message_each_way_lossy();
 extern void harness_lossy_100_percent_negative_control();
 extern void harness_no_allocation_after_create();
+extern void harness_collect_preserves_other_channels();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -4587,6 +4588,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "harness_one_message_each_way_lossy", harness_one_message_each_way_lossy },
     { "harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control },
     { "harness_no_allocation_after_create", harness_no_allocation_after_create },
+    { "harness_collect_preserves_other_channels", harness_collect_preserves_other_channels },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
