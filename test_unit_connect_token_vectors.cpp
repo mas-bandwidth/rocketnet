@@ -40,6 +40,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 // ---------------------------------------------------------------------------
 // the vector inputs. integers are values; addresses are their wire bytes
 // (ipv4: four octets then the port little-endian; ipv6: eight uint16 groups
@@ -427,7 +431,13 @@ static void vectors_regenerate_byte_identical()
     rocketnet_unit_check( file != NULL );
     rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
     rocketnet_unit_check( fclose( file ) == 0 );
+#if defined(_WIN32)
+    // The Windows CRT rename refuses to replace an existing destination.
+    rocketnet_unit_check( MoveFileExA( temp.c_str(), path.c_str(),
+                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
+#else
     rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
+#endif
 
     rocketnet_unit_check( existed );
     rocketnet_unit_check( existing == generated );
