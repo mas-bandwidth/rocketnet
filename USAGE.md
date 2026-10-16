@@ -106,7 +106,7 @@ the second is the one that hurts:
 
 **So replies stage after the drain, and in the loop that will drain the answer.**
 That is the shape of the pump above, and it is not stylistic. The failure it
-prevents is the C# smoke's first flake (#73): a reply staged from somewhere that
+prevents is the former C# loopback smoke's first flake (#73): a reply staged from somewhere that
 pumps its own updates — a helper, a nested wait loop, a second pump — puts a
 payload in flight toward a peer while nobody is positioned to drain the response,
 and the response is delivered into an update whose batch is then discarded. It

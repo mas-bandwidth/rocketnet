@@ -2848,7 +2848,7 @@ void rocketnet_test_server_port_zero_driver()
         // it an operator debugs a cookie gate that never matches.
         //
         // captured at the ERROR level ON PURPOSE, because that is the
-        // level a deployed binary, this suite and the C# smoke all run at:
+        // level a deployed binary and this suite run at:
         // the per-rung warn is invisible there, so if the rule were only a
         // warn a pinned port-zero create would return NULL with nothing
         // anywhere saying why. The exhausted-ladder path restates it as an

@@ -120,7 +120,7 @@ starts.
 | 6 | **Scheduler** | Four priority levels with RakNet's strides, round robin of channels within a level, FIFO within a channel, and the packet builder that aggregates | Within a channel, the first send of each record follows ordering order. No level starves. A stalled window never blocks unreliable traffic. | `RNScheduler` |
 | 7 | **Endpoint machine** and **slots machine** | One connection's composition of layers 3 to 6, its error state and deadline; the server's slot-to-endpoint map | The pure-module rule. End to end, over a lossy link, delivery is exactly-once for reliable, at-most-once for unreliable, and no state hangs. | `RNEndpoint`, `RNSlots`; socketless unit tests |
 | 8 | **Objects** | `rocketnet_server_t` and `rocketnet_client_t`: transport plus endpoints plus regions plus time | The update order, the thread rules, the delivered list's lifetime | functional tests over loopback; the swarm soak |
-| 9 | **C API** | `sdk/rocketnet.h`, `extern "C"`, no C++ types | The surface section 12 lists, usable from C#. | binding smoke; header compile test |
+| 9 | **C API** | `sdk/rocketnet.h`, `extern "C"`, no C++ types | The surface section 12 lists for C consumers. | native header compile and package-consumer tests |
 
 The order of work is in section 18.
 
@@ -1272,7 +1272,7 @@ the full plan.
 - **Not here yet:** CONFIG (10.3), so two builds with different message
   configs do not refuse each other; events, receipts and stats lists; the
   zero-copy SINGLE form (11.2); `write_packets` from fill threads; the
-  six later types; the C# binding of this API.
+  six later types.
 
 ## 12. Layer 9: the C API, as it will appear in `sdk/rocketnet.h`
 
@@ -1482,17 +1482,18 @@ counters this document names are `MESSAGE_SEND_STORE_FULL`,
 `MESSAGE_MEMORY_EXHAUSTED`, plus one
 counter for each violation in section 13.3.
 
-**The C# shim.** The study's §13 is provisional until the shim arrives. This
-API covers each provisional need:
+**Consumer adapter boundary.** The RakNet-style adapter discussed in the
+study's §13 is outside RocketNet's library deliverable. The native C API
+covers the following protocol needs:
 
 - RakNet's `Send` maps to `send_message`, which returns a nonzero serial.
 - `Receive` and `DeallocatePacket` become iteration over the update's list, or
   the client's copying cursor.
-- Receipts and connection notices are lists. A shim can merge them into
+- Receipts and connection notices are lists. A consumer adapter can merge them into
   RakNet's single stream, so the interleaving I17 describes is reproduced above
   this layer.
-- This layer does not reserve the first payload byte for a message id. It
-  stays the shim's (study §13).
+- This layer does not reserve the first payload byte for a message id. That
+  remains a consumer adapter choice (study §13).
 
 ## 13. The wire, to the bit, ready for STANDARD.md
 
@@ -2121,7 +2122,7 @@ requires.
   `RNEndpoint`, `RNSlots`.
 - **C8.** Layer 8: objects, loopback functional tests, the swarm soak with
   messages.
-- **C9.** Layer 9: the C API and the C# binding smoke. **The space game
+- **C9.** Layer 9: the C API and native consumer checks. **The space game
   integrates here.**
 - **C10 onward**, one card per type, in this order: 2, 6, 7, 1, 4, 5. Each
   card adds `RNReceipts` and the dispatch tests where needed.
@@ -2186,5 +2187,6 @@ requires.
   loopback), card C0b, commit `bec3ed5`.
 - The RTO behaviour when acks are paced only by keep-alives was reasoned, not
   measured.
-- The C# shim surface is still the study's provisional §13.
+- The RakNet-style consumer adapter surface remains the study's provisional §13;
+  it is outside RocketNet's library deliverable.
 - The layer list (section 3) has not yet gone to Glenn for correction.

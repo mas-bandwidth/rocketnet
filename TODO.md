@@ -277,8 +277,8 @@ land. The milestone view is issue #28; this file is the live ordering.
 - The public surface above it all, ruled: the root header the customer sees is
   netcode-style pure C -- rocketnet_client_transport_t with functions,
   rocketnet_server_transport_t with functions, maybe the address type, nothing
-  else. Real non-mangled symbols, so C# lands on P/Invoke and every other
-  language binds the same way; whether the inside shims to C++ is an
+  else. Real non-mangled symbols allow C and other FFI consumers to bind to
+  the same API; whether the inside shims to C++ is an
   implementation privilege, not a surface concern. The public C API surface (#22)
   is this surface's usage spec.
 - The XDP server transport, remaining rungs: ipv6 in the kernel program
