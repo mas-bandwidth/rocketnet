@@ -215,6 +215,13 @@ int rocketnet_message_client_receive( struct rocketnet_message_client_t * client
     return rn_message_object_receive( &client->object, 0, channel, data, bytes );
 }
 
+int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
+        return 0;
+    return rn_window_ack_receipts( &client->object.connections[0].ordered.ack, out, capacity );
+}
+
 void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data )
 {
     if ( !rocketnet_api_null_guard( client ) )

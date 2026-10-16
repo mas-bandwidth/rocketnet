@@ -54,9 +54,9 @@
 #define ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT    7
 #define ROCKETNET_CHANNEL_NUM_TYPES                             8
 
-// the first version's mask: UNRELIABLE and RELIABLE_ORDERED (7.5)
+// the enabled message types: UNRELIABLE, RELIABLE_ORDERED, and receipt-bearing UNRELIABLE (7.5)
 
-#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
+#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT ) )
 
 // a receipt type's base type: 5 travels as code 0, 6 as code 2, 7 as code 3
 

@@ -1308,6 +1308,14 @@ namespace rocketnet
 #define ROCKETNET_RECEIPT_ACKED                                         1
 #define ROCKETNET_RECEIPT_LOSS                                          2
 
+// One outcome for a send's nonzero serial. The list returned after an update
+// is valid until the next update; a full receipt ring drops its oldest entry.
+struct rocketnet_message_receipt_t
+{
+    uint32_t serial;
+    uint32_t status;            // ROCKETNET_RECEIPT_ACKED or ROCKETNET_RECEIPT_LOSS
+};
+
 // Why a message connection ended, the reason its DISCONNECTED event carries
 // (docs/CHANNELS.md 12). Values 0 to 4 are the window layer's
 // (sdk/rocketnet_window_ack.h defines the same values when this header is
@@ -1532,6 +1540,10 @@ ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_send( struct rocketnet_m
 // 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
+// Copies this update's receipt list into out, up to capacity entries; returns
+// the copied count. Repeated calls see the same list until the next update.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity );
+
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
 
@@ -1581,6 +1593,9 @@ ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_m
 
 // a NULL server, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
+
+// As above for one connected client slot. Invalid inputs return zero.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );

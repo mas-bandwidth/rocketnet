@@ -517,7 +517,6 @@ static const counters_exception_t counters_no_code_path[] =
     { "MESSAGE_SEQUENCED_STALE",        "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
     { "MESSAGE_SEQUENCED_SUPERSEDED",   "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
     { "MESSAGE_SEQUENCED_HOLD_FULL",    "the sequenced dispatch case in sdk/rocketnet_channel_sequenced.cpp is a stub; the sequenced card fills the body" },
-    { "MESSAGE_RECEIPT_RING_FULL",      "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
     { "MESSAGE_RECEIPT_ACKED",          "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
     { "MESSAGE_RECEIPT_LOSS",           "the receipt dispatch case in sdk/rocketnet_channel_receipts.cpp is a stub; the receipts card fills the body" },
     { NULL, NULL }
