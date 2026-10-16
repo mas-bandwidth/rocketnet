@@ -1208,6 +1208,72 @@ The objects do not own serialization (CLAUDE.md), broadcast, or flows.
   send is a loop over subscribers. Nothing here forecloses that.
 - **The game's own clock:** time is always passed in (`sdk/rocketnet.h:542-544`).
 
+### 11.5 As built: `rocketnet_message_client_t` and `rocketnet_message_server_t`
+
+The objects in the tree (`sdk/rocketnet_message_client.cpp`,
+`sdk/rocketnet_message_server.cpp`, `sdk/rocketnet_message_object.h`) are the
+first cut of 11.1 to 11.3, condensed to the two shipped types. Their C API is
+the `message objects` section of `sdk/rocketnet.h`; section 12 below remains
+the full plan.
+
+- **One block.** Create makes one allocation (or takes a caller block of
+  `rocketnet_message_*_required_memory` bytes, 64-aligned): the object, its
+  connections, each connection's receive bookkeeping and the arena of regions.
+  Nothing is allocated after create (R2).
+- **The send.** `start( channel, reliability, bytes )` returns a pointer into
+  the connection's region; the application writes the message there once;
+  `finish( bytes_written )` queues it and returns its receipt serial, nonzero.
+  `abort` gives the room back, and `send` is the copying convenience. The one
+  copy on the path is THE COPIES (a), record to frame, in layer 6's writer.
+- **The receive.** `receive( channel )` hands out the update's next message on
+  the channel as a const view and a length; `release` gives it back. Every view
+  is released before the next update: update with one held asserts in a debug
+  build and returns `ROCKETNET_ERROR_MESSAGE_NOT_RELEASED` in a release build,
+  counted as `MESSAGE_NOT_RELEASED` (tla/RNSlots.tla, RejectUnreleasedUpdate).
+  The views are taken back either way, so memory never grows from a held view.
+- **UNRELIABLE.** A code 0 record carries no channel (13.2), so an unreliable
+  message is received on channel 0. It is one record in one packet, up to the
+  payload capacity less the form byte and the record's three header bytes
+  (1411). It shares the region's send descriptors and store with the ordered
+  path, and is written after it, under the same budget; when a reliable packet
+  waits for budget, or the budget refuses an unreliable packet, the update's
+  queued unreliable messages are dropped and counted
+  (`MESSAGE_UNRELIABLE_OVER_BUDGET`).
+- **The update** runs RNSlots' order: the held-view check, the last update's
+  EndUpdate and the reset of any kicked connection's region, the transport's
+  update, Observe (the server reads every slot's connection id), the acked
+  packet ids (R1), the payloads, then the kick decision (exhaustion, then a wire
+  violation, then a reliable timeout). `send_packets` writes each connection's
+  packets one frame at a time from the transport's `start_packet`, ordered
+  progress and retransmits first, then unreliable, and calls the transport's
+  `send_packets`.
+- **Admission.** The transport's batches carry a client index but no
+  connection tag. An entry is admitted only for a slot bound before this
+  update's transport update and still bound to the same connection after it;
+  a slot bound or dropped by this update discards its entries, counted as
+  `MESSAGE_STALE_CONNECTION_ENTRY`. The connection id is the transport's
+  `client_id` for the slot, so a reconnect of the same client id into the same
+  slot inside one transport update is not told apart; a per-entry connection
+  tag from the transport (P9b) closes it.
+- **Exhaustion** (R5). A start the region has no room for, or a record the
+  receive side cannot place, ends the connection with
+  `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`: the server disconnects
+  the slot, the client disconnects itself. The region is reset at the next
+  update, before the transport can hand the slot to another client.
+- **Budgets** (R6) are per connection, in kbps, set at create (0 is the
+  default: 1000 for the client, 10000 per server slot) and at runtime with
+  `set_send_kbps`. A reused slot starts at the server's default.
+- **Time.** Create takes no time. The object's clock is the game's time from
+  the first update on. The client's transport is seeded at 0.0 at create and
+  is handed the time since the first update, so its connect timers and the
+  token's lifetime start at the first update whatever the game's clock reads
+  then (a game clock at 1000.0 connects). The server's transport reads the
+  game's time as it is.
+- **Not here yet:** CONFIG (10.3), so two builds with different message
+  configs do not refuse each other; events, receipts and stats lists; the
+  zero-copy SINGLE form (11.2); `write_packets` from fill threads; the
+  six later types.
+
 ## 12. Layer 9: the C API, as it will appear in `sdk/rocketnet.h`
 
 ```c

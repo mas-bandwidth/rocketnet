@@ -74,6 +74,13 @@ static const abi_field_t packet_context_fields[] =
 };
 #undef ABI_TYPE
 
+#define ABI_TYPE rocketnet_message_config_t
+static const abi_field_t message_config_fields[] =
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE(INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD)
+};
+#undef ABI_TYPE
+
 #define ABI_TYPE rocketnet_frame_sync_stats_t
 static const abi_field_t frame_sync_stats_fields[] =
 {
@@ -96,6 +103,7 @@ static const abi_type_t types[] =
     TYPE(server_transport_client_stats)
     TYPE(packet_context)
     TYPE(frame_sync_stats)
+    TYPE(message_config)
 };
 
 static const abi_type_t * find_type(const char * name)

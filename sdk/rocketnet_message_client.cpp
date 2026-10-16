@@ -1,0 +1,246 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The client message object (docs/CHANNELS.md 11.3): the object core of
+// sdk/rocketnet_message_server.cpp with one connection, over a
+// rocketnet_client_transport_t. Its one connection is bound at create and never
+// bound again; when its region is exhausted the client disconnects itself with
+// ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED (R5, tla/RNConnectionMemory.tla
+// Kick). The spec of the update and release rules is tla/RNSlots.tla.
+
+#include <string.h>
+
+#include "rocketnet.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_send_budget.h"
+
+// ---------------------------------------------------------------
+//                     the client transport's link
+// ---------------------------------------------------------------
+
+static void rn_client_link_update( void * transport, double time )
+{
+    rocketnet_client_transport_update( (rocketnet_client_transport_t *) transport, time );
+}
+
+static int rn_client_link_payloads( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
+{
+    *client_index = NULL;
+    return rocketnet_client_transport_payloads( (rocketnet_client_transport_t *) transport, payload_data, payload_bytes );
+}
+
+static int rn_client_link_acked( void * transport, const int ** client_index, const uint64_t ** packet_ids )
+{
+    *client_index = NULL;
+    return rocketnet_client_transport_acked_packets( (rocketnet_client_transport_t *) transport, packet_ids );
+}
+
+static uint8_t * rn_client_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
+{
+    (void) client_index;
+    return rocketnet_client_transport_start_packet( (rocketnet_client_transport_t *) transport, request_bytes, context );
+}
+
+static int rn_client_link_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
+{
+    return rocketnet_client_transport_finish_packet( (rocketnet_client_transport_t *) transport, context, payload_bytes );
+}
+
+static void rn_client_link_abort_packet( void * transport, rocketnet_packet_context_t * context )
+{
+    rocketnet_client_transport_abort_packet( (rocketnet_client_transport_t *) transport, context );
+}
+
+static void rn_client_link_send_packets( void * transport )
+{
+    rocketnet_client_transport_send_packets( (rocketnet_client_transport_t *) transport );
+}
+
+static uint64_t rn_client_link_connection( void * transport, int client_index )
+{
+    (void) client_index;
+    return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? 1 : 0;
+}
+
+static void rn_client_link_disconnect( void * transport, int client_index )
+{
+    (void) client_index;
+    rocketnet_client_transport_disconnect( (rocketnet_client_transport_t *) transport );
+}
+
+static int rn_client_link_state( void * transport )
+{
+    return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport );
+}
+
+static void rn_client_link_destroy( void * transport )
+{
+    rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
+}
+
+void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport )
+{
+    memset( link, 0, sizeof( *link ) );
+    link->transport = transport;
+    link->update = rn_client_link_update;
+    link->payloads = rn_client_link_payloads;
+    link->acked = rn_client_link_acked;
+    link->start_packet = rn_client_link_start_packet;
+    link->finish_packet = rn_client_link_finish_packet;
+    link->abort_packet = rn_client_link_abort_packet;
+    link->send_packets = rn_client_link_send_packets;
+    link->connection = rn_client_link_connection;
+    link->disconnect = rn_client_link_disconnect;
+    link->state = rn_client_link_state;
+    link->destroy = rn_client_link_destroy;
+    link->clock_from_first_update = 1;
+}
+
+// ---------------------------------------------------------------
+//                     the client's C API
+// ---------------------------------------------------------------
+
+uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config )
+{
+    return rn_message_object_required_bytes( message_config, 1, 0 );
+}
+
+struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
+                                                                     const struct rocketnet_client_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps )
+{
+    if ( !rocketnet_api_null_guard( connect_token ) )
+        return NULL;
+
+    const uint32_t kbps = send_kbps != 0 ? send_kbps : ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
+
+    // refuse before the transport opens a socket
+    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !rocketnet_send_budget_kbps_valid( kbps ) )
+    {
+        rocketnet_error( "message client create refused: message config or send budget" );
+        return NULL;
+    }
+
+    // create takes no time: the transport is seeded at 0.0, and the object
+    // hands it time relative to the first update (clock_from_first_update),
+    // so the connect attempt's timers and the token's lifetime start at the
+    // first update, whatever the game's clock reads then. time comes in only
+    // through update.
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create( context, connect_token, transport_config, 0.0 );
+    if ( !transport )
+        return NULL;
+
+    rn_message_link_t link;
+    rn_message_client_link( &link, transport );
+    return (rocketnet_message_client_t *) rn_message_object_create( context, &link, 0, 1, message_config, memory, memory_bytes, kbps, 0.0 );
+}
+
+void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+    rn_message_object_destroy( &client->object );
+}
+
+struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return NULL;
+    return client->object.link.destroy == rn_client_link_destroy ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
+}
+
+int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+    return client->object.link.state( client->object.link.transport );
+}
+
+int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return ROCKETNET_MESSAGE_OK;
+    return rn_message_object_update( &client->object, time );
+}
+
+void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+    rn_message_object_send_packets( &client->object );
+}
+
+uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return NULL;
+    return rn_message_object_start( &client->object, 0, channel, reliability, bytes );
+}
+
+uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    return rn_message_object_finish( &client->object, 0, bytes_written );
+}
+
+void rocketnet_message_client_abort( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+    rn_message_object_abort( &client->object, 0 );
+}
+
+uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+    return rn_message_object_send( &client->object, 0, channel, reliability, data, bytes );
+}
+
+int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( data ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( bytes ) )
+        return 0;
+    return rn_message_object_receive( &client->object, 0, channel, data, bytes );
+}
+
+void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+    if ( !rocketnet_api_null_guard( data ) )
+        return;
+    rn_message_object_release( &client->object, 0, data );
+}
+
+int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return 0;
+    return rn_message_object_set_send_kbps( &client->object, 0, kbps ) ? 1 : 0;
+}
+
+int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return ROCKETNET_MESSAGE_ERROR_NONE;
+    return rn_message_object_disconnect_reason( &client->object, 0 );
+}
+
+const struct rocketnet_counters_t * rocketnet_message_client_counters( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return NULL;
+    return &client->object.counters;
+}

@@ -123,7 +123,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 100
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 132
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -264,8 +264,9 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 
 // Safe before init; no allocation and no caller-owned struct writes. Type names
 // are the public C struct names. Unknown types/fields return SIZE_MAX for size
-// and offset, and -1 for field count. This describes the seven transport/config/
-// packet/frame-sync structs in this header, not opaque internal objects.
+// and offset, and -1 for field count. This describes the eight transport/config/
+// packet/frame-sync/message-config structs in this header, not opaque internal
+// objects such as the message client and server.
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_abi_version( void );
 // a NULL type is a counted no-op that returns SIZE_MAX.
 ROCKETNET_EXPORT_FUNC size_t rocketnet_abi_type_size( const char * type );
@@ -1273,7 +1274,7 @@ namespace rocketnet
 // The message layer above the transports (docs/CHANNELS.md). What is here
 // today is layer 1's surface: the constants every layer shares, the message
 // config, and the sizing of one connection's region, callable before any
-// connect. The client and server objects arrive with layer 8.
+// connect. The client and server objects follow the counters below.
 
 #ifndef ROCKETNET_MAX_CHANNELS
 #define ROCKETNET_MAX_CHANNELS                                         32
@@ -1421,6 +1422,175 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_class_name( int counter_cla
 // returns, when every packet counted as arrived has taken its outcome. A NULL
 // counters is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes );
+
+// -----------------------------------------
+//                         message objects
+// -----------------------------------------
+
+// The client and server message objects over the transports (docs/CHANNELS.md
+// 10 to 12): a message is bytes, a pointer and a length (R4). Each object is
+// one block made at create -- the object, its connections and one region per
+// connection (the client's one, one per server slot) -- and allocates nothing
+// after create (R2). memory is optional: NULL makes the one allocation, and a
+// caller block of at least *_required_memory bytes, 64-aligned, makes none
+// (the transport still allocates its own at its create).
+//
+// The update order, on the main thread: update (the transport's update, the
+// transport's acked packet ids into the channels -- the only ack there is, R1
+// -- then the received payloads into deliveries, then the exhaustion and
+// error checks that disconnect), receive and release, start/write/finish,
+// then send_packets (each connection's packets under its send budget into
+// frames from the transport's start_packet, then the transport's
+// send_packets).
+//
+// Sending mirrors the transport's start_packet and finish_packet: start
+// returns a pointer into the connection's region; write the message there
+// once, in place; finish(bytes_written) queues it and returns its receipt
+// serial, nonzero (CHANNELS 7.4); abort gives the room back. One start is
+// pending per object at a time. reliability is ROCKETNET_UNRELIABLE or
+// ROCKETNET_RELIABLE_ORDERED; the other six types are refused (counted
+// MESSAGE_SEND_TYPE_NOT_ENABLED) until their cards enable them. An
+// UNRELIABLE message travels as one record in one packet, up to 1411 bytes,
+// and carries no channel on the wire: it is received on channel 0. A
+// RELIABLE_ORDERED message is up to the config's max_message_bytes.
+//
+// A start the connection's region has no room for ends the connection (R5):
+// the server disconnects that client, the client disconnects itself, with the
+// reason ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED, and start returns
+// NULL. The send budget governs the wire, never the queue: a reliable message
+// waits for budget and is never dropped; an unreliable one over budget is
+// dropped and counted (MESSAGE_UNRELIABLE_OVER_BUDGET).
+//
+// Receiving: receive hands out the next message of the update on a channel as
+// a const view and its length, valid until the next update. Every received
+// message is released before the next update; update with one still held
+// asserts in a debug build and returns ROCKETNET_ERROR_MESSAGE_NOT_RELEASED in
+// a release build (tla/RNSlots.tla, RejectUnreleasedUpdate). Copy what is kept
+// past the update.
+//
+// Budgets are kilobits per second of the transport's wire bytes (1 kbps =
+// 1000 bit/s), per connection: 0 at create means the default.
+
+#ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
+#define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000
+#endif
+#ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
+#define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
+#endif
+
+#define ROCKETNET_MESSAGE_OK                                0
+#define ROCKETNET_ERROR_MESSAGE_NOT_RELEASED                -1
+
+struct rocketnet_message_client_t;
+struct rocketnet_message_server_t;
+
+// ---- client ----
+
+// the bytes a caller block for a client object needs; 0 for a refused config
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const struct rocketnet_message_config_t * message_config );
+
+// a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
+// create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update.
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
+                                                                                         const struct rocketnet_client_transport_config_t * transport_config,
+                                                                                         const struct rocketnet_message_config_t * message_config,
+                                                                                         void * memory, uint64_t memory_bytes, uint32_t send_kbps );
+
+// a NULL client is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
+
+// the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct rocketnet_message_client_t * client );
+
+// ROCKETNET_CLIENT_TRANSPORT_STATE_*. a NULL client is a counted no-op that returns DISCONNECTED.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_state( struct rocketnet_message_client_t * client );
+
+// ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_MESSAGE_OK.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time );
+
+// a NULL client is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client );
+
+// a NULL client is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes );
+
+// the receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written );
+
+// a NULL client is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_abort( struct rocketnet_message_client_t * client );
+
+// The convenience over start and finish. It copies data into the region
+// record: start, write in place and finish do not. a NULL client or data is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
+
+// 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
+
+// a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
+
+// 1 when the budget took the new rate, from now on. a NULL client is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps );
+
+// ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client );
+
+// the message counters (rocketnet_counters.h). a NULL client is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_client_counters( struct rocketnet_message_client_t * client );
+
+// ---- server ----
+
+// the bytes a caller block for a server object needs, at the transport config's max_clients; 0 for a refused config
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
+
+// a NULL address is a counted no-op that returns NULL. NULL configs are the defaults.
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
+                                                                                         const struct rocketnet_server_transport_config_t * transport_config,
+                                                                                         const struct rocketnet_message_config_t * message_config,
+                                                                                         void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+
+// a NULL server is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
+
+// the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct rocketnet_message_server_t * server );
+
+// ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_MESSAGE_OK.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
+
+// a NULL server is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server );
+
+// a NULL server is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes );
+
+// a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
+
+// a NULL server is a counted no-op.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index );
+
+// The convenience over start and finish; it copies data into the region record. a NULL server or data is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
+
+// a NULL server, data or bytes is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
+
+// a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
+ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );
+
+// a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps );
+
+// ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index );
+
+// a NULL server is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_client_connected( struct rocketnet_message_server_t * server, int client_index );
+
+// a NULL server is a counted no-op that returns NULL.
+ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_server_counters( struct rocketnet_message_server_t * server );
 
 // -----------------------------------------
 
