@@ -1154,6 +1154,143 @@ static void hostile_chunk_count_or_index_kicks()
     }
 }
 
+static void hostile_small_at_held_ordering_is_refused()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static uint8_t chunk[1152];
+    memset( chunk, 0x77, sizeof( chunk ) );
+    rn_delivery_t out;
+    rocketnet_message_record_t record;
+
+    node_t * b = node_new( &config, 4 );
+
+    // chunk 0 of a 4-chunk block at ordering 0 is held, still collecting chunks
+    chunk_record( &record, 0, 0, 0, 3, 0, chunk, (int) F );
+    check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    uint32_t held_before = 0;
+    for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+        held_before += b->region->held_index[i].used ? 1 : 0;
+    check( held_before == 1 );
+
+    // a small record at the same ordering index: refused, not delivered
+    const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    record.number = 1;
+    record.ordering = 0;
+    record.channel = 0;
+    record.data = chunk;
+    record.bytes = 16;
+    check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( b->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == before + 1 );
+    check( b->ordered.channels.deliveries == 0 );
+
+    // no held entry was leaked: only the blocks own entry remains
+    uint32_t held_after = 0;
+    for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+        held_after += b->region->held_index[i].used ? 1 : 0;
+    check( held_after == 1 );
+
+    node_free( b );
+}
+
+// the same conflict over the simulated receive path: two connections on
+// rocketnet_network_simulator, time only an argument starting at 1000.0, the
+// hostile small record injected as a packet after the block's chunk is held
+
+static void hostile_small_at_held_ordering_is_refused_sim()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static uint8_t chunk[1152];
+    memset( chunk, 0x77, sizeof( chunk ) );
+
+    node_t * a = node_new( &config, 4 );
+    node_t * b = node_new( &config, 4 );
+    node_t * nodes[2] = { a, b };
+
+    sim_t sim;
+    sim_setup( &sim, 0.0f, 0.0f, 9 );
+    sim.now = 1000.0;
+
+    alignas( 16 ) static uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    rocketnet_message_writer_t writer;
+    rocketnet_message_record_t record;
+    wire_packet_t wp;
+
+    // packet 1: chunk 0 of a 4-chunk block at ordering 0, held while collecting
+    chunk_record( &record, 0, 0, 0, 3, 0, chunk, (int) F );
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+    check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+    int len = rocketnet_message_writer_finish( &writer );
+    check( len > 0 );
+    wp.id = a->next_packet_id++;
+    wp.bytes = len;
+    memcpy( wp.data, payload, (size_t) len );
+    sim_send_data( &sim, 0, &wp );
+
+    int ticks = 0;
+    uint32_t held_before = 0;
+    while ( ticks++ < 200 )
+    {
+        sim_tick( &sim, nodes, 1.0 / 60.0 );
+        held_before = 0;
+        for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+            held_before += b->region->held_index[i].used ? 1 : 0;
+        if ( held_before == 1 )
+            break;
+    }
+    check( held_before == 1 );
+
+    // packet 2: a small record at the same ordering index: refused, not delivered
+    const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    record.number = 1;
+    record.ordering = 0;
+    record.channel = 0;
+    record.data = chunk;
+    record.bytes = 16;
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+    check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+    len = rocketnet_message_writer_finish( &writer );
+    check( len > 0 );
+    wp.id = a->next_packet_id++;
+    wp.bytes = len;
+    memcpy( wp.data, payload, (size_t) len );
+    sim_send_data( &sim, 0, &wp );
+
+    ticks = 0;
+    uint64_t after = before;
+    while ( ticks++ < 200 && after == before )
+    {
+        sim_tick( &sim, nodes, 1.0 / 60.0 );
+        after = counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+    }
+    check( counter( b, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == before + 1 );
+    check( b->ordered.channels.deliveries == 0 );
+    check( b->delivered.size() == 0 );
+    check( b->got[0].size() == 0 );
+    check( rn_ordered_decide( &b->ordered ) == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+
+    // no held entry was leaked: only the block's own entry remains
+    uint32_t held_after = 0;
+    for ( uint32_t i = 0; i < b->region->held_entries; i++ )
+        held_after += b->region->held_index[i].used ? 1 : 0;
+    check( held_after == 1 );
+
+    sim_teardown( &sim );
+    node_free( a );
+    node_free( b );
+}
+
 // ---------------------------------------------------------------------------
 // 8. zero copy: the start pointer is where the frame is copied from, and
 //    delivery is a view
@@ -1746,6 +1883,8 @@ REGISTER_UNIT_TEST( large_between_small_keeps_order );
 REGISTER_UNIT_TEST( chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( no_partial_delivery );
 REGISTER_UNIT_TEST( hostile_chunk_count_or_index_kicks );
+REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
+REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );
 static void no_allocation_after_create()
 {
