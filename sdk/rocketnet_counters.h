@@ -524,7 +524,13 @@
     X( MESSAGE_BAD_BLOCK, REFUSAL, NONE ) \
     X( MESSAGE_BAD_RING, REFUSAL, NONE ) \
     X( MESSAGE_ORDERING_AHEAD, REFUSAL, NONE ) \
-    X( MESSAGE_PROTOCOL_VIOLATION, REFUSAL, NONE )
+    X( MESSAGE_PROTOCOL_VIOLATION, REFUSAL, NONE ) \
+    \
+    /* Message-object refusal, stale batch entry, and unreleased receive */ \
+    /* view. Appended so the enum, names, classes, and families agree. */ \
+    X( MESSAGE_SEND_REFUSED, REFUSAL, NONE ) \
+    X( MESSAGE_STALE_CONNECTION_ENTRY, EXPECTED, NONE ) \
+    X( MESSAGE_NOT_RELEASED, REFUSAL, NONE )
 
 enum
 {

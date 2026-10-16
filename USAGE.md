@@ -281,6 +281,49 @@ if ( !rocketnet_counters_conserved( rocketnet_server_transport_counters( server 
     printf( "counters out of balance: %s\n", report );
 ```
 
+## Messages
+
+The message objects sit on the transports and carry reliable ordered and
+unreliable messages, each a pointer and a length. One client object or one
+server object per endpoint, created once; nothing is allocated after create.
+
+    struct rocketnet_message_server_t * server = rocketnet_message_server_create( NULL, "0.0.0.0:40000", &server_config, NULL, NULL, 0, 0 );
+
+    // each frame, on the main thread
+    rocketnet_message_server_update( server, time );        // ROCKETNET_ERROR_MESSAGE_NOT_RELEASED if a view was kept
+
+    for ( int client_index = 0; client_index < max_clients; client_index++ )
+    {
+        const uint8_t * data;
+        int bytes;
+        while ( rocketnet_message_server_receive( server, client_index, channel, &data, &bytes ) )
+        {
+            handle( data, bytes );                           // copy what is kept past the next update
+            rocketnet_message_server_release( server, client_index, data );
+        }
+    }
+
+    uint8_t * p = rocketnet_message_server_start( server, client_index, channel, ROCKETNET_RELIABLE_ORDERED, max_bytes );
+    if ( p )
+    {
+        int written = write_message( p, max_bytes );         // written once, in place
+        rocketnet_message_server_finish( server, client_index, written );
+    }
+
+    rocketnet_message_server_send_packets( server );
+
+The client is the same with no client index, and takes the connect token at
+create but no time: its connect attempt starts at its first update, at
+whatever the game's clock reads then. Every received message is released
+before the next update. `start` returning NULL for a connected client with a valid
+channel and size means its memory was exhausted: that connection has ended
+with `ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED`, readable from
+`rocketnet_message_*_disconnect_reason`. An unreliable message arrives on
+channel 0 and is at most 1411 bytes. Each connection's send budget is in
+kbps, 0 at create meaning 1000 for the client and 10000 per server slot,
+and `rocketnet_message_*_set_send_kbps` changes it at runtime. The design is
+docs/CHANNELS.md, section 11.5 for what is built.
+
 ## Connection quality
 
 `rocketnet_client_transport_stats` and

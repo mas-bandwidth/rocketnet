@@ -359,6 +359,9 @@ public static unsafe partial class RocketNet
         MessageBadRing,
         MessageOrderingAhead,
         MessageProtocolViolation,
+        MessageSendRefused,
+        MessageStaleConnectionEntry,
+        MessageNotReleased,
     }
 #pragma warning restore 1591
 
