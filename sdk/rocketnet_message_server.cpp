@@ -560,7 +560,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
     }
     else
     {
-        // the other five types are refused until their cards enable them (7.5)
+        // the remaining types are refused until their cards enable them (7.5)
         if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
             rn_channels_send_check( &connection->ordered.channels, reliability, (uint32_t) channel );
         else
@@ -724,7 +724,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
 
     int written = 0;
 
-    // the ordered path, one packet per call so a frame is started only for a
+    // the reliable path, one packet per call so a frame is started only for a
     // packet that is written; the RTO back-off doubles at most once an update
     rn_window_ack_t * ack = &connection->ordered.ack;
     const uint32_t backoff = ack->backoff;
