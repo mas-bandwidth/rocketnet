@@ -108,8 +108,8 @@ static void disabled_codes_are_refused_and_counted()
             refused++;
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == refused );
     }
-    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) ) == 0 );
-    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) ) == 0 );
+    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) ) != 0 );
+    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) ) != 0 );
 
     // Wire codes still outside the enabled mask are refused on receive.
     static uint8_t payload[8];

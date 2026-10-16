@@ -772,9 +772,11 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
 
     rn_region_t * region = channels->region;
 
+    const int receipt_base = rn_channels_reliable_receipt_base( type );
+
     // RNChannel!RefuseSend: a type outside the mask is refused and counted (7.5)
     if ( rn_channels_send_check( channels, type, channel ) != ROCKETNET_CHANNEL_SEND_OK ||
-         ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
+         ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED && receipt_base < 0 ) )
         return NULL;
 
     // an exhausted connection sends nothing more: the owner kicks it (R5)
@@ -789,7 +791,11 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     channels->pending = d;
     channels->pending_bytes = bytes;
     channels->pending_channel = channel;
-    region->send_descriptors[d].reliability = (uint8_t) type;
+    // RNReceipts EffectiveKind: public 6/7 use the existing reliable code
+    // 2/3 numbering and resend path; the flag requests one ACKED outcome.
+    region->send_descriptors[d].reliability = (uint8_t) ( receipt_base >= 0 ? receipt_base : type );
+    if ( receipt_base >= 0 )
+        region->send_descriptors[d].flags |= RN_SEND_FLAG_RECEIPT_RELIABLE;
 
     return rn_region_send_write_pointer( region, d );
 }
