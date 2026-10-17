@@ -42,7 +42,6 @@
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_send_handoff.h"
 #include "rocketnet_xdp_limits.h"
-#include "rocketnet_xdp_bind.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
 
@@ -53,9 +52,6 @@
 
 // XDP umem frame size must match libxdp expectation
 static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must be 4096" );
-static_assert( ROCKETNET_XDP_BIND_COPY == XDP_COPY, "rocketnet_xdp_bind.h: XDP_COPY drifted from linux/if_xdp.h" );
-static_assert( ROCKETNET_XDP_BIND_ZEROCOPY == XDP_ZEROCOPY, "rocketnet_xdp_bind.h: XDP_ZEROCOPY drifted from linux/if_xdp.h" );
-static_assert( ROCKETNET_XDP_BIND_USE_NEED_WAKEUP == XDP_USE_NEED_WAKEUP, "rocketnet_xdp_bind.h: XDP_USE_NEED_WAKEUP drifted from linux/if_xdp.h" );
 
 struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
@@ -1449,7 +1445,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         // create umem with explicit config
         struct xsk_umem_config umem_config;
-        rocketnet_xdp_umem_config_init( &umem_config, ROCKETNET_XDP_FILL_QUEUE_SIZE, XSK_RING_CONS__DEFAULT_NUM_DESCS, ROCKETNET_XDP_FRAME_SIZE );
+        memset( &umem_config, 0, sizeof(umem_config) );
+        umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
+        umem_config.frame_headroom = 0;
 
         int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
         if ( result ) 
@@ -1459,56 +1457,25 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        // initialize receive frame allocator
-
-        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
-        {
-            socket->receive_frames[j] = ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE;
-        }
-
-        socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
-
-        // populate the fill ring BEFORE bind. A zero-copy driver allocates its
-        // Rx ring from the fill ring when the socket binds; filled after bind,
-        // i40e starts the ring partly empty ("Failed to allocate some buffers
-        // on AF_XDP ZC enabled Rx ring", logged at both of space's panics).
-        // The 2048 frames here cover the whole Rx ring only while the NIC's Rx
-        // ring is at most ROCKETNET_XDP_FILL_QUEUE_SIZE entries (ethtool -g;
-        // i40e's default is 512, space's eno1 reads 512). The fill ring exists
-        // from xsk_umem__create, so it can be populated here.
-
-        rocketnet_assert( ROCKETNET_XDP_FILL_QUEUE_SIZE <= ROCKETNET_XDP_RECV_QUEUE_SIZE );
-
-        if ( !rocketnet_xdp_prefill( ROCKETNET_XDP_FILL_QUEUE_SIZE, INVALID_FRAME,
-                 [&]( uint32_t count, uint32_t * index ) { return xsk_ring_prod__reserve( &socket->fill_queue, count, index ); },
-                 [&]() { return alloc_receive_frame( socket ); },
-                 [&]( uint32_t index, uint64_t frame ) { *xsk_ring_prod__fill_addr( &socket->fill_queue, index ) = frame; },
-                 [&]( uint32_t count ) { xsk_ring_prod__submit( &socket->fill_queue, count ); } ) )
-        {
-            rocketnet_error( "server failed to populate the fill queue with %d receive frames", ROCKETNET_XDP_FILL_QUEUE_SIZE );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
-        }
-
         // create xdp socket
 
-        // copy mode unless ROCKETNET_XDP_ZEROCOPY=1 (rocketnet_xdp_bind.h says why)
-        const char * zerocopy_env = rocketnet_platform_getenv( "ROCKETNET_XDP_ZEROCOPY" );
-        const bool zerocopy = rocketnet_xdp_want_zerocopy( zerocopy_env );
-
         struct xsk_socket_config xsk_config;
-        rocketnet_xdp_socket_config_init( &xsk_config, ROCKETNET_XDP_RECV_QUEUE_SIZE, ROCKETNET_XDP_SEND_QUEUE_SIZE,
-                                          XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD, zerocopy_env );
+
+        memset( &xsk_config, 0, sizeof(xsk_config) );
+
+        xsk_config.rx_size = ROCKETNET_XDP_RECV_QUEUE_SIZE;
+        xsk_config.tx_size = ROCKETNET_XDP_SEND_QUEUE_SIZE;
+        xsk_config.xdp_flags = XDP_ZEROCOPY;     
+        xsk_config.bind_flags = XDP_USE_NEED_WAKEUP;
+        xsk_config.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
 
         result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
         if ( result )
         {
-            rocketnet_error( "server could not create %s xsk socket for queue %d", zerocopy ? "zero-copy" : "copy mode", queue );
+            rocketnet_error( "server could not create xsk socket for queue %d", queue );
             rocketnet_server_socket_destroy( server_socket );
             return NULL;
         }
-
-        rocketnet_info( "xdp socket queue %d bound in %s mode", queue, zerocopy ? "zero-copy" : "copy" );
 
         // configure the xdp socket to receive packets from the xdp program
 
@@ -1544,6 +1511,50 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // make sure we start off with the correct send buffer index
 
         socket->send_flow_index.store( socket->send_handoff.acquire(), std::memory_order_relaxed );
+
+        // initialize receive frame allocator
+
+        for ( int j = 0; j < ROCKETNET_XDP_NUM_FRAMES / 2; j++ )
+        {
+            socket->receive_frames[j] = ( ROCKETNET_XDP_NUM_FRAMES / 2 + j ) * ROCKETNET_XDP_FRAME_SIZE;
+        }
+
+        socket->num_free_receive_frames = ROCKETNET_XDP_NUM_FRAMES / 2;
+
+        // populate fill ring for packets to be received in
+        {
+            rocketnet_assert( ROCKETNET_XDP_FILL_QUEUE_SIZE <= ROCKETNET_XDP_RECV_QUEUE_SIZE );
+
+            uint32_t index;
+            int result = xsk_ring_prod__reserve( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE, &index );
+            if ( result != ROCKETNET_XDP_FILL_QUEUE_SIZE )
+            {
+                rocketnet_error( "server failed to populate fill queue: %d", result );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+
+            uint64_t frames[ROCKETNET_XDP_FILL_QUEUE_SIZE];
+            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
+            {
+                frames[i] = alloc_receive_frame( socket );
+                if ( frames[i] == INVALID_FRAME )
+                {
+                    rocketnet_error( "server could not allocate receive frame for fill queue" );
+                    rocketnet_server_socket_destroy( server_socket );
+                    return NULL;
+                }
+            }
+
+            for ( int i = 0; i < ROCKETNET_XDP_FILL_QUEUE_SIZE; i++ ) 
+            {
+                uint64_t * frame = (uint64_t*) xsk_ring_prod__fill_addr( &socket->fill_queue, index + i );
+                rocketnet_assert( frame );
+                *frame = frames[i];
+            }
+
+            xsk_ring_prod__submit( &socket->fill_queue, ROCKETNET_XDP_FILL_QUEUE_SIZE );
+        }
 
         // create send mutex
 
