@@ -84,7 +84,13 @@ An end in error does nothing more: the object disconnects it (section 11).
   other modules' (`RNRing`, `RNSendSpans`, `RNReceipts`, `RNScheduler`).
 - `WriteAll = TRUE` makes a packet carry every due record and every waiting
   unreliable record, a model-size knob: which subset a packet carries is
-  `RNScheduler`'s and `RNSendBudget`'s.
+  `RNScheduler`'s and `RNSendBudget`'s. On an in-order link it also leaves
+  ordering unexercised: every packet carries every unacked record inside the
+  window, so a later ordered message never arrives without the one before
+  it, and `OrderedInOrder` holds whatever the receiver does.
+  `MCRNEndpointPartial.cfg` runs `WriteAll = FALSE` (a packet carries any
+  subset of the due records) so the hold is what keeps the order, and
+  `MCRNEndpointBrokenOrderIgnored.cfg` shows it.
 
 ## Properties
 
@@ -121,8 +127,8 @@ lost send or a full link disables the step for a while.
 The instance: N messages per side, the first N - 1 reliable ordered on
 channel 0 and the last unreliable on channel 1; `W = 2`; two
 configurations, equal (`num_channels` 2 at both ends) and differing (2 at
-a, 1 at b), both explored from `Init`. The two controls run Link capacity
-1 and the two witnesses capacity 2.
+a, 1 at b), both explored from `Init`. The passing cases and the order
+witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
 
 | Case | Spec and terrain | Expected |
 |---|---|---|
@@ -130,8 +136,11 @@ a, 1 at b), both explored from `Init`. The two controls run Link capacity
 | `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `RtoAboveRtt` | pass |
 | `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE`, capacity 2 | temporal `ConfigVerifiedDespiteFirstLoss` |
 | `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE`, capacity 2, no constraints | invariant `MismatchErrorsBothEnds` |
+| `MCRNEndpointTwoWay.cfg` | `Spec`, N = 2, capacity 1, both ends sending, the safety terrain; constraint `MCOneTimeout` only (bench) | pass |
+| `MCRNEndpointPartial.cfg` | the safety case with `WriteAll = FALSE` (bench) | pass |
+| `MCRNEndpointBrokenOrderIgnored.cfg` | the Partial case with `OrderChecked = FALSE` | invariant `OrderedInOrder` |
 
-### What makes the controls finish
+### What makes the controls finish, and what each reduction gives up
 
 - `OpenAny(e)` opens the head of the wire into `e` rather than quantifying
   over every value of `Pkts` (4,096 records at N = 3). Link's `Deliver`
@@ -146,37 +155,61 @@ a, 1 at b), both explored from `Init`. The two controls run Link capacity
   while the link drops every packet into it. A second timed-out end adds
   no delivery state, only its `err` value, which no invariant reads for
   `RELIABLE_TIMEOUT`.
-- `MCOneWay` (safety only): only a's application sends; b resets, writes
-  CONFIG and acks, and opens a's packets. The model is symmetric in the
-  two ends except for `cfg`, so b's data to a is a's data to b renamed.
-  The differing pair puts the larger `num_channels` at a, so a's channel-1
-  message is the data record outside b's bounds (the `VIOLATION` path);
-  b's own refusal of that channel is `Send`'s guard. The full two-way
-  product at N = 3 did not finish in 280 s with 4 workers (over 3.5 million
-  distinct states, queue growing), with or without timeouts at any time.
+- `MCOneWay` (the one-way safety case only): only a's application sends;
+  b resets, writes CONFIG and acks, and opens a's packets. The model is
+  symmetric in the two ends except for `cfg`, so b's data to a is a's data
+  to b renamed, and each direction on its own is covered. The renaming
+  does not cover interference between the directions: it assumes an end's
+  sent records and its received records never meet in one rule. A
+  receiver that confuses them (a planted bug that takes as fresh any record
+  not in `rcvd[e] \ acked[e]`, so a message the end has received is taken
+  again once its own send of the same number is acked) passes the one-way
+  case at its full 736909 distinct states and fails `ReliableExactlyOnce`
+  in the two-way case within seconds. `MCRNEndpointTwoWay.cfg` checks both
+  ends sending at N = 2 under `MCOneTimeout` alone. The differing pair puts
+  the larger `num_channels` at a, so a's channel-1 message is the data
+  record outside b's bounds (the `VIOLATION` path); b's own refusal of that
+  channel is `Send`'s guard. The full two-way product at N = 3 did not
+  finish in 280 s with 4 workers (over 3.5 million distinct states, queue
+  growing), with or without timeouts at any time.
+- `WriteAll = TRUE` on the one-way, two-way and liveness cases leaves
+  `OrderedInOrder` unexercised (see above): `OrderChecked = FALSE` under
+  `MCRNEndpoint.cfg` passes at its full 736909 distinct states, and the
+  same argument holds for every `WriteAll = TRUE` case. The Partial case
+  is where the ordering rule is checked.
 - Liveness stays at N = 2: at N = 3 and capacity 1 it completes (86,113
   distinct states, no violation) but in 188 s, over the budget.
 
 ### Measured records
 
 Measured with the pinned runner and JAR on a 16-CPU Linux bench under a
-one-minute load of 35 to 55, each case its own 110-second shard, merged into
-`tla/RUNS.tsv` with `tlacheck merge --keep tla/RUNS.tsv` (`groups --stale`
-prints `[]`):
+one-minute load of 5 to 20, each case its own 110-second shard on two
+workers, merged into `tla/RUNS.tsv` with `tlacheck merge --keep
+tla/RUNS.tsv` (`groups --stale` prints `[]`):
 
 | Case | Gate | Exit | Result | Generated | Distinct | Seconds |
 |---|---|---:|---|---:|---:|---:|
-| `MCRNEndpoint.cfg` | required | 0 | PASS | 5708001 | 736909 | 88.775 |
-| `MCRNEndpointLive.cfg` | required | 0 | PASS | 61813 | 24370 | 39.816 |
-| `MCRNEndpointBrokenConfigUnreliable.cfg` | required | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 9.818 |
-| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 2.280 |
+| `MCRNEndpoint.cfg` | required | 0 | PASS | 5708001 | 736909 | 44.018 |
+| `MCRNEndpointLive.cfg` | required | 0 | PASS | 61813 | 24370 | 35.673 |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | required | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 7.317 |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 1.605 |
+| `MCRNEndpointBrokenOrderIgnored.cfg` | required | 12 | PASS (invariant `OrderedInOrder`) | 47823 | 10350 | 3.283 |
+| `MCRNEndpointTwoWay.cfg` | bench | 124 | FAIL (debt `endpoint-two-way-safety-over-budget`) | - | - | 110.332 |
+| `MCRNEndpointPartial.cfg` | bench | 124 | FAIL (debt `endpoint-partial-write-safety-over-budget`) | - | - | 110.335 |
 
-The safety control is the closest to the budget (89 of 110 s on two
-workers); a refresh on a heavily loaded bench may need a quieter one.
+The two bench cases complete outside the budget. Run on the same bench
+with the same JAR, TLC on two workers with `-deadlock` and no budget:
+`MCRNEndpointTwoWay.cfg` completes with no error, 37543692 states
+generated, 5082866 distinct, in 4 min 12 s; `MCRNEndpointPartial.cfg`
+completes with no error, 30828410 generated, 3326097 distinct, in
+2 min 56 s. Those runs are evidence for this document, not records: the
+records stay the 110-second debt rows. The one-way safety control took
+89 s of 110 under a one-minute load of 35 to 55; a refresh on a heavily
+loaded bench may need a quieter one.
 
 ## Reversed witnesses, each checked by hand
 
-Both traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
+The traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
 No code implements CONFIG or the endpoint yet (`sdk/` defines only the
 error code), so the check is against the design, which is the spec the
 two code cards implement.
@@ -204,6 +237,21 @@ nothing is enabled that changes `peerCfg`, and the behaviour stutters with
 this out by giving CONFIG the first reliable number, "so it is resent until
 acked"; with that rule the same first losses are followed by a resend, which
 the model's `WriteOldest` fairness carries.
+
+**`MCRNEndpointBrokenOrderIgnored.cfg`** (`OrderChecked = FALSE`,
+invariant `OrderedInOrder`, 9 states). Equal configurations, `num_channels`
+2 at both ends. a's application sends messages 1 and 2, both reliable
+ordered on channel 0, which take reliable numbers 1 and 2 behind CONFIG.
+a writes a packet carrying CONFIG alone; b opens it, its comparison passes
+and it owes the ack of record 0. b writes its first packet (its CONFIG)
+with that ack; a opens it, takes b's CONFIG and marks record 0 acked, so
+the window is now numbers 1 and 2. a writes a packet carrying message 2
+and not message 1 (with `WriteAll = FALSE` a packet carries any subset of
+the due records). b opens it: message 2 is fresh, and with no predecessor
+check it is released at once, `deliv[b] = <<2>>` while message 1 has never
+arrived. Section 7.2 holds a RELIABLE_ORDERED message until every earlier
+message on its channel is received; with that check, message 2 waits in
+`held[b]` until message 1 arrives and both are then delivered in order.
 
 ## Action-to-section map
 
