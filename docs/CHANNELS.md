@@ -665,8 +665,9 @@ details explicit:
   `2P`-entry `sent_index` table (Knuth multiplicative hash with backward-shift
   deletion), and writes the `uint32_t` references (`n & 0xFFFFFFu`, bit 31
   reserved for layer 4 receipt serials) into the circular `16P`-entry
-  `sent_refs` ring. On each referenced number's first send (`last_send == 0.0`)
-  it sets `first_send = now`; on every send it sets `last_send = now` and links
+  `sent_refs` ring. On each referenced number's first send (its `last_send` is
+  the never-sent sentinel `RN_SEND_NUMBER_NEVER_SENT`) it sets
+  `first_send = now`; on every send it sets `last_send = now` and links
   the slot at the tail of the resend FIFO. When `sent_count == P` or
   `sent_ref_count + count > 16P`, the oldest sent-packet entries are evicted
   first and counted in `MESSAGE_SENT_MAP_EVICTED`; evicted numbers keep their

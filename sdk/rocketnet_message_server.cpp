@@ -694,7 +694,7 @@ static int rn_message_ordered_fifo_due( const rn_region_t * region, uint32_t cur
             return 1;                                           // a long acked prefix: let the write walk it
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
-            return ( slot->last_send <= 0.0 || now >= slot->last_send + delay ) ? 1 : 0;
+            return ( rn_send_number_unsent_due( slot->last_send ) || now >= slot->last_send + delay ) ? 1 : 0;
         cursor = region->resend_fifo[cursor].next;
     }
     return 0;
