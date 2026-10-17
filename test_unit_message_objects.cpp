@@ -95,6 +95,7 @@ struct mo_net_t
     bool drop_to_server;
     bool drop_to_client;
     int drop_next_to_server;                        // drop this many packets to the server, then deliver
+    int fail_finish;                                // the next this many finish_packet calls fail (return 0, nothing sent)
     bool hold_acks;                                 // opened ids are not reported back while set
     bool keep_log;
 };
@@ -114,6 +115,7 @@ static mo_net_t * mo_net_new()
     net->drop_to_server = false;
     net->drop_to_client = false;
     net->drop_next_to_server = 0;
+    net->fail_finish = 0;
     net->hold_acks = false;
     net->keep_log = true;
     return net;
@@ -259,6 +261,11 @@ static int mo_finish_packet( void * transport, rocketnet_packet_context_t * cont
     check( f >= 0 );
     check( payload_bytes >= 1 && payload_bytes <= ROCKETNET_MAX_PAYLOAD_BYTES );
     e->frame_used[f] = false;
+    if ( e->net->fail_finish > 0 )
+    {
+        e->net->fail_finish--;                                  // the transport refused the packet: nothing goes on the wire
+        return 0;
+    }
     e->finishes++;
 
     mo_packet_t packet;
@@ -1647,6 +1654,230 @@ static void message_objects_client_clock_starts_at_first_update()
     mo_net_free( net );
 }
 
+// ---------------------------------------------------------------------------
+// The unreliable path on the shipped objects (docs/CHANNELS.md 5, 6.3, 6.4,
+// 9.3): the cases of the retired standalone rn_unreliable_* module that
+// describe behaviour the product has, run through the message objects.
+// ---------------------------------------------------------------------------
+
+// a send the store has no room for exhausts the connection and kicks it (R5):
+// the shipped path never drops an unreliable send for a full store, it counts
+// the refusal once and ends the connection
+static void unreliable_store_full_exhausts_and_kicks()
+{
+    rocketnet_message_config_t config;
+    mo_small_config( &config );
+    config.send_queue_messages = 1024;                          // the store runs out before the descriptors do
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1, &config );
+    mo_step( &pair );
+
+    int started = 0;
+    for ( ;; )
+    {
+        uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_UNRELIABLE, 16 );
+        if ( !p )
+            break;
+        memset( p, 0xAB, 16 );
+        check( rocketnet_message_server_finish( pair.server, 0, 16 ) != 0 );
+        started++;
+        check( started < 100000 );
+    }
+    check( started > 0 );
+
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) == 1 );
+    check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) == 0 );
+    check( pair.net->server->disconnects == 1 );
+
+    // sticky: the kicked connection takes no further send
+    check( rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_UNRELIABLE, 16 ) == NULL );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 1 );
+
+    mo_pair_teardown( &pair );
+}
+
+// an unreliable message past the one-packet limit is refused and counted
+// (SEND_FAILED) at the send call, never queued, so the queue never holds a
+// message it can never send; the one at the limit goes, and a valid message
+// behind the refused one still arrives
+static void unreliable_past_limit_refused_counted_and_not_wedged()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
+    const int limit = (int) client->object.unreliable_limit;
+    check( limit > 1000 && limit < ROCKETNET_MAX_PAYLOAD_BYTES );
+
+    static uint8_t message[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
+    mo_fill( message, 1, (uint32_t) limit );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit ) != 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
+
+    // past the limit, and far past it (the largest the config allows)
+    mo_fill( message, 2, (uint32_t) limit + 1 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit + 1 ) == 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 1 );
+    mo_fill( message, 3, 16384 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 16384 ) == 0 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 2 );
+
+    // a refusal is not a store-full drop, and the connection stays up
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
+    check( rocketnet_message_client_disconnect_reason( client ) == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    // not wedged: a valid message behind the refused ones is sent
+    mo_fill( message, 4, 50 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, 50 ) != 0 );
+
+    std::vector<mo_received_t> got;
+    for ( int i = 0; i < 4; i++ )
+        mo_step( &pair, &got );
+    check( got.size() == 2 );
+    uint32_t id = 0;
+    check( mo_verify( got[0].bytes, &id ) && id == 1 && (int) got[0].bytes.size() == limit );
+    check( mo_verify( got[1].bytes, &id ) && id == 4 && got[1].bytes.size() == 50 );
+
+    mo_pair_teardown( &pair );
+}
+
+// a packet the transport fails to finish drops the unreliable records it
+// carried and counts each (6.4, Failed send); nothing reaches the wire, and the
+// next send is unaffected
+static void unreliable_failed_packet_drops_and_counts_each_record()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
+
+    for ( uint32_t i = 0; i < 3; i++ )
+    {
+        uint8_t message[16];
+        mo_fill( message, 10 + i, sizeof( message ) );
+        check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    }
+
+    pair.net->fail_finish = 1;
+    std::vector<mo_received_t> got;
+    mo_step( &pair, &got );
+    mo_step( &pair, &got );
+    check( pair.net->fail_finish == 0 );                        // the failure was taken by the one packet
+    check( got.empty() );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 3 );
+
+    // the dropped records are gone for good (unreliable): none arrives later
+    for ( int i = 0; i < 4; i++ )
+        mo_step( &pair, &got );
+    check( got.empty() );
+
+    uint8_t message[16];
+    mo_fill( message, 99, sizeof( message ) );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    for ( int i = 0; i < 3; i++ )
+        mo_step( &pair, &got );
+    check( got.size() == 1 );
+    uint32_t id = 0;
+    check( mo_verify( got[0].bytes, &id ) && id == 99 );
+    check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 3 );
+
+    mo_pair_teardown( &pair );
+}
+
+// the send store holds an unreliable message only until its record is written:
+// the chunks are back once the packet is built (9.3 step 3, R5), across the
+// store's classes
+static void unreliable_chunks_freed_when_written()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    mo_step( &pair );
+
+    rocketnet_message_client_t * client = pair.clients[0];
+    rn_send_store_t * store = &mo_client_connection( client )->region->store;
+
+    uint8_t small[64], medium[400];
+    mo_fill( small, 20, sizeof( small ) );
+    mo_fill( medium, 21, sizeof( medium ) );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, small, (int) sizeof( small ) ) != 0 );
+    check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, medium, (int) sizeof( medium ) ) != 0 );
+
+    uint32_t used = 0;
+    for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )
+        used += rn_send_store_total_chunks( store, cl ) - rn_send_store_free_chunks( store, cl );
+    check( used >= 2 );                                         // both messages hold store chunks while queued
+
+    std::vector<mo_received_t> got;
+    mo_step( &pair, &got );
+    mo_step( &pair, &got );
+    check( got.size() == 2 );
+    for ( int cl = 0; cl < RN_STORE_NUM_CLASSES; cl++ )
+        check( rn_send_store_free_chunks( store, cl ) == rn_send_store_total_chunks( store, cl ) );
+
+    mo_pair_teardown( &pair );
+}
+
+// small unreliable messages over a link that loses packets: every message that
+// arrives is byte-identical to one sent and arrives once, none is invented, and
+// with no loss every message arrives (R8)
+static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
+{
+    for ( int lossy = 0; lossy < 2; lossy++ )
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, NULL, 100000, 100000 );
+        mo_step( &pair );
+
+        rocketnet_message_client_t * client = pair.clients[0];
+        const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
+        std::vector<mo_received_t> got;
+        uint32_t next_id = 1000;
+        uint32_t sent = 0;
+        for ( int round = 0; round < 60; round++ )
+        {
+            for ( int n = 0; n < 4; n++ )
+            {
+                uint8_t message[100];
+                mo_fill( message, next_id, sizeof( message ) );
+                check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+                next_id++;
+                sent++;
+            }
+            if ( lossy && round % 3 == 0 )
+                pair.net->drop_next_to_server = 1;
+            mo_step( &pair, &got );
+        }
+        for ( int i = 0; i < 4; i++ )
+            mo_step( &pair, &got );
+
+        std::vector<uint32_t> ids;
+        for ( size_t i = 0; i < got.size(); i++ )
+        {
+            uint32_t id = 0;
+            check( mo_verify( got[i].bytes, &id ) );
+            check( got[i].bytes.size() == 100 && id >= 1000 && id < next_id );
+            for ( size_t k = 0; k < ids.size(); k++ )
+                check( ids[k] != id );                          // at most once
+            ids.push_back( id );
+        }
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == 0 );
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == 0 );
+        if ( lossy )
+            check( ids.size() > 0 && ids.size() < sent );
+        else
+            check( ids.size() == sent );
+
+        mo_pair_teardown( &pair );
+    }
+}
+
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
@@ -1660,3 +1891,8 @@ REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );
 REGISTER_UNIT_TEST( message_send_refused_counts_bad_arguments );
+REGISTER_UNIT_TEST( unreliable_store_full_exhausts_and_kicks );
+REGISTER_UNIT_TEST( unreliable_past_limit_refused_counted_and_not_wedged );
+REGISTER_UNIT_TEST( unreliable_failed_packet_drops_and_counts_each_record );
+REGISTER_UNIT_TEST( unreliable_chunks_freed_when_written );
+REGISTER_UNIT_TEST( unreliable_over_a_lossy_link_arrives_intact_at_most_once );
