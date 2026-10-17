@@ -732,6 +732,16 @@ details explicit:
   `functional/channel_resend_timing.cpp` measures delivery latency and copies
   over the channel harness (`resend_timing_table_over_lossy_links`) and the
   wire cost of a block on a long path (`block_resend_cost_over_long_path`).
+  The table case prints its percentiles and asserts the rule itself on every
+  seed, never a percentile: zero timeouts; every resend gap, from the
+  development build's resend gap record (`rn_resend_gaps_t`, measured where
+  the commit sets `last_send`), at least the delay in force at the resend and
+  at most the delay in force at the update before plus one tick; four of the
+  largest gap inside `reliable_timeout`; and each message's latency within
+  its own ceiling, one-way latency and jitter plus two ticks plus, for each
+  earlier send, `resend_interval` and a tick. The delay of the earlier send
+  is not a bound: an RTT sample between two sends moves the RTO, and the walk
+  follows the delay in force at each update.
 
 ### 6.5 The receiver's window check
 

@@ -42,6 +42,36 @@
 #define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT    4
 #endif
 
+#if ROCKETNET_DEVELOPMENT
+
+// The resend gap record (development builds only; a release build has neither
+// the fields nor the code). For each delay class (0: single-packet records,
+// 1: chunks of a block) it holds the extremes of the gap between a number's
+// send and its next resend, as measured where rn_window_ack_commit sets
+// last_send, against the class delay in force (docs/CHANNELS.md 6.4 "Resend";
+// tla/RNResendTiming.tla Walk). The walk resends a number at the first update
+// whose delay has passed since its last send, so for every resend
+//
+//   delay at the resend <= gap < delay at the update before + the time between the two updates
+//
+// The delay of the earlier send is not a bound: an RTT sample between the two
+// sends moves the RTO, and the walk follows the delay in force at each update.
+// Nothing allocates; a resend costs a class lookup and a few compares.
+struct rn_resend_gaps_t
+{
+    double update_now;              // the update rn_window_ack_gaps_update last saw
+    double update_delay[2];         // each class's delay at that update
+    double prev_now;                // the update before it (0 before the second update)
+    double prev_delay[2];           // each class's delay at the update before
+    uint32_t count[2];              // resends measured
+    double gap_min[2];              // smallest gap, seconds
+    double gap_max[2];              // largest gap, seconds
+    double early_min[2];            // min over resends of gap - delay at the resend (>= 0 by the rule)
+    double late_max[2];             // max over resends of gap - delay at the update before (<= one update by the rule)
+};
+
+#endif // #if ROCKETNET_DEVELOPMENT
+
 struct rn_window_ack_t
 {
     rn_window_send_t * send;        // the sender's numbering window (U, U', next)
@@ -87,6 +117,10 @@ struct rn_window_ack_t
 
     uint64_t oldest_number;         // message number U whose first_send is cached below
     double oldest_first_send;       // first_send time of oldest_number
+
+#if ROCKETNET_DEVELOPMENT
+    rn_resend_gaps_t gaps;          // test-visible resend gap record; development builds only
+#endif // #if ROCKETNET_DEVELOPMENT
 };
 
 // The resend delay of a single-packet record: min( rto, resend_interval ),
@@ -204,6 +238,16 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 // Returns the number of resent message numbers written to `out_numbers` (0 if
 // none are due or if reliable_timeout has fired).
 uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers );
+
+// The resend gap record's clock (development builds only; a no-op otherwise):
+// called once per update before the update's packets are written, with the
+// update's time, after its acks have moved the RTO. It keeps this update's and
+// the previous update's class delays for rn_window_ack_commit's measure.
+#if ROCKETNET_DEVELOPMENT
+void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now );
+#else // #if ROCKETNET_DEVELOPMENT
+static inline void rn_window_ack_gaps_update( rn_window_ack_t *, double ) {}
+#endif // #if ROCKETNET_DEVELOPMENT
 
 // Number of live (unacked, non-evicted) packet entries currently in the sent-packet map.
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack );

@@ -17,23 +17,53 @@
     (min( rto, resend_interval ), no back-off) and "fixed" is a resend every
     100 ms, set on the client's estimator (rto_min = rto_max = rto = 100 ms).
     The case prints the whole table beside the Monte Carlo model's p99 for
-    the rule (one message's timeline, ack after RTT plus up to a tick), then
-    asserts: zero timeouts on every row; the rule's p99 no later than the
-    fixed 100 ms schedule's plus one tick; and the rule's p99 within the
-    one-way latency, the harness floor of two ticks (a send waits for its
-    update, a delivery is seen at the receiver's next one) and three resends
-    at the cap of resend_interval plus a tick each. At 20% loss three sends
-    reach 99.2% of messages, so the third resend is slack for the sample.
+    the rule (one message's timeline, ack after RTT plus up to a tick), and
+    the resend gaps each row measured.
+
+    It asserts the rule itself, on every row of both schedules and on every
+    seed, never a percentile:
+
+    - zero timeouts;
+    - every resend gap, from the client's resend gap record (struct
+      rn_resend_gaps_t, measured where rn_window_ack_commit sets last_send),
+      is at least the delay min( rto, resend_interval ) in force at the
+      resend, and at most the delay in force at the update before plus one
+      tick; so no gap exceeds resend_interval plus one tick;
+    - ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS gaps of the largest size fit
+      inside reliable_timeout (RNResendTiming AttemptsBeforeTimeout);
+    - every message's latency is within its own ceiling: the one-way latency
+      and its jitter, the harness floor of two ticks (a send waits for its
+      update, a delivery is seen at the receiver's next one) and, for each
+      send of it before the one that arrived, resend_interval plus a tick.
+
+    The p50, p99 and p99.9 columns are printed, not asserted. A p99 of 400
+    samples is the fifth-slowest message, which moves by a whole resend when
+    one more message loses one more copy, and loss in the simulator clusters,
+    so neither a cross-schedule p99 comparison nor a ceiling on p99 from
+    independent losses holds on every seed. The rule they stood in for is
+    asserted per resend and per message above.
 
     The model's p99 is not asserted directly: the harness updates both ends
     at 60 Hz, so each measured RTT sample is the path's RTT plus up to two
     ticks and the ack's own update, and on a 20 ms path the RTO follows that
     longer measured RTT. The table shows the difference row by row.
+
+    Why the delay at the update before and not at the earlier send: the walk
+    resends a number at the first update where now >= last_send + delay, with
+    the delay in force at that update. An RTT sample between the two sends
+    moves the RTO; when it lowers it, the gap is longer than the new delay by
+    up to the drop, and when it raises it, longer than the earlier send's
+    delay. At the update before the resend the number was not due, so the
+    gap is less than that update's delay plus the time to the next update.
 */
 
 #include "channel_harness.h"
 
 #include <math.h>
+
+#if !ROCKETNET_DEVELOPMENT
+#error "channel_resend_timing.cpp reads the resend gap record, which only development builds have"
+#endif
 
 #include <algorithm>
 
@@ -48,6 +78,7 @@ static void resend_timing_fail( const char * condition, int line )
 
 #define RESEND_TIMING_MESSAGES 400
 #define RESEND_TIMING_BYTES 64
+#define RESEND_TIMING_MAX_SENDS 64
 
 struct resend_timing_row_t
 {
@@ -60,6 +91,14 @@ struct resend_timing_row_t
     double p99_ms;
     double p999_ms;
     double copies;
+    uint32_t gaps;                  // resends measured by the client's resend gap record
+    double gap_min_ms;
+    double gap_max_ms;
+    double early_min_ms;            // min of gap - delay at the resend
+    double late_max_ms;             // max of gap - delay at the update before
+    double reliable_timeout_ms;
+    double ceiling_slack_ms;        // max over messages of latency - its own ceiling
+    int max_sends;                  // most sends of one message before its delivery
 };
 
 static double resend_timing_percentile( const double * sorted, int count, double fraction )
@@ -81,9 +120,10 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     resend_timing_check( rocketnet_channel_harness_create( &h ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
 
+    rn_ordered_t * ordered = &h.message_client->object.connections[0].ordered;
+    rn_window_ack_t * ack = &ordered->ack;
     if ( fixed_100ms )
     {
-        rn_window_ack_t * ack = &h.message_client->object.connections[0].ordered.ack;
         ack->rto_min = 0.1;
         ack->rto_max = 0.1;
         ack->rto_initial = 0.1;
@@ -91,21 +131,45 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     }
 
     const double latency = (double) rtt_ms / 2000.0;
-    rocketnet_channel_harness_set_link( &h, latency, latency * 0.1, (float) loss_percent, 0.0f );
+    const double jitter = latency * 0.1;
+    rocketnet_channel_harness_set_link( &h, latency, jitter, (float) loss_percent, 0.0f );
 
     const uint64_t resent_before = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
+    // the resend gap record measures this run's messages only
+    for ( int c = 0; c < 2; c++ )
+    {
+        ack->gaps.count[c] = 0;
+        ack->gaps.gap_min[c] = 1.0e30;
+        ack->gaps.gap_max[c] = 0.0;
+        ack->gaps.early_min[c] = 1.0e30;
+        ack->gaps.late_max[c] = -1.0e30;
+    }
+
+    // the client's reliable messages are numbered in send order from here: one
+    // per update, none other on the connection
+    const rn_region_t * region = ordered->channels.region;
+    const uint64_t first_number = ordered->send.next;
 
     static double send_time[RESEND_TIMING_MESSAGES];
     static double latency_ms[RESEND_TIMING_MESSAGES];
     static uint8_t seen[RESEND_TIMING_MESSAGES];
+    static double sends_at[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
+    static int sends[RESEND_TIMING_MESSAGES];
     memset( seen, 0, sizeof(seen) );
+    memset( sends, 0, sizeof(sends) );
 
     uint8_t payload[RESEND_TIMING_BYTES];
     uint8_t state[32];
     memset( state, 0x5A, sizeof(state) );
 
+    const double tick_ms = tick * 1000.0;
+    const double resend_interval_ms = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS;
+    double ceiling_slack_ms = -1.0e30;
+    int max_sends = 0;
+
     int sent = 0;
     int delivered = 0;
+    int undelivered_from = 0;
     int up = 1;
     const int max_updates = RESEND_TIMING_MESSAGES + 60 * 15;      // the sends, then up past reliable_timeout
     for ( int update = 0; update < max_updates && delivered < RESEND_TIMING_MESSAGES && up; update++ )
@@ -123,6 +187,22 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
 
         up = rocketnet_channel_harness_pump( &h, tick );
 
+        // each send of each undelivered message: a send sets its number's
+        // last_send to the update's time, at most once an update
+        while ( undelivered_from < sent && seen[undelivered_from] )
+            undelivered_from++;
+        for ( int i = undelivered_from; i < sent; i++ )
+        {
+            if ( seen[i] )
+                continue;
+            const uint64_t number = first_number + (uint64_t) i;
+            const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
+            if ( slot->number != number || slot->last_send != h.now )
+                continue;
+            resend_timing_check( sends[i] < RESEND_TIMING_MAX_SENDS );
+            sends_at[i][sends[i]++] = h.now;
+        }
+
         rocketnet_channel_delivery_t delivery;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
@@ -131,7 +211,20 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
             memcpy( &index, delivery.data, sizeof(index) );
             resend_timing_check( index >= 0 && index < sent && !seen[index] );
             seen[index] = 1;
-            latency_ms[delivered++] = ( h.now - send_time[index] ) * 1000.0;
+            const double message_ms = ( h.now - send_time[index] ) * 1000.0;
+            latency_ms[delivered++] = message_ms;
+
+            // the copy that arrived left at least the one-way latency ago:
+            // the sends before it are the ones that could have carried it
+            int k = 0;
+            while ( k < sends[index] && sends_at[index][k] <= h.now - latency + 1e-9 )
+                k++;
+            resend_timing_check( k >= 1 );
+            if ( k > max_sends )
+                max_sends = k;
+            const double ceiling_ms = ( latency + jitter ) * 1000.0 + 2.0 * tick_ms + (double) ( k - 1 ) * ( resend_interval_ms + tick_ms );
+            if ( message_ms - ceiling_ms > ceiling_slack_ms )
+                ceiling_slack_ms = message_ms - ceiling_ms;
         }
         for ( int channel = 0; channel < h.message_config.num_channels; channel++ )
             while ( rocketnet_channel_harness_client_collect( &h, channel, &delivery ) )
@@ -153,6 +246,18 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->p999_ms = resend_timing_percentile( latency_ms, delivered, 0.999 );
     row->copies = (double) ( RESEND_TIMING_MESSAGES + resent ) / (double) RESEND_TIMING_MESSAGES;
 
+    // the single-packet class (0) of the client's resend gap record
+    const rn_resend_gaps_t * gaps = &ack->gaps;
+    row->gaps = gaps->count[0];
+    row->gap_min_ms = gaps->gap_min[0] * 1000.0;
+    row->gap_max_ms = gaps->gap_max[0] * 1000.0;
+    row->early_min_ms = gaps->early_min[0] * 1000.0;
+    row->late_max_ms = gaps->late_max[0] * 1000.0;
+    row->reliable_timeout_ms = ack->reliable_timeout * 1000.0;
+    row->ceiling_slack_ms = ceiling_slack_ms;
+    row->max_sends = max_sends;
+    resend_timing_check( gaps->count[1] == 0 );         // no chunks in this case
+
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -162,7 +267,6 @@ void resend_timing_table_over_lossy_links()
     static const int losses[] = { 10, 20 };
     // the Monte Carlo model's p99 for the rule (ms), by RTT
     static const double model_p99[] = { 77.0, 192.0, 250.0, 300.0 };
-    const double two_ticks_ms = 2000.0 / 60.0;
 
     resend_timing_row_t rows[2][4][2];
     for ( int s = 0; s < 2; s++ )
@@ -172,31 +276,39 @@ void resend_timing_table_over_lossy_links()
 
     printf( "resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
             RESEND_TIMING_MESSAGES, RESEND_TIMING_BYTES );
-    printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms\n" );
+    printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms resends gap_min_ms gap_max_ms early_min_ms late_max_ms max_sends ceiling_slack_ms\n" );
     for ( int s = 0; s < 2; s++ )
         for ( int r = 0; r < 4; r++ )
             for ( int l = 0; l < 2; l++ )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
-                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f\n",
+                printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7u %10.2f %10.2f %12.3f %11.3f %9d %16.2f\n",
                         row->schedule, row->rtt_ms, row->loss_percent, row->p50_ms, row->p99_ms, row->p999_ms,
-                        row->copies, row->timeouts, s == 0 ? model_p99[r] : 0.0 );
+                        row->copies, row->timeouts, s == 0 ? model_p99[r] : 0.0,
+                        row->gaps, row->gaps ? row->gap_min_ms : 0.0, row->gap_max_ms, row->gaps ? row->early_min_ms : 0.0,
+                        row->gaps ? row->late_max_ms : 0.0, row->max_sends, row->ceiling_slack_ms );
             }
     fflush( stdout );
 
     const double tick_ms = 1000.0 / 60.0;
-    const double resend_interval_ms = 100.0;
-    for ( int r = 0; r < 4; r++ )
-        for ( int l = 0; l < 2; l++ )
-        {
-            const resend_timing_row_t * row = &rows[0][r][l];
-            const resend_timing_row_t * fixed = &rows[1][r][l];
-            const double ceiling_ms = rtts[r] / 2.0 + two_ticks_ms + 3.0 * ( resend_interval_ms + tick_ms );
-            resend_timing_check( row->timeouts == 0 );
-            resend_timing_check( fixed->timeouts == 0 );
-            resend_timing_check( row->p99_ms <= fixed->p99_ms + tick_ms + 1e-6 );
-            resend_timing_check( row->p99_ms <= ceiling_ms + 1e-6 );
-        }
+    const double resend_interval_ms = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS;
+    const double eps_ms = 1e-6;
+    for ( int s = 0; s < 2; s++ )
+        for ( int r = 0; r < 4; r++ )
+            for ( int l = 0; l < 2; l++ )
+            {
+                const resend_timing_row_t * row = &rows[s][r][l];
+                resend_timing_check( row->timeouts == 0 );
+                // the rule, per resend: delay at the resend <= gap <= delay at the update before + a tick
+                resend_timing_check( row->gaps > 0 );
+                resend_timing_check( row->early_min_ms >= -eps_ms );
+                resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
+                resend_timing_check( row->gap_max_ms <= resend_interval_ms + tick_ms + eps_ms );
+                // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
+                resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_timeout_ms );
+                // the rule, per message: within its own ceiling
+                resend_timing_check( row->ceiling_slack_ms <= eps_ms );
+            }
 }
 
 /*

@@ -392,7 +392,54 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->receipt_visible_tail = 0;
     ack->oldest_number = send->U;
     ack->oldest_first_send = 0.0;
+
+#if ROCKETNET_DEVELOPMENT
+    for ( int c = 0; c < 2; c++ )
+    {
+        ack->gaps.gap_min[c] = 1.0e30;
+        ack->gaps.gap_max[c] = 0.0;
+        ack->gaps.early_min[c] = 1.0e30;
+        ack->gaps.late_max[c] = -1.0e30;
+    }
+#endif // #if ROCKETNET_DEVELOPMENT
 }
+
+#if ROCKETNET_DEVELOPMENT
+
+void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now )
+{
+    rocketnet_assert( ack );
+    rn_resend_gaps_t * gaps = &ack->gaps;
+    if ( now == gaps->update_now )
+        return;
+    gaps->prev_now = gaps->update_now;
+    gaps->update_now = now;
+    for ( int c = 0; c < 2; c++ )
+    {
+        gaps->prev_delay[c] = gaps->update_delay[c];
+        gaps->update_delay[c] = rn_window_ack_class_delay( ack, c == 1 );
+    }
+}
+
+// The measure of one resend (struct rn_resend_gaps_t): `last_send` is the
+// number's previous send, `now` this one.
+static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_index, double last_send, double now )
+{
+    rn_resend_gaps_t * gaps = &ack->gaps;
+    if ( gaps->prev_now <= 0.0 || gaps->update_now != now )
+        return;                                             // no update before this one to measure against
+    const int c = rn_window_ack_slot_is_chunk( ack, slot_index ) ? 1 : 0;
+    const double gap = now - last_send;
+    const double early = gap - rn_window_ack_class_delay( ack, c == 1 );
+    const double late = gap - gaps->prev_delay[c];
+    gaps->count[c]++;
+    if ( gap < gaps->gap_min[c] ) gaps->gap_min[c] = gap;
+    if ( gap > gaps->gap_max[c] ) gaps->gap_max[c] = gap;
+    if ( early < gaps->early_min[c] ) gaps->early_min[c] = early;
+    if ( late > gaps->late_max[c] ) gaps->late_max[c] = late;
+}
+
+#endif // #if ROCKETNET_DEVELOPMENT
 
 // Commits a sent packet and its referenced reliable message numbers into the
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
@@ -463,6 +510,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         rocketnet_assert( slot->number == n );
         if ( slot->last_send == 0.0 )
             rn_window_ack_record_first_send( ack, slot, now );
+#if ROCKETNET_DEVELOPMENT
+        if ( slot->last_send > 0.0 )                        // a resend: not a first send, not a failed send's retry
+            rn_window_ack_gaps_measure( ack, slot_index, slot->last_send, now );
+#endif // #if ROCKETNET_DEVELOPMENT
         slot->last_send = now;
         if ( !slot->acked )
             rn_resend_fifo_push_tail( ack, slot_index );

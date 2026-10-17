@@ -841,6 +841,7 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     // packet that is written; every resend waits the same delay, with no
     // back-off (tla/RNResendTiming.tla)
     rn_window_ack_t * ack = &connection->ordered.ack;
+    rn_window_ack_gaps_update( ack, now );                  // the resend gap record (development builds only)
 
     while ( written < max_packets && rn_message_ordered_due( connection, now ) )
     {
