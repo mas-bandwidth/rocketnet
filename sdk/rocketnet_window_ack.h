@@ -148,6 +148,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 
+// Test-only: the product's walk is rn_ordered_write (sdk/rocketnet_channel.cpp).
 // Walks the resend FIFO from its head while
 // now >= last_send + rn_window_ack_resend_delay( ack ) (docs/CHANNELS.md 6.4
 // "Resend"; tla/RNWindow.tla WriteOldest, tla/RNResendTiming.tla Resend).

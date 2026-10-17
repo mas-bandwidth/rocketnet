@@ -118,7 +118,6 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_packet_builder.cpp
     sdk/rocketnet_window_receive.cpp
     sdk/rocketnet_window_ack.cpp
-    sdk/rocketnet_unreliable.cpp
     sdk/rocketnet_network_simulator.cpp
     sdk/rocketnet_platform.cpp
     sdk/rocketnet_protocol.cpp
