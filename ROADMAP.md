@@ -127,10 +127,11 @@ The XDP server transport. Further XDP work comes later, separately, by the owner
 | IPv6 in the kernel program and the userspace path | ✅ |
 | Kernel filter counters through the transport counter surface | ❌ |
 | Kernel replay protection with a read-only high-water map | ❌ |
+| STANDARD.md states the kernel replay map is sized apart from the userspace replay window | ❌ |
 | Packet blaster and simulated-client harnesses at line rate | ❌ |
 | Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ |
 | Privileged syscall-failure coverage in its own lab | ❌ |
-| complete | 44% |
+| complete | 40% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -194,6 +195,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | feature | done |
 |---|:---:|
 | Transport C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ |
+| Root header pure C: the two transport types with functions, the address type, nothing else | ❌ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ |
 | ABI revision and layout queries | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ |
@@ -202,7 +204,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Sized APIs for compatible struct evolution | ❌ |
 | Whole-transport memory estimates and operator budgets (#155) | ❌ |
 | C++ ClientTransport and ServerTransport interfaces | ❌ |
-| complete | 55% |
+| complete | 50% |
 
 [Source data](docs/roadmap.sexp)
 
@@ -216,7 +218,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Supported-platform policy | ❌ |
 | Security disclosure and release process | ❌ |
 | Independent review of the transport repair diff, received | ❌ |
-| TODO.md and TRANSPORT_READINESS.md retired into the roadmap | ❌ |
-| complete | 28% |
+| The old to-do and readiness files retired into this roadmap | ✅ |
+| complete | 42% |
 
 [Source data](docs/roadmap.sexp)

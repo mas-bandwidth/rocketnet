@@ -36,7 +36,7 @@
     (:feature "Public API is NULL-safe at the boundary" :cells (y) :evidence "3e51b9d; rocketnet_test_public_api_null_is_a_counted_no_op")
     (:feature "Refusal decisions agree with netcode 1.02" :cells (y) :evidence "e5acbbb")
     (:feature "The token is bound at response open" :cells (n) :note "rocketnet-fixes card 7, in progress")
-    (:feature "Session layer: identity auth with a backend, rolling magic, keyed filter value (later)" :cells (n) :note "TODO.md THE SESSION LAYER; v2")))
+    (:feature "Session layer: identity auth with a backend, rolling magic, keyed filter value (later)" :cells (n) :note "v2, optional, behind the first deliverable. The 6-byte header with its epoch byte is already in, so the keyed form is a configuration change, not a wire break. It needs a backend that tracks the connected set across servers live: one identity, one seat, so a shared token gives away the sharer's own slot, and the old player is kicked with rocketnet_server_transport_disconnect_client when the same user hash appears elsewhere. An extraction from the game's own backend, not a new design. Then the rolling magic feeds the keyed filter value (SipHash over type, length and the four bytes after the header, one MAC per packet), and a per-title generator emits the constant and the keyed reader in every language plus verifier-clean BPF behind a differential gate. Never: a default magic, or standalone IP pinning")))
 
   (:id "connection" :title "Connections and the transport"
    :text "The unreliable transport the message layer runs over: connection state, slots, keep-alives, fragments, acks and the server loop."
@@ -48,12 +48,12 @@
     (:feature "Keep-alives paced and suppressed by traffic" :cells (y) :evidence "rocketnet_test_client_keep_alive_suppression")
     (:feature "Payloads both ways from the connection response on" :cells (y) :evidence "rocketnet_test_client_payload_before_first_keep_alive")
     (:feature "Redundant disconnect burst, from the client or the server" :cells (y) :evidence "rocketnet_test_client_disconnect_reports_state_change; rocketnet_server_transport_disconnect_client")
-    (:feature "Large payloads fragmented and reassembled" :cells (y) :evidence "7e959ab; rocketnet_test_fragment_vector")
+    (:feature "Large payloads fragmented and reassembled" :cells (y) :evidence "7e959ab; rocketnet_test_fragment_vector; reassembly geometry under a 512 MiB component budget, oversized configurations refused before any allocation: test_lifecycle.cpp check_memory_geometry")
     (:feature "Fragments accepted only on a connected slot" :cells (y) :evidence "9e0d822")
     (:feature "Per-packet acks with delivery notification" :cells (y) :evidence "8af8b80; rocketnet_test_ack_block_validity, rocketnet_test_ack_block_build")
-    (:feature "Ack history that survives a long lossy path" :cells (y) :evidence "187a875; rocketnet_test_send_history_lossy_long_path")
+    (:feature "Ack history that survives a long lossy path" :cells (y) :evidence "187a875; rocketnet_test_send_history_lossy_long_path; ROCKETNET_HISTORY_PACKETS 4096 default, 4096 to 32768 (sdk/rocketnet_history.h), no frame, send or ack rate assumed; test_lifecycle.cpp check_ack_retention, rocketnet_test_send_history_silent_peer_overflows")
     (:feature "Frame sync: a fixed-rate server loop with priority and drop detection" :cells (y) :evidence "rocketnet_test_frame_sync_advance, rocketnet_test_frame_sync_guard")
-    (:feature "Counters on every path, each classified, conserved and named by a test" :cells (y) :evidence "1750e83 rocketnet-counters-classified-and-conserved")))
+    (:feature "Counters on every path, each classified, conserved and named by a test" :cells (y) :evidence "1750e83 rocketnet-counters-classified-and-conserved; rocketnet_num_counters and rocketnet_counter_value for FFI callers; packet-rate statistics in elapsed-time buckets: test_lifecycle.cpp check_stats_cadence")))
 
   (:id "reliability" :title "Reliability modes"
    :text "The eight RakNet reliabilities, per send, over the transport's per-packet acks."
@@ -81,35 +81,36 @@
     (:feature "Send budget in kbps per connection" :cells (y) :evidence "a4ff908; budgets_are_per_connection")
     (:feature "A 1400-byte game message fits one packet" :cells (y) :evidence "ff4c7c6; message_of_1400_bytes_is_one_unfragmented_packet")
     (:feature "One fixed region per connection, no allocation after create" :cells (y) :evidence "8b99c72; no_allocation_after_create")
-    (:feature "Caller-supplied memory block" :cells (y) :evidence "user_block_is_used_and_nothing_else")
+    (:feature "Caller-supplied memory block" :cells (y) :evidence "user_block_is_used_and_nothing_else; aligned allocation keeps its callback and context, late replacement refused: rocketnet_test_allocator_refusal_is_returned, test_lifecycle.cpp check_component_create_sweeps")
     (:feature "Memory exhaustion kicks only that connection" :cells (y) :evidence "c335529; server_kicks_exhausted_client_others_unaffected")
     (:feature "Hostile records and chunks refused" :cells (y) :evidence "d1ff1a2; hostile_chunk_count_or_index_kicks, hostile_small_at_held_ordering_is_refused")
     (:feature "Endpoint and slots as pure machines (CHANNELS.md layer 7)" :cells (n) :note "no rn_endpoint; the objects compose the layers directly")
     (:feature "CONFIG announcement: both ends prove the same configuration" :cells (n) :note "ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH defined only")
     (:feature "Message layer soaked at full configured load" :cells (n) :note "bounded exhaustion soak c335529 only")
-    (:feature "Broadcast send (later)" :cells (n) :note "owner's ideas roadmap")
+    (:feature "Broadcast send (later)" :cells (n) :note "owner's ideas roadmap; REQUIREMENTS.md step 3 with reliability (the Reliability modes table) and flows")
     (:feature "Flows: server-side subscription groups (later)" :cells (n) :note "REQUIREMENTS.md step 3")))
 
   (:id "drivers" :title "Drivers"
    :text "The server socket drivers below the transport, selected at runtime by ROCKETNET_DRIVER or the config's driver field."
    :columns ("portable" "gso" "msgx" "iocp" "xdp" "io_uring" "loopback (later)")
    :rows
-   ((:feature "Server driver" :cells (y y y y y n n) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928")
+   ((:feature "Server driver" :cells (y y y y y n n) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928" :note "io_uring is the open rung after XDP")
     (:feature "Selectable by pin at runtime" :cells (y y y y y n n) :evidence "10308e4; rocketnet_test_server_driver_pin_portable, _gso, _msgx, _iocp, _xdp")))
 
   (:id "xdp" :title "XDP (later)"
    :text "The XDP server transport. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP in the game, tested to 10 Gbps."
    :columns ("done")
    :rows
-   ((:feature "Kernel prefilter with AF_XDP rings and counted verdicts" :cells (y) :evidence "c0b0928; xdp_host_every_counter_has_a_case")
+   ((:feature "Kernel prefilter with AF_XDP rings and counted verdicts" :cells (y) :evidence "c0b0928; xdp_host_every_counter_has_a_case; libxdp all-or-zero reservation, send pressure retains the staged packet, no worker exits: test_lifecycle.cpp check_frame_conservation, check_send_handoff")
     (:feature "Native attach on a production NIC with internet handshakes" :cells (y) :evidence "8d54514")
     (:feature "Kernel filter decisions run as host C in the unit suite" :cells (y) :evidence "bf2aecd")
     (:feature "IPv6 in the kernel program and the userspace path" :cells (y) :evidence "66d8282, 037c71c; ipv6_frame_matches_golden")
     (:feature "Kernel filter counters through the transport counter surface" :cells (n) :note "rocketnet_server_socket_xdp_counters reads them at socket level only")
-    (:feature "Kernel replay protection with a read-only high-water map" :cells (n))
-    (:feature "Packet blaster and simulated-client harnesses at line rate" :cells (n))
-    (:feature "Ownership and retry paths regression-validated against the 10 Gbps baseline" :cells (n))
-    (:feature "Privileged syscall-failure coverage in its own lab" :cells (n))))
+    (:feature "Kernel replay protection with a read-only high-water map" :cells (n) :note "a BPF map keyed by source address holding the high-water sequence, so a replay never costs a ring slot. Needs no backend and no magic. The kernel drops but never advances; only userspace writes the mark back after the AEAD opens, so a forged sequence cannot poison a session. The owner prefers 16 entries for the kernel map on memory grounds (128 KB against 8 MB at a thousand clients); STANDARD.md requires a userspace replay window of at least 4096 sequences, so the two are sized separately")
+    (:feature "STANDARD.md states the kernel replay map is sized apart from the userspace replay window" :cells (n) :note "the standard states one rule today and is not to be quietly narrowed")
+    (:feature "Packet blaster and simulated-client harnesses at line rate" :cells (n) :note "its own rung: a packet blaster load to prove line rate, and simulated clients against the XDP server")
+    (:feature "Ownership and retry paths regression-validated against the 10 Gbps baseline" :cells (n) :note "the changed XDP ownership and retry paths, against the game deployment; CI runs no privileged XDP traffic and test executables forbid privileged commit")
+    (:feature "Privileged syscall-failure coverage in its own lab" :cells (n) :note "targeted syscall-failure and frame-conservation tests cover different conditions from throughput tests")))
 
   (:id "scaling" :title "Scaling and load" :milestone "next"
    :text "Many channels and many connections, measured."
@@ -121,8 +122,8 @@
     (:feature "Message layer stressed at 1024 channels" :cells (n))
     (:feature "Message layer stressed at 10k channels" :cells (n))
     (:feature "About 1000 real connections with channels on, at game-like load" :cells (n))
-    (:feature "Socket-level swarm with Go orchestration against real transports" :cells (n))
-    (:feature "Multi-day soaks past 2^32 packets on one connection" :cells (n))))
+    (:feature "Socket-level swarm with Go orchestration against real transports" :cells (n) :note "the in-process swarm, at the socket level")
+    (:feature "Multi-day soaks past 2^32 packets on one connection" :cells (n) :note "soak_sim and soak run unbounded on real hardware for days of parallel clients before the connect layer is believed; polite and garbage traffic, counters asserted while running, past 2^32 packets on one connection so sequence wrap is routine. The nightly CI soak is the bounded sentinel")))
 
   (:id "verification" :title "Verification"
    :text "How RocketNet is checked: unit tests without sockets or real time, functional tests, fuzzing, proofs and models."
@@ -145,31 +146,32 @@
    :text "Where RocketNet builds and passes."
    :columns ("linux" "macos" "windows")
    :rows
-   ((:feature "Per-commit CI, Debug and Release" :cells (y y y) :evidence "ci.yml; TRANSPORT_READINESS.md")
-    (:feature "Shared export list compared" :cells (y y y) :evidence "tools/check_exports.py; TRANSPORT_READINESS.md")
+   ((:feature "Per-commit CI, Debug and Release" :cells (y y y) :evidence "ci.yml: native Debug and Release, portable and auto driver selection, serialization, s390x, sanitizers, bounded simulated soak, corpus replay, standard-value conformance")
+    (:feature "Shared export list compared" :cells (y y y) :evidence "tools/check_exports.py, tools/exports.txt; 095f374 production sources separate from tests, strict endpoint port parsing")
     (:feature "Nightly soak" :cells (y y n) :evidence "nightly-soak.yml; 63a25be macOS")))
 
   (:id "api" :title "Public API"
    :text "The C surface in sdk/rocketnet.h and what a consumer needs to use it."
    :columns ("done")
    :rows
-   ((:feature "Transport C surface: rocketnet_client_transport_* and rocketnet_server_transport_*" :cells (y) :evidence "ruled #77; sdk/rocketnet.h")
+   ((:feature "Transport C surface: rocketnet_client_transport_* and rocketnet_server_transport_*" :cells (y) :evidence "ruled #77; sdk/rocketnet.h; packet contexts checked against single-consumption leases: test_lifecycle.cpp check_packet_leases")
+    (:feature "Root header pure C: the two transport types with functions, the address type, nothing else" :cells (n) :note "ruled: netcode-style, real non-mangled symbols for C and FFI; a C++ inside is an implementation privilege. The public C API surface (#22), designed outside in, is its usage spec and an input to the top-layer client and server objects")
     (:feature "Message objects in C: rocketnet_message_client_* and rocketnet_message_server_*" :cells (y) :evidence "2c1aa7b")
     (:feature "ABI revision and layout queries" :cells (y) :evidence "sdk/rocketnet_abi.cpp; tools/abi_mismatch.cpp")
     (:feature "Installable CMake package with C and C++ consumers" :cells (y) :evidence "tools/check_package.py, tools/package_consumer")
     (:feature "Vendored sodium, no system libsodium" :cells (y) :evidence "23d4c40; sodium/")
-    (:feature "Structured create errors and FFI-safe logging" :cells (n) :note "specified bfbdc94")
-    (:feature "Sized APIs for compatible struct evolution" :cells (n))
-    (:feature "Whole-transport memory estimates and operator budgets (#155)" :cells (n))
-    (:feature "C++ ClientTransport and ServerTransport interfaces" :cells (n) :note "the original motive is spent (#106)")))
+    (:feature "Structured create errors and FFI-safe logging" :cells (n) :note "specified bfbdc94; for C ABI consumers")
+    (:feature "Sized APIs for compatible struct evolution" :cells (n) :note "wire version 1.0.0 does not freeze the native ABI")
+    (:feature "Whole-transport memory estimates and operator budgets (#155)" :cells (n) :note "all components, kernel buffers, thread stacks, allocator overhead and application memory; the component limits refuse the documented oversized geometry but do not prove a host affords every configuration below them")
+    (:feature "C++ ClientTransport and ServerTransport interfaces" :cells (n) :note "light C++ like the game: the free-function transport surfaces map one to one onto methods, the portable implementations become the first concrete transports, the protocol core stays. The original motive, runtime selection, landed without them (#106), so what is left is the C++ ergonomics on their own merits")))
 
   (:id "release" :title "Release and process"
    :columns ("done")
    :rows
    ((:feature "Release hardening flags" :cells (y) :evidence "fe7966f; tools/check_hardening.py")
-    (:feature "Reproducible vendored sources" :cells (y) :evidence "23d4c40 sodium; f6457b5 XDP archive")
-    (:feature "First integrating game vendors the SDK and proves it (release gate)" :cells (n) :note "held")
+    (:feature "Reproducible vendored sources" :cells (y) :evidence "23d4c40 sodium; f6457b5 XDP archive" :note "reproducible release dependencies as a whole are still owed")
+    (:feature "First integrating game vendors the SDK and proves it (release gate)" :cells (n) :note "held. The ultimate soak: vendored byte for byte, the game server soaks it under real conditions. The game loop pegs to real time with drop-frame detection, so update stays non-blocking with time passed in and bounded walks, and nothing in the transports blocks or takes unbounded time in update")
     (:feature "Supported-platform policy" :cells (n))
     (:feature "Security disclosure and release process" :cells (n))
-    (:feature "Independent review of the transport repair diff, received" :cells (n))
-    (:feature "TODO.md and TRANSPORT_READINESS.md retired into the roadmap" :cells (n))))))
+    (:feature "Independent review of the transport repair diff, received" :cells (n) :note "the repair of findings #143 to #159; a review request sent is not a review received or an approval")
+    (:feature "The old to-do and readiness files retired into this roadmap" :cells (y) :evidence "rocketnet-retire-todo-and-readiness" :note "TODO.md and TRANSPORT_READINESS.md deleted; every open item is a row here")))))
