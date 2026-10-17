@@ -32,7 +32,20 @@ do                                                                              
 static const int rocketnet_ordered_message_count = 64;
 static const double rocketnet_ordered_step = 1.0 / 60.0;
 static const double rocketnet_ordered_timeout = 180.0;
-static const double rocketnet_ordered_multiple = 15.0; // calibrated from three fixed-seed runs
+// Completion must fit within this multiple of the budget lower bound
+// (payload bits over the sender's kbps). The multiple is measured, not
+// derived: the lower bound counts only the send budget, and a completed run
+// also pays the two-message pipeline, the 50 ms link, the resend of every lost
+// chunk and head-of-line waits, so the multiple sits well above 1 even on a
+// clean link. Over 10% loss and seeds 1-2000 of scripts/channel-seed-sweep
+// (ordered_256k_chunked_stream_over_lossy_reordering_link, the larger factor)
+// the completed runs have a median of 13.5 and a maximum of 17.67; the
+// multiple is that maximum plus a margin of about 13%. The earlier 15.0 came
+// from three runs on the pinned seed and 6% of seeds exceeded it. A run that
+// does not complete inside rocketnet_ordered_timeout is "incomplete" (a
+// reliable timeout), a different failure than this bound. Re-measure with
+// scripts/channel-seed-sweep --seeds 1-2000 when the resend rule changes.
+static const double rocketnet_ordered_multiple = 20.0;
 
 static int rocketnet_ordered_size( int index )
 {
@@ -234,6 +247,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
 
     if ( !complete || !within_budget || !no_overflow || !no_allocations )
     {
+        printf( "seed=0x%016llx\n", (unsigned long long) h.seed );
         const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple" :
                              !no_overflow ? "harness_overflow" : "allocation_after_create";
         const rn_message_object_t * sender = client_to_server ? &h.message_client->object : &h.message_server->object;
