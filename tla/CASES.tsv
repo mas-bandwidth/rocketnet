@@ -112,3 +112,6 @@ MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoSta
 MCRNResendTiming.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
 MCRNResendTimingBrokenBackoff.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
 MCRNResendTimingBrokenOneFifo.cfg	MCRNResendTiming.tla	invariant	SmallNeverHeldByChunk	check	rnresendtiming	required	-
+MCRNFilterEpochs.cfg	MCRNFilterEpochs.tla	pass	-	check	rnfilterepochs	required	-
+MCRNFilterEpochsBrokenAcceptZero.cfg	MCRNFilterEpochs.tla	invariant	NeverKeyedAtZero	check	rnfilterepochs	required	-
+MCRNFilterEpochsBrokenWrapToZero.cfg	MCRNFilterEpochs.tla	invariant	WrapSkipsZero	check	rnfilterepochs	required	-
