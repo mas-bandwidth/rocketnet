@@ -4611,13 +4611,21 @@ static bool rocketnet_xdp_veth_print_counters( const char * case_name, struct ro
         return false;
     }
 
-    // the stats map, every row by the table's name and class; a refusal is
-    // a drop in the kernel, so every refusal row must read zero
+    // the stats map, every row by name and class; a refusal is a drop in
+    // the kernel, so every refusal row must read zero
 
     struct xdp_counter_row_t { int index; const char * name; const char * kind; };
-#define ROCKETNET_XDP_VETH_COUNTER_ROW( define, name, kind ) { define, name, kind },
-    static const xdp_counter_row_t xdp_counter_rows[] = { ROCKETNET_SERVER_XDP_COUNTER_TABLE( ROCKETNET_XDP_VETH_COUNTER_ROW ) };
-#undef ROCKETNET_XDP_VETH_COUNTER_ROW
+    static const xdp_counter_row_t xdp_counter_rows[] =
+    {
+        { ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED,            "redirected",            "delivery" },
+        { ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL,     "dropped_too_small",     "refusal" },
+        { ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE,     "dropped_too_large",     "refusal" },
+        { ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER,  "dropped_wrong_filter",  "refusal" },
+        { ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE,  "dropped_invalid_type",  "refusal" },
+        { ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH,   "dropped_wrong_epoch",   "refusal" },
+        { ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION, "passed_ipv6_extension", "pass" },
+    };
+    static_assert( sizeof( xdp_counter_rows ) / sizeof( xdp_counter_rows[0] ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS, "one row per stats map counter" );
     xdp_refusals = 0;
     for ( const xdp_counter_row_t & row : xdp_counter_rows )
     {
@@ -4779,6 +4787,14 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     char capture_log[512];
     snprintf( capture_log, sizeof(capture_log), "%s/%s.tcpdump.log", pcap_dir, case_name );
 
+    // tcpdump is the capture judge; a machine without it still runs the
+    // traffic and the counters, and the case fails by name at its end
+
+    const bool capture_tool_present = system( "command -v tcpdump >/dev/null 2>&1" ) == 0;
+    if ( !capture_tool_present )
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: tcpdump is not installed on %s: no capture; the traffic and the counters run, then the case fails by name", case_name, hostname );
+
+    if ( capture_tool_present )
     {
         char command[2048];
         snprintf( command, sizeof(command),
@@ -4945,50 +4961,53 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     // the capture: it stops itself at 2 x count maximum-size datagrams; a
     // capture still running after that is stopped here
 
-    start = rocketnet_platform_time();
-    while ( rocketnet_xdp_veth_capture_pid > 0 && kill( rocketnet_xdp_veth_capture_pid, 0 ) == 0 && rocketnet_platform_time() - start < 5.0 )
-        rocketnet_platform_sleep( 0.05 );
-    if ( rocketnet_xdp_veth_capture_pid > 0 && kill( rocketnet_xdp_veth_capture_pid, 0 ) == 0 )
+    if ( capture_tool_present )
     {
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the capture did not reach %d datagrams; stopping it", case_name, 2 * count );
-        kill( rocketnet_xdp_veth_capture_pid, SIGTERM );
-        rocketnet_platform_sleep( 0.5 );
-    }
-    rocketnet_xdp_veth_capture_pid = 0;
-
-    {
-        char command[1024];
-        snprintf( command, sizeof(command), "tcpdump -vv -n -r '%s' 2>/dev/null", pcap_path );
-        const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
-        const char * server_host = ipv6 ? "2001:db8::1" : "192.0.2.1";
-        char from_server[64], to_server_text[64];
-        snprintf( from_server, sizeof(from_server), " %s.%d > ", server_host, ROCKETNET_XDP_VETH_PORT );
-        snprintf( to_server_text, sizeof(to_server_text), " > %s.%d: ", server_host, ROCKETNET_XDP_VETH_PORT );
-        const std::string * server_to_client = NULL;
-        const std::string * client_to_server = NULL;
-        int bad_server_checksums = 0;
-        for ( const std::string & line : lines )
+        start = rocketnet_platform_time();
+        while ( rocketnet_xdp_veth_capture_pid > 0 && kill( rocketnet_xdp_veth_capture_pid, 0 ) == 0 && rocketnet_platform_time() - start < 5.0 )
+            rocketnet_platform_sleep( 0.05 );
+        if ( rocketnet_xdp_veth_capture_pid > 0 && kill( rocketnet_xdp_veth_capture_pid, 0 ) == 0 )
         {
-            if ( line.find( from_server ) != std::string::npos )
-            {
-                if ( !server_to_client )
-                    server_to_client = &line;
-                if ( line.find( "bad udp cksum" ) != std::string::npos )
-                    bad_server_checksums++;
-            }
-            else if ( line.find( to_server_text ) != std::string::npos && !client_to_server )
-            {
-                client_to_server = &line;
-            }
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: the capture did not reach %d datagrams; stopping it", case_name, 2 * count );
+            kill( rocketnet_xdp_veth_capture_pid, SIGTERM );
+            rocketnet_platform_sleep( 0.5 );
         }
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture %s (%d maximum-size datagrams)", case_name, pcap_path, (int) lines.size() );
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: client to server: %s", case_name, client_to_server ? client_to_server->c_str() : "(none captured)" );
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server to client: %s", case_name, server_to_client ? server_to_client->c_str() : "(none captured)" );
-        rocketnet_check( server_to_client );
-        rocketnet_check( client_to_server );
-        rocketnet_check( bad_server_checksums == 0 );
-        if ( ipv6 )
-            rocketnet_check( server_to_client->find( "udp sum ok" ) != std::string::npos );
+        rocketnet_xdp_veth_capture_pid = 0;
+
+        {
+            char command[1024];
+            snprintf( command, sizeof(command), "tcpdump -vv -n -r '%s' 2>/dev/null", pcap_path );
+            const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
+            const char * server_host = ipv6 ? "2001:db8::1" : "192.0.2.1";
+            char from_server[64], to_server_text[64];
+            snprintf( from_server, sizeof(from_server), " %s.%d > ", server_host, ROCKETNET_XDP_VETH_PORT );
+            snprintf( to_server_text, sizeof(to_server_text), " > %s.%d: ", server_host, ROCKETNET_XDP_VETH_PORT );
+            const std::string * server_to_client = NULL;
+            const std::string * client_to_server = NULL;
+            int bad_server_checksums = 0;
+            for ( const std::string & line : lines )
+            {
+                if ( line.find( from_server ) != std::string::npos )
+                {
+                    if ( !server_to_client )
+                        server_to_client = &line;
+                    if ( line.find( "bad udp cksum" ) != std::string::npos )
+                        bad_server_checksums++;
+                }
+                else if ( line.find( to_server_text ) != std::string::npos && !client_to_server )
+                {
+                    client_to_server = &line;
+                }
+            }
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: capture %s (%d maximum-size datagrams)", case_name, pcap_path, (int) lines.size() );
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: client to server: %s", case_name, client_to_server ? client_to_server->c_str() : "(none captured)" );
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server to client: %s", case_name, server_to_client ? server_to_client->c_str() : "(none captured)" );
+            rocketnet_check( server_to_client );
+            rocketnet_check( client_to_server );
+            rocketnet_check( bad_server_checksums == 0 );
+            if ( ipv6 )
+                rocketnet_check( server_to_client->find( "udp sum ok" ) != std::string::npos );
+        }
     }
 
     rocketnet_server_transport_stop( server );
@@ -5005,6 +5024,12 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     close( client_netns );
 
     rocketnet_xdp_veth_teardown();
+
+    if ( !capture_tool_present )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: tcpdump is not installed on %s, so no capture line judges the wire", case_name, hostname );
+        rocketnet_check( !"tcpdump is not installed" );
+    }
 }
 
 void rocketnet_test_xdp_max_size_both_ways_ipv4()

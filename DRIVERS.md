@@ -171,7 +171,9 @@ pair at MTU 1500 between two network namespaces, pin the server to the xdp
 driver, run a portable client, and send a maximum-size payload 20 times each
 way. Then they read the stats map, the driver counters and the transport
 counters, and print one `tcpdump -vv` line per direction from a capture on the
-client end. They change the machine, so they run only as root with
+client end. tcpdump is the capture judge: where it is not installed the case
+still runs the traffic and prints every counter, then fails by name
+(`tcpdump is not installed`). They change the machine, so they run only as root with
 `ROCKETNET_TEST_XDP_VETH=1` on an XDP-provisioned machine, and print a named
 skip otherwise. The two cases share their namespaces, so they run one at a
 time: a case name given to `./bin/functional` (bare, or after `--run`) runs
