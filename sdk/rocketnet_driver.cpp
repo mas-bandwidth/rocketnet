@@ -3,6 +3,14 @@
 #include <string.h>
 
 #define ROCKETNET_DRIVER_LINUX (1u << ROCKETNET_PLATFORM_LINUX)
+// the io_uring row exists only in a build configured with liburing; without
+// it the row has no platform, so no availability entry and no reference to
+// the backend, and a pin of it is skipped by the ladder
+#if defined(ROCKETNET_IO_URING) && ROCKETNET_IO_URING
+#define ROCKETNET_DRIVER_IO_URING_PLATFORMS ROCKETNET_DRIVER_LINUX
+#else
+#define ROCKETNET_DRIVER_IO_URING_PLATFORMS 0u
+#endif
 #define ROCKETNET_DRIVER_MAC (1u << ROCKETNET_PLATFORM_MAC)
 #define ROCKETNET_DRIVER_WINDOWS (1u << ROCKETNET_PLATFORM_WINDOWS)
 #define ROCKETNET_DRIVER_ALL_PLATFORMS (~0u)

@@ -88,7 +88,8 @@ static void test_driver_registry()
         }
     CHECK(found_queues); // The BPF map must cover every admitted queue index.
     CHECK(ROCKETNET_DRIVER_PORTABLE == 0 && ROCKETNET_DRIVER_GSO == 1 &&
-          ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4);
+          ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4 &&
+          ROCKETNET_DRIVER_IO_URING == 5);
     for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; ++i )
     {
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition(i);
@@ -108,7 +109,11 @@ static void test_driver_registry()
         if (i) CHECK(rocketnet_driver_definition(servers[i-1])->server_preference <= definition->server_preference);
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO && servers[2] == ROCKETNET_DRIVER_PORTABLE);
+    if (rocketnet_driver_definition(ROCKETNET_DRIVER_IO_URING)->backend) // built with liburing
+        CHECK(count == 4 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO &&
+              servers[2] == ROCKETNET_DRIVER_IO_URING && servers[3] == ROCKETNET_DRIVER_PORTABLE);
+    else
+        CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO && servers[2] == ROCKETNET_DRIVER_PORTABLE);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_MSGX && servers[1] == ROCKETNET_DRIVER_PORTABLE);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

@@ -12362,6 +12362,7 @@ void rocketnet_test_server_port_zero_needs_a_discovering_driver()
     rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_PORTABLE ) );
     rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_MSGX ) );
     rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_GSO ) );
+    rocketnet_check( rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_IO_URING ) );
     rocketnet_check( !rocketnet_driver_discovers_bound_port( ROCKETNET_DRIVER_XDP ) );
 
     // and out of range fails safe rather than reading off the end

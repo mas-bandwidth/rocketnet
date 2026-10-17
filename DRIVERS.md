@@ -105,6 +105,36 @@ hardware failure tests or per-platform line-rate measurements.
 Dispatch measurements and their limits are recorded in
 [bench/transport_fill.md](bench/transport_fill.md).
 
+## The io_uring server driver
+
+`io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)
+is a staged Linux server driver with one io_uring per driver, used only on the
+main thread, and no worker threads. An `SO_REUSEPORT` socket group, bound the
+way the GSO driver binds its group, shards receives across queues. Each queue
+has a provided buffer ring and one multishot `RECVMSG`, so the kernel fills
+receive buffers with no syscall per datagram; `send_packets` submits one
+batched `SENDMSG` per staged slot, in chunks no larger than the free submission
+queue space, and returns once every send has completed. A queue count past
+`ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
+`ROCKETNET_URING_DEFAULT_QUEUES`.
+
+The driver needs liburing at build time (`ROCKETNET_IO_URING`, on by default
+and used when liburing is found). A build without it keeps the registry row with
+no platform: the row is absent from the availability lists and a pin of
+`io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
+probes once that the kernel accepts the ring, the opcodes and the provided
+buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30)
+in the Linux `auto` order; it has no client side.
+
+Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
+submit syscalls, send drops, receive drops for size, bank overflow and
+unconvertible source, receives ended for want of buffers, and multishot
+re-arms. A destroy that gives up waiting for outstanding completions leaks the
+kernel-visible memory rather than freeing it and counts it in
+`rocketnet_server_uring_leaked_bytes()` and `rocketnet_server_uring_leaked_drivers()`.
+The send staging, the two receive banks and destroy are modelled in
+`tla/RNUringDriver.tla`.
+
 ## The XDP receive filter
 
 `server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
