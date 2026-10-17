@@ -539,6 +539,11 @@ int main()
     memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS;
     // Planning a geometry larger than the component budget never allocates it.
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
+    // The whole-host estimate is a plan too: it allocates nothing before init.
+    rocketnet_host_memory_estimate_t host_estimate;
+    check(rocketnet_server_transport_host_memory_estimate(NULL, "portable", &host_estimate));
+    check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
+    check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
     check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {

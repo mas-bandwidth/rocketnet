@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 135
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 136
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -874,6 +874,40 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketn
 // geometry, overflow, unknown/custom driver, or driver not built for this platform.
 // Query each candidate separately: "auto" and driver lists are not concrete plans.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_server_transport_config_t * config, const char * driver );
+
+// Allocation-free whole-host memory estimate for one built-in driver name: the
+// required_memory plan plus the kernel-facing memory the driver requests. Each
+// component is a request, never a grant: allocator_bytes is the SDK allocator
+// plan (required_memory minus UMEM); umem_bytes is XDP UMEM, the frame memory,
+// equal to the plan's; the socket buffer fields sum the SO_SNDBUF and SO_RCVBUF
+// sizes asked of every socket the driver opens; xdp_ring_bytes is the AF_XDP
+// RX and TX descriptor rings asked of every XDP socket; thread_stack_bytes is
+// worker_threads x thread_stack_bytes_per_thread, the stack each driver thread
+// is created with (the platform default: the driver passes no stack size), as
+// reserved address space. total_bytes is the sum of the six byte components
+// and is at least required_memory. exclusions names, in static strings, what
+// the library cannot know and does not count. Same config and driver rules as
+// required_memory: NULL config means defaults; false (and a zeroed estimate)
+// means no plan. A NULL estimate is a counted misuse that returns false.
+#define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS 8
+
+struct rocketnet_host_memory_estimate_t
+{
+    uint64_t allocator_bytes;
+    uint64_t umem_bytes;
+    uint64_t socket_send_buffer_bytes;
+    uint64_t socket_receive_buffer_bytes;
+    uint64_t xdp_ring_bytes;
+    uint64_t thread_stack_bytes;
+    uint64_t thread_stack_bytes_per_thread;
+    uint64_t total_bytes;
+    int sockets;
+    int worker_threads;
+    int num_exclusions;
+    const char * exclusions[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
+};
+
+ROCKETNET_EXPORT_FUNC bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * driver, struct rocketnet_host_memory_estimate_t * estimate );
 
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
 // config is the default shape.
