@@ -101,6 +101,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_config.cpp
     sdk/rocketnet_driver.cpp
     sdk/rocketnet_driver_builtin.cpp
+    sdk/rocketnet_driver_loopback.cpp
     sdk/rocketnet_connect_token.cpp
     sdk/rocketnet_counters.cpp
     sdk/rocketnet_encryption_map.cpp
