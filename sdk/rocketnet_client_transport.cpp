@@ -1349,21 +1349,27 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 {
     rocketnet_assert( client_transport );
 
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
+    // the mutex covers the append only, never a socket call (docs/CLIENT-IO.md, Measured)
 
-    const int off_index = client_transport->receive_buffer_index ? 0 : 1;
-
-    rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
+    uint8_t scratch[ROCKETNET_MAX_PACKET_BYTES];
 
     while ( 1 )
     {
-        if ( receive_buffer->num_packets >= ROCKETNET_NUM_CLIENT_PACKETS )
+        // a short hold: is there room in the buffer update is not reading?
+
+        rocketnet_platform_mutex_acquire( &client_transport->mutex );
+
+        int off_index = client_transport->receive_buffer_index ? 0 : 1;
+
+        const bool full = client_transport->receive_buffer[off_index].num_packets >= ROCKETNET_NUM_CLIENT_PACKETS;
+
+        rocketnet_platform_mutex_release( &client_transport->mutex );
+
+        if ( full )
             break;
 
-        uint8_t * packet_data = receive_buffer->data + receive_buffer->num_packets * ROCKETNET_FRAME_SIZE;
-
         struct rocketnet_address_t from;
-        int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, packet_data, ROCKETNET_MAX_PACKET_BYTES );
+        const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
 
@@ -1373,17 +1379,32 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
             continue;
 
-        const int index = receive_buffer->num_packets;
+        const double receive_time = rocketnet_platform_time();
 
-        receive_buffer->from[index] = from;
-        receive_buffer->receive_time[index] = rocketnet_platform_time();
-        receive_buffer->packet_data[index] = packet_data;
-        receive_buffer->packet_bytes[index] = packet_bytes;
+        rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
-        receive_buffer->num_packets++;
+        // update may have swapped while the socket call ran
+
+        off_index = client_transport->receive_buffer_index ? 0 : 1;
+
+        rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
+
+        if ( receive_buffer->num_packets < ROCKETNET_NUM_CLIENT_PACKETS )
+        {
+            const int index = receive_buffer->num_packets;
+
+            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, packet_bytes );
+
+            receive_buffer->from[index] = from;
+            receive_buffer->receive_time[index] = receive_time;
+            receive_buffer->packet_data[index] = receive_buffer->data + index * ROCKETNET_FRAME_SIZE;
+            receive_buffer->packet_bytes[index] = packet_bytes;
+
+            receive_buffer->num_packets++;
+        }
+
+        rocketnet_platform_mutex_release( &client_transport->mutex );
     }
-
-    rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
 static void rocketnet_client_thread_function( void * data )
