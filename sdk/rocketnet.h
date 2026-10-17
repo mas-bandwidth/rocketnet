@@ -656,6 +656,9 @@ struct rocketnet_client_transport_config_t
 {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     void (*state_change_callback)( void * context, int previous_state, int current_state );
+    // the clock the client I/O thread stamps each datagram with (docs/CLIENT-IO.md,
+    // The clock), read once at create; NULL means the platform clock
+    double (*time_callback)( void * context );
 };
 
 // a NULL config is a counted no-op.

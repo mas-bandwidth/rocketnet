@@ -295,6 +295,7 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_WRONG_EPOCH",
     "XDP_KERNEL_PASSED_IPV6_EXTENSION",
     "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
+    "CLIENT_SEND_DEFERRED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
@@ -398,6 +399,7 @@ static void counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_NOT_RELEASED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED ) == ROCKETNET_COUNTER_CLASS_ARRIVAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == ROCKETNET_COUNTER_CLASS_EXPECTED );
 }
 
 REGISTER_UNIT_TEST( counters_every_counter_has_a_class );

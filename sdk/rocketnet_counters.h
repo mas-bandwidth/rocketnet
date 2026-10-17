@@ -549,7 +549,15 @@
     /* addresses can each hold a mapping for one token, and the second to */ \
     /* respond is refused (STANDARD.md, Processing Connection Response */ \
     /* Packets). appended: indices are the contract. */ \
-    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED )
+    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
+    \
+    /* The client I/O path (docs/CLIENT-IO.md, Reuse only after sent; a */ \
+    /* hand-off never waits; tla/RNClientIo.tla Defer): a hand-off that found */ \
+    /* the other send ring still with the I/O thread, so the committed slots */ \
+    /* stay in the Filling ring for the next hand-off. Once per deferred */ \
+    /* call. EXPECTED: deferral is the common case, not an overload signal. */ \
+    /* appended: indices are the contract. */ \
+    X( CLIENT_SEND_DEFERRED, EXPECTED, NONE )
 
 enum
 {

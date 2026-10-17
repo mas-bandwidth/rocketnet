@@ -297,4 +297,28 @@ inline void rocketnet_client_io_thread_function( void * data )
     while ( rocketnet_client_io_step( io, true ) != ROCKETNET_CLIENT_IO_EXITED ) {}
 }
 
+// The transport's wiring of this core (sdk/rocketnet_client_transport.cpp,
+// docs/CLIENT-IO.md _The interface_). True when the operations have both
+// wait and wake: the transport then runs the I/O thread design; otherwise
+// the BASE path.
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations );
+
+// The unit-test seam (docs/CLIENT-IO.md _The I/O step_ and _Stop and destroy
+// order_, the step-driven unit mode). While a test driver is set, create opens
+// its operations with instance_context as the driver create's context, in
+// place of the ladder's grant; an I/O-path transport then creates no I/O
+// thread, the test calls rocketnet_client_transport_io_step in its place, and
+// destroy steps in place of the sleep and the join. NULL clears it. Unit
+// tests only; never set while another transport is being created.
+struct rocketnet_client_transport_test_driver_t
+{
+    const rocketnet_client_driver_operations_t * operations;
+    void * instance_context;
+};
+
+void rocketnet_client_transport_set_test_driver( const rocketnet_client_transport_test_driver_t * driver );
+
+// One I/O step of a step-mode transport (rocketnet_client_io_step).
+int rocketnet_client_transport_io_step( struct rocketnet_client_transport_t * transport, bool block );
+
 #endif // #ifndef ROCKETNET_CLIENT_IO_H
