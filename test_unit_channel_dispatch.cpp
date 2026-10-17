@@ -391,6 +391,145 @@ static void rnchannel_witness_replays()
     rn_region_reset( region );
 }
 
+// The bad-ring, collision and double-ordering refusals of
+// rn_channels_dispatch_ordered (sdk/rocketnet_channel.cpp), each pinned by a
+// refusal: a second record in a live descriptor slot under another number
+// (PROTOCOL_VIOLATION), an out-of-ring span (BAD_RING), two messages sharing
+// one ordering index (PROTOCOL_VIOLATION), and a block holding an in-turn
+// ordering (PROTOCOL_VIOLATION).
+
+static void ordered_dispatch_refuses_collisions_and_bad_rings()
+{
+    rn_region_t * region = dispatch_region();
+    rocketnet_unit_check( region != NULL );
+
+    static uint8_t payload[16];
+    memset( payload, 0xAB, sizeof( payload ) );
+
+    // (a) a number in a slot another number holds: the same descriptor slot, a
+    // different number, is a protocol violation.
+    {
+        rn_region_reset( region );
+        memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+        rn_channels_t channels;
+        rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+        struct rocketnet_message_record_t held;
+        dispatch_record( &held, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        held.ordering = 1;
+        held.number = 1;
+
+        struct rn_delivery_t delivery;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &held, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+
+        struct rocketnet_message_record_t collision;
+        dispatch_record( &collision, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        collision.ordering = 2;
+        collision.number = 1 + region->window;
+        collision.ring = 4;
+
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &collision, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
+    }
+
+    // (b) an out-of-ring span is a bad ring.
+    {
+        rn_region_reset( region );
+        memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+        rn_channels_t channels;
+        rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+        struct rocketnet_message_record_t record;
+        dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        record.ordering = 1;
+        record.number = 1;
+        record.ring = (uint32_t) ( region->ring_bytes / 16 );
+
+        struct rn_delivery_t delivery;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_RING] == 1 );
+        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
+    }
+
+    // (c) two messages with one ordering index are refused.
+    {
+        rn_region_reset( region );
+        memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+        rn_channels_t channels;
+        rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+        struct rocketnet_message_record_t held;
+        dispatch_record( &held, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        held.ordering = 1;
+        held.number = 1;
+
+        struct rn_delivery_t delivery;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &held, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+
+        struct rocketnet_message_record_t twice;
+        dispatch_record( &twice, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        twice.ordering = 1;
+        twice.number = 2;
+        twice.ring = 4;
+
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &twice, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
+    }
+
+    // (d) a block collecting chunks holds its ordering: an in-turn small record
+    // on that ordering is refused.
+    {
+        const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+        static uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+        memset( chunk, 0xCD, sizeof( chunk ) );
+
+        rn_region_reset( region );
+        memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+        rn_channels_t channels;
+        rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+        struct rocketnet_message_record_t block;
+        memset( &block, 0, sizeof( block ) );
+        block.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+        block.block = 1;
+        block.channel = 0;
+        block.number = 0;
+        block.ordering = 0;
+        block.fragment = 0;
+        block.fragments = 1;
+        block.ring = 0;
+        block.data = chunk;
+        block.bytes = (int) F;
+
+        struct rn_delivery_t delivery;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &block, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+
+        struct rocketnet_message_record_t small;
+        dispatch_record( &small, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+        small.ordering = 0;
+        small.number = 5;
+
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &small, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+        rocketnet_unit_check( channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+        rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
+    }
+
+    rn_region_reset( region );
+}
+
 REGISTER_UNIT_TEST( dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( unreliable_delivered_as_a_view );
@@ -398,3 +537,4 @@ REGISTER_UNIT_TEST( unreliable_never_takes_a_number );
 REGISTER_UNIT_TEST( ack_feed_marks_only_carried_numbers );
 REGISTER_UNIT_TEST( rnchannel_witness_replays );
 REGISTER_UNIT_TEST( unreliable_delivery_budget_drops_and_counts );
+REGISTER_UNIT_TEST( ordered_dispatch_refuses_collisions_and_bad_rings );

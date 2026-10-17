@@ -103,6 +103,13 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 
 int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config )
 {
+    return rocketnet_message_validate_config_ex( config, NULL );
+}
+
+int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status )
+{
+    // docs/ERRORS-AND-LOGGING.md 2.1: every refusal of the message config is
+    // CONFIG_OUT_OF_RANGE, and an accepted config is OK.
     struct rocketnet_message_config_t defaults;
     if ( !config )
     {
@@ -113,7 +120,11 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
     if ( !rocketnet_config_validate( "message", config, fields, num_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
+    }
 
     const int W = config->window_messages;
     const int B = config->receive_ring_bytes;
@@ -124,6 +135,8 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     if ( ( W & ( W - 1 ) ) != 0 )
     {
         rocketnet_error( "message config window_messages %d is not a power of two", W );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -131,6 +144,8 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     if ( B % 16 != 0 )
     {
         rocketnet_error( "message config receive_ring_bytes %d is not a multiple of 16", B );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -138,6 +153,8 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     if ( config->max_message_bytes > B )
     {
         rocketnet_error( "message config max_message_bytes %d is above receive_ring_bytes %d", config->max_message_bytes, B );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -145,6 +162,8 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     if ( fragments > W )
     {
         rocketnet_error( "message config max_message_bytes %d needs %d fragments, above window_messages %d", config->max_message_bytes, fragments, W );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -154,6 +173,8 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     {
         rocketnet_error( "message config send_buffer_bytes %d holds %u large chunks, below the %d a max_message_bytes %d block needs",
                          config->send_buffer_bytes, large, fragments, config->max_message_bytes );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -161,11 +182,15 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     if ( config->rto_min_ms > config->rto_max_ms )
     {
         rocketnet_error( "message config rto_min_ms %d is above rto_max_ms %d", config->rto_min_ms, config->rto_max_ms );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
     if ( config->rto_initial_ms < config->rto_min_ms || config->rto_initial_ms > config->rto_max_ms )
     {
         rocketnet_error( "message config rto_initial_ms %d is outside rto_min_ms %d to rto_max_ms %d", config->rto_initial_ms, config->rto_min_ms, config->rto_max_ms );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
@@ -177,9 +202,13 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     {
         rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of max( the %d ms resend interval, rto_initial_ms %d )",
                          config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, config->rto_initial_ms );
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return 0;
     }
 
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
     return 1;
 }
 
@@ -350,6 +379,32 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
         }
         break;
     }
+}
+
+bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out )
+{
+    rocketnet_assert( transport_name );
+    rocketnet_assert( field_name );
+    rocketnet_assert( out );
+
+    char env_name[128];
+    if ( !rocketnet_config_env_var_name_for( transport_name, field_name, env_name, sizeof(env_name) ) )
+    {
+        rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field_name );
+        return false;
+    }
+
+    const char * value = rocketnet_platform_getenv( env_name );
+    if ( !value || value[0] == '\0' )
+        return true;
+
+    if ( !rocketnet_config_parse_uint64( value, out ) )
+    {
+        rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
+        return false;
+    }
+
+    return true;
 }
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
