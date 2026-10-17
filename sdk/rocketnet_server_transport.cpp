@@ -146,6 +146,7 @@ struct rocketnet_server_payloads_t
 {
     int num_payloads;
     int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
     uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
     int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
 };
@@ -420,7 +421,8 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t)});
     for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * ROCKETNET_ENCRYPTION_MAP_RATIO),
         rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO), rocketnet_token_table_allocation_bytes(clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO),
-        rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients)})
+        rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients),
+        rocketnet_memory_allocations({(uint64_t)clients*sizeof(uint64_t), (uint64_t)clients*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(uint64_t)})})
     {
         if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
     }
@@ -839,6 +841,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
+
+    // the connection ids (docs/CHANNELS.md P9a, P9b): one per slot, 0 while
+    // free, and one per acked batch entry, sized as the acked batch is
+    protocol->connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * sizeof(uint64_t) );
+    protocol->acked_connection_ids = (uint64_t*) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof(uint64_t) );
+    if ( protocol->connection_ids )
+        memset( protocol->connection_ids, 0, (size_t) max_clients * sizeof(uint64_t) );
     // the delivered mirror sizes to the server's drain bound: the receive
     // one reassembly set per connection slot, created here at create and
     // reached only from a connected slot (STANDARD.md _Fragmentation_):
@@ -858,7 +867,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     server_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
                                                                ( server_transport->max_payload_bytes + 15 ) & ~15 );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->reassembly || !server_transport->send_arena )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->reassembly || !server_transport->send_arena )
     {
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
@@ -891,6 +900,10 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_client_slots_destroy( server_transport->protocol.client_slots );
     if ( server_transport->protocol.acks )
         rocketnet_server_acks_destroy( server_transport->protocol.acks );
+    if ( server_transport->protocol.connection_ids )
+        rocketnet_free( server_transport->context, server_transport->protocol.connection_ids );
+    if ( server_transport->protocol.acked_connection_ids )
+        rocketnet_free( server_transport->context, server_transport->protocol.acked_connection_ids );
     if ( server_transport->protocol.reassembly )
         rocketnet_reassembly_set_destroy( server_transport->protocol.reassembly );
     if ( server_transport->send_arena )
@@ -1106,6 +1119,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         {
             const int index = server_transport->payloads.num_payloads;
             server_transport->payloads.client_index[index] = payload_client_index;
+            server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
             server_transport->payloads.payload_data[index] = payload;
             server_transport->payloads.payload_bytes[index] = payload_bytes;
             server_transport->payloads.num_payloads++;
@@ -1123,6 +1137,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             {
                 const int index = server_transport->payloads.num_payloads;
                 server_transport->payloads.client_index[index] = payload_client_index;
+                server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                 server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
                 server_transport->payloads.num_payloads++;
@@ -1201,6 +1216,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         {
             const int index = server_transport->payloads.num_payloads;
             server_transport->payloads.client_index[index] = payload_client_index;
+            server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
             server_transport->payloads.payload_data[index] = payload;
             server_transport->payloads.payload_bytes[index] = payload_bytes;
             server_transport->payloads.num_payloads++;
@@ -1218,6 +1234,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             {
                 const int index = server_transport->payloads.num_payloads;
                 server_transport->payloads.client_index[index] = payload_client_index;
+                server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
                 server_transport->payloads.payload_data[index] = reassembly->completed_payload;
                 server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
                 server_transport->payloads.num_payloads++;
@@ -1320,6 +1337,23 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
     *client_index = server_transport->payloads.client_index;
     *payload_data = server_transport->payloads.payload_data;
     *payload_bytes = server_transport->payloads.payload_bytes;
+
+    return server_transport->payloads.num_payloads;
+}
+
+// docs/CHANNELS.md P9b: the connection id of each payload entry, parallel to
+// the client index array above
+
+int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( connection_id ) )
+        return 0;
+    rocketnet_assert( server_transport );
+    rocketnet_assert( connection_id );
+
+    *connection_id = server_transport->payloads.connection_id;
 
     return server_transport->payloads.num_payloads;
 }
@@ -1956,6 +1990,16 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
     return rocketnet_client_slots_client_id( server_transport->protocol.client_slots, client_index );
 }
 
+// docs/CHANNELS.md P9a: the connection that holds the slot now
+
+uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    rocketnet_assert( server_transport );
+    return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
+}
+
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -2011,6 +2055,23 @@ int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_
     *packet_ids = acks->acked_packet_ids;
 
     return acks->num_acked;
+}
+
+// docs/CHANNELS.md P9b: the connection id of each acked packet id, parallel
+// to the client index array above
+
+int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    if ( !rocketnet_api_null_guard( connection_id ) )
+        return 0;
+    rocketnet_assert( server_transport );
+    rocketnet_assert( connection_id );
+
+    *connection_id = server_transport->protocol.acked_connection_ids;
+
+    return server_transport->protocol.acks->num_acked;
 }
 
 void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_server_transport_client_stats_t * stats )

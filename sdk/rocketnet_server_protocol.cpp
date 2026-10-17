@@ -15,6 +15,30 @@
 #include <sodium.h>
 #include <string.h>
 
+// the connection ids, docs/CHANNELS.md P9a: a slot takes the next id from the
+// server-wide counter when it is assigned and drops to 0 when it is released
+
+uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index )
+{
+    if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
+        return 0;
+    return server->connection_ids[client_index];
+}
+
+static void rocketnet_server_connection_id_assigned( struct rocketnet_server_protocol_t * server, int client_index )
+{
+    if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
+        return;
+    server->connection_ids[client_index] = ++server->next_connection_id;
+}
+
+static void rocketnet_server_connection_id_released( struct rocketnet_server_protocol_t * server, int client_index )
+{
+    if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
+        return;
+    server->connection_ids[client_index] = 0;
+}
+
 // the failed-signature-verify budget: see rocketnet_server.h. the window
 // rolls over when the clock passes it, clearing the global count and every
 // per-source count together, so a source that exhausted the budget is refused
@@ -735,6 +759,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index, mapping->user_data );
     rocketnet_assert( client_index != -1 );     // num_free was checked above
+    rocketnet_server_connection_id_assigned( server, client_index );
 
     mapping->client_index = client_index;
     mapping->established = 1;
@@ -800,6 +825,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     if ( client_index != -1 )
     {
         rocketnet_client_slots_release( server->client_slots, client_index );
+        rocketnet_server_connection_id_released( server, client_index );
         counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     }
     rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
@@ -1055,8 +1081,15 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                               server->acks->acked_packet_ids, server->acks->acked_capacity, &server->acks->num_acked,
                                               &counters[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE],
                                               &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
+        // P9b: each acked id is tagged with the connection it was received
+        // for, beside its client index, as it is appended
+        const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
         for ( int i = before; i < server->acks->num_acked; i++ )
+        {
             server->acks->acked_client_index[i] = client_index;
+            if ( server->acked_connection_ids )
+                server->acked_connection_ids[i] = connection_id;
+        }
 
         if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET )
             endpoint->ack_debt++;
@@ -1083,6 +1116,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         memcpy( out_payload, type_data, (size_t) type_data_bytes );
         *out_payload_bytes = type_data_bytes;
         *out_payload_client_index = client_index;
+        server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
 
@@ -1125,7 +1159,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                               counters, &fragment_counters );
 
         if ( server->reassembly->completed_bytes > 0 )
+        {
             *out_payload_client_index = client_index;
+            server->payload_connection_id = rocketnet_server_protocol_connection_id( server, client_index );     // P9b
+        }
 
         return accepted ? ROCKETNET_SERVER_PROCESS_ACCEPTED : ROCKETNET_SERVER_PROCESS_IGNORED;
     }
@@ -1138,6 +1175,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED]++;
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     rocketnet_client_slots_release( server->client_slots, client_index );
+    rocketnet_server_connection_id_released( server, client_index );
     rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
 
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
@@ -1171,6 +1209,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
     *response_bytes = 0;
     *out_payload_bytes = 0;
     *out_payload_client_index = -1;
+    server->payload_connection_id = 0;
 
     if ( server->reassembly )
     {
@@ -1289,7 +1328,10 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             int client_index = mapping->client_index;
             rocketnet_debug( "client %d timed out", client_index );
             if ( client_index != -1 )
+            {
                 rocketnet_client_slots_release( server->client_slots, client_index );
+                rocketnet_server_connection_id_released( server, client_index );
+            }
             rocketnet_encryption_map_remove( server->encryption_map, iterator );
             counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
@@ -1910,5 +1952,6 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     rocketnet_client_slots_release( server->client_slots, client_index );
+    rocketnet_server_connection_id_released( server, client_index );
     rocketnet_encryption_map_remove( server->encryption_map, mapping_index );
 }

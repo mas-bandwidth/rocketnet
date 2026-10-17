@@ -7469,6 +7469,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
+    "rocketnet_server_transport_payload_connection_ids",
     "rocketnet_server_transport_start_packet",
     "rocketnet_server_transport_packet_payload",
     "rocketnet_server_transport_finish_packet",
@@ -7479,11 +7480,13 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_num_connected_clients",
     "rocketnet_server_transport_is_client_connected",
     "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_client_connection_id",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
+    "rocketnet_server_transport_acked_connection_ids",
     "rocketnet_frame_sync_create",
     "rocketnet_frame_sync_destroy",
     "rocketnet_frame_sync_wait",
@@ -7587,6 +7590,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_server_transport_num_payloads",
     "rocketnet_server_transport_payload",
     "rocketnet_server_transport_payloads",
+    "rocketnet_server_transport_payload_connection_ids",
     "rocketnet_server_transport_start_packet",
     "rocketnet_server_transport_packet_payload",
     "rocketnet_server_transport_finish_packet",
@@ -7597,11 +7601,13 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_server_transport_num_connected_clients",
     "rocketnet_server_transport_is_client_connected",
     "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_client_connection_id",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
+    "rocketnet_server_transport_acked_connection_ids",
     "rocketnet_frame_sync_destroy",
     "rocketnet_frame_sync_wait",
     "rocketnet_frame_sync_stats",
@@ -7836,6 +7842,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_connection_id( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( NULL ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
@@ -7864,10 +7874,18 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_acked_connection_ids( NULL, &acked ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_payload( NULL, 0, &client_index, &payload_bytes ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_payloads( NULL, &client_ids, &payload_data, &payload_sizes ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_payload_connection_ids( NULL, &acked ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -12498,6 +12516,193 @@ void rocketnet_test_suite_environment()
     unsetenv("ROCKETNET_PUMP");
 }
 
+void rocketnet_test_server_transport_entries_carry_connection_id()
+{
+    // docs/CHANNELS.md P9a, P9b (card C0a): a slot released and reassigned
+    // inside one update. Client A holds slot 0; A's payload, whose ack block
+    // acknowledges three server packets, then A's disconnect, then client B
+    // connecting into the freed slot 0, then B's payload -- with no batch
+    // drain between them, as within one transport update. A's payload entry
+    // and A's acked ids must carry A's connection id, B's payload B's, and
+    // the slot's id at the end is B's: reading the slot after the update
+    // names only its last owner, so the tag is written when the entry is.
+    // The wire between the clients and the server is the in-memory network
+    // simulator. Mutation that must bite: tag an entry from the slot at
+    // update end (or not at all); the checks on A's entries go red.
+
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    // the connection id arrays, as the transport creates them for its slots
+    // and its acked batch
+    const int max_clients = rocketnet_client_slots_max_clients( test.server.client_slots );
+    test.server.connection_ids = (uint64_t*) rocketnet_malloc( NULL, (size_t) max_clients * sizeof(uint64_t) );
+    test.server.acked_connection_ids = (uint64_t*) rocketnet_malloc( NULL, (size_t) test.server.acks->acked_capacity * sizeof(uint64_t) );
+    rocketnet_check( test.server.connection_ids && test.server.acked_connection_ids );
+    memset( test.server.connection_ids, 0, (size_t) max_clients * sizeof(uint64_t) );
+    memset( test.server.acked_connection_ids, 0, (size_t) test.server.acks->acked_capacity * sizeof(uint64_t) );
+
+    // a free slot reads 0, and so does an index out of range
+    rocketnet_check( rocketnet_server_protocol_connection_id( &test.server, 0 ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_connection_id( &test.server, -1 ) == 0 );
+    rocketnet_check( rocketnet_server_protocol_connection_id( &test.server, max_clients ) == 0 );
+
+    struct rocketnet_address_t address_a, address_b, server_address;
+    rocketnet_check( rocketnet_address_parse( &address_a, "198.51.100.7:56789" ) );
+    rocketnet_check( rocketnet_address_parse( &address_b, "198.51.100.8:56789" ) );
+    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+
+    // A connects into slot 0 and takes connection id 1
+    struct rocketnet_counters_t counters_a;
+    struct rocketnet_client_protocol_t client_a;
+    test.client_address = address_a;
+    rocketnet_test_ack_connect( &test, &client_a, &counters_a, 0xA0A0ULL );
+    rocketnet_check( rocketnet_client_slots_connected( test.server.client_slots, 0 ) );
+    const uint64_t connection_a = rocketnet_server_protocol_connection_id( &test.server, 0 );
+    rocketnet_check( connection_a == 1 );
+
+    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 0xC0A1ULL );
+    rocketnet_check( simulator );
+    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    struct rocketnet_address_t from;
+    int bytes = 0;
+
+    double time = 101.0;
+
+    // the server sends A three payloads with packet ids 7001..7003; A
+    // receives them, so A's next packet acknowledges all three
+    for ( uint64_t id = 7001; id <= 7003; id++ )
+    {
+        struct rocketnet_address_t to;
+        uint64_t sequence = 0;
+        rocketnet_check( rocketnet_server_protocol_start_payload( &test.server, 0, &to, &sequence ) );
+        uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+        memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &id, 8 );
+        const int wire = rocketnet_server_protocol_seal_payload_frame( &test.server, 0, sequence, id, frame, 8, time );
+        rocketnet_check( wire > 0 );
+        rocketnet_network_simulator_send( simulator, &server_address, &address_a, frame, wire, time );
+    }
+    while ( ( bytes = rocketnet_network_simulator_receive( simulator, &address_a, time, &from, packet ) ) > 0 )
+        rocketnet_check( rocketnet_client_protocol_process_packet( &client_a, packet, bytes, time, payload, sizeof(payload), &payload_bytes ) );
+
+    // the update begins: the batches are empty
+    test.server.acks->num_acked = 0;
+
+    struct entry_t { int client_index; uint64_t connection_id; uint8_t first_byte; };
+    struct entry_t entries[4];
+    int num_entries = 0;
+
+    // A's payload, then the first packet of A's disconnect burst, over the wire
+    const uint8_t data_a[4] = { 0xAA, 0xAA, 0xAA, 0xAA };
+    time += 0.001;
+    bytes = rocketnet_client_protocol_write_payload( &client_a, data_a, 4, time, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_network_simulator_send( simulator, &address_a, &server_address, packet, bytes, time );
+
+    uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+    int burst_count = 0;
+    int burst_bytes = 0;
+    rocketnet_client_protocol_disconnect( &client_a, burst, &burst_count, &burst_bytes );
+    rocketnet_check( burst_count == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    rocketnet_network_simulator_send( simulator, &address_a, &server_address, burst, burst_bytes, time );
+
+    int received = 0;
+    while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+    {
+        received++;
+        rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
+                                                  ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                  payload, &payload_bytes, &payload_client_index );
+        if ( payload_bytes > 0 )
+        {
+            rocketnet_check( num_entries < 4 );
+            entries[num_entries].client_index = payload_client_index;
+            entries[num_entries].connection_id = test.server.payload_connection_id;
+            entries[num_entries].first_byte = payload[0];
+            num_entries++;
+        }
+        else
+        {
+            rocketnet_check( test.server.payload_connection_id == 0 );
+        }
+    }
+    rocketnet_check( received == 2 );
+
+    // A's ack block acknowledged 7001..7003, each tagged with A's connection
+    const int acked_by_a = test.server.acks->num_acked;
+    rocketnet_check( acked_by_a == 3 );
+
+    // the disconnect released slot 0: its id is 0 again
+    rocketnet_check( !rocketnet_client_slots_connected( test.server.client_slots, 0 ) );
+    rocketnet_check( rocketnet_server_protocol_connection_id( &test.server, 0 ) == 0 );
+
+    // B connects into the freed slot 0 in the same update and takes id 2
+    struct rocketnet_counters_t counters_b;
+    struct rocketnet_client_protocol_t client_b;
+    test.client_address = address_b;
+    rocketnet_test_ack_connect( &test, &client_b, &counters_b, 0xB0B0ULL );
+    rocketnet_check( rocketnet_client_slots_connected( test.server.client_slots, 0 ) );
+    const uint64_t connection_b = rocketnet_server_protocol_connection_id( &test.server, 0 );
+    rocketnet_check( connection_b == 2 );
+
+    // B's payload, over the wire
+    const uint8_t data_b[4] = { 0xBB, 0xBB, 0xBB, 0xBB };
+    time += 0.001;
+    bytes = rocketnet_client_protocol_write_payload( &client_b, data_b, 4, time, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_network_simulator_send( simulator, &address_b, &server_address, packet, bytes, time );
+    received = 0;
+    while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
+    {
+        received++;
+        rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
+                                                  ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                  payload, &payload_bytes, &payload_client_index );
+        rocketnet_check( payload_bytes == 4 );
+        entries[num_entries].client_index = payload_client_index;
+        entries[num_entries].connection_id = test.server.payload_connection_id;
+        entries[num_entries].first_byte = payload[0];
+        num_entries++;
+    }
+    rocketnet_check( received == 1 );
+
+    // the update ends. both payloads name slot 0; only the tag tells them apart
+    rocketnet_check( num_entries == 2 );
+    rocketnet_check( entries[0].client_index == 0 );
+    rocketnet_check( entries[0].first_byte == 0xAA );
+    rocketnet_check( entries[0].connection_id == 1 );
+    rocketnet_check( entries[1].client_index == 0 );
+    rocketnet_check( entries[1].first_byte == 0xBB );
+    rocketnet_check( entries[1].connection_id == 2 );
+
+    // A's acked ids carry A's id, never B's, though slot 0 is B's now
+    rocketnet_check( test.server.acks->num_acked == 3 );
+    for ( int i = 0; i < test.server.acks->num_acked; i++ )
+    {
+        rocketnet_check( test.server.acks->acked_client_index[i] == 0 );
+        rocketnet_check( test.server.acks->acked_packet_ids[i] >= 7001 && test.server.acks->acked_packet_ids[i] <= 7003 );
+        rocketnet_check( test.server.acked_connection_ids[i] == 1 );
+    }
+
+    // the slot at update end names its last owner only
+    rocketnet_check( rocketnet_server_protocol_connection_id( &test.server, 0 ) == 2 );
+    rocketnet_check( connection_a != connection_b );
+
+    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_free( NULL, test.server.connection_ids );
+    rocketnet_free( NULL, test.server.acked_connection_ids );
+    test.server.connection_ids = NULL;
+    test.server.acked_connection_ids = NULL;
+    rocketnet_test_server_teardown( &test );
+}
+
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
     // P2 (docs/CHANNELS.md section 2): for an unfragmented payload (type 5),
@@ -13258,6 +13463,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_send_history_silent_peer_overflows", rocketnet_test_send_history_silent_peer_overflows },
     { "test_send_history_late_ack_before_eviction", rocketnet_test_send_history_late_ack_before_eviction },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch },
+    { "test_server_transport_entries_carry_connection_id", rocketnet_test_server_transport_entries_carry_connection_id },
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update },
     { "test_ack_rtt_freshness", rocketnet_test_ack_rtt_freshness },
     { "test_ack_payload_seal_with_ranges", rocketnet_test_ack_payload_seal_with_ranges },
