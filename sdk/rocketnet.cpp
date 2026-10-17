@@ -78,14 +78,14 @@ void rocketnet_assert_function( void (*function)( const char * condition, const 
 
 // -------------------------------------------------------------
 
-static int log_quiet = 0;
+static std::atomic<bool> log_quiet{ false };
 
 void rocketnet_quiet( bool flag )
 {
-   log_quiet = flag;
+   log_quiet.store( flag, std::memory_order_relaxed );
 }
 
-static int log_level = ROCKETNET_LOG_LEVEL_INFO;
+static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
 
 void rocketnet_log_level( int level )
 {
@@ -95,7 +95,7 @@ void rocketnet_log_level( int level )
     // library by accident.
     if ( level < ROCKETNET_LOG_LEVEL_NONE || level > ROCKETNET_LOG_LEVEL_SPAM )
         return;
-    log_level = level;
+    log_level.store( level, std::memory_order_relaxed );
 }
 
 // test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
@@ -148,17 +148,17 @@ void rocketnet_log_level_override_apply( const char * value )
     if ( rocketnet_config_parse_int_value( value, &parsed ) &&
          parsed >= ROCKETNET_LOG_LEVEL_NONE && parsed <= ROCKETNET_LOG_LEVEL_SPAM )
     {
-        log_level = parsed;
-        rocketnet_info( "log level overridden to %d", log_level );
+        log_level.store( parsed, std::memory_order_relaxed );
+        rocketnet_info( "log level overridden to %d", log_level.load( std::memory_order_relaxed ) );
         return;
     }
     rocketnet_warn( "ignoring ROCKETNET_LOG_LEVEL=\"%s\": not a level %d to %d, keeping %d",
-                    value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level );
+                    value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
 
 int rocketnet_get_log_level( void )
 {
-    return log_level;
+    return log_level.load( std::memory_order_relaxed );
 }
 
 const char * rocketnet_log_level_string( int level )
@@ -224,41 +224,85 @@ const char * rocketnet_status_string( int status )
     return rocketnet_status_names[status];
 }
 
-static void default_log_function( int level, const char * format, ... )
+static void default_log_callback( void * context, int level, const char * message, size_t length )
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
-    va_list args;
-    va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
+    (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
-        if ( !log_quiet )
-        {
-            const char * level_string = rocketnet_log_level_string( level );
-            printf( "%.6f: %s: %s\n", rocketnet_platform_time(), level_string, buffer );
-        }
+        const char * level_string = rocketnet_log_level_string( level );
+        printf( "%.6f: %s: %.*s\n", rocketnet_platform_time(), level_string, (int) length, message );
     }
     else
     {
-        printf( "%s\n", buffer );
+        printf( "%.*s\n", (int) length, message );
     }
-    va_end( args );
     fflush( stdout );
 #endif // #if !ROCKETNET_UNREAL_ENGINE
 }
 
-static void (*log_function)( int level, const char * format, ... ) = default_log_function;
+static volatile uint64_t rocketnet_log_sink_lock = 0;
+static rocketnet_log_callback_t rocketnet_log_callback = NULL;
+static void * rocketnet_log_callback_context = NULL;
+static void (*rocketnet_log_legacy)( int level, const char * format, ... ) = NULL;
+
+// docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: a non-NULL callback on either entry
+// point replaces the active sink; NULL restores the default sink. the
+// (callback, context, legacy) tuple is guarded by the spin lock so it is never
+// observed torn.
+void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context )
+{
+    rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
+    rocketnet_log_callback = callback;
+    rocketnet_log_callback_context = context;
+    rocketnet_log_legacy = NULL;
+    rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
+}
 
 void rocketnet_log_function( void (*function)( int level, const char * format, ... ) )
 {
-    if ( function )
+    rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
+    rocketnet_log_legacy = function ? function : NULL;
+    rocketnet_log_callback = NULL;
+    rocketnet_log_callback_context = NULL;
+    rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
+}
+
+// docs/ERRORS-AND-LOGGING.md 3.3: filter before formatting (quiet and level are
+// relaxed atomics read before vsnprintf), format once into the 1024-byte
+// buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
+// vsnprintf), then dispatch to the preformatted callback, the legacy varargs
+// function, or the default sink.
+static void rocketnet_log_v( int level, const char * format, va_list args )
+{
+    if ( log_quiet.load( std::memory_order_relaxed ) )
+        return;
+    if ( level != ROCKETNET_LOG_LEVEL_NONE &&
+         level > log_level.load( std::memory_order_relaxed ) )
+        return;
+
+    char buffer[1024];
+    int n = vsnprintf( buffer, sizeof( buffer ), format, args );
+    size_t length = ( n < 0 ) ? 0 :
+                    ( (size_t) n < sizeof( buffer ) ? (size_t) n : sizeof( buffer ) - 1 );
+
+    rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
+    rocketnet_log_callback_t cb = rocketnet_log_callback;
+    void * ctx = rocketnet_log_callback_context;
+    void (*legacy)( int, const char *, ... ) = rocketnet_log_legacy;
+    rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
+
+    if ( cb )
     {
-        log_function = function;
+        cb( ctx, level, buffer, length );
+    }
+    else if ( legacy )
+    {
+        legacy( level, "%s", buffer );
     }
     else
     {
-        log_function = default_log_function;
+        default_log_callback( NULL, level, buffer, length );
     }
 }
 
@@ -266,13 +310,9 @@ void rocketnet_printf( int level, const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( level > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( level, "%s", buffer );
+    rocketnet_log_v( level, format, args );
     va_end( args );
 }
 
@@ -280,13 +320,9 @@ void rocketnet_info( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( ROCKETNET_LOG_LEVEL_INFO > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( ROCKETNET_LOG_LEVEL_INFO, "%s", buffer );
+    rocketnet_log_v( ROCKETNET_LOG_LEVEL_INFO, format, args );
     va_end( args );
 }
 
@@ -294,13 +330,9 @@ void rocketnet_warn( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( ROCKETNET_LOG_LEVEL_WARN > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( ROCKETNET_LOG_LEVEL_WARN, "%s", buffer );
+    rocketnet_log_v( ROCKETNET_LOG_LEVEL_WARN, format, args );
     va_end( args );
 }
 
@@ -308,13 +340,9 @@ void rocketnet_error( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( ROCKETNET_LOG_LEVEL_ERROR > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( ROCKETNET_LOG_LEVEL_ERROR, "%s", buffer );
+    rocketnet_log_v( ROCKETNET_LOG_LEVEL_ERROR, format, args );
     va_end( args );
 }
 
@@ -322,13 +350,9 @@ void rocketnet_debug( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( ROCKETNET_LOG_LEVEL_DEBUG > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( ROCKETNET_LOG_LEVEL_DEBUG, "%s", buffer );
+    rocketnet_log_v( ROCKETNET_LOG_LEVEL_DEBUG, format, args );
     va_end( args );
 }
 
@@ -336,13 +360,9 @@ void rocketnet_spam( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
-    if ( ROCKETNET_LOG_LEVEL_SPAM > log_level )
-        return;
     va_list args;
     va_start( args, format );
-    char buffer[1024];
-    vsnprintf( buffer, sizeof( buffer ), format, args );
-    log_function( ROCKETNET_LOG_LEVEL_SPAM, "%s", buffer );
+    rocketnet_log_v( ROCKETNET_LOG_LEVEL_SPAM, format, args );
     va_end( args );
 }
 
