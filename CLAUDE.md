@@ -76,7 +76,7 @@ portable on macOS; iocp behind portable on windows). `client.c` and
 `server.c` connect out of the box under the published dev keys.
 
 What remains is REQUIREMENTS.md's tail: reliability, flows and broadcast
-above the transport. TODO.md is the live ordering.
+above the transport. docs/roadmap.sexp is the live ordering (ROADMAP.md renders it).
 
 ## The scaling story, in one paragraph
 
