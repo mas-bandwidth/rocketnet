@@ -21,7 +21,12 @@
 (* CapVerifyBudget in their code position reproduce a finding each; in     *)
 (* their fixed position the invariants hold.  Rotation, AcceptPrevious     *)
 (* and PreviousOutlivesWindow state the cookie-key rotation window and     *)
-(* its stall bound.                                                        *)
+(* its stall bound.  BindAtRequest TRUE is the code before 2026-10-17:    *)
+(* the request records the history entry, so a replay from an address     *)
+(* that holds no keys binds the token.  The same change made the code's    *)
+(* RefuseAdmittedAtResponse TRUE.  Holds[t] is the set of addresses        *)
+(* holding token t's keys; only they can open a response, and every        *)
+(* other address is the replaying attacker.                                *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -31,7 +36,7 @@ CONSTANTS
     Rotation, AcceptPrevious,
     RefuseAdmittedAtResponse, AdmitExpiredAtResponse,
     EvictLiveHistory, DeniedConsumesToken, CapVerifyBudget,
-    PreviousOutlivesWindow
+    PreviousOutlivesWindow, BindAtRequest, Holds
 
 ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in Nat \ {0}
        /\ MaxClients \in Nat \ {0} /\ HistoryCap \in Nat \ {0} /\ AdmittedCap \in Nat \ {0}
@@ -40,6 +45,7 @@ ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in
        /\ RefuseAdmittedAtResponse \in BOOLEAN /\ AdmitExpiredAtResponse \in BOOLEAN
        /\ EvictLiveHistory \in BOOLEAN /\ DeniedConsumesToken \in BOOLEAN
        /\ CapVerifyBudget \in BOOLEAN /\ PreviousOutlivesWindow \in BOOLEAN
+       /\ BindAtRequest \in BOOLEAN /\ Holds \in [Tokens -> SUBSET Addrs]
        /\ Expire \in [Tokens -> Nat] /\ Cid \in [Tokens -> Nat]
 
 Gens == 1..3
@@ -76,25 +82,39 @@ Init ==
 IsExpired(u) == IF history[u] = None THEN FALSE ELSE history[u].exp <= clock
 
 \* rocketnet_used_token_history_record: no-op if live; else a free slot,
-\* then an expired slot, then (code) the oldest entry, live or not.
-HistoryRecord(tk, a) ==
+\* then an expired slot, then (code) the oldest entry, live or not.  The
+\* ghost field opened says whether the record was made by a response from
+\* a that opened under tk's handshake key (TRUE) or by a request (FALSE).
+HistoryRecord(tk, a, op) ==
     IF HistLive(tk) THEN history
     ELSE IF HistCount < HistoryCap \/ history[tk] # None
-      THEN [history EXCEPT ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder]]
+      THEN [history EXCEPT ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder, opened |-> op]]
       ELSE LET expired == {u \in Tokens : IsExpired(u)}
            IN IF expired # {}
                 THEN LET v == CHOOSE victim \in expired : TRUE
-                     IN [history EXCEPT ![v] = None, ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder]]
+                     IN [history EXCEPT ![v] = None, ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder, opened |-> op]]
                 ELSE IF EvictLiveHistory
                   THEN LET present == {x \in Tokens : history[x] # None}
                            v == CHOOSE victim \in present : \A w \in present : HistOrder(victim) <= HistOrder(w)
-                       IN [history EXCEPT ![v] = None, ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder]]
+                       IN [history EXCEPT ![v] = None, ![tk] = [addr |-> a, exp |-> ExpTime(tk), order |-> insertOrder, opened |-> op]]
                   ELSE history
 
 EvictsLive(tk) ==
     /\ ~HistLive(tk) /\ HistCount >= HistoryCap /\ history[tk] = None
     /\ ~(\E u \in Tokens : IsExpired(u))
     /\ EvictLiveHistory
+
+\* The history record and its ghosts: rocketnet_used_token_history_record
+\* for token tk at address a.  An expired token is not recorded (the
+\* request path refuses it at its top; the response path checks before
+\* the record), and the insert order moves only when an entry is written:
+\* a response can repeat, so a counter that moved on a no-op record would
+\* be unbounded.
+Bind(tk, a, op) ==
+    IF TokExpired(tk) THEN UNCHANGED <<history, insertOrder, evictedLive>>
+    ELSE /\ evictedLive' = (evictedLive \/ (\E u \in Tokens : u # tk /\ HistLive(u) /\ (HistoryRecord(tk, a, op))[u] = None))
+         /\ history' = HistoryRecord(tk, a, op)
+         /\ insertOrder' = IF HistoryRecord(tk, a, op) = history THEN insertOrder ELSE insertOrder + 1
 
 \* A request past the cookie gate, from any address, holding any token,
 \* under a cookie of generation g.  The attacker is this quantification:
@@ -108,15 +128,16 @@ Request(a, tok, g) ==
        ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
        ELSE TRUE
     /\ verifies' = verifies + 1
-    /\ evictedLive' = (evictedLive \/ (\E u \in Tokens : u # tok /\ HistLive(u) /\ (HistoryRecord(tok, a))[u] = None))
-    /\ history' = HistoryRecord(tok, a)
-    /\ insertOrder' = IF HistLive(tok) THEN insertOrder ELSE insertOrder + 1
+    /\ IF BindAtRequest THEN Bind(tok, a, FALSE)
+       ELSE UNCHANGED <<history, insertOrder, evictedLive>>
     /\ map' = [map EXCEPT ![a] = tok] /\ mapGen' = [mapGen EXCEPT ![a] = g] /\ mapBorn' = [mapBorn EXCEPT ![a] = clock]
     /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit>>
 
-\* The response rung: the packet opened under the mapping.  The code
-\* checks the client id, then the slots, then the admitted set, whose
-\* add succeeds when the token is already present.
+\* The response rung: the packet opened under the mapping, so only an
+\* address in Holds[tok] takes this step.  The record runs first (unless
+\* BindAtRequest, where the request made it).  The code then checks the
+\* client id, the admitted set (RefuseAdmittedAtResponse), then the
+\* slots, then adds, the add succeeding when the token is already present.
 AdmittedAddOk(tk) == AdmLive(tk) \/ AdmCount < AdmittedCap \/ admitted[tk] # 0
                     \/ \E u \in Tokens : admitted[u] # 0 /\ admitted[u] <= clock
 AdmittedAfterAdd(tk) ==
@@ -128,22 +149,28 @@ AdmittedAfterAdd(tk) ==
 Response(a) ==
     /\ Live(a)
     /\ LET tok == map[a] IN
-       IF \E s \in slots : s.cid = Cid[tok] THEN UNCHANGED vars
-       ELSE IF TokExpired(tok) /\ ~AdmitExpiredAtResponse THEN UNCHANGED vars
-       ELSE IF AdmLive(tok) /\ RefuseAdmittedAtResponse THEN UNCHANGED vars
-       ELSE IF NumFree <= 0 \/ ~AdmittedAddOk(tok) THEN
-            /\ deniedPulse' = ~deniedPulse
-            /\ admitted' = IF DeniedConsumesToken THEN AdmittedAfterAdd(tok) ELSE admitted
-            /\ UNCHANGED <<clock, history, insertOrder, map, mapGen, mapBorn, slots, others,
-                           gen, hasPrev, prevUntil, verifies, admits, lateAdmit, evictedLive>>
-       ELSE
-            /\ admitted' = AdmittedAfterAdd(tok)
-            /\ slots' = slots \cup {[cid |-> Cid[tok], tok |-> tok, addr |-> a]}
-            /\ map' = [map EXCEPT ![a] = None]
-            /\ admits' = [admits EXCEPT ![tok] = @ + 1]
-            /\ lateAdmit' = (lateAdmit \/ TokExpired(tok))
-            /\ UNCHANGED <<clock, history, insertOrder, mapGen, mapBorn, others, gen, hasPrev,
-                           prevUntil, verifies, deniedPulse, evictedLive>>
+       /\ a \in Holds[tok]
+       /\ IF BindAtRequest THEN UNCHANGED <<history, insertOrder, evictedLive>>
+          ELSE Bind(tok, a, TRUE)
+       /\ IF \E s \in slots : s.cid = Cid[tok] THEN
+               UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
+                           prevUntil, verifies, deniedPulse, admits, lateAdmit>>
+          ELSE IF (TokExpired(tok) /\ ~AdmitExpiredAtResponse) \/ (AdmLive(tok) /\ RefuseAdmittedAtResponse) THEN
+               UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
+                           prevUntil, verifies, deniedPulse, admits, lateAdmit>>
+          ELSE IF NumFree <= 0 \/ ~AdmittedAddOk(tok) THEN
+               /\ deniedPulse' = ~deniedPulse
+               /\ admitted' = IF DeniedConsumesToken THEN AdmittedAfterAdd(tok) ELSE admitted
+               /\ UNCHANGED <<clock, map, mapGen, mapBorn, slots, others,
+                              gen, hasPrev, prevUntil, verifies, admits, lateAdmit>>
+          ELSE
+               /\ admitted' = AdmittedAfterAdd(tok)
+               /\ slots' = slots \cup {[cid |-> Cid[tok], tok |-> tok, addr |-> a]}
+               /\ map' = [map EXCEPT ![a] = None]
+               /\ admits' = [admits EXCEPT ![tok] = @ + 1]
+               /\ lateAdmit' = (lateAdmit \/ TokExpired(tok))
+               /\ UNCHANGED <<clock, mapGen, mapBorn, others, gen, hasPrev,
+                              prevUntil, verifies, deniedPulse>>
 
 OtherJoins == /\ others < MaxClients /\ NumFree > 0 /\ others' = others + 1
               /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
@@ -186,6 +213,13 @@ TypeOK ==
     /\ \A a \in Addrs : map[a] = None \/ map[a] \in Tokens
 
 OneConnectionPerToken == \A t \in Tokens : admits[t] <= 1
+\* A token is bound in the history only by a response that opened under
+\* it, from the address it binds, so a replay from an address that holds
+\* no keys binds nothing (STANDARD.md, Processing Connection Response
+\* Packets).  NoBindToNonHolder is its consequence for the attacker: no
+\* address outside Holds[t] is ever bound to t.
+BoundOnlyToOpener == \A t \in Tokens : history[t] # None => history[t].opened
+NoBindToNonHolder == \A t \in Tokens : history[t] # None => history[t].addr \in Holds[t]
 NoLiveHistoryEviction == ~evictedLive
 ExpiredNeverAdmitted == ~lateAdmit
 DeniedTokenStaysUsable == [][deniedPulse' # deniedPulse => admitted' = admitted]_vars
@@ -202,6 +236,7 @@ TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :
     (Live(a) /\ map[a] = t) ~> (admits[t] = 1 \/ ~Live(a))
 
-SafetyInvariants == TypeOK /\ OneConnectionPerToken /\ NoLiveHistoryEviction
+SafetyInvariants == TypeOK /\ OneConnectionPerToken /\ BoundOnlyToOpener /\ NoBindToNonHolder
+                    /\ NoLiveHistoryEviction
                     /\ ExpiredNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded
 =============================================================================

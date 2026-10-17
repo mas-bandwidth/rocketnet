@@ -542,7 +542,14 @@
     X( XDP_KERNEL_DROPPED_WRONG_FILTER, REFUSAL, NONE ) \
     X( XDP_KERNEL_DROPPED_INVALID_TYPE, REFUSAL, NONE ) \
     X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
-    X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE )
+    X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
+    \
+    /* A connection response that opened for a token already in the */ \
+    /* admitted-token set: the token is bound at response open, so two */ \
+    /* addresses can each hold a mapping for one token, and the second to */ \
+    /* respond is refused (STANDARD.md, Processing Connection Response */ \
+    /* Packets). appended: indices are the contract. */ \
+    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED )
 
 enum
 {
