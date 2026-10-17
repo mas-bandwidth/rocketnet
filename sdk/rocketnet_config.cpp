@@ -592,8 +592,10 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
     if ( is_auto )
     {
+        // Pin-only drivers are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            ladder->candidates[ladder->num_candidates++] = available[i];
+            if ( !rocketnet_driver_pin_only( available[i] ) )
+                ladder->candidates[ladder->num_candidates++] = available[i];
         return true;
     }
 
@@ -688,14 +690,17 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         auto_names[0] = '\0';
         for ( int i = 0; i < num_available; i++ )
         {
+            if ( rocketnet_driver_pin_only( available[i] ) ) continue;
             const size_t used = strlen( auto_names );
             snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
         }
 
         rocketnet_warn( "driver list \"%s\" names no driver for this endpoint on this platform. using auto (%s)", value, auto_names );
 
+        // Pin-only drivers are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )
-            ladder->candidates[ladder->num_candidates++] = available[i];
+            if ( !rocketnet_driver_pin_only( available[i] ) )
+                ladder->candidates[ladder->num_candidates++] = available[i];
     }
 
     return true;

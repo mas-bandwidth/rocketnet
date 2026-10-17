@@ -15,6 +15,13 @@ transport retains the selected operations and opaque instance for its lifetime.
 Factories, resources and platform decisions stay in the driver layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
+A driver with a preference rank at or above `ROCKETNET_DRIVER_PIN_ONLY`
+(1000) is pin-only: it stays in the availability list, so an explicit name
+always selects it, but `auto` never chooses it. The loopback driver is the one
+pin-only row. It is in-process, carries datagrams through memory with no socket
+and no system network call, and serves tests and tools; it is never chosen by
+auto.
+
 ## Server capabilities and ownership
 
 Two I/O shapes preserve the existing implementations:

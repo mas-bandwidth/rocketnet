@@ -7,6 +7,11 @@
 // Native implementation interface. None of these symbols is a public C export.
 struct rocketnet_platform_send_t;
 
+// A preference rank this large keeps a driver out of every auto order; a pin
+// still selects it. The loopback driver is pin-only: it is chosen only by an
+// explicit name, never by auto.
+#define ROCKETNET_DRIVER_PIN_ONLY 1000
+
 enum
 {
 #define ROCKETNET_DRIVER(symbol, name, discovers, operations, platforms, server, client) ROCKETNET_DRIVER_##symbol,
@@ -120,6 +125,7 @@ const char * rocketnet_driver_name( int driver );
 const char * rocketnet_driver_names();
 const char * rocketnet_driver_discovering_names();
 bool rocketnet_driver_discovers_bound_port( int driver );
+bool rocketnet_driver_pin_only( int driver );
 const int * rocketnet_server_driver_availability( int * num_available );
 const int * rocketnet_client_driver_availability( int * num_available );
 
