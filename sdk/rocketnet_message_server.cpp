@@ -680,9 +680,24 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 }
 
 // Whether the ordered path has a packet to write now: a message queued for
-// its first write, or a number at the head of the resend FIFO that is unsent
-// or past its resend delay, min( rto, resend_interval ) (tla/RNResendTiming.tla
-// Due). It keeps a frame from being started for nothing.
+// its first write, or a number at the head of either resend FIFO that is
+// unsent or past its class's delay, min( rto, resend_interval ) for a small
+// record and the RTO for a chunk of a block (tla/RNResendTiming.tla Due). It
+// keeps a frame from being started for nothing.
+
+static int rn_message_ordered_fifo_due( const rn_region_t * region, uint32_t cursor, double delay, double now )
+{
+    for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
+    {
+        if ( steps >= 64 )
+            return 1;                                           // a long acked prefix: let the write walk it
+        const rn_send_number_t * slot = &region->send_numbers[cursor];
+        if ( !slot->acked )
+            return ( slot->last_send <= 0.0 || now >= slot->last_send + delay ) ? 1 : 0;
+        cursor = region->resend_fifo[cursor].next;
+    }
+    return 0;
+}
 
 static bool rn_message_ordered_due( const rn_message_connection_t * connection, double now )
 {
@@ -692,17 +707,8 @@ static bool rn_message_ordered_due( const rn_message_connection_t * connection, 
 
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = connection->region;
-    uint32_t cursor = ack->resend_head;
-    for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
-    {
-        if ( steps >= 64 )
-            return true;                                        // a long acked prefix: let the write walk it
-        const rn_send_number_t * slot = &region->send_numbers[cursor];
-        if ( !slot->acked )
-            return slot->last_send <= 0.0 || now >= slot->last_send + rn_window_ack_resend_delay( ack );
-        cursor = region->resend_fifo[cursor].next;
-    }
-    return false;
+    return rn_message_ordered_fifo_due( region, ack->resend_head, rn_window_ack_resend_delay( ack ), now ) ||
+           rn_message_ordered_fifo_due( region, ack->chunk_head, rn_window_ack_chunk_resend_delay( ack ), now );
 }
 
 static void rn_message_unreliable_unlink( rn_message_connection_t * connection, uint32_t d, uint32_t previous )

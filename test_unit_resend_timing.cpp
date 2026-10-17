@@ -289,3 +289,201 @@ static void message_config_abi_size_is_unchanged()
 }
 
 REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );
+
+// ---------------------------------------------------------------------------
+// The chunks of a block wait the RTO alone (docs/CHANNELS.md 6.4 "Resend";
+// tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
+// witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
+// every version of layer 3 has (the walk's output and resend_count), so they
+// build against the one-FIFO walk too and show where it differs.
+// ---------------------------------------------------------------------------
+
+// Numbers a block of `bytes` (more than one fragment) and sends each chunk in
+// its own packet at now. Writes the chunk numbers to out_numbers and returns
+// how many there are.
+static uint32_t resend_timing_send_block( resend_timing_fixture_t * f, double now, int bytes, uint64_t * out_numbers, uint32_t max_numbers )
+{
+    const uint32_t d = rn_region_send_alloc( f->region, bytes );
+    check( d != RN_DESCRIPTOR_NONE );
+    uint64_t first = 0, ring_start = 0;
+    const uint32_t fragments = rn_window_send_first_write_block( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, (uint32_t) bytes, d, &first, &ring_start );
+    check( fragments > 1 && fragments <= max_numbers );
+    check( f->region->send_descriptors[d].fragments == fragments );
+    for ( uint32_t i = 0; i < fragments; i++ )
+    {
+        const uint64_t number = first + i;
+        rn_window_ack_commit_packet( &f->ack, f->next_packet_id++, &number, 1, now );
+        out_numbers[i] = number;
+    }
+    return fragments;
+}
+
+// Gives the estimator one RTT sample of `rtt` seconds, ending at the returned
+// time: a small record sent at `now` and acked rtt later.
+static double resend_timing_sample( resend_timing_fixture_t * f, double now, double rtt )
+{
+    const uint64_t packet_id = resend_timing_send( f, now, NULL );
+    check( rn_window_ack_on_ack( &f->ack, packet_id, now + rtt ) == 1 );
+    return now + rtt;
+}
+
+// One resend pass at now; writes what it resent to out (capacity 64).
+static uint32_t resend_timing_pass_numbers( resend_timing_fixture_t * f, double now, uint64_t * out )
+{
+    return rn_window_ack_resend( &f->ack, now, &f->next_packet_id, out, 64 );
+}
+
+static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, uint64_t number )
+{
+    for ( uint32_t i = 0; i < count; i++ )
+        if ( numbers[i] == number )
+            return true;
+    return false;
+}
+
+// chunk_resend_paced_by_rtt_not_interval: on a 200 ms path (rto = 1.25 x 200
+// + 2 x 100 ms, clamped to rto_max 250 ms) a chunk of a block is resent at
+// the RTO, 250 ms after its send, not at the 100 ms cap a small record keeps;
+// and at the same delay every time after.
+static void chunk_resend_paced_by_rtt_not_interval()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
+    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+
+    uint64_t chunks[8];
+    const uint32_t n = resend_timing_send_block( &f, t1, 2500, chunks, 8 );
+    check( n == 3 );
+
+    uint64_t out[64];
+    uint32_t resent = resend_timing_pass_numbers( &f, t1 + 0.101, out );
+    printf( "chunk_resend_paced_by_rtt_not_interval: at +101 ms on a 200 ms path %u of %u chunks resent\n", resent, n );
+    check( resent == 0 );                                          // not at the 100 ms cap
+    check( resend_timing_pass_numbers( &f, t1 + 0.249, out ) == 0 );
+    resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
+    check( resent == n );                                          // at the RTO, every chunk
+    for ( uint32_t i = 0; i < n; i++ )
+        check( resend_timing_contains( out, resent, chunks[i] ) );
+
+    // the same delay again: no back-off, no cap
+    check( resend_timing_pass_numbers( &f, t1 + 0.251 + 0.101, out ) == 0 );
+    check( resend_timing_pass_numbers( &f, t1 + 0.251 + 0.249, out ) == 0 );
+    check( resend_timing_pass_numbers( &f, t1 + 0.251 + 0.251, out ) == n );
+
+    // a single-packet record on the same path keeps min( rto, 100 ms )
+    uint64_t small = 0;
+    const double t2 = t1 + 0.6;
+    resend_timing_send( &f, t2, &small );
+    resent = resend_timing_pass_numbers( &f, t2 + 0.101, out );
+    check( resent == 1 && out[0] == small );
+    check( f.ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( chunk_resend_paced_by_rtt_not_interval );
+
+// small_record_behind_a_chunk_not_held: the witness of
+// MCRNResendTimingBrokenOneFifo.cfg against the code. A block's chunks go
+// first, a small record 10 ms after, so in a FIFO ordered by last send the
+// chunks are ahead of it. At 111 ms the small record is due (100 ms cap) and
+// the chunks are not (RTO 250 ms): the small record is resent in that pass
+// and the chunks are not touched; the small record is resent every 100 ms
+// while the chunks wait.
+static void small_record_behind_a_chunk_not_held()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
+    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+
+    uint64_t chunks[8];
+    const uint32_t n = resend_timing_send_block( &f, t1, 2500, chunks, 8 );
+    uint64_t small = 0;
+    resend_timing_send( &f, t1 + 0.010, &small );
+
+    uint64_t out[64];
+    uint32_t resent = resend_timing_pass_numbers( &f, t1 + 0.111, out );
+    check( resend_timing_contains( out, resent, small ) );         // not held behind the chunks
+    check( resent == 1 );                                          // and the chunks not resent early
+    resent = resend_timing_pass_numbers( &f, t1 + 0.212, out );
+    check( resent == 1 && out[0] == small );                       // again at its own 100 ms
+    resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
+    check( resent == n );                                          // the chunks at their RTO
+    for ( uint32_t i = 0; i < n; i++ )
+        check( resend_timing_contains( out, resent, chunks[i] ) );
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( small_record_behind_a_chunk_not_held );
+
+// both_fifos_walk_only_what_is_due: each class is walked from its head while
+// due and no further. Tripwires show it: a number marked acked by hand while
+// still linked is unlinked by the first walk that reaches it, so resend_count
+// drops only when a walk goes as far as a tripwire. One tripwire sits in each
+// class behind numbers that are not yet due; while the walks stop before
+// them the count holds, and a walk past a stop point would remove them.
+static void both_fifos_walk_only_what_is_due()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
+    check( fabs( f.ack.rto - 0.250 ) < 1e-9 );
+    check( f.ack.resend_count == 0 );
+
+    // chunks c0..c2 and small s1 at t1, small s2 at +20 ms; at +30 ms a small
+    // tripwire s3 and a two-chunk block c3, c4 whose first chunk is the chunk
+    // tripwire
+    uint64_t c[8];
+    check( resend_timing_send_block( &f, t1, 2500, c, 8 ) == 3 );
+    uint64_t s1 = 0, s2 = 0, s3 = 0;
+    resend_timing_send( &f, t1, &s1 );
+    resend_timing_send( &f, t1 + 0.020, &s2 );
+    resend_timing_send( &f, t1 + 0.030, &s3 );
+    check( resend_timing_send_block( &f, t1 + 0.030, 1500, c + 3, 5 ) == 2 );
+    const uint32_t W = f.region->window;
+    f.region->send_numbers[s3 & ( W - 1 )].acked = 1;              // tripwires: acked, still linked
+    f.region->send_numbers[c[3] & ( W - 1 )].acked = 1;
+    const uint32_t linked = f.ack.resend_count;
+    check( linked == 8 );
+
+    uint64_t out[64];
+
+    // +101 ms: s1 is due (100 ms); s2 is not (due at +120 ms) and stops the
+    // small walk; c0 is not (250 ms) and stops the chunk walk
+    uint32_t resent = resend_timing_pass_numbers( &f, t1 + 0.101, out );
+    check( resent == 1 && out[0] == s1 );
+    check( f.ack.resend_count == linked );                         // no tripwire reached
+
+    // nothing is due at +110 ms: the walks stop at their heads
+    check( resend_timing_pass_numbers( &f, t1 + 0.110, out ) == 0 );
+    check( f.ack.resend_count == linked );
+
+    // +121 ms: s2 is due; the small walk passes the acked s3 (unlinking it)
+    // and stops at s1, resent at +101 ms; the chunk walk still stops at c0
+    resent = resend_timing_pass_numbers( &f, t1 + 0.121, out );
+    check( resent == 1 && out[0] == s2 );
+    check( f.ack.resend_count == linked - 1 );                     // the small tripwire, not the chunk one
+
+    // +251 ms: s1 and s2 are due again and c0..c2 at their RTO; the chunk
+    // walk passes the acked c3 and stops at c4 (due at +280 ms)
+    resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
+    check( resent == 5 );
+    check( resend_timing_contains( out, resent, s1 ) && resend_timing_contains( out, resent, s2 ) );
+    for ( int i = 0; i < 3; i++ )
+        check( resend_timing_contains( out, resent, c[i] ) );
+    check( !resend_timing_contains( out, resent, c[4] ) );
+    check( f.ack.resend_count == linked - 2 );
+
+    // small records come out of the walk before chunks (R6 retransmit order)
+    check( out[0] == s1 && out[1] == s2 );
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( both_fifos_walk_only_what_is_due );

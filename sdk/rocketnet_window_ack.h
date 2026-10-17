@@ -27,7 +27,8 @@
 //   - region->sent_index   : 2P entries of 16 bytes (open-addressed packet_id -> entry)
 //   - region->sent_refs    : 16P u32 entries (ring of referenced message numbers)
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
-//   - region->resend_fifo  : W entries of 8 bytes (intrusive prev/next links in 0..W-1)
+//   - region->resend_fifo  : W entries of 8 bytes (intrusive prev/next links in 0..W-1),
+//                            shared by the two resend FIFOs: a number is in at most one
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -61,9 +62,17 @@ struct rn_window_ack_t
     uint16_t pad;
     int error;                      // ROCKETNET_MESSAGE_ERROR_NONE or ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT
 
-    uint32_t resend_head;           // oldest slot in the resend FIFO (0..W-1), or RN_RESEND_NONE
-    uint32_t resend_tail;           // newest slot in the resend FIFO (0..W-1), or RN_RESEND_NONE
-    uint32_t resend_count;          // number of unacked slots currently linked in the resend FIFO
+    // Two resend FIFOs over the one link array region->resend_fifo, one per
+    // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
+    // SmallNeverHeldByChunk): single-packet records, and the chunks of a
+    // block (a record whose send descriptor has more than one fragment). Each
+    // is ordered by last send and walked from its head while due.
+    uint32_t resend_head;           // oldest slot in the small-record FIFO (0..W-1), or RN_RESEND_NONE
+    uint32_t resend_tail;           // newest slot in the small-record FIFO (0..W-1), or RN_RESEND_NONE
+    uint32_t resend_count;          // number of slots linked in both FIFOs
+    uint32_t chunk_head;            // oldest slot in the chunk FIFO (0..W-1), or RN_RESEND_NONE
+    uint32_t chunk_tail;            // newest slot in the chunk FIFO (0..W-1), or RN_RESEND_NONE
+    uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + acked + one stop per FIFO)
 
     uint64_t pkt_head;              // oldest live or un-reclaimed slot in sent_packets
     uint64_t pkt_tail;              // next slot to write in sent_packets (pkt_tail - pkt_head <= P)
@@ -80,14 +89,46 @@ struct rn_window_ack_t
     double oldest_first_send;       // first_send time of oldest_number
 };
 
-// The resend delay of every record: min( rto, resend_interval ), the same for
-// every resend, with no back-off (docs/CHANNELS.md 6.4 "Resend";
-// tla/RNResendTiming.tla Delay with MaxBackoff = 1). The three resend walks
-// (rn_window_ack_resend, rn_ordered_write, rn_message_ordered_due) read it.
+// The resend delay of a single-packet record: min( rto, resend_interval ),
+// the same for every resend, with no back-off (docs/CHANNELS.md 6.4 "Resend";
+// tla/RNResendTiming.tla Delay("s") with MaxBackoff = 1). The three resend
+// walks (rn_window_ack_resend, rn_ordered_write, rn_message_ordered_due) read
+// it for the small-record FIFO.
 static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 {
     return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
 }
+
+// The resend delay of a chunk of a block: the RTO alone, not the 100 ms cap,
+// so a large block on a long path is not sent again before its acks can
+// return (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla Delay("c")).
+// It is capped at reliable_timeout / ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
+// (ChunkCap) so the attempts rule holds for chunks under any accepted
+// rto_max; at the defaults (2.5 s against rto_max 250 ms) the cap never binds.
+// The same for every resend, with no back-off.
+static inline double rn_window_ack_chunk_resend_delay( const rn_window_ack_t * ack )
+{
+    const double cap = ack->reliable_timeout / (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS;
+    return ack->rto < cap ? ack->rto : cap;
+}
+
+// Whether the number in send_numbers slot `slot_index` is a chunk of a block:
+// its send descriptor is in use with more than one fragment (docs/CHANNELS.md
+// 8). It picks the number's resend FIFO and delay.
+bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_index );
+
+// The delay of the FIFO a slot is in: rn_window_ack_chunk_resend_delay for a
+// chunk, rn_window_ack_resend_delay otherwise.
+static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, bool chunk )
+{
+    return chunk ? rn_window_ack_chunk_resend_delay( ack ) : rn_window_ack_resend_delay( ack );
+}
+
+// Links a never-sent number into its class's resend FIFO right after `after`
+// (a slot of the same FIFO), or at that FIFO's head when `after` is
+// RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
+// ones already waiting, ahead of every number that was sent.
+void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
 // Initializes the sent-packet map, resend FIFO, and RFC 6298 estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
@@ -149,11 +190,13 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 
 // Test-only: the product's walk is rn_ordered_write (sdk/rocketnet_channel.cpp).
-// Walks the resend FIFO from its head while
-// now >= last_send + rn_window_ack_resend_delay( ack ) (docs/CHANNELS.md 6.4
-// "Resend"; tla/RNWindow.tla WriteOldest, tla/RNResendTiming.tla Resend).
-// Stops at the first entry that is not yet due, so the walk is O(due) and O(1)
-// when nothing is due. Each due number is committed in a new sent-packet entry
+// Walks the small-record FIFO from its head while
+// now >= last_send + rn_window_ack_resend_delay( ack ), then the chunk FIFO
+// while now >= last_send + rn_window_ack_chunk_resend_delay( ack )
+// (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla WriteOldest,
+// tla/RNResendTiming.tla Walk). Each walk stops at the first entry that is not
+// yet due, so the work is O(due) and O(1) when nothing is due, and a chunk
+// that is not due never holds back a small record that is. Each due number is committed in a new sent-packet entry
 // with packet_id = (*io_next_packet_id)++, its last_send is set to `now`, it is
 // moved to the tail of the resend FIFO, its number is written to `out_numbers`,
 // and MESSAGE_RESENT is incremented. The delay is the same for every pass;

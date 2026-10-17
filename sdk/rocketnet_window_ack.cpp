@@ -53,13 +53,29 @@ static void rn_descriptor_set_first_send( rn_send_descriptor_t * descriptor, dou
 }
 
 // ----------------------------------------------------------------
-//            Intrusive resend FIFO over region->resend_fifo
+//     Two intrusive resend FIFOs over the one region->resend_fifo
 // ----------------------------------------------------------------
+
+// The two FIFOs share the W links: a number is in at most one of them, the
+// one its class picks when it is linked (tla/RNResendTiming.tla, one FIFO per
+// class). Unlinking needs no class: a slot with no prev is the head of the
+// FIFO whose head it is, and a slot with no next the tail of the FIFO whose
+// tail it is, so a slot whose descriptor was freed still unlinks exactly.
+
+bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_index )
+{
+    const rn_region_t * region = ack->region;
+    const rn_send_number_t * slot = &region->send_numbers[slot_index];
+    if ( slot->descriptor == RN_DESCRIPTOR_NONE || slot->descriptor >= region->queue )
+        return false;
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
+    return descriptor->in_use && descriptor->fragments > 1;
+}
 
 static bool rn_resend_fifo_is_linked( const rn_window_ack_t * ack, uint32_t slot )
 {
     const rn_resend_link_t * link = &ack->region->resend_fifo[slot];
-    return ack->resend_head == slot || link->prev != RN_RESEND_NONE || link->next != RN_RESEND_NONE;
+    return ack->resend_head == slot || ack->chunk_head == slot || link->prev != RN_RESEND_NONE || link->next != RN_RESEND_NONE;
 }
 
 static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
@@ -73,13 +89,17 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 
     if ( prev != RN_RESEND_NONE )
         fifo[prev].next = next;
-    else
+    else if ( ack->resend_head == slot )
         ack->resend_head = next;
+    else
+        ack->chunk_head = next;
 
     if ( next != RN_RESEND_NONE )
         fifo[next].prev = prev;
-    else
+    else if ( ack->resend_tail == slot )
         ack->resend_tail = prev;
+    else
+        ack->chunk_tail = prev;
 
     fifo[slot].prev = RN_RESEND_NONE;
     fifo[slot].next = RN_RESEND_NONE;
@@ -92,16 +112,20 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
     if ( rn_resend_fifo_is_linked( ack, slot ) )
         rn_resend_fifo_unlink( ack, slot );
 
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
+    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
+    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
+
     rn_resend_link_t * fifo = ack->region->resend_fifo;
-    fifo[slot].prev = ack->resend_tail;
+    fifo[slot].prev = *tail;
     fifo[slot].next = RN_RESEND_NONE;
 
-    if ( ack->resend_tail != RN_RESEND_NONE )
-        fifo[ack->resend_tail].next = slot;
+    if ( *tail != RN_RESEND_NONE )
+        fifo[*tail].next = slot;
     else
-        ack->resend_head = slot;
+        *head = slot;
 
-    ack->resend_tail = slot;
+    *tail = slot;
     ack->resend_count++;
 }
 
@@ -110,16 +134,47 @@ static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
     if ( rn_resend_fifo_is_linked( ack, slot ) )
         rn_resend_fifo_unlink( ack, slot );
 
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
+    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
+    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
+
     rn_resend_link_t * fifo = ack->region->resend_fifo;
     fifo[slot].prev = RN_RESEND_NONE;
-    fifo[slot].next = ack->resend_head;
+    fifo[slot].next = *head;
 
-    if ( ack->resend_head != RN_RESEND_NONE )
-        fifo[ack->resend_head].prev = slot;
+    if ( *head != RN_RESEND_NONE )
+        fifo[*head].prev = slot;
     else
-        ack->resend_tail = slot;
+        *tail = slot;
 
-    ack->resend_head = slot;
+    *head = slot;
+    ack->resend_count++;
+}
+
+void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
+{
+    rocketnet_assert( ack );
+    if ( after == RN_RESEND_NONE )
+    {
+        rn_resend_fifo_push_head( ack, slot_index );
+        return;
+    }
+
+    rocketnet_assert( rn_window_ack_slot_is_chunk( ack, after ) == rn_window_ack_slot_is_chunk( ack, slot_index ) );
+    if ( rn_resend_fifo_is_linked( ack, slot_index ) )
+        rn_resend_fifo_unlink( ack, slot_index );
+
+    const bool chunk = rn_window_ack_slot_is_chunk( ack, slot_index );
+    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
+    rn_resend_link_t * fifo = ack->region->resend_fifo;
+    const uint32_t next = fifo[after].next;
+    fifo[slot_index].prev = after;
+    fifo[slot_index].next = next;
+    fifo[after].next = slot_index;
+    if ( next != RN_RESEND_NONE )
+        fifo[next].prev = slot_index;
+    else
+        *tail = slot_index;
     ack->resend_count++;
 }
 
@@ -322,6 +377,9 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;
     ack->resend_count = 0;
+    ack->chunk_head = RN_RESEND_NONE;
+    ack->chunk_tail = RN_RESEND_NONE;
+    ack->walk_visits = 0;
 
     ack->pkt_head = 0;
     ack->pkt_tail = 0;
@@ -680,34 +738,32 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
     return 0;
 }
 
-// Walks the resend FIFO from its head while
-// now >= last_send + rn_window_ack_resend_delay( ack ) (docs/CHANNELS.md 6.4
-// "Resend"; tla/RNWindow.tla WriteOldest, tla/RNResendTiming.tla Resend: the
-// same delay every pass, no back-off).
-uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers )
+// Walks the small-record FIFO and then the chunk FIFO, each from its head
+// while due at its own delay (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla
+// WriteOldest, tla/RNResendTiming.tla Walk with OneFifo = FALSE and
+// SmallNeverHeldByChunk: the same delay every pass, no back-off, and a chunk
+// not yet due never holds a due small record behind it).
+static uint32_t rn_window_ack_resend_fifo( rn_window_ack_t * ack, bool chunk, double now, uint64_t * io_next_packet_id,
+                                           uint64_t * out_numbers, uint32_t max_numbers )
 {
-    rocketnet_assert( ack );
-    rocketnet_assert( io_next_packet_id );
-    if ( rn_window_ack_check_timeout( ack, now ) )
-        return 0;
-    if ( max_numbers == 0 || !out_numbers || ack->resend_count == 0 )
-        return 0;
-
     rn_region_t * region = ack->region;
-    const double delay = rn_window_ack_resend_delay( ack );
-    const uint32_t initial_count = ack->resend_count;
+    const double delay = rn_window_ack_class_delay( ack, chunk );
+    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
+
+    // each due number moves to its FIFO's tail with last_send = now, which is
+    // not due again while delay > 0; the count bounds the walk regardless
+    uint32_t remaining = ack->resend_count;
 
     uint32_t resent = 0;
-    uint32_t visited = 0;
-
-    while ( ack->resend_head != RN_RESEND_NONE && visited < initial_count && resent < max_numbers )
+    while ( *head != RN_RESEND_NONE && remaining > 0 && resent < max_numbers )
     {
-        const uint32_t cur = ack->resend_head;
+        const uint32_t cur = *head;
         const rn_send_number_t * slot = &region->send_numbers[cur];
+        ack->walk_visits++;
+        remaining--;
         if ( slot->acked )
         {
             rn_resend_fifo_unlink( ack, cur );
-            visited++;
             continue;
         }
 
@@ -723,9 +779,24 @@ uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_
         rn_window_ack_count( region, ROCKETNET_COUNTER_MESSAGE_RESENT );
 
         out_numbers[resent++] = number;
-        visited++;
     }
+    return resent;
+}
 
+uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers )
+{
+    rocketnet_assert( ack );
+    rocketnet_assert( io_next_packet_id );
+    ack->walk_visits = 0;
+    if ( rn_window_ack_check_timeout( ack, now ) )
+        return 0;
+    if ( max_numbers == 0 || !out_numbers || ack->resend_count == 0 )
+        return 0;
+
+    // small records first, then chunks: retransmits in this order (R6)
+    uint32_t resent = rn_window_ack_resend_fifo( ack, false, now, io_next_packet_id, out_numbers, max_numbers );
+    if ( resent < max_numbers )
+        resent += rn_window_ack_resend_fifo( ack, true, now, io_next_packet_id, out_numbers + resent, max_numbers - resent );
     return resent;
 }
 

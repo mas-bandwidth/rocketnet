@@ -947,36 +947,68 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
     return true;
 }
 
-// Links a never-sent number into the resend FIFO behind the numbers already
-// waiting to be sent, ahead of every number that was sent (the FIFO is ordered
-// by last send, and a number never sent is due now): it is due the next update
-// it was not written in. RNChannel!NumberRecord's number joins the resend set.
+// The update's items as rn_ordered_write plans them: how many, the bytes
+// planned and the room the update's packets have.
 
-static void rn_ordered_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot )
+struct rn_ordered_plan_t
 {
-    rn_resend_link_t * fifo = ack->region->resend_fifo;
-    if ( after == RN_RESEND_NONE )
+    rn_packet_item_t * items;
+    int count;
+    uint64_t planned;
+    uint64_t room;
+    uint32_t capacity;
+};
+
+// One resend FIFO's walk for rn_ordered_write, oldest first
+// (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
+// chunk's, a packet the transport refused); a sent one is due when its class's
+// delay has passed since its last send, the same delay every time
+// (RNResendTiming!Walk, no back-off). The walk stops at the first number not
+// yet due. Returns false when more is due than this update can write. On
+// return *last_unsent is the last never-sent number at the FIFO's head (where
+// new numbers of this class join), or RN_RESEND_NONE.
+
+static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_ordered_plan_t * plan, uint32_t * last_unsent )
+{
+    rn_region_t * region = ordered->channels.region;
+    rn_window_ack_t * ack = &ordered->ack;
+    const double delay = rn_window_ack_class_delay( ack, chunk );
+    uint32_t cursor = chunk ? ack->chunk_head : ack->resend_head;
+    *last_unsent = RN_RESEND_NONE;
+
+    while ( cursor != RN_RESEND_NONE )
     {
-        fifo[slot].prev = RN_RESEND_NONE;
-        fifo[slot].next = ack->resend_head;
-        if ( ack->resend_head != RN_RESEND_NONE )
-            fifo[ack->resend_head].prev = slot;
-        else
-            ack->resend_tail = slot;
-        ack->resend_head = slot;
+        const rn_send_number_t * slot = &region->send_numbers[cursor];
+        const uint32_t next = region->resend_fifo[cursor].next;
+        ack->walk_visits++;
+
+        if ( slot->acked )
+        {
+            cursor = next;
+            continue;
+        }
+
+        const bool unsent = slot->last_send <= 0.0;
+        if ( !unsent && !( now >= slot->last_send + delay ) )
+            return true;
+
+        if ( plan->count >= ROCKETNET_ORDERED_MAX_ITEMS || plan->planned >= plan->room )
+            return false;                                       // more is due than this update can write
+
+        if ( unsent )
+            *last_unsent = cursor;
+
+        rn_packet_item_t * item = &plan->items[plan->count];
+        if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
+        {
+            item->resend = unsent ? 0 : 1;
+            plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
+            plan->count++;
+        }
+
+        cursor = next;
     }
-    else
-    {
-        const uint32_t next = fifo[after].next;
-        fifo[slot].prev = after;
-        fifo[slot].next = next;
-        fifo[after].next = slot;
-        if ( next != RN_RESEND_NONE )
-            fifo[next].prev = slot;
-        else
-            ack->resend_tail = slot;
-    }
-    ack->resend_count++;
+    return true;
 }
 
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
@@ -1003,65 +1035,26 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     const int packet_limit = builder->max_packets_per_update < num_payloads ? builder->max_packets_per_update : num_payloads;
     const uint32_t capacity = channels->payload_capacity;
     const uint64_t room = (uint64_t) packet_limit * ( capacity - 1 );
-    uint64_t planned = 0;
 
     rn_packet_item_t items[ROCKETNET_ORDERED_MAX_ITEMS];
-    int count = 0;
+    rn_ordered_plan_t plan;
+    plan.items = items;
+    plan.count = 0;
+    plan.planned = 0;
+    plan.room = room;
+    plan.capacity = capacity;
 
-    // 1. The resend FIFO, oldest first (RNWindow!WriteOldest): a number never
-    // sent is due now (a new message's, a chunk's, a packet the transport
-    // refused); a sent one is due when min( rto, resend_interval ) has passed
-    // since its last send, the same delay every time (RNResendTiming!Resend,
-    // no back-off). The walk stops at the first number not yet due.
-    const double delay = rn_window_ack_resend_delay( ack );
-    uint32_t cursor = ack->resend_head;
-    uint32_t last_unsent = RN_RESEND_NONE;
-    bool walked = true;
-
-    while ( cursor != RN_RESEND_NONE )
-    {
-        const rn_send_number_t * slot = &region->send_numbers[cursor];
-        const uint32_t next = region->resend_fifo[cursor].next;
-
-        if ( slot->acked )
-        {
-            cursor = next;
-            continue;
-        }
-
-        const bool unsent = slot->last_send <= 0.0;
-        if ( !unsent && !( now >= slot->last_send + delay ) )
-            break;
-
-        if ( count >= ROCKETNET_ORDERED_MAX_ITEMS || planned >= room )
-        {
-            walked = false;                                     // more is due than this update can write
-            break;
-        }
-
-        if ( unsent )
-            last_unsent = cursor;
-
-        if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, &items[count] ) )
-        {
-            items[count].resend = unsent ? 0 : 1;
-            planned += items[count].alone ? ( capacity - 1 ) : (uint64_t) items[count].bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
-            count++;
-        }
-
-        cursor = next;
-    }
-
-    if ( walked )
-    {
-        // never-sent numbers sit at the FIFO's head; the last of them is where
-        // new numbers join
-        while ( cursor != RN_RESEND_NONE && region->send_numbers[cursor].last_send <= 0.0 )
-        {
-            last_unsent = cursor;
-            cursor = region->resend_fifo[cursor].next;
-        }
-    }
+    // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at
+    // min( rto, resend_interval ), then the chunks of blocks at the RTO alone
+    // (rn_window_ack_chunk_resend_delay), retransmits first (R6). Each walk
+    // stops at its own first number not yet due, so a chunk that is not due
+    // never holds back a small record that is (RNResendTiming!
+    // SmallNeverHeldByChunk) and the work is O(due).
+    ack->walk_visits = 0;
+    uint32_t last_unsent_small = RN_RESEND_NONE;
+    uint32_t last_unsent_chunk = RN_RESEND_NONE;
+    const bool walked = rn_ordered_walk( ordered, false, now, &plan, &last_unsent_small ) &&
+                        rn_ordered_walk( ordered, true, now, &plan, &last_unsent_chunk );
 
     // 2. New messages, numbered late (6.2) and whole (8), channels taking turns
     // one message each (17.3 item 4), while the update has room. The channel's
@@ -1069,7 +1062,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     // A message the window cannot yet admit stops numbering until acks move U'
     // (RNWindow!NumberRecord, RNRing!PlaceSingle and PlaceBlock); a stall never
     // blocks what is already numbered, or the unreliable records.
-    while ( walked && planned < room && count < ROCKETNET_ORDERED_MAX_ITEMS && channels->ready_head != RN_DESCRIPTOR_NONE )
+    while ( walked && plan.planned < room && plan.count < ROCKETNET_ORDERED_MAX_ITEMS && channels->ready_head != RN_DESCRIPTOR_NONE )
     {
         const uint32_t channel = channels->ready_head;
         rn_channel_send_t * send = region->channel_send + channel;
@@ -1105,30 +1098,32 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
         // every number of the message joins the resend set, due now; the ones
         // this update has room for are also planned into packets now
+        // (in its class's FIFO: a block's numbers are chunks)
+        uint32_t * last_unsent = rn_window_ack_slot_is_chunk( ack, (uint32_t) ( first & ( region->window - 1 ) ) ) ? &last_unsent_chunk : &last_unsent_small;
         for ( uint32_t i = 0; i < numbers; i++ )
         {
             const uint32_t slot_index = (uint32_t) ( ( first + i ) & ( region->window - 1 ) );
-            rn_ordered_park( ack, last_unsent, slot_index );
-            last_unsent = slot_index;
+            rn_window_ack_park( ack, *last_unsent, slot_index );
+            *last_unsent = slot_index;
 
-            if ( count < ROCKETNET_ORDERED_MAX_ITEMS && planned < room &&
-                 rn_ordered_item( ordered, &region->send_numbers[slot_index], ROCKETNET_SEND_CLASS_NEW_RELIABLE, &items[count] ) )
+            if ( plan.count < ROCKETNET_ORDERED_MAX_ITEMS && plan.planned < room &&
+                 rn_ordered_item( ordered, &region->send_numbers[slot_index], ROCKETNET_SEND_CLASS_NEW_RELIABLE, &items[plan.count] ) )
             {
-                planned += items[count].alone ? ( capacity - 1 ) : (uint64_t) items[count].bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
-                count++;
+                plan.planned += items[plan.count].alone ? ( capacity - 1 ) : (uint64_t) items[plan.count].bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
+                plan.count++;
             }
         }
     }
 
-    if ( count == 0 )
+    if ( plan.count == 0 )
         return 0;
 
     // 3. Packets (9.3), under the send budget (R6)
-    const int written = rn_packet_builder_write( builder, items, count, payloads, num_payloads );
+    const int written = rn_packet_builder_write( builder, items, plan.count, payloads, num_payloads );
 
     // 4. Each resend written is counted; the delay never backs off (6.4,
     // RNResendTiming)
-    for ( int i = 0; i < count; i++ )
+    for ( int i = 0; i < plan.count; i++ )
     {
         if ( items[i].taken && items[i].resend )
             rn_channels_count( region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
