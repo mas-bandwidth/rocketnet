@@ -530,7 +530,19 @@
     /* view. Appended so the enum, names, classes, and families agree. */ \
     X( MESSAGE_SEND_REFUSED, REFUSAL, NONE ) \
     X( MESSAGE_STALE_CONNECTION_ENTRY, EXPECTED, NONE ) \
-    X( MESSAGE_NOT_RELEASED, REFUSAL, NONE )
+    X( MESSAGE_NOT_RELEASED, REFUSAL, NONE ) \
+    \
+    /* The kernel prefilter counters (sdk/rocketnet_wire.h */ \
+    /* ROCKETNET_SERVER_XDP_COUNTER_*), surfaced through the transport */ \
+    /* counter surface by rocketnet_counters_apply_prefilter */ \
+    /* (sdk/rocketnet_counters.cpp). appended: indices are the contract. */ \
+    X( XDP_KERNEL_REDIRECTED, EXPECTED, NONE ) \
+    X( XDP_KERNEL_DROPPED_TOO_SMALL, REFUSAL, NONE ) \
+    X( XDP_KERNEL_DROPPED_TOO_LARGE, REFUSAL, NONE ) \
+    X( XDP_KERNEL_DROPPED_WRONG_FILTER, REFUSAL, NONE ) \
+    X( XDP_KERNEL_DROPPED_INVALID_TYPE, REFUSAL, NONE ) \
+    X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
+    X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE )
 
 enum
 {
@@ -555,6 +567,12 @@ struct rocketnet_counters_t
     // is the published counter above.
     uint64_t handshakes_processed_this_update;
 };
+
+// Surface a driver's kernel prefilter counters through the transport counter
+// surface: prefilter holds ROCKETNET_SERVER_XDP_NUM_COUNTERS values in
+// ROCKETNET_SERVER_XDP_COUNTER_* order. Each value is assigned (the kernel
+// totals are cumulative) to its transport counter; nothing else moves.
+void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter );
 
 #include "rocketnet.h"                  // rocketnet_counter_name lives in the forest header
 
