@@ -8,6 +8,7 @@
 
 // CHANNELS 6.5 (R8), RNWindow Accept: one duplicate record, one owner's
 // counter. Regions can share that owner across connection threads (16.1).
+// tla/RNWindow.tla OpenPacket
 static int rn_window_duplicate( rn_window_receive_t * receive )
 {
     if ( receive->region->counters )
@@ -18,6 +19,7 @@ static int rn_window_duplicate( rn_window_receive_t * receive )
 
 // CHANNELS 6.1 and R4, RNWindow Init: the region is carved by layer 1 at
 // connect; this module owns only R and its pointer into those fixed tables.
+// tla/RNWindow.tla Init
 void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region, uint64_t first_number )
 {
     rocketnet_assert( receive && region && region->received_bits && region->receive_descriptors );
@@ -29,6 +31,7 @@ void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region
 
 // CHANNELS 6.5, 13.3 check 10 and 13.5; RNWindow Recon and Accept. The
 // caller applies records in wire order and stops a payload on VIOLATION (R6).
+// tla/RNWindow.tla OpenPacket
 int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot )
 {
     rocketnet_assert( receive && receive->region && record && slot );
@@ -101,6 +104,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
 
 // CHANNELS 6.1/6.3, RNWindow EndUpdate and held release: only the exact live
 // number may free its slot; R and received history never move backwards.
+// tla/RNWindow.tla EndUpdate
 void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )
 {
     rocketnet_assert( receive && receive->region );

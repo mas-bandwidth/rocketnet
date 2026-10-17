@@ -23,6 +23,7 @@ static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t
 // CHANNELS 6.2's count and byte bounds; RNWindow NumberRecord and RNRing
 // Admits/PlaceSingle/PlaceBlock. Subtraction avoids overflowing U'+W or
 // p+span. A failed first write counts once until U' moves or one succeeds.
+// tla/RNWindow.tla NumberRecord
 static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
                                   uint64_t span, int holdable, uint64_t * position )
 {
@@ -56,6 +57,7 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
 
 // CHANNELS 6.1/6.2; RNWindow NumberRecord and RNRing PlaceSingle/PlaceBlock.
 // Code 2 gets a zero-byte ring anchor at p so it can safely be U'.
+// tla/RNWindow.tla NumberRecord
 static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
                                         uint32_t descriptor, uint16_t fragment,
                                         uint64_t ring_start, uint64_t bytes16 )
@@ -73,6 +75,7 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
 
 // CHANNELS 6.1/6.2; RNWindow Init and RNRing Init. Layer 1 already carved
 // the fixed region; this state has no allocation, clock or socket (R4).
+// tla/RNWindow.tla Init
 void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_t first_number )
 {
     rocketnet_assert( send && region && region->send_numbers );
@@ -88,6 +91,7 @@ void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_
 
 // CHANNELS 6.2 I3/I13; RNWindow NumberRecord and RNRing PlaceSingle. This
 // is called only at first packet write, never when send_message queues it.
+// tla/RNWindow.tla NumberRecord
 int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t bytes,
                                 uint32_t descriptor, uint64_t * number, uint64_t * ring_start )
 {
@@ -117,6 +121,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
 // all k consecutive numbers and one span at first fragment write, checking
 // both bounds once. The concrete final fragment uses rounded actual bytes
 // (CHANNELS 13.3 check 8); RNRing abstracts it to a full F stride.
+// tla/RNWindow.tla NumberRecord
 uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
                                             uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start )
 {
@@ -148,6 +153,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 // CHANNELS 6.2/6.4 (R7); RNWindow ReceiveAck and RNRing Ack. U advances
 // only over newly acknowledged contiguous entries; U' stays at a partial
 // block's first fragment until the whole block has been acknowledged.
+// tla/RNWindow.tla ReceiveAck
 int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
 {
     rocketnet_assert( send && send->region );
@@ -180,6 +186,7 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
 
 // CHANNELS 6.2 I13/I3; RNWindow NumberRecord models only reliable records.
 // A reliable stall never prevents writing an unreliable record with no number.
+// tla/RNWindow.tla NumberRecord
 int rn_window_send_can_write_unreliable( const rn_window_send_t * send )
 {
     rocketnet_assert( send && send->region );
