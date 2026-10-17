@@ -123,15 +123,17 @@ pure (CHANNELS.md 16.3).
 ## 4. Refusals
 
 Each is a counter appended to `sdk/rocketnet_counters.h` (indices are the
-contract), class REFUSAL unless noted. The checks run in this order, the
-order `tla/RNFlows.tla` Subscribe takes them.
+contract), class REFUSAL unless noted. Subscribe runs its checks in this
+order, the order `tla/RNFlows.tla` Subscribe takes them; the client-index
+range check comes first and is outside the model, whose slots are always in
+range.
 
 | Counter | When |
 |---|---|
 | `FLOW_TABLE_FULL` | create with `max_flows` live flows (or flows off) |
 | `FLOW_IDS_EXHAUSTED` | create after 2^32 - 1 creates |
 | `FLOW_UNKNOWN` | destroy, subscribe, unsubscribe or send with an id that is 0, out of range, or not live (destroyed) |
-| `FLOW_NOT_CONNECTED` | subscribe of a client index out of range, or of a slot with no bound connection |
+| `FLOW_NOT_CONNECTED` | subscribe of a client index out of range, or of a slot with no bound connection or a kicked one |
 | `FLOW_ALREADY_SUBSCRIBED` | subscribe of a connection already in the flow |
 | `FLOW_SUBSCRIBERS_FULL` | subscribe to a flow at its subscriber bound |
 | `FLOW_CLIENT_FLOWS_FULL` | subscribe of a connection at `max_client_flows` |
@@ -151,14 +153,20 @@ For each slot whose observed connection changed (RESET or DROP), it calls
 slot's row of at most `K` nodes, unlinks each from its flow and zeroes the
 row. `tla/RNFlows.tla` Observe is this step.
 
-- **Disconnect.** The slot's connection goes to 0; its subscriptions end at
-  the next update's Observe. Between the disconnect and that Observe the
-  application cannot send (sends happen between updates, and the transport
-  only changes slots inside an update), so no send sees the stale
-  subscription.
-- **Kick.** `rn_message_object_kick` (exhaustion, wire violation, reliable
-  timeout) also calls `rn_flows_drop_slot`, so a kicked connection leaves
-  its flows at once rather than at the next Observe.
+- **Disconnect.** The slot's connection goes to 0 inside the transport's
+  update; its subscriptions end at that update's Observe, before the
+  application can send again.
+- **Kick.** `rn_message_object_kick` runs on the main thread, including
+  from inside the per-slot send when the slot's region is exhausted, so it
+  can run in the middle of a flow send. It does not touch the flow lists:
+  the connection is KICKED at once, its send path refuses every later send
+  (counted by that path, as for broadcast), and the transport frees the
+  slot, so the next update's Observe sees a changed slot and drops its
+  subscriptions there. `flow_send` reads each node's `next` before it sends
+  to the node's slot, so the walk never depends on what the send did.
+  `tla/RNFlows.tla` Kick is this step: an application-phase kick leaves
+  the lists alone and the slot is skipped by every later send until
+  Observe drops it.
 - **Reuse.** A new connection in the slot is a changed connection id, so
   Observe drops first and resets second; the new connection starts with an
   empty row. Subscriptions are never carried to it (F1); the game
@@ -178,34 +186,39 @@ Ordered; each depends on the one before. Each test is a unit test in a root
 1000.0) unless named functional.
 
 1. **rocketnet-flows-table.** `sdk/rocketnet_flows.h`,
-   `sdk/rocketnet_flows.cpp`, `test_unit_flows.cpp`, `tla/COVERAGE.tsv`
-   (rn-flows owed to current, code `sdk/rocketnet_flows.cpp`). The pure
-   `rn_flows_t` of section 3, each function citing its `tla/RNFlows.tla`
-   action. Tests: `flows_create_until_table_full`,
+   `sdk/rocketnet_flows.cpp`, `sdk/rocketnet_counters.h` (the nine counters
+   of section 4, appended), `test_unit_flows.cpp`. The pure `rn_flows_t` of
+   section 3, each function citing its `tla/RNFlows.tla` action. Tests:
+   `flows_create_until_table_full`,
    `flows_destroyed_id_is_unknown_after_index_reuse` (F3),
    `flows_subscribe_refusals_in_order` (section 4),
    `flows_unsubscribe_stops_later_sends` (the
    `MCRNFlowsBrokenSendAfterUnsubscribe` trace, red with the list left in
    place), `flows_drop_slot_ends_every_subscription` (F1, the reuse trace),
+   `flows_walk_survives_a_send_that_kicks` (the cursor rule of section 5),
    `flows_bytes_matches_formula`.
-2. **rocketnet-flows-config-and-counters.** `sdk/rocketnet.h` (the three
-   fields of section 2, not WIRE), `sdk/rocketnet_counters.h` (the nine
-   counters, appended), `sdk/rocketnet_message_server.cpp` (required memory
-   and sizing add `flow_bytes`), `test_unit_flows_config.cpp`. Tests:
-   `flows_config_ranges_refused` (each field one past each end),
-   `flows_off_adds_no_memory`, `flows_required_memory_matches_formula`.
+2. **rocketnet-flows-config.** `sdk/rocketnet.h` (the three fields of
+   section 2, not WIRE), `sdk/rocketnet_config.cpp` (their ranges in
+   `rocketnet_message_validate_config_ex`), `sdk/rocketnet_allocator.cpp`
+   (the `flow_bytes` line in `rocketnet_message_connection_sizing`),
+   `test_unit_flows_config.cpp`. Tests: `flows_config_ranges_refused` (each
+   field one past each end), `flows_off_prints_no_flow_line`,
+   `flows_sizing_line_matches_formula`.
 3. **rocketnet-flows-server-api.** `sdk/rocketnet.h` (the five calls),
-   `sdk/rocketnet_message_server.cpp` (carve the block at create, the
-   Observe and kick drops of section 5, the five calls over `rn_flows_t` and
-   the per-slot send), `tools/exports.txt`,
+   `sdk/rocketnet_message_server.cpp` (`required_memory` adds `flow_bytes`,
+   create carves it, the Observe drop of section 5, the five calls over
+   `rn_flows_t` and the per-slot send), `tools/exports.txt`,
    `test_unit_message_server_flows.cpp` over a fake object link (the
    `link` callbacks of `rn_message_object_t`), time passed in. Tests:
    `server_flow_send_reaches_only_subscribers`,
    `server_flow_subscription_ends_at_disconnect`,
    `server_flow_reused_slot_starts_unsubscribed`,
-   `server_flow_kick_leaves_flows`, `server_flow_null_guards_counted`.
-4. **rocketnet-flows-functional.** `functional/rocketnet_functional_tests.cpp`
-   and `docs/FLOWS.md` (an as-built note). Functional test
+   `server_flow_kicked_slot_skipped_then_dropped`,
+   `server_flow_required_memory_matches_formula`,
+   `server_flow_null_guards_counted`.
+4. **rocketnet-flows-functional.** `functional/rocketnet_functional_tests.cpp`,
+   `docs/FLOWS.md` (an as-built note) and `tla/COVERAGE.tsv` (rn-flows owed
+   to current, code `sdk/rocketnet_flows.cpp`). Functional test
    `functional_flows_chunk_subscribers_over_loopback`: three clients, two
    chunk flows, a client moving between chunks by unsubscribe and subscribe,
    a client disconnecting and another taking its slot; every message reaches

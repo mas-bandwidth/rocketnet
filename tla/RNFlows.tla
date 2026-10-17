@@ -50,6 +50,9 @@ Init ==
 IndexOf(id) == IF \E i \in Flows : table[i] = id
                THEN CHOOSE i \in Flows : table[i] = id ELSE 0
 Issued == 1..(nextId - 1)
+\* A slot whose endpoint is bound to the connection the transport still has:
+\* not free and not kicked since the last Observe.
+Live(s) == bound[s] # 0 /\ owner[s] = bound[s]
 \* A refusal changes no flow state: the design counts it under the name r
 \* (FLOWS.md 4); the counter is not modelled, so a refusal is a stutter.
 Refuse(r) == /\ r \in Reasons /\ UNCHANGED vars
@@ -86,7 +89,7 @@ Subscribe(id, s) ==
     /\ phase = "application"
     /\ LET i == IndexOf(id)
        IN IF i = 0 THEN Refuse("FLOW_UNKNOWN")
-          ELSE IF bound[s] = 0 THEN Refuse("FLOW_NOT_CONNECTED")
+          ELSE IF ~Live(s) THEN Refuse("FLOW_NOT_CONNECTED")
           ELSE IF i \in clientFlows[s] THEN Refuse("FLOW_ALREADY_SUBSCRIBED")
           ELSE IF Cardinality(subs[i]) >= MaxSubsPerFlow THEN Refuse("FLOW_SUBSCRIBERS_FULL")
           ELSE IF Cardinality(clientFlows[s]) >= MaxFlowsPerClient THEN Refuse("FLOW_CLIENT_FLOWS_FULL")
@@ -113,8 +116,8 @@ Unsubscribe(id, s) ==
 
 \* rn_flows_send: one copy into each subscriber slot's endpoint, as
 \* rocketnet_message_server_broadcast sends to a slot. A stale id reaches
-\* nobody. A free slot's send is refused by the send path (not modelled as
-\* a flow refusal). The model checks the send with no connection-tag test,
+\* nobody. A free or kicked slot is skipped: its send path refuses it and
+\* counts that (not a flow refusal). The model checks the send with no connection-tag test,
 \* so the drop at Observe alone has to keep it safe.
 Send(id) ==
     /\ phase = "application" /\ nextMsg <= MaxMessages
@@ -122,7 +125,7 @@ Send(id) ==
            m == nextMsg
        IN IF i = 0 THEN Refuse("FLOW_UNKNOWN")
           ELSE /\ queue' = [s \in Slots |->
-                     IF bound[s] # 0 /\ \E x \in subs[i] : x.slot = s
+                     IF Live(s) /\ \E x \in subs[i] : x.slot = s
                      THEN queue[s] \cup {[conn |-> bound[s], id |-> id, msg |-> m]}
                      ELSE queue[s]]
                /\ entitled' = entitled \cup
@@ -130,6 +133,17 @@ Send(id) ==
                /\ nextMsg' = nextMsg + 1
                /\ UNCHANGED <<phase, owner, nextConn, bound, table, nextId, subs,
                               clientFlows, wants, delivered>>
+
+\* rn_message_object_kick from the send path (region exhausted) on the main
+\* thread, possibly in the middle of a flow send: the transport ends the
+\* connection now and the endpoint takes nothing more. The flow lists are
+\* not touched; the slot is a changed slot at the next Observe, which drops
+\* its subscriptions (FLOWS.md 5, Kick).
+Kick(s) ==
+    /\ phase = "application" /\ Live(s)
+    /\ owner' = [owner EXCEPT ![s] = 0]
+    /\ queue' = [queue EXCEPT ![s] = {}]
+    /\ UNCHANGED <<phase, nextConn, bound, delivered>> /\ UNCHANGED app
 
 BeginUpdate ==
     /\ phase = "application"
@@ -179,7 +193,7 @@ Next ==
     \/ Create \/ BeginUpdate \/ Observe
     \/ \E id \in Issued : Destroy(id) \/ Send(id)
     \/ \E id \in Issued, s \in Slots : Subscribe(id, s) \/ Unsubscribe(id, s)
-    \/ \E s \in Slots : Connect(s) \/ Disconnect(s)
+    \/ \E s \in Slots : Connect(s) \/ Disconnect(s) \/ Kick(s)
     \/ \E s \in Slots : \E c \in queue[s] : Deliver(s, c)
 
 Spec == Init /\ [][Next]_vars
