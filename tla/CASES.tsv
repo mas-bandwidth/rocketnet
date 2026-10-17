@@ -117,3 +117,6 @@ MCRNResendTimingBrokenOneFifo.cfg	MCRNResendTiming.tla	invariant	SmallNeverHeldB
 MCRNFilterEpochs.cfg	MCRNFilterEpochs.tla	pass	-	check	rnfilterepochs	required	-
 MCRNFilterEpochsBrokenAcceptZero.cfg	MCRNFilterEpochs.tla	invariant	NeverKeyedAtZero	check	rnfilterepochs	required	-
 MCRNFilterEpochsBrokenWrapToZero.cfg	MCRNFilterEpochs.tla	invariant	WrapSkipsZero	check	rnfilterepochs	required	-
+MCRNUringDriver.cfg	MCRNUringDriver.tla	pass	-	check	rnuringdriver	required	-
+MCRNUringDriverBrokenResetBeforeReap.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
+MCRNUringDriverBrokenOneBank.cfg	MCRNUringDriver.tla	invariant	ExposedStable	check	rnuringdriver	required	-
