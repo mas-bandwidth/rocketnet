@@ -521,7 +521,11 @@ struct rocketnet_channel_seed_state_t
     int hook_installed;
 };
 
-inline struct rocketnet_channel_seed_state_t rocketnet_channel_seed_state = { 0x5EED5EED5EED5EEDULL, 0, 0 };
+inline rocketnet_channel_seed_state_t & rocketnet_channel_seed_state()
+{
+    static rocketnet_channel_seed_state_t state = { 0x5EED5EED5EED5EEDULL, 0, 0 };
+    return state;
+}
 
 static inline uint64_t rocketnet_channel_seed_from_environment( void )
 {
@@ -533,11 +537,11 @@ static inline uint64_t rocketnet_channel_seed_from_environment( void )
 
 static inline void rocketnet_channel_seed_exit_hook( void )
 {
-    if ( rocketnet_channel_seed_state.live )
+    if ( rocketnet_channel_seed_state().live )
     {
         printf( "channel seed=0x%016llx (replay: ROCKETNET_CHANNEL_SEED=%llu)\n",
-                (unsigned long long) rocketnet_channel_seed_state.seed,
-                (unsigned long long) rocketnet_channel_seed_state.seed );
+                (unsigned long long) rocketnet_channel_seed_state().seed,
+                (unsigned long long) rocketnet_channel_seed_state().seed );
         fflush( stdout );
     }
 }
@@ -594,11 +598,11 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // the simulator: capacity 256, the seed from the environment (the pinned
     // seed when unset) so a failing run replays
     h->seed = rocketnet_channel_seed_from_environment();
-    rocketnet_channel_seed_state.seed = h->seed;
-    rocketnet_channel_seed_state.live = 1;
-    if ( !rocketnet_channel_seed_state.hook_installed )
+    rocketnet_channel_seed_state().seed = h->seed;
+    rocketnet_channel_seed_state().live = 1;
+    if ( !rocketnet_channel_seed_state().hook_installed )
     {
-        rocketnet_channel_seed_state.hook_installed = 1;
+        rocketnet_channel_seed_state().hook_installed = 1;
         atexit( rocketnet_channel_seed_exit_hook );
     }
     h->sim = rocketnet_network_simulator_create( NULL, 256, h->seed );
@@ -788,7 +792,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
         rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init();
     }
-    rocketnet_channel_seed_state.live = 0;
+    rocketnet_channel_seed_state().live = 0;
     memset( h, 0, sizeof(*h) );
 }
 
