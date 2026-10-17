@@ -31,9 +31,12 @@ admin permissions are required (https://docs.aws.amazon.com/gameliftservers/late
 cap_net_admin,cap_bpf,cap_net_raw+ep <server>` on the server binary.
 
 Whether those file capabilities survive into the process GameLift launches is
-unknown and not documented in these sources: file capabilities are honored on
-`execve` unless the launch path sets `no_new_privs` or the filesystem is
-mounted `nosuid`, and GameLift's launch mechanics are not specified here. This
+unknown and not documented in these sources: the kernel applies file
+capabilities on `execve` only when the mount allows suid execution, so a
+`nosuid` mount defeats them
+(https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/security/commoncap.c), and with `no_new_privs` set, `execve` does not add file
+capabilities to the permitted set (https://docs.kernel.org/userspace-api/no_new_privs.html);
+GameLift's launch mechanics are not specified here. This
 is the deciding unknown; it would be settled by a test on a real managed fleet
 that installs with `setcap`, launches, and checks `getcap <server>` and
 whether the XDP create succeeds in the launched process.
@@ -127,8 +130,7 @@ xdp; verify on a real fleet. (b) If they do not survive, XDP works only on
 Anywhere or container fleets, where the builder controls the user and can run
 with root or set capabilities, and managed fleets fall back to RocketNet's GSO
 (or io_uring) driver. (c) If the capabilities are not retained, the managed
-fleet path is the GSO driver, which is RocketNet's non-root Linux driver for
-hosts without CAP_NET_ADMIN (https://github.com/mas-bandwidth/rocketnet/blob/main/BUILDING.md).
+fleet path is RocketNet's GSO or io_uring driver.
 
 A ten-minute test on a real managed EC2 fleet settles it: connect via SSM,
 install the build with `sudo setcap cap_net_admin,cap_bpf,cap_net_raw+ep
