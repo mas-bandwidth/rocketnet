@@ -100,6 +100,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
+| `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
