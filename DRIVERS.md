@@ -46,6 +46,28 @@ A flush means submission, not necessarily completion or reusable storage. IOCP
 keeps operation buffers until completion retirement. The backend owns that
 decision; it must never hand a still-owned frame to another producer.
 
+## UDP coalescing
+
+The coalescing rules live once, in `sdk/rocketnet_coalesce.h`: a receive split
+at the stride the kernel reports, and a send run of same-destination frames of
+one size with at most one shorter tail. Each coalescing driver probes its
+offloads at create on the bound socket; a refusal is a tier, not an error, and
+the create log line names each feature as yes or no.
+
+- **GSO (Linux):** `UDP_SEGMENT` on send, `UDP_GRO` on receive.
+- **IOCP (Windows 11, Server 2022 or later):** USO on send through the
+  `UDP_SEND_MSG_SIZE` socket option, URO on receive through
+  `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
+  `UDP_COALESCED_INFO` stride. `rocketnet_server_iocp_features` reports
+  `ROCKETNET_IOCP_FEATURE_USO` and `ROCKETNET_IOCP_FEATURE_URO`; the create flags
+  `ROCKETNET_IOCP_DISABLE_USO` and `ROCKETNET_IOCP_DISABLE_URO` skip each probe.
+  The Winsock reference documents the segment size as a socket option, not a
+  per-send control message, so a run of more than one frame sets the option to
+  the run's stride and posts one `WSASendMsg` with one buffer per frame. Every
+  frame of a run stays owned until that one completion retires the run. A live
+  USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
+  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
 once for a staging generation; the backend retains ownership until it can
