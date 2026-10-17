@@ -89,12 +89,23 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->quit.store( false, std::memory_order_relaxed );
 }
 
+// RNClientIo Stop; main thread. Stores quit, then wakes the I/O thread
+// (docs/CLIENT-IO.md _Stop and destroy order_). The I/O thread finishes the
+// ring in flight and exits; the main thread joins, closes the driver, then
+// frees.
+inline void rocketnet_client_io_stop( rocketnet_client_io_t * io )
+{
+    io->quit.store( true, std::memory_order_release );
+    io->driver->operations->wake( io->driver->instance );
+}
+
 // RNClientIo HandOff and Defer; main thread. A LATE result is the deferred
 // hand-off of docs/CLIENT-IO.md _Reuse only after sent_: the committed slots
 // stay in the Filling ring and leave with the next hand-off. This function
 // never waits, spins or retries, and wakes the I/O thread only on HANDED_OFF.
 inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t committed, const rocketnet_address_t * to )
 {
+    rocketnet_assert( !io->quit.load( std::memory_order_relaxed ) );
     io->to[io->rings.fill] = *to;
     const int result = rocketnet_client_send_rings_hand_off( &io->rings, committed );
     if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
@@ -123,6 +134,10 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
     rocketnet_assert( io );
+
+    // RNClientIo Stop: the main thread stores quit and wakes. Read it first;
+    // a step that sees it stops once the ring in flight is finished.
+    const bool quitting = io->quit.load( std::memory_order_acquire );
 
     bool worked = false;
 
@@ -172,6 +187,12 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         rocketnet_client_send_rings_finish( &io->rings, ring );
         worked = true;
     }
+
+    // RNClientIo IoExit: once quit is stored, the ring handed off before stop
+    // is sent first (the send phase above); when nothing is in flight the
+    // thread exits at once: no receive, no publish, no wait.
+    if ( quitting && !rocketnet_client_send_rings_in_flight( &io->rings ) )
+        return ROCKETNET_CLIENT_IO_EXITED;
 
     // 2. RNClientIo IoReceive: drain into the buffer the handshake gives the
     // I/O thread. A received datagram is worked even when the size prefilter
@@ -258,13 +279,22 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // (MCRNClientIoBrokenFullWaitReadable.cfg, FullWaitsOnWake). The owed flag
     // was stored above before this wait, so the return at the end of the next
     // update wakes it.
-    if ( block && !worked )
+    if ( block && !worked && !quitting )
     {
         const bool readable = rocketnet_client_receive_handshake_io_wait( handshake );
         io->driver->operations->wait( io->driver->instance, readable, io->guard_timeout_seconds );
     }
 
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
+}
+
+// RNClientIo IoExit; the I/O thread's body. Calls the step in a loop until it
+// returns EXITED (docs/CLIENT-IO.md _Stop and destroy order_). The transport
+// creates the thread with this function and joins it before closing the driver.
+inline void rocketnet_client_io_thread_function( void * data )
+{
+    rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
+    while ( rocketnet_client_io_step( io, true ) != ROCKETNET_CLIENT_IO_EXITED ) {}
 }
 
 #endif // #ifndef ROCKETNET_CLIENT_IO_H
