@@ -1,2 +1,9 @@
 # Embedded source bytes must match on Windows and Unix checkouts.
 * text=auto eol=lf
+
+# TLA cards append ledger rows; a doubled row after a merge is refused by
+# tlacheck and tools/check_tla_coverage.py.
+tla/CASES.tsv merge=union
+tla/COVERAGE.tsv merge=union
+tla/RUNS.tsv merge=union
+tla/README.md merge=union
