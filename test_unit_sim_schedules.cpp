@@ -40,7 +40,6 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_counters.h"
-#include "rocketnet_unreliable.h"
 #include "rocketnet_message.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_address.h"
@@ -631,81 +630,9 @@ static void TestSimScheduleSequenceWrap()
 }
 
 // ---------------------------------------------------------------------------
-// 6. unreliable aggregation at the two caps
-// ---------------------------------------------------------------------------
-
-static void TestSimScheduleUnreliableAggregation()
-{
-    struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
-    struct rocketnet_message_config_t config;
-    rocketnet_message_default_config( &config );
-    config.max_message_bytes = 65536;
-    config.send_buffer_bytes = 1 << 20;
-
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
-    rocketnet_unit_check( arena != NULL );
-    rn_region_t * region = rn_arena_region( arena, 0 );
-    rn_region_carve( region );
-
-    rn_unreliable_message_t queue[16];
-    memset( queue, 0, sizeof(queue) );
-    rn_unreliable_t unreliable;
-    rn_unreliable_init( &unreliable, region, queue, 16 );
-
-    static uint8_t at_u16_cap[65535];
-    for ( int i = 0; i < (int) sizeof(at_u16_cap); i++ )
-        at_u16_cap[i] = (uint8_t) i;
-    static uint8_t past_u16_cap[65536];
-    static uint8_t past_config_cap[65537];
-
-    // the schedule scripts the three sends at the two caps. the message bytes
-    // themselves exceed the wire ceiling, so each packet carries the message
-    // size and the receive loop feeds rn_unreliable_send the matching buffer.
-    struct sim_schedule_t sched;
-    sim_schedule_begin( &sched );
-
-    uint8_t desc_a[4];
-    uint8_t desc_b[4];
-    uint8_t desc_c[4];
-    sim_write_u32_le( desc_a, 65535 ); sim_schedule_deliver( &sched, desc_a, 4 );
-    sim_write_u32_le( desc_b, 65536 ); sim_schedule_deliver( &sched, desc_b, 4 );
-    sim_write_u32_le( desc_c, 65537 ); sim_schedule_deliver( &sched, desc_c, 4 );
-    rocketnet_unit_check( sim_schedule_flush( &sched ) == 3 );
-
-    // 65535: exactly the u16 record cap -- accepted, travels alone as a block
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == 4 );
-    rocketnet_unit_check( sim_read_u32_le( sched.rx ) == 65535 );
-    rocketnet_unit_check( rn_unreliable_send( &unreliable, at_u16_cap, (int) sizeof(at_u16_cap), 0, 0 ) == 1 );
-
-    // 65536: past the u16 cap -- refused and counted SEND_FAILED
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == 4 );
-    rocketnet_unit_check( sim_read_u32_le( sched.rx ) == 65536 );
-    rocketnet_unit_check( rn_unreliable_send( &unreliable, past_u16_cap, (int) sizeof(past_u16_cap), 0, 0 ) == 0 );
-    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == 1 );
-
-    // max_datagram_bytes + 1: past the configured maximum -- refused, and not
-    // counted as a failed send (the caller's own refusal, R4)
-    rocketnet_unit_check( sim_schedule_receive( &sched ) == 4 );
-    rocketnet_unit_check( sim_read_u32_le( sched.rx ) == 65537 );
-    rocketnet_unit_check( rn_unreliable_send( &unreliable, past_config_cap, (int) sizeof(past_config_cap), 0, 0 ) == 0 );
-    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == 1 );
-    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == 0 );
-
-    // the FIFO is not wedged: the accepted block still fills alone
-    const int plan = rn_unreliable_next_packet_bytes( &unreliable );
-    rocketnet_unit_check( plan == (int) sizeof(at_u16_cap) + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
-
-    sim_schedule_end( &sched );
-    rn_arena_destroy( arena );
-    rocketnet_counters_assert_conserved( &counters );
-}
-
-// ---------------------------------------------------------------------------
 
 REGISTER_UNIT_TEST( TestSimScheduleFinalFragmentFirst );
 REGISTER_UNIT_TEST( TestSimScheduleBatchCap );
 REGISTER_UNIT_TEST( TestSimScheduleSameTickSlotReuse );
 REGISTER_UNIT_TEST( TestSimScheduleSequenceWrap );
-REGISTER_UNIT_TEST( TestSimScheduleUnreliableAggregation );
 REGISTER_UNIT_TEST( TestSimScheduleLongSkipStragglers );

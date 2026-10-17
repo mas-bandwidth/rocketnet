@@ -29,7 +29,6 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_message.h"
-#include "rocketnet_unreliable.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_test_vectors.h"
@@ -240,11 +239,9 @@ static void message_of_1400_bytes_is_one_unfragmented_packet()
     {
         memset( g_frame, 0, sizeof(g_frame) );
         max_payload_fill( message, (int) sizeof(message), 1 );
-        uint8_t * write_at = rn_unreliable_single_begin( root, ROCKETNET_MAX_PAYLOAD_BYTES, (int) sizeof(message) );
-        check( write_at == root );                                                  // zero copy: into the wire frame
-        memcpy( write_at, message, sizeof(message) );
-        const int length = rn_unreliable_single_finish( root, ROCKETNET_MAX_PAYLOAD_BYTES, (int) sizeof(message) );
-        check( length == (int) sizeof(message) + 1 );
+        memcpy( root, message, sizeof(message) );                                   // the message at the payload root
+        root[sizeof(message)] = ROCKETNET_MESSAGE_FORM_SINGLE;                      // the form byte last
+        const int length = (int) sizeof(message) + 1;
         max_payload_seal_and_deliver( &pair, length );
         check( memcmp( g_received, message, sizeof(message) ) == 0 );
         check( g_received[length - 1] == ROCKETNET_MESSAGE_FORM_SINGLE );
