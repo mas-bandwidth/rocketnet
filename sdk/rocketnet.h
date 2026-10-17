@@ -121,14 +121,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
     #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
-// The number of unique ROCKETNET_EXPORT_FUNC entry points compiled into the
-// non-development library (ROCKETNET_DEVELOPMENT=0). The public-API NULL audit
-// in sdk/rocketnet_tests.cpp holds a mirror of these names and fails when the
-// two drift, so a new exported entry point without a NULL case is caught at
-// test time. rocketnet_init is declared once for C and once for C++ and counts
-// once; the development-only rocketnet_write_dev_connect_token is not in this
-// count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 141
+// tools/check_exports.py derives the set of exported entry points from these
+// ROCKETNET_EXPORT_FUNC declarations and refuses any name missing from the
+// rocketnet_test_exports mirror in sdk/rocketnet_tests.cpp, any table name this
+// header does not declare, and any duplicate. rocketnet_init is declared once
+// for C and once for C++ and counts once; the development-only
+// rocketnet_write_dev_connect_token is excluded, its behaviour covered by the
+// development library's own tests.
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
