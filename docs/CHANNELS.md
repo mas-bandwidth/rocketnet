@@ -609,11 +609,16 @@ corruption.
   not due, and the work is O(due). Pacing the chunks of a large block by RTT
   is a later card's.
 - **The cost.** A record that was only delayed, not lost, is sent again when
-  the delay fires before its ack returns. On a path whose RTT is above
-  `resend_interval` that is about `RTT / resend_interval - 1` extra copies of
-  each message (about 1 at RTT 200 ms); below it, the RTO rule fires after the
-  ack in nearly every case. For small messages that is cheap and it is the
-  point: the latency of a lost message is one delay, not a doubling series.
+  the delay fires before its ack returns. Below an RTT of `resend_interval`
+  the RTO fires after the ack in nearly every case, and the copies per
+  message are the loss's own (`1 / (1 - loss)`); above it the cap fires before
+  the ack can return, about once per `resend_interval` of RTT. Measured on
+  the channel harness at 60 Hz (`resend_timing_table_over_lossy_links`, 400
+  messages a row), copies per message at 10% and 20% loss are 1.11 and 1.25
+  at RTT 20 ms, 1.10 and 1.23 at 50 ms, 2.10 and 2.22 at 100 ms, and 2.21
+  and 2.43 at 200 ms. For small messages that is cheap and it is the point:
+  the latency of a lost message is one delay, not a doubling series, and no
+  message in those runs reached `reliable_timeout`.
 - **Failed send.** If `finish_packet` returns 0, the numbered records in that
   packet are marked due now and the packet's unreliable records are dropped and
   counted.
