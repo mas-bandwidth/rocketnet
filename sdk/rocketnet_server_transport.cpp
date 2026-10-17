@@ -711,22 +711,54 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     else
         memset( bind_address.data.ipv6, 0, sizeof(bind_address.data.ipv6) );
 
+    // the operator memory budget (#155): each candidate's pre-allocation plan
+    // is compared to the budget before any allocation, and a candidate whose
+    // plan exceeds it is refused exactly as a refusing driver is -- logged with
+    // the plan and the budget, and skipped so the ladder falls to the next
+    // candidate. a budget that no candidate fits refuses the create before the
+    // first allocation.
+    uint64_t memory_budget = 0;
+    if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+        return NULL;
+    bool budget_refused[ROCKETNET_NUM_DRIVERS];
+    memset( budget_refused, 0, sizeof(budget_refused) );
+    int budget_refused_total = 0;
+    int budget_allowed = 0;
+
     for (int i = 0; i < ladder.num_candidates; ++i)
     {
-        const char * name = rocketnet_driver_name(ladder.candidates[i]);
+        const int candidate = ladder.candidates[i];
+        const char * name = rocketnet_driver_name(candidate);
         rocketnet_server_memory_plan_t plan;
         if (rocketnet_server_transport_memory_plan(config, name, plan))
+        {
             rocketnet_info("server memory plan [%s]: %llu allocator bytes, %llu UMEM bytes, %d workers, %d sockets; excludes OS stacks, kernel queues, loader and application memory",
                 name, (unsigned long long)(plan.total_bytes - plan.umem_bytes),
                 (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
+            if ( memory_budget > 0 && plan.total_bytes > memory_budget )
+            {
+                rocketnet_warn("server driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                    name, (unsigned long long)plan.total_bytes, (unsigned long long)memory_budget);
+                budget_refused[candidate] = true;
+                budget_refused_total++;
+            }
+            else
+                budget_allowed++;
+        }
         else
             rocketnet_info("server memory plan [%s]: unavailable; consult this driver's resource policy", name);
+    }
+
+    if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
+    {
+        rocketnet_error("server driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+            (unsigned long long)memory_budget);
+        return NULL;
     }
 
     struct rocketnet_server_transport_t * server_transport = (struct rocketnet_server_transport_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_transport_t) );
     if ( !server_transport )
         return NULL;
-
     new ( server_transport ) rocketnet_server_transport_t();
 
     server_transport->context = context;
@@ -780,6 +812,20 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
+
+        // a candidate whose memory plan the operator budget refused was logged
+        // and refused in the plan loop above; record it for the exhausted
+        // summary and fall to the next candidate, never opening it
+        if ( budget_refused[candidate] )
+        {
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_DRIVERS && !refused_seen[candidate] )
+            {
+                refused_seen[candidate] = true;
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            }
+            continue;
+        }
 
         // #109: a port-zero public address asks the KERNEL for an
         // ephemeral port, and the adoption below reads the granted port

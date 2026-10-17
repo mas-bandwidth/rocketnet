@@ -542,7 +542,74 @@ static void receive_ceiling_refuses_one_byte_over()
     max_payload_pair_teardown( &pair );
 }
 
+// ---------------------------------------------------------------------------
+// The client drops reserved packet types and server-bound types, counted.
+// The client's two refusals live in rocketnet_client_protocol_process_packet
+// (sdk/rocketnet_client_protocol.cpp): RESERVED_TYPE for a type above
+// ROCKETNET_CONNECTION_FRAGMENT_PACKET, WRONG_DIRECTION for a request or a
+// response. Each refusal also counts the packet's arrival.
+// ---------------------------------------------------------------------------
+
+static uint64_t client_all_counters_sum( const struct rocketnet_counters_t * counters )
+{
+    uint64_t sum = 0;
+    for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )
+        sum += counters->values[c];
+    return sum;
+}
+
+static void client_drops_reserved_and_wrong_direction_types()
+{
+    static struct max_payload_pair_t pair;
+    max_payload_pair_setup( &pair );
+
+    static uint8_t out[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
+    static uint8_t packet[64];
+    int out_bytes = 0;
+
+    const uint64_t packets_before = pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+
+    // types 10 through 255 are reserved and ignored: PACKETS_RECEIVED and
+    // RESERVED_TYPE each rise by exactly one and nothing else moves, so the
+    // counter sum rises by exactly two
+    static const uint8_t reserved_type[3] = { 10, 200, 255 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        const uint64_t before = client_all_counters_sum( &pair.client_counters );
+        memset( packet, 0, sizeof(packet) );
+        uint8_t * p = packet;
+        rocketnet_write_prefilter_header( &p, reserved_type[i], pair.client.filter_value );
+        check( !rocketnet_client_protocol_process_packet( &pair.client, packet, 64, pair.time,
+                                                           out, (int) sizeof(out), &out_bytes ) );
+        check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 1 + i );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == i + 1 );
+    }
+
+    // a request or a response is the wrong direction for a client: the same
+    // arrival count and WRONG_DIRECTION each rise by exactly one
+    static const uint8_t server_bound_type[2] = { ROCKETNET_CONNECTION_REQUEST_PACKET,
+                                                  ROCKETNET_CONNECTION_RESPONSE_PACKET };
+    for ( int i = 0; i < 2; i++ )
+    {
+        const uint64_t before = client_all_counters_sum( &pair.client_counters );
+        memset( packet, 0, sizeof(packet) );
+        uint8_t * p = packet;
+        rocketnet_write_prefilter_header( &p, server_bound_type[i], pair.client.filter_value );
+        check( !rocketnet_client_protocol_process_packet( &pair.client, packet, 64, pair.time,
+                                                           out, (int) sizeof(out), &out_bytes ) );
+        check( client_all_counters_sum( &pair.client_counters ) == before + 2 );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == packets_before + 4 + i );
+        check( pair.client_counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == i + 1 );
+    }
+
+    check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    max_payload_pair_teardown( &pair );
+}
+
 REGISTER_UNIT_TEST( message_of_1400_bytes_is_one_unfragmented_packet );
 REGISTER_UNIT_TEST( limits_are_derived_from_the_packet_size );
 REGISTER_UNIT_TEST( sealed_packet_at_max_size_opens );
 REGISTER_UNIT_TEST( receive_ceiling_refuses_one_byte_over );
+REGISTER_UNIT_TEST( client_drops_reserved_and_wrong_direction_types );

@@ -76,15 +76,29 @@ struct rocketnet_client_driver_config_t
     const rocketnet_client_transport_config_t * transport;
 };
 
-// Clients retain the existing transport receive thread and buffers. A backend
-// must support receive concurrently with sends and borrow buffers only for
-// the call. destroy runs after that thread has joined and drains owned I/O.
+// A backend with wait and wake runs the client I/O thread design of
+// docs/CLIENT-IO.md; a backend without them keeps the receive thread and
+// per-packet main-thread sends.
 struct rocketnet_client_driver_operations_t
 {
     void * (*create)( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * );
     void (*destroy)( void * );
     void (*send)( void *, const rocketnet_address_t *, const uint8_t *, int );
     int (*receive)( void *, rocketnet_address_t *, uint8_t *, int );
+    // optional; I/O thread only. Sends num_packets datagrams in one batch,
+    // borrowing sends and the bytes they point at for the call only.
+    void (*send_batch)( void * driver, const rocketnet_platform_send_t * sends, int num_packets );
+    // optional; I/O thread only. Drains up to max_packets into caller
+    // storage at packet_data + i * packet_stride, writing from[i] and
+    // packet_bytes[i]; returns the count, zero when drained.
+    int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+    // optional, with wake; I/O thread only. Blocks until the socket is
+    // readable, a wake is set, or timeout_seconds pass; consumes the wake.
+    // Returns true when readable or woken.
+    bool (*wait)( void * driver, double timeout_seconds );
+    // optional, with wait; any thread. Sets the level-triggered wake, so a
+    // wait in progress or the next wait returns at once.
+    void (*wake)( void * driver );
 };
 
 struct rocketnet_driver_backend_t
