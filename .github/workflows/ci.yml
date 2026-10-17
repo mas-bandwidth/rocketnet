@@ -185,6 +185,10 @@ jobs:
         if: runner.os == 'Linux'
         run: bash tools/check_fp_contract.sh
 
+      - name: Check every child make has a bounded -j
+        if: runner.os == 'Linux'
+        run: bash tools/check_make_jobs.sh
+
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
       # state machines and the in-memory simulator, parallel, 60s warning,
