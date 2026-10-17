@@ -1,0 +1,202 @@
+# RNEndpoint: two endpoints end to end, with CONFIG
+
+`RNEndpoint` is the model `docs/CHANNELS.md` section 15 plans for layer 7:
+two message endpoints, one at each end of a connection, joined by two
+instances of `tla/Link.tla` (`AB` carries a's packets to b, `BA` carries b's
+to a), with the transport's ack semantics and the CONFIG announcement of
+sections 10.3 and 13.4. It is written before the code: it is the spec the
+CONFIG card (`rocketnet-config-announcement`) and the endpoint card
+(`rocketnet-endpoint-pure`) implement, and its actions carry the names of
+the planned functions of section 10.1. No code implements it yet, so
+`tla/COVERAGE.tsv` holds its row as owed by `rocketnet-endpoint-pure`.
+
+## What is modelled
+
+- **Reset** (`rn_endpoint_reset`): both ends start a connection. Each queues
+  CONFIG (record 0) at the head of IMMEDIATE with the first reliable number,
+  so the first packet an end writes carries it.
+- **Send** (`rn_endpoint_send`): the application sends messages 1..N in index
+  order. A message on a channel outside the sender's own `num_channels` is
+  refused. A reliable or reliable-ordered message takes the next reliable
+  number; an unreliable one waits for its single write.
+- **WritePacket** (`rn_endpoint_write_packet`): a packet carries reliable
+  records whose numbers are inside the window `U .. U + W - 1` (first sends
+  and resends alike), waiting unreliable records, and the transport's pending
+  acks. An unreliable record is written once and is gone after.
+- **PacketFailed** (`rn_endpoint_packet_failed`): the packet was written and
+  the transport never sent it (a burned id). Its reliable records stay due;
+  its unreliable records are gone.
+- **OnAcked** (`rn_endpoint_on_acked`): the records of the end's own packets
+  that the peer opened are acked.
+- **OnPayload** (`rn_endpoint_on_payload`): an end opens a packet from its
+  peer. The transport acks the packet's reliable records whatever follows
+  (P2). CONFIG, first in the packet, goes through **ConfigCompare**; a
+  mismatch is `CONFIG_MISMATCH` and parsing stops. Data records are checked
+  against the receiver's own `num_channels`: a channel outside it is a
+  `VIOLATION` and parsing stops (R6). Otherwise a fresh reliable message is
+  received once, an ordered one is held until its channel predecessors are
+  received and then delivered with every hold it releases, and an unreliable
+  one is delivered at once. An end in error opens and discards.
+- **Tick** (`rn_endpoint_tick`): the reliable timeout. An end still waiting
+  for the peer's CONFIG, or holding an unacked reliable record, enters
+  `RELIABLE_TIMEOUT`.
+- The transport's own steps: **WriteAck** sends pending acks with no message
+  records (a keepalive); **AckSilence** drops pending acks unsent (ack history
+  overflow, P5).
+
+An end in error does nothing more: the object disconnects it (section 11).
+
+## What is abstracted, and why
+
+- **Packet ids.** An ack names the records of the opened packet, not a packet
+  id. The map from an acked id to the records it carried, its eviction and
+  the never-repeating id are `RNWindow`'s sent map, checked there. Taking
+  the records directly keeps "acked implies opened" (P2) exact at record
+  level: every acked record was in a packet the peer opened.
+- **Numbering, the window and the receiver's slots** are taken at the level
+  `RNWindow` and `RNChannelTypes` check: the count bound `U + W`, a received
+  set standing for `R` and the bitset, duplicates dropped, ordered messages
+  held on their channel. The 24-bit wire number, `U'` inside blocks and the
+  descriptor slots are not restated.
+- **The RTO** is abstract, as in `RNWindow`: an unacked record inside the
+  window may be resent at any step. `RtoAboveRtt = TRUE` (the liveness cases)
+  narrows this to the real ordering of the RTO above the RTT: a record is due
+  again only once no copy of it is in flight and no ack of it is pending or in
+  flight back. The timing that makes this so is `RNResendTiming`'s.
+- **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (the safety cases)
+  `Tick` may fire at any moment, so safety holds wherever the timeout lands.
+  Under `FALSE` (the liveness cases) it fires only once the peer is in error
+  and silent: that a live peer's resends land before `reliable_timeout` is
+  `RNResendTiming`'s `AttemptsBeforeTimeout`.
+- **A configuration** is its `num_channels`, the field the instances vary.
+  ConfigCompare compares the whole configuration value, which stands for the
+  field-by-field comparison of section 13.4 (version, enabled mask,
+  `window_messages`, `receive_ring_bytes`, `max_message_bytes`,
+  `fragment_bytes`): any differing field is the same mismatch.
+- **Duplicated packets** are the transport replay window's to drop
+  (`ReplayWindow`), so the instances run Link with `Duplication = FALSE`.
+  Resends still put several copies of one reliable record in flight in the
+  safety cases, and the receiver's dedupe is what keeps them exactly once.
+- **Inside one packet** the records are processed CONFIG first, then data; a
+  data record outside the receiver's bounds refuses the packet's data as a
+  whole. The order of records inside a packet beyond that is section 9.3's.
+- **Bytes, the ring, blocks, receipts and priorities below IMMEDIATE** are
+  other modules' (`RNRing`, `RNSendSpans`, `RNReceipts`, `RNScheduler`).
+- `WriteAll = TRUE` makes a packet carry every due record and every waiting
+  unreliable record, a model-size knob: which subset a packet carries is
+  `RNScheduler`'s and `RNSendBudget`'s.
+
+## Properties
+
+Safety (every case lists them):
+
+| Invariant | Meaning |
+|---|---|
+| `TypeOK` | variable domains; each link within its capacity |
+| `ConfigFirstReliable` | CONFIG takes the first reliable number (10.3) |
+| `WindowBounded` | no more than `W` reliable records are ever writable (6.2) |
+| `AckedImpliesOpened` | an acked record was in a packet the peer opened (P2) |
+| `ReliableExactlyOnce` | a reliable message is delivered at most once, and only if the peer's application sent it and Send accepted it; with `EveryReliableDelivered`, exactly once |
+| `UnreliableAtMostOnce` | an unreliable message is delivered at most once, and only if sent |
+| `OrderedInOrder` | an ordered message is delivered only after every ordered message before it on its channel |
+| `MismatchErrorsBothEnds` | an end that takes the peer's CONFIG takes an equal one, and `CONFIG_MISMATCH` means a real difference: every end that opens a differing CONFIG errors |
+| `NoViolationWhenEqual` | with equal configurations, data records before CONFIG never trip the receiver's bounds (R6) |
+
+Liveness (`MCRNEndpointLive.cfg`, under `LiveSpec`):
+
+| Property | Meaning |
+|---|---|
+| `ConfigVerifiedDespiteFirstLoss` | with equal configurations and each link losing its first packet, both ends take the peer's CONFIG |
+| `EveryReliableDelivered` | with equal configurations, every reliable message the peer sent is delivered (no hang) |
+| `MismatchBothEndsError` | with differing configurations, both ends end in error (no hang) |
+
+Fairness is for liveness only: the application sends; the oldest unacked
+reliable record is written again while it can be (the resend FIFO's
+guarantee, as in `RNWindow`); a waiting unreliable record is written; acks go
+out; the head of each wire is opened; a due timeout fires. Strong where a
+lost send or a full link disables the step for a while.
+
+## Cases
+
+The instance: N messages per side, the first N - 1 reliable ordered on
+channel 0 and the last unreliable on channel 1; `W = 2`; Link capacity 2;
+two configurations, equal (`num_channels` 2 at both ends) and differing
+(2 at a, 1 at b), both explored from `Init`.
+
+| Case | Spec and terrain | Expected |
+|---|---|---|
+| `MCRNEndpoint.cfg` | `Spec`, N = 3, `"arbitrary"` loss both ways, failed sends, ack silence, timeouts at any time, abstract RTO | pass |
+| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, `"first"` loss both ways, `RtoAboveRtt` | pass |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE` | temporal `ConfigVerifiedDespiteFirstLoss` |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE` | invariant `MismatchErrorsBothEnds` |
+
+### Measured records
+
+Measured with the pinned runner and JAR on a loaded Linux bench (one-minute
+load near 200 on 64 logical CPUs), each case its own 110-second shard,
+merged into `tla/RUNS.tsv` (`groups --stale` prints `[]`):
+
+| Case | Gate | Exit | Result | Generated | Distinct | Seconds |
+|---|---|---:|---|---:|---:|---:|
+| `MCRNEndpoint.cfg` | bench | 124 | FAIL (budget) | - | - | 110.270 |
+| `MCRNEndpointLive.cfg` | bench | 124 | FAIL (budget) | - | - | 110.249 |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | bench | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 32.649 |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 2.161 |
+
+**The two controls are debt, not proofs.** Neither completed inside the
+budget. Longer manual runs on the same bench, outside the records, also did
+not complete: the safety case reached 55,421 distinct states at depth 10 in
+500 s with no violation and a growing queue; the liveness case reached
+31,447 distinct states (80,218 explored by the temporal check) in 500 s with
+no violation. No invariant or property was found false in any explored
+state, but the exploration is incomplete and is labelled so. The debt is a
+smaller committed instance or a quieter bench, and it is owed before the
+model gates the endpoint card. The unreliable-CONFIG witness is declared
+bench conservatively; it ran in 33 s and can move to required on the next
+record refresh.
+
+## Reversed witnesses, each checked by hand
+
+Both traces were read by hand against `docs/CHANNELS.md` 10.3 and 13.4.
+No code implements CONFIG or the endpoint yet (`sdk/` defines only the
+error code), so the check is against the design, which is the spec the
+two code cards implement.
+
+**`MCRNEndpointBrokenConfigNotCompared.cfg`** (`ConfigCompared = FALSE`,
+invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing
+configurations, `num_channels` 2 at a and 1 at b. a writes its first packet,
+`[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, at the head of
+IMMEDIATE with reliable number 0 (10.3). b opens it with no comparison and
+records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
+13.4 requires "any difference is ERROR_CONFIG_MISMATCH"; without the
+comparison b goes on as if both ends were configured the same, so the
+"identical and verified" model of 10.3 is lost on the first CONFIG.
+
+**`MCRNEndpointBrokenConfigUnreliable.cfg`** (`ConfigReliable = FALSE`,
+temporal `ConfigVerifiedDespiteFirstLoss`, 14 states then stuttering).
+Equal configurations, each link losing its first packet ("first"). b writes
+its first packet carrying CONFIG as an unreliable record; the BA link loses
+it. a writes its first packet carrying CONFIG; the AB link loses it. Both
+unreliable CONFIG records are gone after their single write. The rest runs
+normally: both applications send, the reliable ordered message 1 is
+delivered at each end, acks return, the unreliable message 2 travels; then
+nothing is enabled that changes `peerCfg`, and the behaviour stutters with
+`peerCfg = [a |-> 0, b |-> 0]`: neither end ever verifies. Section 10.3 rules
+this out by giving CONFIG the first reliable number, "so it is resent until
+acked"; with that rule the same first losses are followed by a resend, which
+the model's `WriteOldest` fairness carries.
+
+## Action-to-section map
+
+| Action / operator | Planned function (10.1) | Design section |
+|---|---|---|
+| `Reset` | `rn_endpoint_reset` | 10.1; 10.3 (CONFIG queued at the head of IMMEDIATE, first reliable number) |
+| `Send(e)` | `rn_endpoint_send` | 10.1; 6.2 (late numbering); 7.1 (channel bound) |
+| `WritePacket(e, S, Us)` | `rn_endpoint_write_packet` | 9.3 (packet writing); 6.2 (count bound `U + W`); 6.4 (resend until acked) |
+| `PacketFailed(e, S, Us)` | `rn_endpoint_packet_failed` | 6.4 (a failed send marks its records due); P5 |
+| `OnAcked(e, as)` | `rn_endpoint_on_acked` | 6.4 (ack marks records); P2, P4 |
+| `OnPayload(e, p)` | `rn_endpoint_on_payload` | 13.3 (receiver's checks in order); 6.5 (duplicates); 7.2 (dispatch, holds); R6 |
+| `ConfigCompare(e)` | the CONFIG comparison inside `rn_endpoint_on_payload` | 10.3; 13.4 (every field compared, mismatch is `ERROR_CONFIG_MISMATCH`) |
+| `Tick(e)` | `rn_endpoint_tick` | 10.3 (no CONFIG within `reliable_timeout` is `RELIABLE_TIMEOUT`); 6.4 |
+| `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_MESSAGE_ERROR_*`) |
+| `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | section 2, P2 and P5 |
