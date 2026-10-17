@@ -29,6 +29,9 @@ jobs:
           # hosted macOS is $0.16/min and this 90-minute job was the largest single line of September's Actions bill
           # (up to ~$14 a night), so it moves to mini-m5's org runner as soon as Glenn registers it.
           - { os: macos-latest }
+          # the windows soak: hosted windows-2025, MSVC via the cmake configure/build
+          # steps below. The only leg with no self-hosted runner, so the billing leg.
+          - { os: windows-2025 }
     runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
     timeout-minutes: 90
     steps:
@@ -46,10 +49,25 @@ jobs:
         run: brew install libsodium pkgconf || brew install libsodium pkg-config
 
       - name: Build
+        if: runner.os != 'Windows'
         run: make
 
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
       - name: Tests
+        if: runner.os != 'Windows'
         run: ./bin/test
+
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./bin/Release/test.exe
 
       # the wire's audit under the real soak, bounded: every receive
       # cross-checked against the reference full-array scan. Slow by
@@ -57,13 +75,31 @@ jobs:
       # than the shape the long soak runs in.
 
       - name: Simulator wire audit (bounded, every receive cross-checked)
+        if: runner.os != 'Windows'
         run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/soak_sim 100000
 
+      - name: Simulator wire audit (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
+
       - name: Simulator soak (eight clients, light loss, any failure is a finding)
+        if: runner.os != 'Windows'
         run: ./bin/soak_sim 10000000
 
+      - name: Simulator soak (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./bin/Release/soak_sim.exe 10000000
+
       - name: UDP loopback soak
+        if: runner.os != 'Windows'
         run: ./bin/soak 200000
+
+      - name: UDP loopback soak (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./bin/Release/soak.exe 200000
 
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
