@@ -460,7 +460,8 @@ no-live-allocation trap — R1).
   `{ packet_id, send_time, ref_first, ref_count, unreliable_receipts }`, plus a
   `16P` reference ring of numbers and a `2P` open-addressed index from
   `packet_id` to entry.
-- The RTT estimator `{ srtt, rttvar, rto, backoff }`.
+- The RTT estimator `{ srtt, rttvar, rto }` and the resend delay
+  `min( rto, resend_interval )`.
 
 **The receiver** owns:
 
@@ -587,15 +588,32 @@ corruption.
   (`MESSAGE_SENT_MAP_EVICTED`).
 - **RTO.** `srtt` and `rttvar` follow RFC 6298 over this layer's own samples,
   not the transport's rtt floor (`U:216-235` explains why that floor cannot
-  drive a timeout). `rto = clamp( srtt + 4·rttvar, rto_min, rto_max )`; before
-  the first sample it is `rto_initial`. The connection-wide `backoff` doubles
-  each time an RTO fires with no ack in between, up to 8, and resets on any
-  ack. RakNet has no back-off (study §9); this departure is deliberate.
-- **Resend.** The resend FIFO is ordered by last send. In `write_packets`, the
-  head is due when `now >= last_send + rto·backoff`. Due records are rewritten
+  drive a timeout).
+  `rto = clamp( srtt·rto_scale_percent/100 + 2·rttvar, rto_min, rto_max )`;
+  before the first sample it is `rto_initial`. At the defaults
+  (`rto_scale_percent` 125, `rto_initial` 100 ms, `rto_min` 10 ms, `rto_max`
+  250 ms) a lost record is resent within one to two RTTs. There is no
+  back-off: every resend of a record waits the same delay, as in RakNet (study
+  §9), so many attempts fit before `reliable_timeout` (`tla/RNResendTiming.tla`,
+  `AttemptsBeforeTimeout`).
+- **Resend.** The resend delay of every record is
+  `delay = min( rto, resend_interval )`, with `resend_interval` 100 ms by
+  default: a small message is resent every 100 ms until it is acked, and
+  sooner on a short path. This is a real-time game's practice; the send budget
+  (R6, retransmits first, nothing over budget sent) bounds the bandwidth that
+  resends take. The resend FIFO is ordered by last send. In `write_packets`,
+  the head is due when `now >= last_send + delay`. Due records are rewritten
   first, each in a new packet with a new id, carrying the same number, ring and
-  ordering fields. Each is then moved to the tail. The walk stops at the first
-  record that is not due, so the work is O(due).
+  ordering fields. Each is then moved to the tail. One delay for every record
+  keeps the FIFO in due order, so the walk stops at the first record that is
+  not due, and the work is O(due). Pacing the chunks of a large block by RTT
+  is a later card's.
+- **The cost.** A record that was only delayed, not lost, is sent again when
+  the delay fires before its ack returns. On a path whose RTT is above
+  `resend_interval` that is about `RTT / resend_interval - 1` extra copies of
+  each message (about 1 at RTT 200 ms); below it, the RTO rule fires after the
+  ack in nearly every case. For small messages that is cheap and it is the
+  point: the latency of a lost message is one delay, not a doubling series.
 - **Failed send.** If `finish_packet` returns 0, the numbered records in that
   packet are marked due now and the packet's unreliable records are dropped and
   counted.
@@ -626,14 +644,15 @@ details explicit:
   the slot at the tail of the resend FIFO. When `sent_count == P` or
   `sent_ref_count + count > 16P`, the oldest sent-packet entries are evicted
   first and counted in `MESSAGE_SENT_MAP_EVICTED`; evicted numbers keep their
-  `send_numbers` entries and resend-FIFO links so they resend on the RTO.
+  `send_numbers` entries and resend-FIFO links so they resend on the delay.
 - **Ack, chunk release and RTT.** `rn_window_ack_on_ack` looks up `packet_id`
-  in `sent_index`; unknown or zero ids return 0 in O(1) without touching RTT,
-  `backoff` or window bounds. A matched entry takes one unambiguous RFC 6298
+  in `sent_index`; unknown or zero ids return 0 in O(1) without touching RTT
+  or window bounds. A matched entry takes one unambiguous RFC 6298
   sample `R_sample = now - send_time` (`srtt = R_sample`, `rttvar = R_sample/2`
   on the first sample; `rttvar = 3/4·rttvar + 1/4·|srtt - R_sample|`,
-  `srtt = 7/8·srtt + 1/8·R_sample` thereafter; `rto = clamp(srtt + max(0.001, 4·rttvar), rto_min, rto_max)`), resets `backoff = 1`, and walks the entry's
-  references. For each reference whose slot `n % W` still names `n` and is
+  `srtt = 7/8·srtt + 1/8·R_sample` thereafter;
+  `rto = clamp(srtt·rto_scale + 2·rttvar, rto_min, rto_max)`, `rto_scale =
+  rto_scale_percent / 100`), and walks the entry's references. For each reference whose slot `n % W` still names `n` and is
   unacked, it unlinks `n` from the resend FIFO, frees that fragment's chunk via
   `rn_region_send_free_fragment` (releasing the send descriptor when the last
   unacked fragment of a block or single message is freed), and calls
@@ -642,28 +661,37 @@ details explicit:
   `rn_window_ack_check_timeout` first (if any unacked number has
   `now - first_send >= reliable_timeout`, `ack->error` becomes
   `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
-  from `resend_head` while `now >= last_send + rto·backoff`, stopping at the
-  first entry that is not due (`O(due)`). Each due number is moved to the tail
-  with `last_send = now`, committed under a fresh `packet_id`, and counted in
-  `MESSAGE_RESENT`. If at least one entry with `last_send > 0.0` was resent in
-  the pass, `backoff` doubles up to 8 (`1, 2, 4, 8`).
+  from `resend_head` while `now >= last_send + rn_window_ack_resend_delay(ack)`
+  (`min(rto, resend_interval)`), stopping at the first entry that is not due
+  (`O(due)`). Each due number is moved to the tail with `last_send = now`,
+  committed under a fresh `packet_id`, and counted in `MESSAGE_RESENT`. The
+  ordered writer (`rn_ordered_write`) and the message server's due check
+  (`rn_message_ordered_due`) read the same delay; nothing in the three walks
+  backs off.
   `rn_window_ack_packet_failed` handles a `finish_packet` refusal without
   entering the packet in the sent-packet map: each numbered record gets
-  `first_send = now` (if unset), `last_send = 0.0` (due immediately without
-  stepping `backoff`), and is linked at the head of the resend FIFO in order.
+  `first_send = now` (if unset), a negative `last_send` (due immediately),
+  and is linked at the head of the resend FIFO in order.
 - **Tests.** `test_channels.cpp` pins these rules in
   `ChannelsWindowAckOfAnUnknownIdIsIgnored`,
   `ChannelsWindowAckFreesTheChunkAndAdvancesU`,
   `ChannelsWindowRttSampleIsUnambiguousAcrossResends`,
   `ChannelsWindowEvictionKeepsNumbersResendable`,
-  `ChannelsWindowBackoffDoublesToEightAndResetsOnAck`,
+  `ChannelsWindowResendDelayNeverBacksOff`,
   `ChannelsWindowResendWalkStopsAtTheFirstNotDue`,
   `ChannelsWindowFailedSendMarksDueNow`,
   `ChannelsWindowReliableTimeoutEntersTheErrorState`, and
   `ChannelsWindowLossySoak` (full layer 2 + layer 3 pipeline over `rn_lossy_t`
   at 0, 10 and 50 percent loss with reordering, duplication, single and
   multi-fragment blocks, and failed-send recovery under the no-live-allocation
-  trap).
+  trap). `test_unit_resend_timing.cpp` pins the delay rule
+  (`resend_delay_is_min_of_interval_and_rtt`, `no_backoff_between_resends`,
+  `first_resend_before_any_sample_at_rto_initial`,
+  `config_refuses_fewer_than_four_attempts`, and
+  `resend_timing_witness_replays`, which replays the schedule of
+  `tla/MCRNResendTimingBrokenBackoff.cfg` against the code), and
+  `functional/channel_resend_timing.cpp` measures delivery latency and copies
+  over the channel harness (`resend_timing_table_over_lossy_links`).
 
 ### 6.5 The receiver's window check
 
@@ -1343,10 +1371,12 @@ the full plan.
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( rto_initial_ms,           1000,     10, 60000,                  0 )                                         \
-    INT_FIELD( rto_min_ms,                 50,      1, 60000,                  0 )                                         \
-    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
+    INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
+    INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
+    INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
+    INT_FIELD( resend_interval_ms,        100,     10, 60000,                  0 )   /* resend delay cap, 6.4 */           \
+    INT_FIELD( rto_scale_percent,         125,    100, 400,                    0 )   /* rto = srtt x this / 100 + 2 rttvar */
 
 struct rocketnet_message_config_t
 {
@@ -1423,7 +1453,7 @@ struct rocketnet_message_stats_t
     int reliable_in_flight;                 // numbered, unacked
     int receive_held;                       // held at this end for ordering
     float rtt;                              // this layer's srtt (milliseconds)
-    float rto;                              // current rto including backoff (milliseconds)
+    float rto;                              // current rto (milliseconds); the resend delay is min( rto, resend_interval )
 };
 
 ROCKETNET_EXPORT_FUNC void rocketnet_server_message_stats( struct rocketnet_server_t * server, int client_index, struct rocketnet_message_stats_t * stats );
@@ -1785,14 +1815,18 @@ region follows.
   between writing a packet and receiving its ack, that packet's entry has
   been evicted when the ack lands, and the ack is ignored. Its numbers stay
   unacked and are resent, and the resends can evict their own entries the
-  same way. A sender under RTO back-off with a small `P` can do this until
+  same way. A sender with a small `P` can do this until
   `reliable_timeout`. Correctness does not depend on `P` (eviction costs
   bandwidth only), but liveness does. `RNWindow` needs this as an assumption
   (`AcksLand`): without it TLC finds a lasso in which every ack names an
-  evicted id (`tla/README-RNWindow.md`). At the defaults, 256 packets per RTT
-  is `max_packets_per_update` times the updates in one RTT. Card C3 checks
-  the default against that, and counts evictions
-  (`MESSAGE_SENT_MAP_EVICTED`) so a shortfall shows.
+  evicted id (`tla/README-RNWindow.md`). The packets a connection writes in
+  one RTT are at most `max_packets_per_update` times the updates in one RTT,
+  resends included, because resends share the update's packet limit. At the
+  defaults and RTT 200 ms on a 60 Hz update that is 4 × 12 = 48 packets
+  against `P = 256`, a margin of 5.3×; the 100 ms resend delay changes what
+  fills those packets, not how many there are. `P` holds up to an RTT of
+  about 1 s at 60 Hz (256 / (4 × 60) = 1.07 s), and `MESSAGE_SENT_MAP_EVICTED`
+  counts a shortfall so it shows.
 - **Validation at create** refuses any of these:
   - `max_message_bytes > B`;
   - `ceil(max_message_bytes / F) > W`;
@@ -1801,7 +1835,11 @@ region follows.
   - a 1152 class (a third of `S`) too small to hold one maximal block, that
     is, fewer than `ceil(max_message_bytes/F)` chunks (as built, the class
     holds `floor(third / 1156)` chunks with their links, section 4);
-  - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1).
+  - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1);
+  - `reliable_timeout_ms < 4 × max( resend_interval_ms, rto_initial_ms )`,
+    so at least `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS` (4) sends of a
+    record fit before the timeout gives up on it (6.4,
+    `tla/RNResendTiming.tla`).
 
   Validation refuses and never clamps.
 
@@ -1824,6 +1862,7 @@ code by hand before it is written down.
 | `RNReceipts` | serials, ACKED and LOSS for 5, 6 and 7, eviction, block receipts | `ExactlyOneOutcomePerReceiptSerial`, `LossOnlyForUnreliableReceipt`, `BlockAckedOnlyWhenAllFragmentsAcked` | firing on the last-index fragment (RakNet): early ACKED |
 | `RNEndpoint` | two endpoints over Link, with transport ack semantics (acked ⇒ opened, burned ids, history overflow ⇒ silence), CONFIG, errors | end to end: reliable exactly-once, ordered in order, unreliable at-most-once, CONFIG mismatch ⇒ both sides error; LIVE no hang: with CONFIG lost on first send, both still verify | CONFIG sent once, unreliable: a lost first packet hangs verification |
 | `RNSlots` | one slot under the transport's loop: connect, disconnect and reassign any number of times between object updates; payload and acked-id entries tagged with the connection they were received for; acked ids deferred across updates (P4); the object update as observe, then admit at apply time | `NoCrossConnectionApply` (no payload or ack of connection A is applied to B), `NoOwnEntryDropped` (admit never discards an entry from the connection it belongs to) | applying by slot after observing the slot's connection id (the old rule, which P9a alone gives): A sends, A disconnects, B claims the slot, all in one update; observe resets to B and A's payload is applied to B. By hand, the same trace also fails with `is_client_connected` or `client_id` in place of the connection id: neither changes, so there is not even a RESET |
+| `RNResendTiming` (`tla/RNResendTiming.tla`) | one unacked reliable number over discrete ticks: the first send, resends at `min(rto, resend_interval)` times a back-off parameter, RTT samples that move `rto` anywhere in `[rto_min, rto_max]`, the ack, and `reliable_timeout` | `AttemptsBeforeTimeout` (unacked at `reliable_timeout` means sent at least `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS` times), `ResendGapBounded` | the first version's schedule, back-off to 8 with `rto_initial` 1000 ms and `rto_max` 2000 ms: `AttemptsBeforeTimeout` fails, a sample sets `rto` to 2 s and the sends at 0, 2 and 6 s are all that fit in 10 s (`tla/MCRNResendTimingBrokenBackoff.cfg`) |
 
 The instances are small: 2 to 3 channels, `W = 4`, `B = 64` (4 units), 3 to 4
 messages, and Link capacity 3. `RNEndpoint` is the largest, and it runs on a
@@ -1848,10 +1887,10 @@ exact variables the action updates):
 
 | Module | TLA+ action / operator | C++ function(s) and file | State updated and guard kept |
 |---|---|---|---|
-| `RNWindow` | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp:74`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp:21`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp:290`) | `next = U = U' = R = first_number`, `ring_next = 0`, `stalled = 0`, `violation = NONE`, empty `sent_packets` / `sent_index` / `sent_refs` / `resend_fifo`, `rto = rto_initial`, `backoff = 1` |
+| `RNWindow` | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp:74`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp:21`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp:290`) | `next = U = U' = R = first_number`, `ring_next = 0`, `stalled = 0`, `violation = NONE`, empty `sent_packets` / `sent_index` / `sent_refs` / `resend_fifo`, `rto = rto_initial` |
 | `RNWindow` | `NumberRecord` | `rn_window_send_first_write` (`sdk/rocketnet_window_send.cpp:100`), `rn_window_send_first_write_block` (`:126`) via `rn_window_send_admit` (`:30`) and `rn_window_send_set_number` (`:51`) | Guard `next + count <= U' + W`; writes `send_numbers[n % W]` (`number`, `descriptor`, `fragment`, `ring_start`, `ring_units`, `acked = 0`), advances `next`; increments `MESSAGE_WINDOW_STALL` once per stall |
-| `RNWindow` | `WritePacket(S, pid)` / `WriteOldest` | `rocketnet_message_writer_add` (`sdk/rocketnet_message.cpp`), `rn_window_ack_commit_packet` (`sdk/rocketnet_window_ack.cpp:336`), `rn_window_ack_resend` (`:526`) | Records `{packet_id, send_time, ref_first, ref_count}` in `sent_packets`, inserts `packet_id` in `sent_index`, appends `numbers` to `sent_refs` (evicting oldest entries when `P` or `16P` is full, counting `MESSAGE_SENT_MAP_EVICTED`), links unacked slots at the tail of `resend_fifo`; `rn_window_ack_resend` walks `resend_fifo` from head while `now >= last_send + rto·backoff` (`O(due)`), re-commits under a new `packet_id`, and steps `backoff` (`1, 2, 4, 8`) |
-| `RNWindow` | `ReceiveAck(q)` | `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp:411`), `rn_window_ack_on_acks` (`:492`) -> `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp:156`) | Ignores unknown/evicted `packet_id` in `O(1)`; on match, samples RFC 6298 RTT (`srtt`, `rttvar`, `rto`), resets `backoff = 1`, unlinks each newly acked `n >= U` from `resend_fifo`, frees its store chunk (`rn_region_send_free_fragment`), sets `acked = 1`, advances `U` past contiguous acked numbers, and sets `U' = U - oldest->fragment` when `U < next` (`U' = next` when `U == next`) |
+| `RNWindow` | `WritePacket(S, pid)` / `WriteOldest` | `rocketnet_message_writer_add` (`sdk/rocketnet_message.cpp`), `rn_window_ack_commit_packet` (`sdk/rocketnet_window_ack.cpp:336`), `rn_window_ack_resend` (`:526`) | Records `{packet_id, send_time, ref_first, ref_count}` in `sent_packets`, inserts `packet_id` in `sent_index`, appends `numbers` to `sent_refs` (evicting oldest entries when `P` or `16P` is full, counting `MESSAGE_SENT_MAP_EVICTED`), links unacked slots at the tail of `resend_fifo`; `rn_window_ack_resend` walks `resend_fifo` from head while `now >= last_send + min(rto, resend_interval)` (`O(due)`), re-commits under a new `packet_id`; the delay is the same for every resend (no back-off, `RNResendTiming`) |
+| `RNWindow` | `ReceiveAck(q)` | `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp:411`), `rn_window_ack_on_acks` (`:492`) -> `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp:156`) | Ignores unknown/evicted `packet_id` in `O(1)`; on match, samples RFC 6298 RTT (`srtt`, `rttvar`, `rto`), unlinks each newly acked `n >= U` from `resend_fifo`, frees its store chunk (`rn_region_send_free_fragment`), sets `acked = 1`, advances `U` past contiguous acked numbers, and sets `U' = U - oldest->fragment` when `U < next` (`U' = next` when `U == next`) |
 | `RNWindow` | `OpenPacket(p)` (`Recon`, `Accept`, `Advance`) | `rocketnet_message_reader_begin` / `rocketnet_message_reader_next` (`sdk/rocketnet_message.cpp`), `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp:32`) | Signed 24-bit half-range `Recon` against `R` (`:40-44`); drops `delta < 0` or set bit as `RN_WINDOW_RECEIVE_DUPLICATE` (`MESSAGE_DUPLICATE`, `:48,60`); refuses `delta >= W` with `ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW` (`:50`); refuses live descriptor naming another number with `ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION` (`:64`); claims `receive_descriptors[n % W]` (`live = 1`), sets `received_bits[n % W]`, and runs `Advance` (`:89-98`), clearing consecutive set bits from `R` and incrementing `R` |
 | `RNWindow` | `FixBatch` / `SendAck` | transport update boundary (P2 and P6, section 2) | Transport fixes update *j*'s received batch before any packet built in update *j* leaves, and any reply to an ack from update *j* opens in update *j+1* or later |
 | `RNWindow` | `EndUpdate` | `rn_window_receive_release` (`sdk/rocketnet_window_receive.cpp:104`) | Clears `receive_descriptors[number % W].live = 0` when `live && descriptor->number == number` (at the end of the delivery update for delivered records, or when a held record/block completes) |
@@ -2081,7 +2120,11 @@ visible effect, and it is the intended one.
    fixes the study's §8.2 and §7.3 behaviour.
 8. **Large unreliable messages stay unreliable** and ride the transport's
    fragments. The receipt type is the one exception.
-9. **An RTO with exponential back-off** from this layer's own samples.
+9. **The resend delay is capped at `resend_interval`** (100 ms), below the
+   RTO on a long path, so a small message is resent every 100 ms until acked.
+   The RTO comes from this layer's own samples and there is no back-off, as
+   in RakNet (study §9); the exponential back-off of the first version is
+   gone, so on back-off rocketnet now matches RakNet.
 10. **Out-of-range arguments are refused, never repaired** (study §5.2 step 1,
     item 20).
 11. **A wire violation disconnects.** RakNet drops the rest of the datagram
@@ -2138,8 +2181,8 @@ requires.
 - **G2. The defaults and their cost** (section 14), about 438 KiB per
   connection, and whether the game wants the lean profile.
 - **G3. No congestion control in the first version.** The sender is bounded
-  by `W`, `B` and `max_packets_per_update`, and RTO back-off limits resend
-  storms. RakNet's sliding window (study §9) could sit at layer 6 later
+  by `W`, `B` and `max_packets_per_update`, and the send budget (R6,
+  retransmits first) limits resend storms; there is no back-off (6.4). RakNet's sliding window (study §9) could sit at layer 6 later
   without a wire change.
 - **G4. STANDARD.md's scope.** It specifies the transport today, and S:7-10
   says messages are specified nowhere in it. Section 13
