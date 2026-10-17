@@ -300,31 +300,14 @@ internal and the config field is a struct member, not an export.
 
 ## The gate
 
-The gate is total main-thread time per frame: **total_us_p99 at most 100 us at
-P = 32**, send plus update, on the platform's own member. Each implementation
-card that switches a platform's client driver to the I/O thread design runs
-the meter there, three runs per P, BASE and head in the same session on the
-same machine, and reports medians for P = 1, 8 and 32 beside this table.
+The owner's number: with the right transport the main thread's socket work is about 0.1 ms per frame or less. Each implementation card that switches a platform's client driver to the I/O thread design runs the meter on its platform, three runs per P, BASE and head interleaved in the same session on the same idle machine (`uptime` recorded before each pair; a load average above a quarter of the core count voids the pair), and reports medians. At P = 32 it must reach:
 
-| measure | BASE (Linux, above) | gate |
+| measure (P = 32) | BASE (Linux, above) | gate |
 |---|---:|---:|
-| total_us_p99, P = 32 | 1676.422 | at most 100 |
-| send_us_p99, P = 32 | 508.913 | at most 10 (one release store and at most one wake) |
-| total_us_p99, P = 1 and P = 8 | 165.603 and 337.599 | no worse than BASE |
+| total_us_p99 | 1676.422 | at most 100 |
+| send_us_p99 | 508.913 | at most 10 |
 
-What the 100 us gate means for this design. The I/O thread design removes the
-send walk (509 us p99 at P = 32) and the receive-mutex wait (71-86 us p99),
-and leaves in `update` the per-reply work: the checks, the decrypt and the
-protocol, about 6 to 13 us per reply, so 187 to 418 us per frame at P = 32
-(update p50 at BASE is 370 us at P = 32). That alone is above 100 us. So these
-cards can meet the send row and the P = 1 and P = 8 rows, but the P = 32 total
-cannot be met while the per-reply work stays on the main thread: each
-implementation card reports its P = 32 total against 100 us and names the
-gap, and the gate is reached only by the follow-on that moves the per-reply
-decrypt and checks onto the I/O thread (`rocketnet-client-io-decrypt`, its
-own design with its own model, see What is left out). Moving it leaves update
-a copy-out of already-verified payloads and the protocol state, which the
-same meter measures.
+and at P = 1 and P = 8 total_us_p99 must also be at most 100. The send window keeps one release store and at most one wake syscall. The total keeps update's decrypt and protocol work, which this design does not move; a card whose update window alone keeps it above the gate reports its BASE and head rows with the update share, and the decrypt study (rocketnet-client-io-decrypt-study) decides whether decrypt moves off the main thread. A card on a platform whose BASE differs states its own BASE row beside these.
 
 ## Per-platform cards
 
