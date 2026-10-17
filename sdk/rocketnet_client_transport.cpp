@@ -7,6 +7,7 @@
 */
 
 #include "rocketnet.h"
+#include "rocketnet_client_io.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
@@ -53,19 +54,6 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 
     return time;
 }
-
-// the receive thread fills one buffer while update processes the other --
-// the IO, carried over whole
-
-struct rocketnet_client_receive_buffer_t
-{
-    int num_packets;
-    rocketnet_address_t from[ROCKETNET_NUM_CLIENT_PACKETS];
-    double receive_time[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
-    size_t packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
-};
 
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
