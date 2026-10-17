@@ -92,10 +92,11 @@ struct rocketnet_client_driver_operations_t
     // storage at packet_data + i * packet_stride, writing from[i] and
     // packet_bytes[i]; returns the count, zero when drained.
     int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
-    // optional, with wake; I/O thread only. Blocks until the socket is
-    // readable, a wake is set, or timeout_seconds pass; consumes the wake.
-    // Returns true when readable or woken.
-    bool (*wait)( void * driver, double timeout_seconds );
+    // optional, with wake; I/O thread only. Blocks until a wake is set,
+    // the socket is readable (only when readable is true), or
+    // timeout_seconds pass; consumes the wake. With readable false the
+    // socket's readiness is ignored. Returns true when woken or readable.
+    bool (*wait)( void * driver, bool readable, double timeout_seconds );
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
     void (*wake)( void * driver );
