@@ -4526,6 +4526,7 @@ extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
+extern void rocketnet_test_cpp_transports_connect_over_loopback();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -4537,6 +4538,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape },
     { "test_transport_udp_loopback", rocketnet_test_transport_udp_loopback },
+    { "cpp_transports_connect_over_loopback", rocketnet_test_cpp_transports_connect_over_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },
     { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped },
