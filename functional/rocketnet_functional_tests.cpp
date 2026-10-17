@@ -3878,6 +3878,46 @@ void rocketnet_test_server_uring_probe()
     rocketnet_address_t over_address;
     rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
     rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
+
+    // a destroy whose wait gives up never frees what the kernel may still
+    // write (RNUringDriver FreedOnlyWhenDrained): one completion that never
+    // arrives, rounds counted and never slept; the ring and the sockets
+    // close, the memory is leaked and counted, and the driver's bytes are
+    // still there to read afterwards
+
+    rocketnet_address_t stall_address;
+    rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
+    struct rocketnet_server_uring_t * stalled = rocketnet_server_uring_create( NULL, &stall_address, 2 );
+    rocketnet_check( stalled );
+    const uint16_t stall_port = stall_address.port;
+
+    const uint64_t leaked_bytes_before = rocketnet_server_uring_leaked_bytes();
+    const uint64_t leaked_drivers_before = rocketnet_server_uring_leaked_drivers();
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int stall_saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    rocketnet_server_uring_test_stall_destroy( stalled );
+    rocketnet_server_uring_destroy( stalled );
+
+    rocketnet_log_level( stall_saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
+    rocketnet_check( rocketnet_server_uring_leaked_drivers() == leaked_drivers_before + 1 );
+    rocketnet_check( rocketnet_server_uring_leaked_bytes() - leaked_bytes_before + 4096 >= rocketnet_server_uring_allocation_bytes( 2 ) );   // both allocations, less their small overhead
+    rocketnet_check( rocketnet_server_uring_num_queues( stalled ) == 2 );      // not freed: freeing clears the allocation
+
+    rocketnet_address_t rebind_address;
+    rocketnet_check( rocketnet_address_parse( &rebind_address, "127.0.0.1" ) );
+    rebind_address.port = stall_port;
+    struct rocketnet_server_uring_t * rebound = rocketnet_server_uring_create( NULL, &rebind_address, 2 );
+    rocketnet_check( rebound );                                                 // the sockets closed
+    rocketnet_server_uring_destroy( rebound );
+    rocketnet_check( rocketnet_server_uring_leaked_drivers() == leaked_drivers_before + 1 );   // a drained destroy leaks nothing
 }
 
 // the wire exchange, the gso exchange's shape for this driver: a plain UDP

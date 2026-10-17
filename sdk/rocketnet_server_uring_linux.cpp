@@ -9,6 +9,7 @@
 
 #include <new>
 #include <atomic>
+#include <inttypes.h>
 #include <string.h>
 
 // The io_uring server driver. See rocketnet_server_uring.h for the shape;
@@ -66,7 +67,9 @@
 #define ROCKETNET_URING_CQE_BATCH                                          256
 
 // destroy waits this long per round for the cancels, and gives up waiting
-// after this many empty rounds (queue exit still cancels and drains)
+// after this many empty rounds. a destroy that gives up exits the ring and
+// closes the sockets, but leaks the buffer rings, the queues and the driver
+// allocation: the kernel may still write them (see rocketnet_server_uring_destroy)
 
 #define ROCKETNET_URING_DESTROY_WAIT_SECONDS                                 1
 #define ROCKETNET_URING_DESTROY_WAIT_ROUNDS                                  5
@@ -128,6 +131,7 @@ struct rocketnet_server_uring_t
     bool ipv6;
     bool ring_ready;
     bool destroying;
+    bool test_stall_destroy;                    // a test's completion that never arrives: destroy counts rounds, never waits
     rocketnet_address_t bind_address;
 
     struct io_uring ring;
@@ -641,6 +645,27 @@ static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring
 
 // ---------------------------------------------------------------------------
 
+// bytes left allocated by destroys that gave up waiting, and how many did
+
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{0};
+static std::atomic<uint64_t> rocketnet_server_uring_leaked_drivers_total{0};
+
+uint64_t rocketnet_server_uring_leaked_bytes()
+{
+    return rocketnet_server_uring_leaked_bytes_total.load();
+}
+
+uint64_t rocketnet_server_uring_leaked_drivers()
+{
+    return rocketnet_server_uring_leaked_drivers_total.load();
+}
+
+void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+    uring->test_stall_destroy = true;
+}
+
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
 {
     rocketnet_assert( bind_address );
@@ -771,6 +796,15 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 // every outstanding CQE (each cancel's own and each multishot's last), and
 // only then free the buffer rings, the ring, the sockets and the memory.
 // sends are never outstanding here: send_packets reaps all of its own.
+//
+// the wait is bounded. a destroy that gives up has not reached Free: a
+// multishot or a cancel may still be outstanding, and io_uring_queue_exit
+// only closes the ring fd while the kernel's exit work drains later. so it
+// exits the ring and closes the sockets, and leaks the buffer rings, the
+// queues (receive buffers and msghdrs, which the kernel writes) and the
+// driver allocation (send slots), counted in rocketnet_server_uring_leaked_bytes.
+// that keeps RNUringDriver FreedOnlyWhenDrained: nothing the kernel can touch
+// is freed while cq may be nonempty or a receive armed.
 
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 {
@@ -805,6 +839,9 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
                     outstanding = true;
             }
 
+            if ( uring->test_stall_destroy )
+                outstanding = true;
+
             if ( !outstanding )
                 break;
 
@@ -812,14 +849,39 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 
             if ( rocketnet_server_uring_reap_available( uring ) == 0 )
             {
-                rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
+                if ( !uring->test_stall_destroy )
+                    rocketnet_server_uring_wait( uring, ROCKETNET_URING_DESTROY_WAIT_SECONDS );
                 if ( rocketnet_server_uring_reap_available( uring ) == 0 )
                     empty_rounds++;
             }
         }
 
         if ( empty_rounds >= ROCKETNET_URING_DESTROY_WAIT_ROUNDS )
-            rocketnet_warn( "io_uring driver: destroy gave up waiting for the receive cancels; queue exit cancels the rest" );
+        {
+            // gave up: not drained, so never Free. exit the ring and close the
+            // sockets; leak every byte the kernel may still write
+
+            io_uring_queue_exit( &uring->ring );
+            uring->ring_ready = false;
+
+            uint64_t leaked = sizeof(rocketnet_server_uring_t) + (uint64_t) uring->num_queues * sizeof(rocketnet_server_uring_queue_t);
+            for ( int i = 0; i < uring->num_queues; i++ )
+            {
+                if ( uring->queues[i].buf_ring )
+                    leaked += (uint64_t) ROCKETNET_URING_RECV_BUFFERS * sizeof(struct io_uring_buf);
+                if ( uring->queues[i].fd >= 0 )
+                {
+                    close( uring->queues[i].fd );
+                    uring->queues[i].fd = -1;
+                }
+            }
+
+            rocketnet_server_uring_leaked_bytes_total += leaked;
+            rocketnet_server_uring_leaked_drivers_total++;
+
+            rocketnet_warn( "io_uring driver: destroy gave up waiting for the receive cancels; %" PRIu64 " bytes the kernel may still write are leaked, not freed", leaked );
+            return;
+        }
 
         for ( int i = 0; i < uring->num_queues; i++ )
         {
@@ -1082,6 +1144,9 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
     }
 }
 
+// RNUringDriver TransportReads: the transport reads the exposed bank, which
+// stays put until the next receive_packets swaps
+
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
@@ -1120,6 +1185,21 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 }
 
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
+{
+    (void) uring;
+}
+
+uint64_t rocketnet_server_uring_leaked_bytes()
+{
+    return 0;
+}
+
+uint64_t rocketnet_server_uring_leaked_drivers()
+{
+    return 0;
+}
+
+void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;
 }

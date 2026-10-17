@@ -83,7 +83,21 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues );
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
 
+// destroy cancels every multishot receive and waits, bounded, for every
+// outstanding completion before freeing. a destroy that gives up waiting
+// closes the ring and the sockets but leaks the memory the kernel may still
+// write, and counts it here: bytes, and drivers so leaked, since the start.
+
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
+
+uint64_t rocketnet_server_uring_leaked_bytes();
+
+uint64_t rocketnet_server_uring_leaked_drivers();
+
+// for tests: one completion that never arrives, so the next destroy counts
+// its rounds (without waiting) and takes the give-up path
+
+void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
