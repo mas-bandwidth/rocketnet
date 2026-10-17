@@ -69,7 +69,11 @@ for name in \
     reliable_sequenced_held_record_released \
     unreliable_receipts_over_lossy_link \
     unreliable_at_most_once_over_duplicating_link \
-    unreliable_dropped_when_builder_out_of_budget_never_arrives
+    unreliable_dropped_when_builder_out_of_budget_never_arrives \
+    control_disconnect_burst_each_end \
+    control_standalone_ack_each_end \
+    control_fragment_packets_each_end \
+    control_denied_when_server_full
 do
     ROCKETNET_PCAPNG_CAPTURE_DIR=test/pcapng ./bin/functional --run $name > /dev/null || exit 1
 done
@@ -92,10 +96,14 @@ python3 tools/pcapng.py summary test/pcapng/*.pcapng
 | `unreliable_receipts_over_lossy_link` | unreliable-with-receipt traffic over loss |
 | `unreliable_at_most_once_over_duplicating_link` | a 50% duplicating link |
 | `unreliable_dropped_when_builder_out_of_budget_never_arrives` | the send-drop case |
+| `control_disconnect_burst_each_end` | the redundant disconnect burst (type 6) each way, client to server and server to client |
+| `control_standalone_ack_each_end` | a standalone ack (type 8) the server sends once its ack debt reaches the threshold |
+| `control_fragment_packets_each_end` | a fragmented payload (type 9) each way, reassembled |
+| `control_denied_when_server_full` | a denied (type 1) when the server's client slots are all full |
 | `hostile_prefilter` | every `fuzz/corpus/prefilter_*` seed less its selector byte, client to server: empty, too short, wrong epoch, wrong filter value, reserved type, an all-zero request, and three well-sized session packets |
 | `fragment_seeds` | every `fuzz/corpus/fragment_*` seed's records as kind-2 records, alternating connections as the fuzz harness does |
 
-The harness never sends a type 9 fragment (its start-packet refuses a request above one wire payload), a standalone type 8 ack, or a denied, and none of the chosen tests disconnects, so those types reach the readers only through `fragment_seeds` and the regressions.
+The harness now sends a type 9 fragment (via `rocketnet_client_protocol_write_fragments` and the server mirror), a standalone type 8 ack (once the ack debt reaches the threshold), a denied (when the server has no free slot) and a disconnect burst (type 6) from either end, so those four types reach the readers from the functional harness as well as through `fragment_seeds` and the regressions.
 
 ## The caps
 
