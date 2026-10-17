@@ -4518,6 +4518,7 @@ extern void ordered_small_and_large_interleaved();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void unreliable_dropped_while_reliable_waits_never_arrives();
 extern void unreliable_dropped_when_builder_out_of_budget_never_arrives();
+extern void resend_timing_table_over_lossy_links();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -4611,6 +4612,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link },
     { "unreliable_dropped_while_reliable_waits_never_arrives", unreliable_dropped_while_reliable_waits_never_arrives },
     { "unreliable_dropped_when_builder_out_of_budget_never_arrives", unreliable_dropped_when_builder_out_of_budget_never_arrives },
+    { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
