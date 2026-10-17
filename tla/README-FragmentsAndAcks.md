@@ -204,7 +204,8 @@ done
 
 `MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
 (`Witness = "none"`, `StaleRule = "code"`), burns on, both links `"arbitrary"` under
-`SpecSafety`, checking the nine invariants and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
+`SpecSafety`, checking the twelve invariants (nine, and the three bitmap invariants
+below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
 is the same instance under `Spec` with `OpenedSurfacesOrLaps` added. The
 instance: `MaxSeq = 4`, `SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`,
 `MaxRanges = 2`, `Slots = 1`, `IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts
@@ -235,7 +236,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
 | pat-none / first / burst | `MCFragmentsAndAcksPatNone.cfg`, `...PatFirst.cfg`, `...PatBurst.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget |
-| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | required |
+| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget on a loaded bench |
 | find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails** `StaleOnlyIfOlder`: D1 | required |
 | find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | find-stale + stale-small | **fails** `StaleOnlyIfOlder`: D1 | required |
 | find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule | bench: over budget |
@@ -274,39 +275,42 @@ probe can be repeated by hand.
 ### Records
 
 The measured records are the `fragmentsandacks` rows of `tla/RUNS.tsv` (TLC 2.19, the
-pinned jar, two workers for a passing case and one for a counterexample, 110 s per
-case), re-measured after the bitmaps were added. Seventeen cases reach their declared
-result; six are `bench` debt and time out (exit 124), which is a failed measurement, not
-a proof. `MCFragmentsAndAcksPatAlternate.cfg`, a required control, no longer fits the
-budget: the bitmap state below multiplies its state space (the bitmaps section has the
-measurement), so its row is a timeout and the finding stands until its gate is decided.
+pinned jar, two workers per case, 110 s per case, each case its own shard, four at
+once), re-measured after the three bitmap invariants were added to every cfg with an
+`INVARIANTS` section. Every case reaches its declared result except the six `bench`
+rows that time out (exit 124), which is a failed measurement, not a proof.
+`MCFragmentsAndAcksPatAlternate.cfg` is a seventh `bench` row: with the bitmap state it
+is 1,422,444 distinct states, which finished in 41.0 s on an idle bench and timed out
+(110.4 s) on a loaded one, so it is declared debt rather than a required control that
+passes or fails with the bench load (the bitmaps section has the measurements). The
+required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
 |---|---|---|---|---|
-| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 111.0 s |
-| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.4 s |
-| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 19.2 s |
-| `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 15.9 s |
-| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.6 s |
-| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.6 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | **timeout (exit 124): required, a finding** |  |  | 110.4 s |
-| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.4 s |
-| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 17.0 s |
-| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 8.0 s |
-| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt |  |  | 110.5 s |
-| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 334,146 | 96,226 | 13.4 s |
-| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 205,517 | 73,495 | 8.6 s |
-| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 1,179,685 | 459,388 | 54.4 s |
-| `MCFragmentsAndAcksDefect.cfg` | pass | 374,661 | 89,755 | 8.9 s |
-| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,495 | 679 | 2.2 s |
-| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 23,327 | 8,765 | 4.2 s |
-| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,768 | 809 | 1.5 s |
-| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 30,943 | 11,465 | 3.1 s |
-| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 1.9 s |
-| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,421 | 76,216 | 7.0 s |
-| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 17.3 s |
-| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 1.4 s |
-| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 1.4 s |
+| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 110.3 s |
+| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.1 s |
+| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 9.2 s |
+| `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 8.6 s |
+| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.3 s |
+| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.3 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass (bench row) | 5,924,703 | 1,422,444 | 41.0 s |
+| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.2 s |
+| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 4.0 s |
+| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 2.1 s |
+| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt |  |  | 110.3 s |
+| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 334,146 | 96,226 | 5.1 s |
+| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 205,517 | 73,495 | 3.7 s |
+| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 1,179,685 | 459,388 | 23.6 s |
+| `MCFragmentsAndAcksDefect.cfg` | pass | 374,661 | 89,755 | 3.6 s |
+| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,495 | 679 | 0.8 s |
+| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 23,327 | 8,765 | 1.6 s |
+| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,768 | 809 | 0.9 s |
+| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 30,943 | 11,465 | 1.6 s |
+| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 1.2 s |
+| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,421 | 76,216 | 3.7 s |
+| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 7.6 s |
+| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.8 s |
+| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.9 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
@@ -321,6 +325,10 @@ are not current records; they are the evidence for the bench rows above.
 | find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the standard's rule on the instance the code's rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
 | find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
 | defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
+
+The evidence for the `pat-alternate` bench row is its run with the bitmaps outside the
+budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
+pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 
 Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
 a three-id defect instance (272 million distinct states in 50 minutes) and the serial
@@ -355,7 +363,8 @@ SentRing].seq # x`: a burned or refused x, or a record that fell below the windo
 both bits; then `bitsChecked = highestSent`. The walk then visits a named sequence s in the
 window only when slot `s % SentRing` has its unacked bit set and holds s.
 
-**Invariants**, listed after the existing ones in the three bitmap cfgs:
+**Invariants**, listed after the existing ones in every FragmentsAndAcks cfg with an
+`INVARIANTS` section (`MCFragmentsAndAcksLiveDup.cfg` has none):
 
 | Property | The rule |
 |---|---|
@@ -421,15 +430,17 @@ would let the next block's walk, or the unknown-sequence count, treat slot 1 as 
 
 **What the bitmaps cost the other rows.** The new state is not derivable from the ring:
 `bitsChecked` records when the last block arrived relative to the sends, and the two ghosts
-record what the last block named. Re-measured, every older case keeps its declared outcome
-except `MCFragmentsAndAcksPatAlternate.cfg`, a required control that now times out. Run
-outside the budget (TLC 2.19, two workers, the same bench): 1,422,444 distinct states in
-168.8 s, against 483,020 in 93.1 s before the bitmaps. With the two ghosts held constant
-in a scratch copy it is 1,027,312 distinct states in 138.2 s; with `bitsChecked` collapsed
-to a caught-up flag (the reconcile starting at `WindowLow` every time, which is
-equivalent because the reconcile is idempotent) and the ghosts kept it is 1,147,728 in
-117.8 s. No encoding of the bitmap state keeps that instance inside 110 s, so its gate is
-the decision this change leaves open.
+record what the last block named. `MCFragmentsAndAcksPatAlternate.cfg` grows from 483,020
+distinct states (93.1 s, inside the budget, before the bitmaps) to 1,422,444. Run outside
+the budget on a loaded bench (TLC 2.19, two workers, before the three invariants were
+added to its cfg): 5,924,703 states generated, 1,422,444 distinct, depth 43, no error, in
+168.8 s. With the two ghosts held constant in a scratch copy it is 1,027,312 distinct
+states in 138.2 s; with `bitsChecked` collapsed to a caught-up flag (the reconcile
+starting at `WindowLow` every time, which is equivalent because the reconcile is
+idempotent) and the ghosts kept it is 1,147,728 in 117.8 s. No encoding of the bitmap
+state keeps that instance inside 110 s on a loaded bench, so it is `bench` debt
+(`pattern-alternate-committed-instance-safety-over-budget`), like the other three pattern
+rows; its recorded run, with the three invariants, passes in 41.0 s on an idle bench.
 
 ## What TLC found
 
