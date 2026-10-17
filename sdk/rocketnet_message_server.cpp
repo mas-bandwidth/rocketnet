@@ -681,7 +681,8 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 
 // Whether the ordered path has a packet to write now: a message queued for
 // its first write, or a number at the head of the resend FIFO that is unsent
-// or past its RTO. It keeps a frame from being started for nothing.
+// or past its resend delay, min( rto, resend_interval ) (tla/RNResendTiming.tla
+// Due). It keeps a frame from being started for nothing.
 
 static bool rn_message_ordered_due( const rn_message_connection_t * connection, double now )
 {
@@ -698,7 +699,7 @@ static bool rn_message_ordered_due( const rn_message_connection_t * connection, 
             return true;                                        // a long acked prefix: let the write walk it
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
-            return slot->last_send <= 0.0 || now >= slot->last_send + ack->rto * (double) ack->backoff;
+            return slot->last_send <= 0.0 || now >= slot->last_send + rn_window_ack_resend_delay( ack );
         cursor = region->resend_fifo[cursor].next;
     }
     return false;
@@ -831,10 +832,9 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
     int written = 0;
 
     // the reliable path, one packet per call so a frame is started only for a
-    // packet that is written; the RTO back-off doubles at most once an update
+    // packet that is written; every resend waits the same delay, with no
+    // back-off (tla/RNResendTiming.tla)
     rn_window_ack_t * ack = &connection->ordered.ack;
-    const uint32_t backoff = ack->backoff;
-    bool backed_off = false;
 
     while ( written < max_packets && rn_message_ordered_due( connection, now ) )
     {
@@ -845,11 +845,6 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
         uint8_t * payload = frame + context.payload_index;
 
         const int packets = rn_ordered_write( &connection->ordered, now, &payload, 1 );
-        if ( ack->backoff != backoff )
-        {
-            backed_off = true;
-            ack->backoff = backoff;
-        }
         if ( packets == 0 )
         {
             link->abort_packet( link->transport, &context );
@@ -870,9 +865,6 @@ static void rn_message_connection_write( rn_message_object_t * object, int index
         }
         written++;
     }
-
-    if ( backed_off )
-        ack->backoff = backoff * 2 > 8 ? 8 : backoff * 2;
 
     // a reliable packet the budget could not pay waits; nothing after it
     // spends the bucket this update (RNSendBudget Wait), so this update's

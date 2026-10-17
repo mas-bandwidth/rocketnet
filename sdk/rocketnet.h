@@ -1342,6 +1342,21 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
+// The reliable resend schedule (docs/CHANNELS.md 6.4; tla/RNResendTiming.tla).
+// These are constants, not config fields, so the public message config keeps
+// its ABI1 layout. Every resend of a record waits
+// min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no back-off, and
+// rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 + 2 rttvar,
+// rto_min_ms, rto_max_ms ). Validation refuses reliable_timeout_ms below
+// ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS times
+// max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms ), the sends that
+// must fit before reliable_timeout gives up on a record
+// (RNResendTiming AttemptsBeforeTimeout).
+
+#define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                         100
+#define ROCKETNET_MESSAGE_RTO_SCALE_PERCENT                          125
+#define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
+
 // The message config table, one declaration deriving struct, defaults and
 // validation, as the transports' tables (docs/CHANNELS.md 12). Fields marked
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
@@ -1360,9 +1375,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
     INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
-    INT_FIELD( rto_initial_ms,           1000,     10, 60000,                  0 )                                         \
-    INT_FIELD( rto_min_ms,                 50,      1, 60000,                  0 )                                         \
-    INT_FIELD( rto_max_ms,               2000,     10, 60000,                  0 )                                         \
+    INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
+    INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
+    INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
     INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
 
 struct rocketnet_message_config_t

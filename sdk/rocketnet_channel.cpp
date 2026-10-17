@@ -1010,9 +1010,10 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
     // 1. The resend FIFO, oldest first (RNWindow!WriteOldest): a number never
     // sent is due now (a new message's, a chunk's, a packet the transport
-    // refused); a sent one is due when its RTO, backed off, has passed. The walk
-    // stops at the first number not yet due.
-    const double delay = ack->rto * (double) ack->backoff;
+    // refused); a sent one is due when min( rto, resend_interval ) has passed
+    // since its last send, the same delay every time (RNResendTiming!Resend,
+    // no back-off). The walk stops at the first number not yet due.
+    const double delay = rn_window_ack_resend_delay( ack );
     uint32_t cursor = ack->resend_head;
     uint32_t last_unsent = RN_RESEND_NONE;
     bool walked = true;
@@ -1125,20 +1126,13 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     // 3. Packets (9.3), under the send budget (R6)
     const int written = rn_packet_builder_write( builder, items, count, payloads, num_payloads );
 
-    // 4. The RTO's back-off: once per update that resent a number whose RTO had
-    // passed, up to 8 (6.4); each such resend is counted
-    uint32_t expired = 0;
+    // 4. Each resend written is counted; the delay never backs off (6.4,
+    // RNResendTiming)
     for ( int i = 0; i < count; i++ )
     {
         if ( items[i].taken && items[i].resend )
-        {
-            expired++;
             rn_channels_count( region->counters, ROCKETNET_COUNTER_MESSAGE_RESENT );
-        }
     }
-
-    if ( expired > 0 && ack->backoff < 8 )
-        ack->backoff = ack->backoff * 2 > 8 ? 8 : ack->backoff * 2;
 
     return written;
 }

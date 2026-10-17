@@ -11,7 +11,7 @@
 #include "rocketnet_window_send.h"
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTO, backoff, failed-send recovery, and reliable timeout (docs/CHANNELS.md
+// RTO, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // tla/RNWindow.tla).
@@ -46,15 +46,16 @@ struct rn_window_ack_t
     rn_window_send_t * send;        // the sender's numbering window (U, U', next)
     rn_region_t * region;           // the connection's carved region
 
-    double rto_initial;             // seconds (default 0.2)
-    double rto_min;                 // seconds (default 0.05)
-    double rto_max;                 // seconds (default 2.0)
+    double rto_initial;             // seconds (default 0.1)
+    double rto_min;                 // seconds (default 0.01)
+    double rto_max;                 // seconds (default 0.25)
     double reliable_timeout;        // seconds (default 10.0)
+    double resend_interval;         // seconds (default 0.1): the cap on the resend delay
+    double rto_scale;               // ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 (1.25)
 
     double srtt;                    // smoothed RTT (RFC 6298)
     double rttvar;                  // RTT variation (RFC 6298)
-    double rto;                     // current clamped RTO before backoff
-    uint32_t backoff;               // 1, 2, 4, 8: doubles on RTO pass, resets to 1 on ack
+    double rto;                     // current clamped RTO; there is no back-off (tla/RNResendTiming.tla)
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
@@ -78,6 +79,15 @@ struct rn_window_ack_t
     uint64_t oldest_number;         // message number U whose first_send is cached below
     double oldest_first_send;       // first_send time of oldest_number
 };
+
+// The resend delay of every record: min( rto, resend_interval ), the same for
+// every resend, with no back-off (docs/CHANNELS.md 6.4 "Resend";
+// tla/RNResendTiming.tla Delay with MaxBackoff = 1). The three resend walks
+// (rn_window_ack_resend, rn_ordered_write, rn_message_ordered_due) read it.
+static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
+{
+    return ack->rto < ack->resend_interval ? ack->rto : ack->resend_interval;
+}
 
 // Initializes the sent-packet map, resend FIFO, and RFC 6298 estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
@@ -107,13 +117,13 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "On ack" and "RTT, RTO and backoff"; tla/RNWindow.tla
-// ReceiveAck).
+// (docs/CHANNELS.md 6.4 "Ack" and "RTO"; tla/RNWindow.tla ReceiveAck,
+// tla/RNResendTiming.tla Sample).
 // Looks up `packet_id` in sent_index in O(1). If absent (an ack of a keep-alive
 // or pure-unreliable packet, a duplicate ack, or an ack arriving after eviction),
 // does nothing and returns 0.
 // If present: takes one RTT sample now - send_time, updates srtt, rttvar, and
-// rto = clamp(srtt + 4 * rttvar, rto_min, rto_max), resets backoff = 1, marks
+// rto = clamp(srtt * rto_scale + 2 * rttvar, rto_min, rto_max), marks
 // each still-unacked referenced number >= U acked, unlinks it from the resend
 // FIFO, frees its chunk in region->store (and frees its send descriptor back to Q
 // when its last fragment is acked), advances U and U', and removes the entry
@@ -139,14 +149,15 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 
 // Test-only: the product's walk is rn_ordered_write (sdk/rocketnet_channel.cpp).
-// Walks the resend FIFO from its head while now >= last_send + rto * backoff
-// (docs/CHANNELS.md 6.4 "On update (resend)"; tla/RNWindow.tla WriteOldest).
+// Walks the resend FIFO from its head while
+// now >= last_send + rn_window_ack_resend_delay( ack ) (docs/CHANNELS.md 6.4
+// "Resend"; tla/RNWindow.tla WriteOldest, tla/RNResendTiming.tla Resend).
 // Stops at the first entry that is not yet due, so the walk is O(due) and O(1)
 // when nothing is due. Each due number is committed in a new sent-packet entry
 // with packet_id = (*io_next_packet_id)++, its last_send is set to `now`, it is
 // moved to the tail of the resend FIFO, its number is written to `out_numbers`,
-// and MESSAGE_RESENT is incremented. If at least one RTO-expired entry was
-// resent during this walk, backoff doubles up to 8.
+// and MESSAGE_RESENT is incremented. The delay is the same for every pass;
+// nothing backs off.
 // Returns the number of resent message numbers written to `out_numbers` (0 if
 // none are due or if reliable_timeout has fired).
 uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers );

@@ -1112,7 +1112,7 @@ static void test_channels_allocator_validation()
         { "queue below its minimum",                (int) offsetof( rocketnet_message_config_t, send_queue_messages ), 15 },
         { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
         { "rto_initial above rto_max",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 3000 },
-        { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 20 },
+        { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 150 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -2952,8 +2952,8 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 1.0 );
-    check( ack.backoff == 1 );
+    check( ack.rto == 0.1 );
+    check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     const uint32_t free_desc_before = region->descriptors_free;
 
     // Unknown packet_id (keep-alive or pure-unreliable ack, or 0): ignored completely.
@@ -2965,8 +2965,8 @@ static void test_channels_window_ack_of_an_unknown_id_is_ignored()
     check( rn_window_ack_entries_in_flight( &ack ) == 1 );
     check( ack.resend_count == 1 );
     check( ack.has_rtt == 0 );
-    check( ack.rto == 1.0 );
-    check( ack.backoff == 1 );
+    check( ack.rto == 0.1 );
+    check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     check( send.U == 0 && send.U_prime == 0 );
     check( region->descriptors_free == free_desc_before );
 
@@ -3084,6 +3084,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.rto_initial_ms = 200;
+    config.rto_max_ms = 2000;                                   // so the RTO formula shows unclamped
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3113,7 +3114,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.299999 && ack.srtt < 0.300001 );
         check( ack.rttvar > 0.149999 && ack.rttvar < 0.150001 );
-        check( ack.rto > 0.899999 && ack.rto < 0.900001 );
+        check( ack.rto > 0.674999 && ack.rto < 0.675001 );     // 1.25 x 0.30 + 2 x 0.15
         check( send.U == 1 && ack.resend_count == 0 );
 
         // Subsequent ack of packet 2 at t = 1.35 does not double-ack n0.
@@ -3143,7 +3144,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
         check( ack.has_rtt == 1 );
         check( ack.srtt > 0.079999 && ack.srtt < 0.080001 );
         check( ack.rttvar > 0.039999 && ack.rttvar < 0.040001 );
-        check( ack.rto > 0.239999 && ack.rto < 0.240001 );
+        check( ack.rto > 0.179999 && ack.rto < 0.180001 );     // 1.25 x 0.08 + 2 x 0.04
         check( send.U == 1 && ack.resend_count == 0 );
     }
 
@@ -3209,11 +3210,13 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
     rn_arena_destroy( arena );
 }
 
-static void test_channels_window_backoff_doubles_to_eight_and_resets_on_ack()
+static void test_channels_window_resend_delay_never_backs_off()
 {
+    // tla/RNResendTiming.tla: every resend waits min( rto, resend_interval ),
+    // the same delay each pass; an ack moves rto, never a back-off factor
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;
+    config.rto_initial_ms = 250;                                // above the 100 ms resend interval
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3226,41 +3229,31 @@ static void test_channels_window_backoff_doubles_to_eight_and_resets_on_ack()
     rn_window_ack_t ack;
     rn_window_ack_init( &ack, &send, region, &config );
 
+    const double t0 = 1000.0;
     uint64_t n0 = 0, p0 = 0;
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
-    rn_window_ack_commit_packet( &ack, 1, &n0, 1, 0.0 );
-    check( ack.rto == 0.25 && ack.backoff == 1 );
+    rn_window_ack_commit_packet( &ack, 1, &n0, 1, t0 );
+    check( ack.rto == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.1 );     // min( rto, the interval )
 
     uint64_t next_pkt = 2;
     uint64_t out[4];
 
-    // Pass 1: due at 0.0 + 0.25 * 1 = 0.25 -> backoff becomes 2
-    check( rn_window_ack_resend( &ack, 0.249, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 1 );
-    check( rn_window_ack_resend( &ack, 0.25, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 2 );
+    // four passes, each due 0.1 after the last: the delay does not grow
+    double last = t0;
+    for ( int pass = 0; pass < 4; pass++ )
+    {
+        check( rn_window_ack_resend( &ack, last + 0.0999, &next_pkt, out, 4 ) == 0 );
+        check( rn_window_ack_resend( &ack, last + 0.1001, &next_pkt, out, 4 ) == 1 );
+        check( out[0] == n0 );
+        last += 0.1001;
+        check( rn_window_ack_resend_delay( &ack ) == 0.1 );
+    }
 
-    // Pass 2: due at 0.25 + 0.25 * 2 = 0.75 -> backoff becomes 4
-    check( rn_window_ack_resend( &ack, 0.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 2 );
-    check( rn_window_ack_resend( &ack, 0.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 4 );
-
-    // Pass 3: due at 0.75 + 0.25 * 4 = 1.75 -> backoff becomes 8
-    check( rn_window_ack_resend( &ack, 1.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 4 );
-    check( rn_window_ack_resend( &ack, 1.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 8 );
-
-    // Pass 4: due at 1.75 + 0.25 * 8 = 3.75 -> backoff stays capped at 8
-    check( rn_window_ack_resend( &ack, 3.749, &next_pkt, out, 4 ) == 0 );
-    check( ack.backoff == 8 );
-    check( rn_window_ack_resend( &ack, 3.75, &next_pkt, out, 4 ) == 1 );
-    check( ack.backoff == 8 );
-
-    // Valid ack resets backoff to 1.
-    check( rn_window_ack_on_ack( &ack, next_pkt - 1, 3.80 ) == 1 );
-    check( ack.backoff == 1 );
+    // an ack of the latest send takes a sample: rto follows it, and the
+    // resend interval still caps the delay
+    check( rn_window_ack_on_ack( &ack, next_pkt - 1, last + 0.04 ) == 1 );
+    check( ack.has_rtt == 1 );
+    check( rn_window_ack_resend_delay( &ack ) <= 0.1 );
 
     rn_arena_destroy( arena );
 }
@@ -3357,7 +3350,7 @@ static void test_channels_window_failed_send_marks_due_now()
     uint64_t out[4];
     check( rn_window_ack_resend( &ack, 1.02, &next_pkt, out, 4 ) == 2 );
     check( out[0] == 1 && out[1] == 2 );
-    check( ack.backoff == 1 );
+    check( rn_window_ack_resend_delay( &ack ) == 0.1 );         // a failed send leaves the delay alone
     check( ack.resend_head == 0 && ack.resend_tail == 2 );
     check( rn_window_ack_entries_in_flight( &ack ) == 3 );
 
@@ -3587,9 +3580,14 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
             rn_window_ack_on_acks( &ack, ack_ids, ack_count, now );
         }
 
-        // 2. Resend due numbers from the resend FIFO on the RTO.
+        // 2. Resend due numbers from the resend FIFO, one packet per tick: the
+        //    per-update packet limit the writers keep (max_packets_per_update),
+        //    so the packets written in one RTT stay under P and acks land on
+        //    live sent-map entries (docs/CHANNELS.md 14, "Sizing P"). With no
+        //    back-off an unbounded resend walk at P = 16 evicts every entry
+        //    before its ack returns, and the soak ends in RELIABLE_TIMEOUT.
         uint64_t resent_numbers[32];
-        const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 32 );
+        const uint32_t resent_count = rn_window_ack_resend( &ack, now, &next_packet_id, resent_numbers, 1 );
         check( ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
         for ( uint32_t i = 0; i < resent_count; i++ )
         {
@@ -3928,9 +3926,14 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
             next_message++;
         }
 
-        // 3. the product's write: its resend FIFO walk and its new numbers. Every
-        //    23rd packet is a failed send (resent first next update, 6.4).
-        const int written = rn_ordered_write( sender, now, pointers, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        // 3. the product's write: its resend FIFO walk and its new numbers, one
+        //    packet per tick, so the packets written in one RTT stay under P and
+        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
+        //    P"). With no back-off (6.4, RNResendTiming) a write of every due
+        //    number at P = 16 evicts each entry before its ack returns, and the
+        //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
+        //    (resent first next update, 6.4).
+        const int written = rn_ordered_write( sender, now, pointers, 1 );
         check( sender->ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
         for ( int p = 0; p < written; p++ )
         {
@@ -4335,7 +4338,7 @@ static const struct channels_test_t channels_tests[] =
     { "test_channels_window_ack_frees_the_chunk_and_advances_u", "ChannelsWindowAckFreesTheChunkAndAdvancesU", test_channels_window_ack_frees_the_chunk_and_advances_u },
     { "test_channels_window_rtt_sample_is_unambiguous_across_resends", "ChannelsWindowRttSampleIsUnambiguousAcrossResends", test_channels_window_rtt_sample_is_unambiguous_across_resends },
     { "test_channels_window_eviction_keeps_numbers_resendable", "ChannelsWindowEvictionKeepsNumbersResendable", test_channels_window_eviction_keeps_numbers_resendable },
-    { "test_channels_window_backoff_doubles_to_eight_and_resets_on_ack", "ChannelsWindowBackoffDoublesToEightAndResetsOnAck", test_channels_window_backoff_doubles_to_eight_and_resets_on_ack },
+    { "test_channels_window_resend_delay_never_backs_off", "ChannelsWindowResendDelayNeverBacksOff", test_channels_window_resend_delay_never_backs_off },
     { "test_channels_window_resend_walk_stops_at_the_first_not_due", "ChannelsWindowResendWalkStopsAtTheFirstNotDue", test_channels_window_resend_walk_stops_at_the_first_not_due },
     { "test_channels_window_failed_send_marks_due_now", "ChannelsWindowFailedSendMarksDueNow", test_channels_window_failed_send_marks_due_now },
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },

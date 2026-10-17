@@ -109,3 +109,5 @@ MCRNSentHistoryBrokenRefuseWhenFull.cfg	MCRNSentHistory.tla	invariant	SendNeverR
 MCRNScheduler.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
 MCRNSchedulerBrokenPerMessagePriority.cfg	MCRNScheduler.tla	invariant	FirstWriteInOrderPerChannel	check	rnscheduler	required	-
 MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
+MCRNResendTiming.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
+MCRNResendTimingBrokenBackoff.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
