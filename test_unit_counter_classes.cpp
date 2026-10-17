@@ -294,6 +294,7 @@ static const char * const counters_appended_names[] =
     "XDP_KERNEL_DROPPED_INVALID_TYPE",
     "XDP_KERNEL_DROPPED_WRONG_EPOCH",
     "XDP_KERNEL_PASSED_IPV6_EXTENSION",
+    "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

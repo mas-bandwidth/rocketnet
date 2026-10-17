@@ -156,6 +156,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
+// tla/RNSecurityTables.tla Request
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
                                                  const uint8_t * packet_data,
@@ -499,6 +500,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     return result;
 }
 
+// tla/RNSecurityTables.tla Request
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
                                                     const struct rocketnet_address_t * from,
                                                     const uint8_t * connection_salt,
@@ -536,7 +538,10 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    rocketnet_used_token_history_record( server->used_token_history, token_identifier, from, token_expire_timestamp, current_timestamp );
+    // no used-token history record here: a request proves nothing about who
+    // holds the token's keys, so the binding waits for a response that opens
+    // under the handshake key (STANDARD.md, Processing Connection Response
+    // Packets; tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -665,6 +670,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 // mapping's handshake client-to-server key, which is all it has to prove.
 // the checks and the slot assignment follow the standard's order.
 
+// tla/RNSecurityTables.tla Response
 static int rocketnet_server_process_connection_response( struct rocketnet_server_protocol_t * server,
                                                          int mapping_index,
                                                          uint64_t current_timestamp,
@@ -678,6 +684,19 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     (void) current_time;
 
+    // the binding: this address has proven it holds the token's keys, which a
+    // request never proves, so a replayed request from another address binds
+    // nothing. a no-op when the token is already bound; an expired token is
+    // not recorded, as the request path never recorded one
+    // (tla/RNSecurityTables.tla, BoundOnlyToOpener)
+
+    if ( mapping->token_expire_timestamp > current_timestamp )
+    {
+        rocketnet_used_token_history_record( server->used_token_history, mapping->token_identifier,
+                                             rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
+                                             mapping->token_expire_timestamp, current_timestamp );
+    }
+
     if ( mapping->client_index != -1 )
     {
         rocketnet_spam( "server ignored connection response. client is already connected" );
@@ -689,6 +708,18 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     {
         rocketnet_debug( "server ignored connection response. a client with this id is already connected" );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // with the binding at the response, two addresses can each hold a mapping
+    // for one token; the first to be admitted consumes it, and the second is
+    // refused here (tla/RNSecurityTables.tla, OneConnectionPerToken with
+    // RefuseAdmittedAtResponse)
+
+    if ( rocketnet_admitted_token_set_contains( server->admitted_token_set, mapping->token_identifier, current_timestamp ) )
+    {
+        rocketnet_debug( "server ignored connection response. connect token already admitted its connection" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
@@ -1253,6 +1284,7 @@ void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server
     rocketnet_debug( "server rotated connection cookie secret" );
 }
 
+// tla/RNSecurityTables.tla Tick
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time )
 {

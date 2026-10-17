@@ -539,6 +539,27 @@ int main()
     memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS;
     // Planning a geometry larger than the component budget never allocates it.
     check(rocketnet_server_transport_required_memory(&memory_config, "portable") > default_memory);
+
+    // The client transport's plan: defaults, unknown/NULL/auto drivers and an
+    // overflowing geometry all refuse to 0, a larger max payload plans larger,
+    // and planning allocates nothing. A create-time counting-allocator match
+    // needs a live socket, so it is left to bench/transport_memory.cpp.
+    rocketnet_client_transport_config_t client_memory_config;
+    rocketnet_client_transport_default_config(&client_memory_config);
+    check(rocketnet_client_transport_required_memory(NULL, "portable") > 0);
+    const uint64_t client_default_memory = rocketnet_client_transport_required_memory(&client_memory_config, "portable");
+    check(client_default_memory > 0);
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
+    check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
+    client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1;
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    client_memory_config.max_payload_bytes = 0;
+    client_memory_config.num_reassembly_slots = ROCKETNET_MAX_FRAGMENTS + 1;
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    client_memory_config.num_reassembly_slots = 0;
+    client_memory_config.max_payload_bytes = ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES;
+    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") > client_default_memory);
     check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {

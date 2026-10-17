@@ -599,6 +599,12 @@ reversed witnesses `MCRNSentHistoryBrokenCountEveryUnacked.cfg` and
 `MCRNSentHistoryBrokenRefuseWhenFull.cfg`. Aggregates, ack debt and the batch remain
 the rest of this module's row.
 
+**Modelled: aggregates and the batch.** `tla/FragmentsAndAcks.tla`
+(`tla/README-FragmentsAndAcks.md`) models aggregates under reordered and partial acks,
+the batch and its deferral, and burned sequences, with `SurfacedOnce`,
+`SurfacedOnlyIfOpened`, `AckedMeansSurfaced`, `BurnedNeverNamed` and the liveness
+`OpenedSurfacesOrLaps`. Ack debt and `AckConversationTerminates` remain unmodelled.
+
 ## M9. Fragment reassembly
 
 **Files.** `sdk/rocketnet_fragment.cpp:173-460`; the send split in
@@ -641,6 +647,14 @@ Completion delivers and clears straight back to `Empty`.
 **Verdict: model it, small.** This is the classic home of reassembly memory bugs: a
 final fragment arriving first, a stride fixed late, a count widened. The comments carry
 the argument; the model makes it checked. Arena bounds stay unit tests.
+
+**Modelled.** `tla/FragmentsAndAcks.tla` (`tla/README-FragmentsAndAcks.md`) models one
+slot set over a lossy link with `DeliveredExact`, `DeliveredOnce`, `CompleteDelivers`,
+`ArenaBounded` and `CountPinned`. Its findings: D1, the stale test is an unsigned
+bounded difference, not the serial comparison the standard names, so whole-payload loss
+or one late fragment poisons a slot (`StaleOnlyIfOlder`); D2, the delivered batch
+overflows under legitimate load (`BatchFullNeverFires`). `NoResurrection` (F10) and
+`SlotRecovers` remain unmodelled.
 
 ## M10. The fill phase: packet leases and sequence burns
 

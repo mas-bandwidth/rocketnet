@@ -228,6 +228,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
 }
 
+// tla/RNSentHistory.tla Send
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
@@ -281,6 +282,7 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     return result;
 }
 
+// tla/RNSentHistory.tla Send
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
@@ -290,6 +292,7 @@ bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
                                                           aggregate_id, time ) == ROCKETNET_ACK_SENT_RECORDED;
 }
 
+// tla/RNSentHistory.tla Send
 void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter )
 {
     rocketnet_assert( lost_counter );
@@ -359,7 +362,9 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
-
+// (tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
+// AckedMeansSurfaced, BurnedNeverNamed)
+// tla/RNSentHistory.tla ReceiveAck
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,
                                     uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
