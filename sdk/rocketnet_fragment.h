@@ -122,6 +122,11 @@ struct rocketnet_reassembly_counters_t
 // server sizes its set there from its configuration and its drain
 // (rocketnet_server_reassembly_delivered_capacity); a set sized below the
 // bound counts BATCH_FULL for each completion past it.
+// The delivered arena packs completions by bytes at a 16-byte stride, so
+// its size is a byte bound beside the count bound, not capacity x max
+// payload: the bytes one update completes are the fragments it drains plus
+// what slots already held (rocketnet_server_reassembly_delivered_bytes). A
+// completion that does not fit the bytes also counts BATCH_FULL.
 // completed_payload and completed_bytes report the last process call's
 // completion, so a caller delivers in arrival position.
 
@@ -136,17 +141,28 @@ struct rocketnet_reassembly_set_t
     uint8_t * arena;                                // num_connections * num_slots * slot_arena_bytes
     int delivered_capacity;                         // completed payloads deliverable per update
     int num_delivered;
-    uint8_t * delivered;                            // delivered_capacity * max_payload_bytes
+    size_t delivered_bytes;                         // the delivered arena's size: the caller's byte bound
+    size_t delivered_used;                          // bytes packed this update
+    uint8_t * delivered;                            // delivered_bytes, completions packed at a 16-byte stride
     uint8_t * completed_payload;                    // the last process call's completion, into delivered
     int completed_bytes;
 };
 
+#define ROCKETNET_REASSEMBLY_DELIVERED_ALIGN        16
+#define ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( n ) ( ( (size_t) (n) + ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) & ~(size_t) ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) )
+
 // Requested component bytes, excluding allocator overhead. Zero means invalid
 // geometry or integer overflow; estimation never allocates or touches storage.
+// The plain forms size the delivered arena at capacity x the aligned maximum
+// payload; the _delivered forms take the caller's byte bound, at least one
+// maximum payload.
 uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
 bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
+uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
+bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
 
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
 
 // The server's delivered capacity from its configuration: the completion
 // bound above at the server's drain, ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
@@ -154,6 +170,13 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
 // larger of the server's two receive paths. Zero for invalid geometry.
 
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots );
+
+// The server's delivered arena bytes beside that count: the smaller of
+// capacity x the aligned maximum payload and the drain's fragment bytes
+// plus the payloads half-held in slots, padded to the packing stride.
+// Zero for invalid geometry.
+
+uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_slots, int max_payload_bytes );
 
 void rocketnet_reassembly_set_destroy( struct rocketnet_reassembly_set_t * set );
 

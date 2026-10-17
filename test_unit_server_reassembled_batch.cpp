@@ -31,6 +31,7 @@
 #include "rocketnet_ack.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_server_protocol.h"
@@ -127,7 +128,9 @@ static void server_reassembled_batch_holds_legitimate_load()
     server.acks = rocketnet_server_acks_create( NULL, SRB_NUM_CLIENTS );
     const int delivered_capacity = rocketnet_server_reassembly_delivered_capacity( SRB_NUM_CLIENTS, num_slots );
     check( delivered_capacity >= SRB_TOTAL_PAYLOADS );
-    server.reassembly = rocketnet_reassembly_set_create( NULL, SRB_NUM_CLIENTS, num_slots, max_payload_bytes, delivered_capacity );
+    const uint64_t delivered_bytes = rocketnet_server_reassembly_delivered_bytes( SRB_NUM_CLIENTS, num_slots, max_payload_bytes );
+    check( delivered_bytes >= (uint64_t) SRB_TOTAL_PAYLOADS * SRB_PAYLOAD_BYTES );
+    server.reassembly = rocketnet_reassembly_set_create_delivered( NULL, SRB_NUM_CLIENTS, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes );
     server.counters = &server_counters;
     check( server.encryption_map && server.used_token_history && server.admitted_token_set &&
            server.client_slots && server.acks && server.reassembly );
@@ -290,6 +293,7 @@ static void server_reassembled_batch_holds_legitimate_load()
     for ( int d = 0; d < num_delivered; d++ )
     {
         check( srb_payload_matches( delivered_data[d], delivered_client[d], delivered_k[d] ) );
+        check( ( (uintptr_t) delivered_data[d] & ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) == 0 );
         check( !seen[delivered_client[d]][delivered_k[d]] );
         seen[delivered_client[d]][delivered_k[d]] = true;
     }
@@ -311,3 +315,142 @@ static void server_reassembled_batch_holds_legitimate_load()
 }
 
 REGISTER_UNIT_TEST( server_reassembled_batch_holds_legitimate_load );
+
+// The delivered arena is sized by bytes beside the count: what one update
+// can complete is its drained fragments plus the payloads half-held in
+// slots, not capacity x max payload. A small server with a large maximum
+// payload stays inside the reassembly budget, as it did when the arena was
+// connections x slots x max payload.
+
+static void server_reassembly_large_payload_small_geometry_fits_the_budget()
+{
+    const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
+
+    // 1 client, 8 slots, 70000-byte payloads: accepted, as before the
+    // count bound grew past connections x slots
+    {
+        const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, 8 );
+        const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 8, 70000 );
+        check( capacity == ( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS + 8 ) / 2 );
+        check( bytes == (uint64_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
+                        8ULL * 70000 + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) );
+        check( bytes < (uint64_t) capacity * 70000 );
+        check( rocketnet_reassembly_memory_allowed_delivered( 1, 8, 70000, capacity, bytes ) );
+        check( rocketnet_reassembly_memory_required_delivered( 1, 8, 70000, capacity, bytes ) < budget );
+
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        config.max_clients = 1;
+        config.num_reassembly_slots = 8;
+        config.max_payload_bytes = 70000;
+        check( rocketnet_server_transport_required_memory( &config, "portable" ) != 0 );
+
+        struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create_delivered( NULL, 1, 8, 70000, capacity, bytes );
+        check( set );
+        check( set->delivered_capacity == capacity && set->delivered_bytes == bytes );
+        rocketnet_reassembly_set_destroy( set );
+    }
+
+    // the largest fragmented payload at 1 client and the most slots: also
+    // accepted, as before
+    {
+        const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, ROCKETNET_MAX_FRAGMENTS );
+        const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES );
+        check( rocketnet_reassembly_memory_allowed_delivered( 1, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, capacity, bytes ) );
+    }
+
+    // where the count bound is the smaller, it is the one used: few
+    // completions of small payloads never exceed capacity x aligned max
+    {
+        const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, 1 );
+        const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 1, ROCKETNET_MAX_PAYLOAD_BYTES );
+        check( bytes <= (uint64_t) capacity * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( ROCKETNET_MAX_PAYLOAD_BYTES ) );
+    }
+
+    // invalid geometry is zero
+    check( rocketnet_server_reassembly_delivered_bytes( 0, 8, 16384 ) == 0 );
+    check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_PAYLOAD_BYTES - 1 ) == 0 );
+    check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1 ) == 0 );
+    check( rocketnet_reassembly_memory_required_delivered( 1, 8, 16384, 4, 16383 ) == 0 );
+
+    printf( "server_reassembly_large_payload_small_geometry_fits_the_budget\n" );
+}
+
+REGISTER_UNIT_TEST( server_reassembly_large_payload_small_geometry_fits_the_budget );
+
+// The byte bound is enforced, not only planned: completions pack at the
+// 16-byte stride, and one that would run past the arena's bytes counts
+// BATCH_FULL even with count to spare, and delivers nothing.
+
+static const struct rocketnet_reassembly_counters_t srb_fragment_counters = {
+    ROCKETNET_COUNTER_FRAGMENT_ZERO_PAYLOAD_ID,
+    ROCKETNET_COUNTER_FRAGMENT_STALE,
+    ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID,
+    ROCKETNET_COUNTER_FRAGMENT_INDEX_OUT_OF_RANGE,
+    ROCKETNET_COUNTER_FRAGMENT_COUNT_MISMATCH,
+    ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE,
+    ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX,
+    ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+
+static int srb_complete_payload( struct rocketnet_reassembly_set_t * set, uint32_t payload_id, int first_bytes, int final_bytes,
+                                 uint64_t * counters )
+{
+    uint8_t fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES];
+    rocketnet_write_fragment_header( fragment, payload_id, 0, 2 );
+    memset( fragment + ROCKETNET_FRAGMENT_HEADER_BYTES, (int) payload_id, (size_t) first_bytes );
+    check( rocketnet_reassembly_process_fragment( set, 0, fragment, ROCKETNET_FRAGMENT_HEADER_BYTES + first_bytes, counters, &srb_fragment_counters ) );
+    rocketnet_write_fragment_header( fragment, payload_id, 1, 2 );
+    memset( fragment + ROCKETNET_FRAGMENT_HEADER_BYTES, (int) payload_id, (size_t) final_bytes );
+    check( rocketnet_reassembly_process_fragment( set, 0, fragment, ROCKETNET_FRAGMENT_HEADER_BYTES + final_bytes, counters, &srb_fragment_counters ) );
+    return set->completed_bytes;
+}
+
+static void server_reassembly_delivered_packs_by_bytes()
+{
+    struct rocketnet_counters_t counters_storage;
+    memset( &counters_storage, 0, sizeof(counters_storage) );
+    uint64_t * counters = counters_storage.values;
+
+    // count 8, bytes 4096: two 1500-byte payloads pack (1500 pads to 1504),
+    // the third would end at 4508 > 4096 and is BATCH_FULL
+    struct rocketnet_reassembly_set_t * set = rocketnet_reassembly_set_create_delivered( NULL, 1, 4, 4096, 8, 4096 );
+    check( set );
+    rocketnet_reassembly_set_begin_update( set );
+
+    check( srb_complete_payload( set, 1, 1000, 500, counters ) == 1500 );
+    const uint8_t * first = set->completed_payload;
+    check( first == set->delivered );
+    check( srb_complete_payload( set, 2, 1000, 500, counters ) == 1500 );
+    check( set->completed_payload == set->delivered + 1504 );
+    check( ( (uintptr_t) set->completed_payload & ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) == ( (uintptr_t) set->delivered & ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) );
+    check( srb_complete_payload( set, 3, 1000, 500, counters ) == 0 );
+    check( set->num_delivered == 2 );
+    check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 3 );
+    check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 1 );
+    for ( int b = 0; b < 1500; b++ )
+        check( first[b] == 1 );
+
+    // the next update reclaims the bytes
+    rocketnet_reassembly_set_begin_update( set );
+    check( set->delivered_used == 0 );
+    check( srb_complete_payload( set, 4, 1000, 500, counters ) == 1500 );
+    check( set->completed_payload == set->delivered );
+    check( counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL] == 1 );
+
+    rocketnet_reassembly_set_destroy( set );
+
+    // the plain create sizes bytes at capacity x the aligned maximum, so
+    // capacity maximum payloads always fit
+    set = rocketnet_reassembly_set_create( NULL, 1, 2, 4100, 2 );
+    check( set );
+    check( set->delivered_bytes == 2 * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( 4100 ) );
+    rocketnet_reassembly_set_destroy( set );
+
+    printf( "server_reassembly_delivered_packs_by_bytes\n" );
+}
+
+REGISTER_UNIT_TEST( server_reassembly_delivered_packs_by_bytes );
