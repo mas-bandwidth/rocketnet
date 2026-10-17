@@ -69,7 +69,9 @@ void control_standalone_ack_each_end()
     // packets and sends each; the server is updated (not pumped) so it sends
     // no payload back, and its ack debt reaches the threshold
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    uint8_t payload[4] = { 1, 2, 3, 4 };
+    // a SINGLE message: three data bytes and the trailing form byte, so the
+    // capture's payload records are valid message payloads, not refusals
+    uint8_t payload[4] = { 1, 2, 3, ROCKETNET_MESSAGE_FORM_SINGLE };
     const int sends = ROCKETNET_ACK_DEBT_THRESHOLD + 8;
     for ( int i = 0; i < sends; i++ )
     {
