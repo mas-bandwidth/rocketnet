@@ -1714,7 +1714,7 @@ static void unreliable_past_limit_refused_counted_and_not_wedged()
     const int limit = (int) client->object.unreliable_limit;
     check( limit > 1000 && limit < ROCKETNET_MAX_PAYLOAD_BYTES );
 
-    static uint8_t message[ROCKETNET_MAX_PAYLOAD_BYTES * 2];
+    static uint8_t message[16384];
     mo_fill( message, 1, (uint32_t) limit );
     check( rocketnet_message_client_send( client, 0, ROCKETNET_UNRELIABLE, message, limit ) != 0 );
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == 0 );
