@@ -447,6 +447,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 // tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
+// tla/RNReceipts.tla EmitAck
 static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, uint32_t status )
 {
     if ( serial == 0 )
@@ -484,6 +485,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
+// tla/RNReceipts.tla WritePacket
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -567,6 +569,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     rn_sent_index_insert( region, packet_id, entry_index );
 }
 
+// tla/RNReceipts.tla WritePacket
 void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now )
 {
     rn_window_ack_commit( ack, packet_id, numbers, count, NULL, 0, now );
@@ -671,6 +674,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     return 1;
 }
 
+// tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -682,6 +686,7 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
     ack->receipt_visible_tail = ack->receipt_head;
 }
 
+// tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -707,6 +712,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     }
 }
 
+// tla/RNReceipts.tla TakeReceipt
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !ack || !out || capacity < 1 )
