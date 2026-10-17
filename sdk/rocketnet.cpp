@@ -423,23 +423,35 @@ uint64_t rocketnet_allocation_overhead()
 
 bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
 {
-    bool refused;
+    return rocketnet_allocator_ex( malloc_function, free_function ) == ROCKETNET_STATUS_OK;
+}
+
+int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+{
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: a partial set is INVALID_ARGUMENT,
+    // a replacement after init (or during the transition) is ALREADY_INITIALIZED,
+    // and outstanding allocations are LIVE_ALLOCATIONS.
+    int status = ROCKETNET_STATUS_OK;
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
-        refused = !malloc_function || !free_function || rocketnet_initialized || rocketnet_transitioning || rocketnet_allocations != 0;
-        if ( !refused )
+        if ( !malloc_function || !free_function )
+            status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        else if ( rocketnet_initialized || rocketnet_transitioning )
+            status = ROCKETNET_STATUS_ALREADY_INITIALIZED;
+        else if ( rocketnet_allocations != 0 )
+            status = ROCKETNET_STATUS_LIVE_ALLOCATIONS;
+        else
         {
             rocketnet_malloc_function = malloc_function;
             rocketnet_free_function = free_function;
         }
     }
-    if ( refused )
+    if ( status != ROCKETNET_STATUS_OK )
     {
         rocketnet_error( "allocator replacement requires an uninitialized library with no live allocations" );
         rocketnet_api_misuse_record();
-        return false;
     }
-    return true;
+    return status;
 }
 
 void * rocketnet_malloc( void * context, size_t bytes )
@@ -624,11 +636,28 @@ void * rocketnet_global_context = NULL;
 
 bool rocketnet_init( void * context )
 {
+    return rocketnet_init_ex( context, NULL );
+}
+
+bool rocketnet_init_ex( void * context, int * status )
+{
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: re-entry and the transition are
+    // ALREADY_INITIALIZED, a failed platform or sodium start is
+    // PLATFORM_INIT_FAILED or CRYPTO_INIT_FAILED, and success is OK.
+    bool already_initialized = false;
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         if ( rocketnet_initialized || rocketnet_transitioning )
-            return false;
-        rocketnet_transitioning = true;
+            already_initialized = true;
+        else
+            rocketnet_transitioning = true;
+    }
+    if ( already_initialized )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_ALREADY_INITIALIZED;
+        rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
+        return false;
     }
 
     // Platform discovery uses the caller's allocator context during startup.
@@ -645,6 +674,8 @@ bool rocketnet_init( void * context )
             std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
             rocketnet_transitioning = false;
         }
+        if ( status )
+            *status = platform_ready ? ROCKETNET_STATUS_CRYPTO_INIT_FAILED : ROCKETNET_STATUS_PLATFORM_INIT_FAILED;
         rocketnet_error( platform_ready ? "failed to initialize sodium" : "failed to initialize platform" );
         return false;
     }
@@ -661,30 +692,50 @@ bool rocketnet_init( void * context )
         rocketnet_initialized = true;
         rocketnet_transitioning = false;
     }
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
     return true;
 }
 
 void rocketnet_term()
 {
+    (void) rocketnet_term_ex();
+}
+
+int rocketnet_term_ex()
+{
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: nothing to terminate is
+    // NOT_INITIALIZED, a term with outstanding allocations is refused with
+    // LIVE_ALLOCATIONS, and a completed term is OK.
+    bool not_initialized = false;
     bool live_allocations = false;
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         if ( !rocketnet_initialized || rocketnet_transitioning )
-            return;
-        live_allocations = rocketnet_allocations != 0;
-        if ( !live_allocations )
-            rocketnet_transitioning = true;
+            not_initialized = true;
+        else
+        {
+            live_allocations = rocketnet_allocations != 0;
+            if ( !live_allocations )
+                rocketnet_transitioning = true;
+        }
+    }
+    if ( not_initialized )
+    {
+        rocketnet_error( "rocketnet_term: rocketnet is not initialized" );
+        return ROCKETNET_STATUS_NOT_INITIALIZED;
     }
     if ( live_allocations )
     {
         rocketnet_error( "destroy all objects and allocations before terminating rocketnet" );
-        return;
+        return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
     rocketnet_platform_term();
     rocketnet_global_context = NULL;
     std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
     rocketnet_initialized = false;
     rocketnet_transitioning = false;
+    return ROCKETNET_STATUS_OK;
 }
 
 // ---------------------------------------------------------------

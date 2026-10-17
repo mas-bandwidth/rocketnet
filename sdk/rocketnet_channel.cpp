@@ -236,6 +236,7 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
     return ROCKETNET_CHANNEL_SEND_OK;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -253,6 +254,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -269,6 +271,7 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
     return sequencing;
 }
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -281,6 +284,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
+// tla/RNChannel.tla DeliverMessage
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -316,6 +320,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
+// tla/RNChannel.tla OpenPacket
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -385,6 +390,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //                  RELIABLE_ORDERED, the receive side
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 {
     // 7.2 Drain: after an ordered delivery on a channel, deliver the held
@@ -425,6 +431,7 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
     }
 }
 
+// tla/RNChannel.tla DeliverMessage
 int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -535,6 +542,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
 // whole message dispatched as one only when every chunk is in.
 
+// tla/RNChannel.tla DeliverMessage
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
 {
     rn_region_t * region = channels->region;
@@ -673,6 +681,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
+// tla/RNChannel.tla ReceiveAck
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into
@@ -710,6 +719,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
+// tla/RNChannel.tla EndUpdate
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
     if ( !channels )
@@ -736,6 +746,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla Enqueue
 static void rn_ready_push( rn_channels_t * channels, uint32_t channel )
 {
     rn_channel_send_t * send = channels->region->channel_send;
@@ -765,6 +776,7 @@ static void rn_ready_remove( rn_channels_t * channels, uint32_t channel )
     send[channel].ready_next = RN_DESCRIPTOR_NONE;
 }
 
+// tla/RNChannel.tla RefuseSend
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes )
 {
     if ( !channels || channels->pending != RN_DESCRIPTOR_NONE )
@@ -801,6 +813,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     return rn_region_send_write_pointer( region, d );
 }
 
+// tla/RNChannel.tla Enqueue
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
@@ -908,6 +921,7 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
+// tla/RNChannel.tla WritePacket
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
     const rn_region_t * region = ordered->channels.region;

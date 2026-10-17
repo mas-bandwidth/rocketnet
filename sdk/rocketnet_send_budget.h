@@ -101,6 +101,7 @@ struct rocketnet_send_budget_t
 // a budget is valid from 1 kbps to ROCKETNET_SEND_BUDGET_MAX_KBPS; 0 is refused,
 // never read as "unlimited"
 
+// tla/RNSendBudget.tla Init
 inline bool rocketnet_send_budget_kbps_valid( uint32_t kbps )
 {
     return kbps >= ROCKETNET_SEND_BUDGET_MIN_KBPS && kbps <= ROCKETNET_SEND_BUDGET_MAX_KBPS;
@@ -174,6 +175,7 @@ inline bool rocketnet_send_budget_time_valid( double now )
 // RNSendBudget!Init: a full bucket. Refuses 0, anything above the maximum and
 // a non-finite time, leaving the budget zeroed (it then admits nothing).
 
+// tla/RNSendBudget.tla Init
 inline bool rocketnet_send_budget_init( struct rocketnet_send_budget_t * budget, uint32_t kbps, double now )
 {
     if ( !budget )
@@ -193,6 +195,7 @@ inline bool rocketnet_send_budget_init( struct rocketnet_send_budget_t * budget,
 // depth. A time at or before the last refill adds nothing and does not move
 // the clock back.
 
+// tla/RNSendBudget.tla Tick
 inline void rocketnet_send_budget_refill( struct rocketnet_send_budget_t * budget, double now )
 {
     if ( !budget || !rocketnet_send_budget_time_valid( now ) || now <= budget->last_time )
@@ -208,6 +211,7 @@ inline void rocketnet_send_budget_refill( struct rocketnet_send_budget_t * budge
 // RNSendBudget!Tick with run: the refill, then a new send phase: the class
 // order and the reliable wait start over.
 
+// tla/RNSendBudget.tla Tick
 inline void rocketnet_send_budget_begin_update( struct rocketnet_send_budget_t * budget, double now )
 {
     if ( !budget )
@@ -241,6 +245,7 @@ inline bool rocketnet_send_budget_set_kbps( struct rocketnet_send_budget_t * bud
 
 // RNSendBudget!Fits: the guard every spend passes
 
+// tla/RNSendBudget.tla Fits
 inline bool rocketnet_send_budget_can_send( const struct rocketnet_send_budget_t * budget, int wire_bytes )
 {
     return budget && wire_bytes >= 1 && wire_bytes <= ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES &&
@@ -250,6 +255,7 @@ inline bool rocketnet_send_budget_can_send( const struct rocketnet_send_budget_t
 // RNSendBudget!Send's tokens' = tokens - s: spends only what fits (the check is
 // the rule; spending without it is RNSendBudget's BrokenOverspend witness).
 
+// tla/RNSendBudget.tla Send
 inline bool rocketnet_send_budget_spend( struct rocketnet_send_budget_t * budget, int wire_bytes )
 {
     if ( !rocketnet_send_budget_can_send( budget, wire_bytes ) )
@@ -268,6 +274,7 @@ inline bool rocketnet_send_budget_spend( struct rocketnet_send_budget_t * budget
 // it is counted, and a reliable one waits rather than spend the bytes the
 // earlier class was promised.
 
+// tla/RNSendBudget.tla Send, Drop and EndUpdate
 inline int rocketnet_send_budget_admit( struct rocketnet_send_budget_t * budget, int send_class, int wire_bytes )
 {
     const int rank = rocketnet_send_budget_class_rank( send_class );

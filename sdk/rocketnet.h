@@ -121,14 +121,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
     #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
-// The number of unique ROCKETNET_EXPORT_FUNC entry points compiled into the
-// non-development library (ROCKETNET_DEVELOPMENT=0). The public-API NULL audit
-// in sdk/rocketnet_tests.cpp holds a mirror of these names and fails when the
-// two drift, so a new exported entry point without a NULL case is caught at
-// test time. rocketnet_init is declared once for C and once for C++ and counts
-// once; the development-only rocketnet_write_dev_connect_token is not in this
-// count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 136
+// tools/check_exports.py derives the set of exported entry points from these
+// ROCKETNET_EXPORT_FUNC declarations and refuses any name missing from the
+// rocketnet_test_exports mirror in sdk/rocketnet_tests.cpp, any table name this
+// header does not declare, and any duplicate. rocketnet_init is declared once
+// for C and once for C++ and counts once; the development-only
+// rocketnet_write_dev_connect_token is excluded, its behaviour covered by the
+// development library's own tests.
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -288,7 +287,17 @@ ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context = NULL );
 ROCKETNET_EXPORT_FUNC bool rocketnet_init( void * context );
 #endif
 
+// As rocketnet_init, with the exact section-2.1 code written to *status on
+// every return path when status is not NULL. A failure also logs one
+// rocketnet_error line. The non-_ex form passes NULL and keeps its result.
+ROCKETNET_EXPORT_FUNC bool rocketnet_init_ex( void * context, int * status );
+
 ROCKETNET_EXPORT_FUNC void rocketnet_term();
+
+// As rocketnet_term, returning the section-2.1 code: OK when the library
+// terminated, NOT_INITIALIZED when there was nothing to terminate, and
+// LIVE_ALLOCATIONS when the term refused. A failure logs one error line.
+ROCKETNET_EXPORT_FUNC int rocketnet_term_ex( void );
 
 // -----------------------------------------
 
@@ -376,6 +385,11 @@ ROCKETNET_EXPORT_FUNC void rocketnet_spam( const char * format, ... );
 // original pointer on free.
 // a NULL malloc_function or free_function is a counted no-op that returns false.
 ROCKETNET_EXPORT_FUNC bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+
+// As rocketnet_allocator, returning the section-2.1 code: INVALID_ARGUMENT for
+// a partial set, ALREADY_INITIALIZED after init or during the transition, and
+// LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line.
+ROCKETNET_EXPORT_FUNC int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // Counts every refused API misuse since the process started: a create before
 // rocketnet_init, a late or partial rocketnet_allocator, and any other call the
@@ -670,6 +684,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
+// The _ex form: same contract, and when status is not NULL it is written with
+// ROCKETNET_STATUS_OK on success and the section-2.1 code of the refusal on
+// every failure exit. The non-_ex form is a thin wrapper passing NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
+
 // a NULL client_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
 
@@ -898,6 +917,12 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
 // config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
+
+// As rocketnet_server_transport_create, with the exact section-2.1 code
+// written to *status on every return path when status is not NULL
+// (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
+// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 
 // a NULL server_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
@@ -1192,6 +1217,11 @@ struct rocketnet_frame_sync_t;
 
 ROCKETNET_EXPORT_FUNC struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate );
 
+// As rocketnet_frame_sync_create, with the section-2.1 code written to *status
+// on every return path when status is not NULL (F1 INVALID_ARGUMENT,
+// F2 OUT_OF_MEMORY, F3 TIMER_CREATE_FAILED). A failure logs one error line.
+ROCKETNET_EXPORT_FUNC struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status );
+
 // a NULL frame_sync is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync );
 
@@ -1411,6 +1441,11 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_me
 // 1 when the config is accepted, else 0 with a log line naming the rule.
 // NULL means the defaults. Allocation-free; safe before init.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
+
+// As rocketnet_message_validate_config, with the section-2.1 code written to
+// *status on every return path when status is not NULL (CONFIG_OUT_OF_RANGE on
+// refusal). A refusal logs one error line.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
 
 // The exact bytes of one connection's region (docs/CHANNELS.md 14): the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;

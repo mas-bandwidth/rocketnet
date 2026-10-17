@@ -16,6 +16,7 @@ static const bool rn_channel_unreliable_sequenced_enabled = true;
 static const bool rn_channel_reliable_sequenced_enabled = true;
 static const uint32_t RN_SEQUENCED_RELIABLE_HOLD = 0x80000000u;
 
+// tla/RNChannelTypes.tla OpenPacket
 static bool rn_sequenced_reliable_hold( uint32_t hold )
 {
     return hold != RN_DESCRIPTOR_NONE && ( hold & RN_SEQUENCED_RELIABLE_HOLD ) != 0;
@@ -94,6 +95,7 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
     return delivery;
 }
 
+// tla/RNChannelTypes.tla Dispatch
 // RNChannelTypes!Dispatch for a code-4 block. The first fragment to arrive is
 // the anchor; rx->pad holds its first number, and only one block per channel
 // can be the newest sequenced state. Each fragment is copied once to its own
@@ -184,6 +186,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
+// tla/RNChannelTypes.tla Dispatch
 // RNChannelTypes!Dispatch: code 1 does not consult the reliable receive window.
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
@@ -362,6 +365,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
+// tla/RNChannelTypes.tla Drain
 // RNChannelTypes!Drain: the ordered transition has already opened the epoch.
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel )
 {

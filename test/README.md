@@ -6,6 +6,9 @@ directory remains the complete drop-in set.
 - `serialize.h` — mas-bandwidth/serialize 1.15, vendored so the serialize
   read of rocketnet.h (the C++ stream surface) is compiled and exercised by
   `bin/test_serialize`. Refresh it when the serialize pin moves.
+- `wycheproof/` — C2SP/wycheproof known-answer vectors for the primitives
+  rocketnet calls (ChaCha20-Poly1305, X25519, Ed25519), read by
+  test/wycheproof.h. See test/wycheproof/README.md for the pin and hashes.
 
 ## Running the suite
 
