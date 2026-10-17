@@ -47,6 +47,17 @@ links the release that carries the fix. The release is cut from `main` by
 [docs/RELEASING.md](docs/RELEASING.md). A security release also carries the
 advisory reference in its release notes.
 
+## Fuzz findings
+
+A fuzz finding is minimized first (`-minimize_crash=1`), then converted with
+`tools/fuzz_finding_to_pcapng.py <harness> <input> --name <name>`, and lands
+with its fix in the same pull request. The unit-tier replay
+(`pcapng_corpus_replay`) reads `test/pcapng/regress/` and holds the finding
+thereafter. `tools/check_fuzz_regressions.py` refuses a regression seed without
+its capture, a capture without its seed, and a capture that does not carry the
+seed's bytes. A finding with no pcapng form keeps its `regress_` seed in the
+harness corpus and names why in the pull request.
+
 ## Scope and security posture
 
 This policy covers the rocketnet library and its wire protocol. The threat model,
