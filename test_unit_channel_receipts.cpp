@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// RNReceipts Send: code 5 must be accepted while later receipt types remain gated.
+// RNReceipts Send: all three receipt types are accepted by the send mask.
 
 #include "test_unit_registry.h"
 #include "sdk/rocketnet.h"
@@ -60,8 +60,8 @@ static void unreliable_receipt_acked_or_loss_exactly_once()
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
     rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
-    rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED );
-    rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED );
+    rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
+    rocketnet_unit_check( rn_channels_send_check( &channels, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT, 0 ) == ROCKETNET_CHANNEL_SEND_OK );
     rn_arena_destroy( arena );
 
     receipt_fixture_t f;

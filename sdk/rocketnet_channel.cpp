@@ -772,9 +772,12 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
 
     rn_region_t * region = channels->region;
 
+    const int receipt_base = rn_channels_reliable_receipt_base( type );
+
     // RNChannel!RefuseSend: a type outside the mask is refused and counted (7.5)
     if ( rn_channels_send_check( channels, type, channel ) != ROCKETNET_CHANNEL_SEND_OK ||
-         ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
+         ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED &&
+           type != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && receipt_base < 0 ) )
         return NULL;
 
     // an exhausted connection sends nothing more: the owner kicks it (R5)
@@ -789,7 +792,11 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     channels->pending = d;
     channels->pending_bytes = bytes;
     channels->pending_channel = channel;
-    region->send_descriptors[d].reliability = (uint8_t) type;
+    // RNReceipts EffectiveKind: public 6/7 use the existing reliable code
+    // 2/3 numbering and resend path; the flag requests one ACKED outcome.
+    region->send_descriptors[d].reliability = (uint8_t) ( receipt_base >= 0 ? receipt_base : type );
+    if ( receipt_base >= 0 )
+        region->send_descriptors[d].flags |= RN_SEND_FLAG_RECEIPT_RELIABLE;
 
     return rn_region_send_write_pointer( region, d );
 }
@@ -808,7 +815,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     const uint8_t type = descriptor->reliability;
-    if ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED )
+    if ( type != ROCKETNET_CHANNEL_TYPE_RELIABLE && type != ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED &&
+         type != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED )
         return false;
     channels->pending = RN_DESCRIPTOR_NONE;
 
@@ -817,11 +825,17 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     // takes one number; a larger block takes one number per chunk.
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
-    const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 : rn_channels_small_limit( channels );
+    const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
+        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 16 : rn_channels_small_limit( channels );
     descriptor->fragments = (uint16_t) ( bytes <= small_limit ? 1 : ( bytes + F - 1 ) / F );
     descriptor->channel = (uint16_t) channel;
     descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
-    descriptor->ordering = type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ? rn_channels_send_ordered( channels, channel ) : 0;
+    if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED )
+        descriptor->ordering = rn_channels_send_ordered( channels, channel );
+    else if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED )
+        descriptor->sequencing = rn_channels_send_sequenced( channels, channel, &descriptor->ordering );
+    else
+        descriptor->ordering = 0;
     descriptor->next = RN_DESCRIPTOR_NONE;
 
     // the channel's FIFO: first writes are in ordering order (9.2)
@@ -914,6 +928,7 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
     item->bytes = bytes;
     item->number = slot->number;
     item->ordering = rn_u24( descriptor->ordering );
+    item->sequencing = rn_u24( descriptor->sequencing );
     item->descriptor = slot->descriptor;
     item->channel = descriptor->channel;
     item->code = descriptor->reliability;        // RNChannelTypes!WritePacket keeps code 2 on every resend

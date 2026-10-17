@@ -56,11 +56,11 @@
 
 // the enabled application types; each type card adds only its own bit (7.5)
 
-#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT ) )
+#define ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION                 ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ) | ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE_WITH_RECEIPT ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) )
 
 // a receipt type's base type: 5 travels as code 0, 6 as code 2, 7 as code 3
 
-#define ROCKETNET_CHANNEL_RECEIPT_BASE( type )                  ( (type) < 5 ? (type) : (type) - 5 )
+#define ROCKETNET_CHANNEL_RECEIPT_BASE( type )                  ( (type) < 5 ? (type) : ( (type) == 5 ? 0 : (type) - 4 ) )
 
 // what a dispatch did with one record (docs/CHANNELS.md 7.2)
 
@@ -141,8 +141,7 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel );
 
 // RNChannel!Enqueue, the sequenced half: ordering = ordered_write,
-// sequencing = sequenced_write++. Disabled in the first version; the sequenced
-// card calls it.
+// sequencing = sequenced_write++. Codes 1 and 4 share this transition.
 
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering );
 
@@ -160,8 +159,8 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
 // (RNChannel!Enqueue's ordering assignment, 7.1); `bytes` may be less than
 // start reserved, never more.
 //
-// RELIABLE (type 2, received on channel 0) and RELIABLE_ORDERED (type 3)
-// travel this path.
+// RELIABLE (type 2, received on channel 0), RELIABLE_ORDERED (type 3), and
+// RELIABLE_SEQUENCED (type 4) travel this path.
 // NULL (and no
 // message) for a type that is not enabled (counted MESSAGE_SEND_TYPE_NOT_ENABLED),
 // a bad channel or size, a start already pending, a region already exhausted,
@@ -250,12 +249,16 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
 
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
 
-// RNChannelTypes!Drain: release the newest held code-1 record when its ordered
-// epoch opens. Returns true if it appended a delivery.
+// RNChannelTypes!Drain: release the newest held code-1 or code-4 record when
+// its ordered epoch opens. Returns true if it appended a delivery.
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel );
 void rn_channels_end_update_sequenced( struct rn_channels_t * channels );
 
 // Codes 5, 6 and 7's case (sdk/rocketnet_channel_receipts.cpp).
+
+// RNReceipts EffectiveKind: returns wire code 2 or 3 for public receipt
+// types 6 or 7, and -1 for every other type. No wire receipt code is sent.
+int rn_channels_reliable_receipt_base( int type );
 
 int rn_channels_dispatch_receipt( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out );
 
