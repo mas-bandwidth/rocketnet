@@ -29,6 +29,7 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients )
 // and drops it; an unchanged id leaves the binding alone. A slot whose
 // binding changes is the update's changed slot, which the server withholds
 // until the transport tags each entry (CHANNELS.md 11.5).
+// tla/RNSlots.tla Observe
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )
@@ -49,6 +50,7 @@ int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_i
 // entry is applied only to the connection it was received for. A free slot
 // binds no connection and no entry carries the id 0, so it discards every
 // entry.
+// tla/RNSlots.tla Admit
 int rn_slots_admit( const struct rn_slots_t * slots, int slot, uint64_t entry_connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )
