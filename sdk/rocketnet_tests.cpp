@@ -12456,7 +12456,6 @@ public:
         clear("ROCKETNET_SERVER_NUM_OS_CPUS");
         clear("ROCKETNET_NUM_OS_CPUS");
         clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
-        clear("ROCKETNET_XDP_ZEROCOPY");
         clear("ROCKETNET_PUMP");
     }
     ~rocketnet_test_environment_t()
