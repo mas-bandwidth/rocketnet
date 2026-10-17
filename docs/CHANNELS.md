@@ -988,9 +988,16 @@ A reliable message is a **block** when its single record would not fit in
 - **No start packet.** Any fragment opens the block's state on its own,
   because every fragment carries everything needed (R3).
 
-`RNBlocks` checks these properties: a delivered block equals the sent bytes; no
-part of a block is ever delivered; a block is never mixed with another block
-after numbers wrap; and the `U'` rule prevents slot reuse.
+`RNBlocks` (`tla/RNBlocks.tla`) checks these properties: a delivered block
+equals the sent bytes (`DeliveredEqualsSent`); no part of a block is ever
+delivered (`NoPartialDelivery`); a block takes one ordering slot
+(`OneOrderingSlotPerBlock`); and its fragments take consecutive numbers over
+one contiguous span (`SplitConsecutive`). Its instance is one window and one
+ring wide with nothing acked, so numbers never wrap and no slot or ring unit is
+reused: slot reuse under the `U'` rule is checked by `RNWindow`
+(`NoSlotCollision`) and ring reuse by `RNRing` (`LiveSpansDisjoint`), and a
+block mixed with another after numbers wrap is not checked by any module yet
+(`tla/README-RNBlocks.md`).
 
 **As built** (`sdk/rocketnet_channel.cpp`, `sdk/rocketnet_packet_builder.cpp`;
 `test_unit_channel_ordered.cpp`; `tla/RNChannel.tla`). RELIABLE_ORDERED, code 3:
