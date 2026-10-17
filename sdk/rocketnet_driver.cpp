@@ -141,6 +141,9 @@ bool rocketnet_client_driver_open( const rocketnet_client_driver_operations_t * 
 {
     if ( !driver || driver->instance || !config || !bind || !ops ||
          !ops->create || !ops->destroy || !ops->send || !ops->receive ) return false;
+    // The interface requires wait and wake together: a wait with no wake can
+    // never be released, a wake with no wait is never observed. docs/CLIENT-IO.md.
+    if ( ( ops->wait != NULL ) != ( ops->wake != NULL ) ) return false;
     rocketnet_address_t attempt = *bind;
     void * instance = ops->create( context, config, &attempt );
     if ( !instance ) return false;
