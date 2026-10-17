@@ -540,7 +540,9 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 }
 
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
-// whole message dispatched as one only when every chunk is in.
+// whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
+// RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
+// and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
 
 // tla/RNChannel.tla DeliverMessage
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
@@ -629,6 +631,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Placed by index, not by arrival: ring + index * F, which is this chunk's
     // own offset (THE COPIES (b): a chunk must outlive the batch).
+    // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
     memcpy( region->receive_ring + (uint64_t) record->ring * 16, record->data, (size_t) record->bytes );
     anchor->block_have++;
 
@@ -662,6 +665,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Its turn: delivered whole, in place, a view of the ring (no reassembly
     // buffer, no second copy), then the coupling and the drain.
+    // RNBlocks!Deliver (DeliveredEqualsSent, NoPartialDelivery,
+    // OneOrderingSlotPerBlock).
     rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
     if ( !delivery )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -835,7 +840,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     // RNChannelTypes!Enqueue: code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
-    // takes one number; a larger block takes one number per chunk.
+    // takes one number; a larger block takes one number per chunk
+    // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
     const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
@@ -952,6 +958,8 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
 
     if ( descriptor->fragments > 1 )
     {
+        // RNBlocks!SendRecord: the fragment carries its index, k - 1 and its
+        // own ring offset, p + index * F.
         item->block = 1;                                        // one chunk, in its own packet (8)
         item->alone = 1;
         item->fragment = slot->fragment;
@@ -1090,6 +1098,8 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
         // RNChannelTypes!WritePacket: code 2 uses the same late, stable
         // reliable number and transport-ACK resend table as code 3.
+        // RNBlocks!NumberMessage: a block's k consecutive numbers and one
+        // contiguous span, fragment i at p + i * F, admitted once.
         if ( descriptor->fragments > 1 )
             numbers = rn_window_send_first_write_block( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start );
         else if ( rn_window_send_first_write( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start ) == RN_WINDOW_SEND_NUMBERED )
