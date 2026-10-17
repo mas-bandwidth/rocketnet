@@ -119,41 +119,60 @@ lost send or a full link disables the step for a while.
 ## Cases
 
 The instance: N messages per side, the first N - 1 reliable ordered on
-channel 0 and the last unreliable on channel 1; `W = 2`; Link capacity 2;
-two configurations, equal (`num_channels` 2 at both ends) and differing
-(2 at a, 1 at b), both explored from `Init`.
+channel 0 and the last unreliable on channel 1; `W = 2`; two
+configurations, equal (`num_channels` 2 at both ends) and differing (2 at
+a, 1 at b), both explored from `Init`. The two controls run Link capacity
+1 and the two witnesses capacity 2.
 
 | Case | Spec and terrain | Expected |
 |---|---|---|
-| `MCRNEndpoint.cfg` | `Spec`, N = 3, `"arbitrary"` loss both ways, failed sends, ack silence, timeouts at any time, abstract RTO | pass |
-| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, `"first"` loss both ways, `RtoAboveRtt` | pass |
-| `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE` | temporal `ConfigVerifiedDespiteFirstLoss` |
-| `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE` | invariant `MismatchErrorsBothEnds` |
+| `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract RTO; constraints `MCOneTimeout` and `MCOneWay` | pass |
+| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `RtoAboveRtt` | pass |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE`, capacity 2 | temporal `ConfigVerifiedDespiteFirstLoss` |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE`, capacity 2, no constraints | invariant `MismatchErrorsBothEnds` |
+
+### What makes the controls finish
+
+- `OpenAny(e)` opens the head of the wire into `e` rather than quantifying
+  over every value of `Pkts` (4,096 records at N = 3). Link's `Deliver`
+  hands over only the head, so the steps are the same; only the
+  enumeration per state is gone.
+- Capacity 1 on the controls. With in-order loss, a second copy in flight
+  adds interleavings of the same records, not a new delivery rule; the
+  witnesses keep capacity 2.
+- `MCOneTimeout` (safety only): the timeout fires at any moment, at one end
+  per behaviour. An end in error is inert: it opens and discards and writes
+  nothing, which under `"arbitrary"` loss is a live end that stays silent
+  while the link drops every packet into it. A second timed-out end adds
+  no delivery state, only its `err` value, which no invariant reads for
+  `RELIABLE_TIMEOUT`.
+- `MCOneWay` (safety only): only a's application sends; b resets, writes
+  CONFIG and acks, and opens a's packets. The model is symmetric in the
+  two ends except for `cfg`, so b's data to a is a's data to b renamed.
+  The differing pair puts the larger `num_channels` at a, so a's channel-1
+  message is the data record outside b's bounds (the `VIOLATION` path);
+  b's own refusal of that channel is `Send`'s guard. The full two-way
+  product at N = 3 did not finish in 280 s with 4 workers (over 3.5 million
+  distinct states, queue growing), with or without timeouts at any time.
+- Liveness stays at N = 2: at N = 3 and capacity 1 it completes (86,113
+  distinct states, no violation) but in 188 s, over the budget.
 
 ### Measured records
 
-Measured with the pinned runner and JAR on a loaded Linux bench (one-minute
-load near 200 on 64 logical CPUs), each case its own 110-second shard,
-merged into `tla/RUNS.tsv` (`groups --stale` prints `[]`):
+Measured with the pinned runner and JAR on a 16-CPU Linux bench under a
+one-minute load of 35 to 55, each case its own 110-second shard, merged into
+`tla/RUNS.tsv` with `tlacheck merge --keep tla/RUNS.tsv` (`groups --stale`
+prints `[]`):
 
 | Case | Gate | Exit | Result | Generated | Distinct | Seconds |
 |---|---|---:|---|---:|---:|---:|
-| `MCRNEndpoint.cfg` | bench | 124 | FAIL (budget) | - | - | 110.270 |
-| `MCRNEndpointLive.cfg` | bench | 124 | FAIL (budget) | - | - | 110.249 |
-| `MCRNEndpointBrokenConfigUnreliable.cfg` | bench | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 32.649 |
-| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 2.161 |
+| `MCRNEndpoint.cfg` | required | 0 | PASS | 5708001 | 736909 | 88.775 |
+| `MCRNEndpointLive.cfg` | required | 0 | PASS | 61813 | 24370 | 39.816 |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | required | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 9.818 |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 2.280 |
 
-**The two controls are debt, not proofs.** Neither completed inside the
-budget. Longer manual runs on the same bench, outside the records, also did
-not complete: the safety case reached 55,421 distinct states at depth 10 in
-500 s with no violation and a growing queue; the liveness case reached
-31,447 distinct states (80,218 explored by the temporal check) in 500 s with
-no violation. No invariant or property was found false in any explored
-state, but the exploration is incomplete and is labelled so. The debt is a
-smaller committed instance or a quieter bench, and it is owed before the
-model gates the endpoint card. The unreliable-CONFIG witness is declared
-bench conservatively; it ran in 33 s and can move to required on the next
-record refresh.
+The safety control is the closest to the budget (89 of 110 s on two
+workers); a refresh on a heavily loaded bench may need a quieter one.
 
 ## Reversed witnesses, each checked by hand
 

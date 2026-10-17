@@ -354,7 +354,9 @@ BAEnvironment == BA!Environment /\ UNCHANGED <<epVars, abVars>>
 
 WriteAny(e)  == \E S \in SUBSET Due(e), Us \in SUBSET unrelQ[e] :
                     WritePacket(e, S, Us) \/ PacketFailed(e, S, Us)
-OpenAny(e)   == \E p \in Pkts : OnPayload(e, p)
+\* Link delivers only the head of its wire, so the packet opened is that
+\* head: the same steps as \E p \in Pkts, without enumerating Pkts.
+OpenAny(e)   == WireInto(e) # <<>> /\ OnPayload(e, Head(WireInto(e)).pkt)
 
 Next ==
     \/ \E e \in E :
