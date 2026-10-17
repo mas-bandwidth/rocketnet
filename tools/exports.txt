@@ -64,6 +64,7 @@ rocketnet_message_default_config
 rocketnet_message_print_connection_sizing
 rocketnet_message_validate_config
 rocketnet_num_counters
+rocketnet_num_status_codes
 rocketnet_platform_client_dual_stack
 rocketnet_platform_client_thread_priority
 rocketnet_platform_connection_type
@@ -136,6 +137,7 @@ rocketnet_server_transport_stop
 rocketnet_server_transport_update
 rocketnet_sleep
 rocketnet_spam
+rocketnet_status_string
 rocketnet_term
 rocketnet_time
 rocketnet_user_id_string
