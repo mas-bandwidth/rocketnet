@@ -2,6 +2,8 @@
 // Compile the actual transport here to seed protocol state and substitute a
 // deterministic driver. No test hook or additional export enters the SDK.
 #include "sdk/rocketnet_server_protocol.h"
+#include "sdk/rocketnet_replay.h"
+#include "sdk/rocketnet_fragment.h"
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
@@ -48,6 +50,10 @@ struct control_fixture_t
     rocketnet_address_t reserved_to;
     uint8_t frame[ROCKETNET_FRAME_STRIDE];
     rocketnet_server_socket_process_packets_t received;
+    int feed_count;
+    rocketnet_address_t feed_from[4];
+    uint8_t feed_data[4][ROCKETNET_RECEIVE_CEILING];
+    int feed_bytes[4];
 };
 
 static void record(control_fixture_t * f, const rocketnet_address_t * to, const uint8_t * packet)
@@ -75,6 +81,20 @@ static void send_batch(void * p, const rocketnet_platform_send_t * sends, int co
 static int receive_batch(void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity)
 {
     auto * f = (control_fixture_t*)p;
+    if (f->feed_count)
+    {
+        // fed client packets, delivered once
+        const int n = f->feed_count;
+        CHECK(n <= capacity);
+        for (int i = 0; i < n; ++i)
+        {
+            from[i] = f->feed_from[i];
+            memcpy(data + stride * i, f->feed_data[i], (size_t) f->feed_bytes[i]);
+            bytes[i] = f->feed_bytes[i];
+        }
+        f->feed_count = 0;
+        return n;
+    }
     CHECK(f->requests <= capacity);
     for (int i = 0; i < f->requests; ++i)
     {
@@ -111,7 +131,24 @@ static void flush(void * p)
     f->pending_disconnects = 0;
     f->used = 0;
 }
-static rocketnet_server_socket_process_packets_t * receive(void * p) { return &((control_fixture_t*)p)->received; }
+static rocketnet_server_socket_process_packets_t * receive(void * p)
+{
+    auto * f = (control_fixture_t*)p;
+    if (f->feed_count)
+    {
+        // fed client packets, delivered once
+        f->received.num_packets = f->feed_count;
+        for (int i = 0; i < f->feed_count; ++i)
+        {
+            f->received.from[i] = f->feed_from[i];
+            f->received.packet_data[i] = f->feed_data[i];
+            f->received.packet_bytes[i] = f->feed_bytes[i];
+        }
+        f->feed_count = 0;
+    }
+    else f->received.num_packets = 0;
+    return &f->received;
+}
 
 static rocketnet_server_transport_t * make_server(control_fixture_t * f, rocketnet_server_driver_operations_t * operations, int clients, bool staged, int payload_limit = ROCKETNET_MAX_PAYLOAD_BYTES)
 {
@@ -294,6 +331,147 @@ static void test_staged_lease_table_full()
     printf("test_staged_lease_table_full\n");
 }
 
+static void test_entries_carry_connection_id(bool staged)
+{
+    // docs/CHANNELS.md P9a, P9b: the transport's own batches carry each
+    // entry's connection id beside its client index. Two slots hold
+    // connection ids 1 and 2; the server sends each client three packets
+    // through the public send path, then each client's sealed payload,
+    // whose ack block acknowledges those three, arrives in one update. Read
+    // through the public accessors, the payload and acked id batches run
+    // parallel to their client index arrays, and every entry's id is the id
+    // its slot holds. Mutation that must bite: drop the tag copy at the
+    // transport's payload append sites (buffered or staged); the payload id
+    // checks go red. Time is an argument; the clock starts at 1000.0.
+    auto * f = new control_fixture_t(); f->capacity = 16;
+    rocketnet_server_driver_operations_t operations;
+    auto * server = make_server(f, &operations, 2, staged);
+    auto * protocol = &server->protocol;
+    const double time = 1000.0;
+
+    // the fixture assigns its slots directly, so each takes its id here the
+    // way the protocol takes one when it assigns a slot
+    for (int i = 0; i < 2; ++i)
+    {
+        protocol->connection_ids[i] = ++protocol->next_connection_id;
+        auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
+            rocketnet_client_slots_mapping_index(protocol->client_slots, i));
+        mapping->last_receive_time = time;
+    }
+    CHECK(rocketnet_server_transport_client_connection_id(server, 0) == 1);
+    CHECK(rocketnet_server_transport_client_connection_id(server, 1) == 2);
+
+    uint64_t sequences[2][3];
+    for (int c = 0; c < 2; ++c)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            rocketnet_packet_context_t context;
+            CHECK(rocketnet_server_transport_start_packet(server, c, 8, &context));
+            int capacity = 0;
+            uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
+            CHECK(payload && capacity >= 8);
+            memset(payload, 0x50 + k, 8);
+            sequences[c][k] = context.sequence;
+            CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
+        }
+    }
+    rocketnet_server_transport_send_packets(server);
+
+    for (int c = 0; c < 2; ++c)
+    {
+        auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
+            rocketnet_client_slots_mapping_index(protocol->client_slots, c));
+        rocketnet_replay_protection_t replay;
+        memset(&replay, 0, sizeof(replay));
+        for (int k = 0; k < 3; ++k) rocketnet_replay_advance(&replay, sequences[c][k]);
+        uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 4];
+        const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
+        CHECK(block > 0);
+        memset(plaintext + block, 0xA0 + c, 4);
+        CHECK(rocketnet_address_parse(&f->feed_from[c], "127.0.0.1:0")); f->feed_from[c].port = 1000 + c;
+        f->feed_bytes[c] = rocketnet_write_sealed_packet(f->feed_data[c], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+            protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+            mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
+        CHECK(f->feed_bytes[c] > 0);
+    }
+    f->feed_count = 2;
+    rocketnet_server_transport_update(server, time + 0.001);
+
+    const int * client_index = NULL;
+    uint8_t * const * payload_data = NULL;
+    const int * payload_bytes = NULL;
+    const uint64_t * connection_id = NULL;
+    const int num_payloads = rocketnet_server_transport_payloads(server, &client_index, &payload_data, &payload_bytes);
+    CHECK(num_payloads == 2);
+    CHECK(rocketnet_server_transport_payload_connection_ids(server, &connection_id) == num_payloads);
+    for (int i = 0; i < num_payloads; ++i)
+    {
+        CHECK(payload_bytes[i] == 4 && payload_data[i][0] == 0xA0 + client_index[i]);
+        CHECK(connection_id[i] != 0);
+        CHECK(connection_id[i] == rocketnet_server_transport_client_connection_id(server, client_index[i]));
+    }
+
+    const int * acked_client_index = NULL;
+    const uint64_t * acked_ids = NULL;
+    const int num_acked = rocketnet_server_transport_acked_packets(server, &acked_client_index, &acked_ids);
+    CHECK(num_acked == 6);
+    CHECK(rocketnet_server_transport_acked_connection_ids(server, &connection_id) == num_acked);
+    int acked_per_client[2] = {};
+    for (int i = 0; i < num_acked; ++i)
+    {
+        CHECK(acked_client_index[i] >= 0 && acked_client_index[i] < 2);
+        ++acked_per_client[acked_client_index[i]];
+        CHECK(connection_id[i] != 0);
+        CHECK(connection_id[i] == rocketnet_server_transport_client_connection_id(server, acked_client_index[i]));
+    }
+    CHECK(acked_per_client[0] == 3 && acked_per_client[1] == 3);
+
+    // the fragment-completion path on its own: client 1 sends one payload
+    // as two fragments in the next update, so the only batch entry is the
+    // reassembled payload, and its tag comes from the transport's
+    // fragment-completion append site (buffered or staged). Mutation that
+    // must bite: drop the tag copy there; this id check goes red.
+    {
+        const int c = 1;
+        auto * mapping = rocketnet_encryption_map_entry(protocol->encryption_map,
+            rocketnet_client_slots_mapping_index(protocol->client_slots, c));
+        rocketnet_replay_protection_t replay;
+        memset(&replay, 0, sizeof(replay));
+        for (int k = 0; k < 3; ++k) rocketnet_replay_advance(&replay, sequences[c][k]);
+        uint8_t fragmented[24];
+        for (int b = 0; b < 24; ++b) fragmented[b] = (uint8_t) (0xC0 + b);
+        const int stride = 16;
+        for (int k = 0; k < 2; ++k)
+        {
+            uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + 24];
+            const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
+            CHECK(block > 0);
+            rocketnet_write_fragment_header(plaintext + block, 1, k, 2);
+            const int fragment_bytes = k == 0 ? stride : 24 - stride;
+            memcpy(plaintext + block + ROCKETNET_FRAGMENT_HEADER_BYTES, fragmented + k * stride, (size_t) fragment_bytes);
+            f->feed_from[k] = f->feed_from[c];
+            f->feed_bytes[k] = rocketnet_write_sealed_packet(f->feed_data[k], ROCKETNET_CONNECTION_FRAGMENT_PACKET,
+                protocol->filter_value, 2 + (uint64_t) k, NULL, plaintext, block + ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
+                protocol->protocol_id, mapping->connection_salt, NULL, mapping->keys.session_client_to_server);
+            CHECK(f->feed_bytes[k] > 0);
+        }
+        f->feed_count = 2;
+        rocketnet_server_transport_update(server, time + 0.002);
+
+        const int num_fragmented = rocketnet_server_transport_payloads(server, &client_index, &payload_data, &payload_bytes);
+        CHECK(num_fragmented == 1);
+        CHECK(rocketnet_server_transport_payload_connection_ids(server, &connection_id) == num_fragmented);
+        CHECK(client_index[0] == c);
+        CHECK(payload_bytes[0] == 24 && memcmp(payload_data[0], fragmented, 24) == 0);
+        CHECK(connection_id[0] == 2);
+        CHECK(connection_id[0] == rocketnet_server_transport_client_connection_id(server, c));
+    }
+
+    rocketnet_server_transport_destroy(server); delete f;
+    printf("test_entries_carry_connection_id staged=%d payloads=%d acked=%d fragmented=1\n", staged, num_payloads, num_acked);
+}
+
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -315,5 +493,7 @@ int main(int argc, char ** argv)
     test_staged_control_fairness();
     test_single_frame_arena();
     test_staged_lease_table_full();
+    test_entries_carry_connection_id(false);
+    test_entries_carry_connection_id(true);
     rocketnet_term();
 }
