@@ -228,6 +228,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->rtt_history[i] = -1.0f;
 }
 
+// tla/RNSentHistory.tla Send
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
                                                                                 uint64_t packet_id, int has_packet_id,
@@ -272,6 +273,15 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     record->has_packet_id = (uint8_t) ( has_packet_id != 0 );
     record->was_keep_alive = 0;
 
+    // RNSentHistory Send writes the record; the shadow bitmaps mark the slot
+    // held and unacknowledged so the walk (ReceiveAck) can skip everything
+    // else. The write is under sent_lock with the record, so the update
+    // thread's reconcile and walk never see a half-published slot.
+
+    uint32_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    endpoint->sent_held[slot >> 6] |= 1ull << ( slot & 63 );
+    endpoint->sent_unacked[slot >> 6] |= 1ull << ( slot & 63 );
+
     // fill-phase threads record concurrently under distinct sequences, so
     // the high-water fold is a compare-exchange max: whatever the
     // interleaving, the mark ends at the largest recorded sequence
@@ -281,6 +291,7 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     return result;
 }
 
+// tla/RNSentHistory.tla Send
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
                                          uint64_t packet_id, int has_packet_id,
@@ -290,6 +301,7 @@ bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
                                                           aggregate_id, time ) == ROCKETNET_ACK_SENT_RECORDED;
 }
 
+// tla/RNSentHistory.tla Send
 void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter )
 {
     rocketnet_assert( lost_counter );
@@ -357,11 +369,93 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
         endpoint->highest_received_sequence = sequence;
 }
 
+// Bitmap helpers over the sent ring: slot = sequence % N maps to word
+// slot/64, bit slot%64. The sent ring is a multiple of 64 (static_assert in
+// rocketnet_ack.h), so a window of at most N slots is a contiguous run of
+// words, possibly wrapping at the ring boundary.
+
+static inline int rn_clz64( uint64_t v )
+{
+#if defined(_MSC_VER)
+    unsigned long idx;
+    _BitScanReverse64( &idx, v );
+    return 63 - (int) idx;
+#else
+    return __builtin_clzll( v );
+#endif
+}
+
+static inline int rn_popcount64( uint64_t v )
+{
+#if defined(_MSC_VER)
+    return (int) __popcnt64( v );
+#else
+    return __builtin_popcountll( v );
+#endif
+}
+
+// popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the
+// partial end words
+
+static inline int rn_bitmap_range_popcount( const uint64_t * bitmap, uint32_t a, uint32_t b )
+{
+    uint32_t w_hi = b >> 6;
+    uint32_t w_lo = a >> 6;
+    int count = 0;
+    for ( uint32_t w = w_lo; ; w++ )
+    {
+        uint64_t word = bitmap[w];
+        if ( w == w_lo )
+            word &= ~0ull << ( a & 63 );
+        if ( w == w_hi )
+        {
+            uint32_t hi_bit = b & 63;
+            word &= hi_bit == 63 ? ~0ull : ( ( 1ull << ( hi_bit + 1 ) ) - 1 );
+        }
+        count += rn_popcount64( word );
+        if ( w == w_hi )
+            break;
+    }
+    return count;
+}
+
+// invoke op(sequence) for every set bit of one bitmap in the linear slot range
+// [a,b] (a<=b), newest slot first, word by word with clz. sequence at slot a is
+// seq_at_a, so sequence = seq_at_a + (slot - a).
+
+template <typename Fn>
+static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint32_t b,
+                                       uint64_t seq_at_a, Fn && op )
+{
+    uint32_t w_hi = b >> 6;
+    uint32_t w_lo = a >> 6;
+    for ( uint32_t w = w_hi; ; w-- )
+    {
+        uint64_t word = bitmap[w];
+        if ( w == w_lo )
+            word &= ~0ull << ( a & 63 );
+        if ( w == w_hi )
+        {
+            uint32_t hi_bit = b & 63;
+            word &= hi_bit == 63 ? ~0ull : ( ( 1ull << ( hi_bit + 1 ) ) - 1 );
+        }
+        while ( word )
+        {
+            int bit = 63 - rn_clz64( word );
+            word &= ~( 1ull << bit );
+            uint64_t seq = seq_at_a + ( w * 64 + (uint32_t) bit ) - a;
+            op( seq );
+        }
+        if ( w == w_lo )
+            break;
+    }
+}
+
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
 // (tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
 // AckedMeansSurfaced, BurnedNeverNamed)
-
+// tla/RNSentHistory.tla ReceiveAck
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,
                                     uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
@@ -394,86 +488,119 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     int newly_acked = 0;
 
-    for ( uint64_t sequence = high; ; sequence-- )
+    // RNSentHistory ReceiveAck marks exactly the named records that are held
+    // and unacknowledged; FragmentsAndAcks RecvAck carries the batch deferral
+    // (SurfacedOnce, AckedMeansSurfaced, BurnedNeverNamed,
+    // OpenedSurfacesOrLaps). The held count over the named slots yields the
+    // unknown count arithmetically (the named-but-never-sent sequences); only
+    // the unacknowledged slots are visited.
+
+    uint64_t window_len = high - low + 1;
+    uint32_t slot_low = (uint32_t)( low % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+    uint32_t slot_high = (uint32_t)( high % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+
+    int held;
+    if ( slot_high >= slot_low )
+        held = rn_bitmap_range_popcount( endpoint->sent_held, slot_low, slot_high );
+    else
+    {
+        held = rn_bitmap_range_popcount( endpoint->sent_held, slot_low, ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 )
+             + rn_bitmap_range_popcount( endpoint->sent_held, 0, slot_high );
+    }
+    *unknown_sequence_counter += window_len - (uint64_t) held;
+
+    auto visit = [&]( uint64_t sequence )
     {
         g_ack_visit_count++;
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
+        // a set bit names a held, unacknowledged record; a mismatch is a
+        // reconcile failure, asserted in debug builds and never counted here
+        // (the held count already told the unknown count)
+
         if ( record->sequence != sequence )
         {
-            // named but never sent: a burned sequence, or reconstruction
-            // against a hostile or badly-truncated block. never an error
-            // that affects the connection.
-            ( *unknown_sequence_counter )++;
+            rocketnet_assert( record->sequence == sequence );
+            return;
         }
-        else if ( !record->acked )
+
+        // a packet id that cannot fit the batch is deferred, never dropped:
+        // the record stays unacknowledged, so a later block -- every block
+        // restates the recent interval -- surfaces it into a drained batch.
+        // the counter records the deferral. a fragment record defers on the
+        // same condition, because its acknowledgment may complete its
+        // aggregate and surface the payload's packet id.
+
+        if ( ( record->has_packet_id || record->aggregate_id != 0 ) && *acked_count >= acked_capacity )
         {
-            // a packet id that cannot fit the batch is deferred, never
-            // dropped: the record stays unacknowledged, so a later block --
-            // every block restates the recent interval -- surfaces it into
-            // a drained batch. the counter records the deferral. a
-            // fragment record defers on the same condition, because its
-            // acknowledgment may complete its aggregate and surface the
-            // payload's packet id.
+            ( *batch_full_counter )++;
+        }
+        else
+        {
+            record->acked = 1;
+            newly_acked++;
 
-            if ( ( record->has_packet_id || record->aggregate_id != 0 ) && *acked_count >= acked_capacity )
+            uint32_t s = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+            endpoint->sent_unacked[s >> 6] &= ~( 1ull << ( s & 63 ) );
+
+            // the loss rule's evidence: the highest sequence the peer has
+            // acknowledged. update thread only, per the threading comment on
+            // the endpoint.
+
+            if ( sequence > endpoint->largest_acked_sequence )
+                endpoint->largest_acked_sequence = sequence;
+
+            // the claim _Keep-alive generation_ turns on: this peer says it
+            // received a keep-alive, so it says it holds its client index.
+            // unverifiable here, and by design
+
+            if ( record->was_keep_alive )
+                endpoint->keep_alive_acked = 1;
+
+            // the first block that acknowledges a sequence yields one rtt
+            // sample: the elapsed time between sending it and receiving the
+            // block
+
+            double sample = time - record->send_time;
+            if ( sample >= 0.0 )
             {
-                ( *batch_full_counter )++;
+                endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] = (float) ( sample * 1000.0 );
+                endpoint->has_rtt_sample = 1;
             }
-            else
+
+            if ( record->has_packet_id )
             {
-                record->acked = 1;
-                newly_acked++;
+                acked_packet_ids[(*acked_count)++] = record->packet_id;
+            }
+            else if ( record->aggregate_id != 0 )
+            {
+                // one fragment of an aggregated payload: the payload's packet
+                // id surfaces only when every fragment's wire packet is
+                // acknowledged. a recycled aggregate slot no longer names this
+                // id and the ack is simply absorbed.
 
-                // the loss rule's evidence: the highest sequence the peer
-                // has acknowledged. update thread only, per the threading
-                // comment on the endpoint.
-
-                if ( sequence > endpoint->largest_acked_sequence )
-                    endpoint->largest_acked_sequence = sequence;
-
-                // the claim _Keep-alive generation_ turns on: this peer
-                // says it received a keep-alive, so it says it holds its
-                // client index. unverifiable here, and by design
-
-                if ( record->was_keep_alive )
-                    endpoint->keep_alive_acked = 1;
-
-                // the first block that acknowledges a sequence yields one
-                // rtt sample: the elapsed time between sending it and
-                // receiving the block
-
-                double sample = time - record->send_time;
-                if ( sample >= 0.0 )
+                struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
+                if ( aggregate->id == record->aggregate_id && aggregate->remaining > 0 )
                 {
-                    endpoint->rtt_history[sequence % ROCKETNET_RTT_HISTORY_SIZE] = (float) ( sample * 1000.0 );
-                    endpoint->has_rtt_sample = 1;
-                }
-
-                if ( record->has_packet_id )
-                {
-                    acked_packet_ids[(*acked_count)++] = record->packet_id;
-                }
-                else if ( record->aggregate_id != 0 )
-                {
-                    // one fragment of an aggregated payload: the payload's
-                    // packet id surfaces only when every fragment's wire
-                    // packet is acknowledged. a recycled aggregate slot no
-                    // longer names this id and the ack is simply absorbed.
-
-                    struct rocketnet_packet_aggregate_t * aggregate = &endpoint->aggregates[record->aggregate_id % ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE];
-                    if ( aggregate->id == record->aggregate_id && aggregate->remaining > 0 )
-                    {
-                        aggregate->remaining--;
-                        if ( aggregate->remaining == 0 )
-                            acked_packet_ids[(*acked_count)++] = aggregate->packet_id;
-                    }
+                    aggregate->remaining--;
+                    if ( aggregate->remaining == 0 )
+                        acked_packet_ids[(*acked_count)++] = aggregate->packet_id;
                 }
             }
         }
+    };
 
-        if ( sequence == low )
-            break;
+    // visit the set bits (the base order: highest sequence first), word by
+    // word with clz, splitting the slot range where it wraps at the ring
+
+    if ( slot_high >= slot_low )
+    {
+        rn_bitmap_walk_bits_desc( endpoint->sent_unacked, slot_low, slot_high, low, visit );
+    }
+    else
+    {
+        rn_bitmap_walk_bits_desc( endpoint->sent_unacked, 0, slot_high, high - slot_high, visit );
+        rn_bitmap_walk_bits_desc( endpoint->sent_unacked, slot_low, ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1, low, visit );
     }
 
     return newly_acked;
@@ -495,6 +622,35 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
     if ( block->largest == 0 )
         return 0;
+
+    // Reconcile the shadow bitmaps to the ring (update thread only; update
+    // and the fill phase never overlap). Every sequence at or above the window
+    // low whose record does not hold that exact sequence -- a burned or
+    // refused sequence, or a slot recycled below the window -- clears its
+    // slot's bits. One check per sent sequence, amortized across blocks, so
+    // the bitmaps stay equal to the ring (BitsMatchRing).
+
+    {
+        uint64_t reconcile_low = 1;
+        if ( endpoint->highest_sequence >= ROCKETNET_SENT_PACKET_BUFFER_SIZE )
+            reconcile_low = endpoint->highest_sequence - ROCKETNET_SENT_PACKET_BUFFER_SIZE + 1;
+
+        uint64_t x = endpoint->sent_bits_checked + 1;
+        if ( x < reconcile_low )
+            x = reconcile_low;
+
+        for ( ; x <= endpoint->highest_sequence; x++ )
+        {
+            struct rocketnet_sent_packet_record_t * record = &endpoint->sent[x % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+            if ( record->sequence != x )
+            {
+                uint32_t slot = x % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+                endpoint->sent_held[slot >> 6] &= ~( 1ull << ( slot & 63 ) );
+                endpoint->sent_unacked[slot >> 6] &= ~( 1ull << ( slot & 63 ) );
+            }
+        }
+        endpoint->sent_bits_checked = endpoint->highest_sequence;
+    }
 
     int newly_acked = 0;
 

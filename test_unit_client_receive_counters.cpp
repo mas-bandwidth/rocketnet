@@ -1131,3 +1131,83 @@ static void session_end_races_move_only_expected_counters()
 }
 
 REGISTER_UNIT_TEST( session_end_races_move_only_expected_counters );
+
+// ---------------------------------------------------------------------------
+// the full admitted-token set denies the connection response, fail closed
+// ---------------------------------------------------------------------------
+
+// The admitted-token set never evicts an unexpired entry
+// (rocketnet_admitted_token_set_add in sdk/rocketnet_token_tables.cpp returns
+// 0 when full), so a full set must refuse the connection response with a
+// denied packet the client can open, and must not seat the client
+// (rocketnet_server_protocol_process_packet in sdk/rocketnet_server_protocol.cpp).
+
+static void response_denied_when_admitted_set_is_full()
+{
+    static struct rcr_pair_t pair;
+    rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
+    // the set holds the connected client's token; fill the other 15 entries
+    {
+        uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        for ( int i = 0; i < 15; i++ )
+        {
+            memset( id, 0xC0 + i, sizeof(id) );
+            check( rocketnet_admitted_token_set_add( pair.server.admitted_token_set, id,
+                                                     ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS ) == 1 );
+        }
+        memset( id, 0xFF, sizeof(id) );
+        check( rocketnet_admitted_token_set_add( pair.server.admitted_token_set, id,
+                                                 ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_CREATE_TS ) == 0 );
+    }
+
+    const struct rocketnet_counters_t before = pair.server_counters;
+
+    // a second client against the same server is denied
+    {
+        struct rocketnet_client_protocol_t other;
+        struct rocketnet_counters_t other_counters;
+        rcr_client_init( &other, &other_counters );
+        struct rocketnet_address_t other_address;
+        check( rocketnet_address_parse( &other_address, "198.51.100.8:56789" ) );
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rcr_mint_token( token_data, 0x2500ULL );
+        check( rocketnet_client_protocol_connect( &other, token_data, pair.time, ROCKETNET_TEST_CREATE_TS ) );
+
+        uint8_t out_packet[ROCKETNET_RECEIVE_CEILING];
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+        int payload_bytes = 0;
+        int payload_client_index = -1;
+        double time = pair.time;
+        for ( ; time < pair.time + 10.0 && other.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED; time += 0.05 )
+        {
+            int out_bytes = 0;
+            rocketnet_client_protocol_update( &other, time, out_packet, &out_bytes );
+            if ( out_bytes == 0 )
+                continue;
+            int response_bytes = 0;
+            rocketnet_server_protocol_process_packet( &pair.server, &other_address, out_packet, out_bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_client_protocol_process_packet( &other, response, response_bytes, time + 0.01,
+                                                          payload, (int) sizeof(payload), &payload_bytes );
+        }
+        check( other.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
+        pair.time = time + 0.2;
+
+        check( pair.server_counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] ==
+               before.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL] + 1 );
+        check( pair.server_counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] ==
+               before.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] );
+        check( rocketnet_client_slots_num_free( pair.server.client_slots ) == 3 );
+        check( rocketnet_client_slots_connected( pair.server.client_slots, 0 ) );
+
+        rocketnet_counters_assert_conserved( &other_counters );
+        rocketnet_reassembly_set_destroy( other.reassembly );
+    }
+    rcr_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( response_denied_when_admitted_set_is_full );

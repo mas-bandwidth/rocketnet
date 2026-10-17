@@ -7448,9 +7448,9 @@ static void rocketnet_test_null_assert_hook( const char * condition, const char 
 // The export audit: a mirror of every ROCKETNET_EXPORT_FUNC entry point compiled
 // into the non-development library, in header order. Every name is either
 // exercised here (a NULL case above) or exempt (no NULL-able pointer, or NULL
-// is a valid value), each exactly once. The static_assert pins the count to
-// ROCKETNET_NUM_EXPORTED_FUNCTIONS in sdk/rocketnet.h, so a new export without
-// a case fails to build until the lists and the cases are brought in step.
+// is a valid value), each exactly once. tools/check_exports.py derives the set
+// of exported entry points from sdk/rocketnet.h and refuses any name missing
+// here, any table name the header does not declare, and any duplicate.
 static const char * rocketnet_test_exports[] =
 {
     "rocketnet_abi_version",
@@ -7459,13 +7459,16 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_abi_field_offset",
     "rocketnet_abi_field_size",
     "rocketnet_init",
+    "rocketnet_init_ex",
     "rocketnet_term",
+    "rocketnet_term_ex",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_string",
     "rocketnet_log_function",
+    "rocketnet_set_log_callback",
     "rocketnet_printf",
     "rocketnet_info",
     "rocketnet_warn",
@@ -7473,6 +7476,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_debug",
     "rocketnet_spam",
     "rocketnet_allocator",
+    "rocketnet_allocator_ex",
     "rocketnet_api_misuse_count",
     "rocketnet_malloc",
     "rocketnet_free",
@@ -7490,7 +7494,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_copy_string",
     "rocketnet_client_transport_state_name",
     "rocketnet_client_transport_default_config",
+    "rocketnet_client_transport_required_memory",
     "rocketnet_client_transport_create",
+    "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -7515,6 +7521,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_dev_config",
     "rocketnet_server_transport_required_memory",
     "rocketnet_server_transport_create",
+    "rocketnet_server_transport_create_ex",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
     "rocketnet_server_transport_state",
@@ -7542,11 +7549,13 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_frame_sync_create",
+    "rocketnet_frame_sync_create_ex",
     "rocketnet_frame_sync_destroy",
     "rocketnet_frame_sync_wait",
     "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_validate_config",
+    "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -7555,6 +7564,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_num_counters",
     "rocketnet_counter_value",
     "rocketnet_counter_name",
+    "rocketnet_counter_class",
+    "rocketnet_counter_class_name",
+    "rocketnet_counters_conserved",
     "rocketnet_message_client_required_memory",
     "rocketnet_message_client_create",
     "rocketnet_message_client_destroy",
@@ -7567,6 +7579,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_message_client_abort",
     "rocketnet_message_client_send",
     "rocketnet_message_client_receive",
+    "rocketnet_message_client_receipts",
     "rocketnet_message_client_release",
     "rocketnet_message_client_set_send_kbps",
     "rocketnet_message_client_disconnect_reason",
@@ -7583,6 +7596,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_message_server_send",
     "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
+    "rocketnet_message_server_receipts",
     "rocketnet_message_server_release",
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
@@ -7606,11 +7620,13 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_debug",
     "rocketnet_spam",
     "rocketnet_allocator",
+    "rocketnet_allocator_ex",
     "rocketnet_user_id_string",
     "rocketnet_random_bytes",
     "rocketnet_copy_string",
     "rocketnet_client_transport_default_config",
     "rocketnet_client_transport_create",
+    "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -7634,6 +7650,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_server_transport_default_config",
     "rocketnet_server_transport_dev_config",
     "rocketnet_server_transport_create",
+    "rocketnet_server_transport_create_ex",
     "rocketnet_server_transport_destroy",
     "rocketnet_server_transport_stop",
     "rocketnet_server_transport_state",
@@ -7664,6 +7681,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_counter_value",
+    "rocketnet_counters_conserved",
     "rocketnet_message_client_create",
     "rocketnet_message_client_destroy",
     "rocketnet_message_client_transport",
@@ -7675,6 +7693,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_message_client_abort",
     "rocketnet_message_client_send",
     "rocketnet_message_client_receive",
+    "rocketnet_message_client_receipts",
     "rocketnet_message_client_release",
     "rocketnet_message_client_set_send_kbps",
     "rocketnet_message_client_disconnect_reason",
@@ -7690,6 +7709,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_message_server_send",
     "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
+    "rocketnet_message_server_receipts",
     "rocketnet_message_server_release",
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
@@ -7701,13 +7721,16 @@ static const char * rocketnet_test_null_exempt_exports[] =
 {
     "rocketnet_abi_version",
     "rocketnet_init",
+    "rocketnet_init_ex",
     "rocketnet_term",
+    "rocketnet_term_ex",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
     "rocketnet_get_log_level",
     "rocketnet_log_level_string",
     "rocketnet_log_function",
+    "rocketnet_set_log_callback",
     "rocketnet_api_misuse_count",
     "rocketnet_malloc",
     "rocketnet_free",
@@ -7721,10 +7744,13 @@ static const char * rocketnet_test_null_exempt_exports[] =
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_transport_state_name",
+    "rocketnet_client_transport_required_memory",
     "rocketnet_server_transport_required_memory",
     "rocketnet_forbid_xdp_commit",
     "rocketnet_frame_sync_create",
+    "rocketnet_frame_sync_create_ex",
     "rocketnet_message_validate_config",
+    "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -7732,11 +7758,11 @@ static const char * rocketnet_test_null_exempt_exports[] =
     "rocketnet_status_string",
     "rocketnet_num_counters",
     "rocketnet_counter_name",
+    "rocketnet_counter_class",
+    "rocketnet_counter_class_name",
     "rocketnet_message_client_required_memory",
     "rocketnet_message_server_required_memory",
 };
-
-static_assert( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) == ROCKETNET_NUM_EXPORTED_FUNCTIONS, "rocketnet_test_exports drifted from sdk/rocketnet.h" );
 
 static bool rocketnet_test_name_in( const char * name, const char * const * list, int count )
 {
@@ -7978,7 +8004,17 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_required_memory( NULL, "portable" ) > 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+    rocketnet_check( rocketnet_client_transport_required_memory( NULL, NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_counter_value( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_counters_conserved( NULL, NULL, 0 ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -8049,12 +8085,20 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_create_ex( NULL, NULL, NULL, 0.0, NULL ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_create( NULL, NULL, NULL ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // rocketnet_allocator refuses a NULL callback in a partial or full set
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_allocator( NULL, NULL ) == false );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_allocator_ex( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // rocketnet_free and rocketnet_clear_and_free already treat NULL p as a
@@ -8091,11 +8135,12 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_message_client_abort( NULL );
         rocketnet_check( rocketnet_message_client_send( NULL, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
         rocketnet_check( rocketnet_message_client_receive( NULL, 0, &view, &view_bytes ) == 0 );
+        rocketnet_check( rocketnet_message_client_receipts( NULL, NULL, 0 ) == 0 );
         rocketnet_message_client_release( NULL, packet );
         rocketnet_check( rocketnet_message_client_set_send_kbps( NULL, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_client_disconnect_reason( NULL ) == ROCKETNET_MESSAGE_ERROR_NONE );
         rocketnet_check( rocketnet_message_client_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 15 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 16 );
 
         before = rocketnet_api_misuse_count();
         rocketnet_check( rocketnet_message_server_create( NULL, NULL, NULL, NULL, NULL, 0, 0 ) == NULL );
@@ -8109,12 +8154,13 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_send( NULL, 0, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
         rocketnet_check( rocketnet_message_server_broadcast( NULL, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
         rocketnet_check( rocketnet_message_server_receive( NULL, 0, 0, &view, &view_bytes ) == 0 );
+        rocketnet_check( rocketnet_message_server_receipts( NULL, 0, NULL, 0 ) == 0 );
         rocketnet_message_server_release( NULL, 0, packet );
         rocketnet_check( rocketnet_message_server_set_send_kbps( NULL, 0, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
         rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
         rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 16 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
 
         // the sizing calls take NULL configs as the defaults: not a misuse
         before = rocketnet_api_misuse_count();
@@ -8540,13 +8586,14 @@ void rocketnet_test_ack_apply_skips_acked_range()
 
     // Second apply: every record in range is already acked, so nothing is
     // newly acked, no packet id is appended, no unknown sequence is counted,
-    // and the walk still visits each record in the range once
+    // and the walk visits no record in the range (an acknowledged record is
+    // not visited)
     g_ack_visit_count = 0;
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == 0 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 11 );
+    rocketnet_check( g_ack_visit_count == 0 );
 
     rocketnet_free( NULL, endpoint );
 }
@@ -8585,9 +8632,11 @@ void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
     rocketnet_check( acked_count == 2 );
     rocketnet_check( unknown == 0 );
 
-    // a single run naming 100 through 102 visits the hole at 101 exactly once:
-    // nothing new is acked, no packet id is appended, the return is 0, and the
-    // unknown counter rises by one
+    // a single run naming 100 through 102 counts the hole at 101 unknown: the
+    // held count yields it arithmetically (nothing new is acked, no packet id
+    // is appended, the return is 0, and the unknown counter rises by one). the
+    // walk visits nothing: 100 and 102 are already acked, and 101 was never
+    // held
     struct rocketnet_ack_block_t full;
     memset( &full, 0, sizeof(full) );
     full.largest = 102;
@@ -8602,7 +8651,7 @@ void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == unknown_before + 1 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 3 );
+    rocketnet_check( g_ack_visit_count == 0 );
 
     // a run naming only the already-acked 100 does not move the counter
     struct rocketnet_ack_block_t one;

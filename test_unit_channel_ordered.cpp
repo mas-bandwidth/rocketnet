@@ -1154,6 +1154,95 @@ static void hostile_chunk_count_or_index_kicks()
     }
 }
 
+// hostile reliable chunks (code 2) are refused and counted: each refusal in
+// rn_channels_dispatch_reliable_chunk (sdk/rocketnet_channel_reliable.cpp)
+// fires BAD_BLOCK for the shape, the dead number and a part that disagrees,
+// and BAD_RING for a span outside the ring.
+static void hostile_reliable_chunks_are_refused()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    static uint8_t chunk[1152];
+    memset( chunk, 0x77, sizeof( chunk ) );
+    rn_delivery_t out;
+    rocketnet_message_record_t record;
+
+    // (a) fragments = 0: a block of one is not a block
+    {
+        node_t * b = node_new( &config, 4 );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        chunk_record( &record, 0, 0, 0, 0, 0, chunk, (int) F );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK, before );
+        node_free( b );
+    }
+
+    // (b) an index at the count
+    {
+        node_t * b = node_new( &config, 4 );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        chunk_record( &record, 0, 0, 2, 1, 0, chunk, (int) F );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK, before );
+        node_free( b );
+    }
+
+    // (c) a non-last chunk shorter than F
+    {
+        node_t * b = node_new( &config, 4 );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        chunk_record( &record, 0, 0, 0, 1, 0, chunk, 100 );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK, before );
+        node_free( b );
+    }
+
+    // (d) a number no peer ever accepted
+    {
+        node_t * b = node_new( &config, 4 );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        chunk_record( &record, 5, 0, 0, 1, 0, chunk, (int) F );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK, before );
+        node_free( b );
+    }
+
+    // (e) a span outside the ring: accepted, then refused as BAD_RING
+    {
+        node_t * b = node_new( &config, 4 );
+        chunk_record( &record, 0, 0, 0, 1, (uint32_t) ( b->region->ring_bytes / 16 ), chunk, (int) F );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        uint32_t slot;
+        check( rn_window_receive_accept( &b->ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_RING, before );
+        node_free( b );
+    }
+
+    // (f) a chunk whose base disagrees with the block's first chunk seen
+    {
+        node_t * b = node_new( &config, 4 );
+        chunk_record( &record, 0, 0, 0, 1, 0, chunk, (int) F );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        uint32_t slot;
+        check( rn_window_receive_accept( &b->ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        const uint64_t before = counter( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        chunk_record( &record, 1, 0, 1, 1, 200, chunk, 100 );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        check( rn_window_receive_accept( &b->ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( rn_channels_dispatch( &b->ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+        expect_kick( b, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK, before );
+        node_free( b );
+    }
+}
+
 static void hostile_small_at_held_ordering_is_refused()
 {
     rocketnet_message_config_t config;
@@ -1888,6 +1977,7 @@ REGISTER_UNIT_TEST( large_between_small_keeps_order );
 REGISTER_UNIT_TEST( chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( no_partial_delivery );
 REGISTER_UNIT_TEST( hostile_chunk_count_or_index_kicks );
+REGISTER_UNIT_TEST( hostile_reliable_chunks_are_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( start_pointer_is_the_frame_source );

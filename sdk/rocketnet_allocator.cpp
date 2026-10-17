@@ -215,6 +215,7 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
     }
 }
 
+    // tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
     rocketnet_assert( store );
@@ -254,6 +255,7 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     return ( (uint32_t) c << 30 ) | first;
 }
 
+    // tla/RNSendStore.tla Free
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
@@ -392,6 +394,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
 }
 
+    // tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
 void rn_region_carve( rn_region_t * region )
 {
     rocketnet_assert( region && region->base );
@@ -717,6 +720,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     return d;
 }
 
+// tla/RNRing.tla PlaceSingle
 const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uint32_t fragment, uint32_t * out_bytes )
 {
     rocketnet_assert( region );
@@ -866,6 +870,7 @@ bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t by
     return (uint64_t) ( address - base ) <= region->bytes - bytes;
 }
 
+// tla/RNRing.tla SpanInsideRing
 bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes )
 {
     // placement is the sender's; the receiver only checks bounds (4.3, 6.3), so
@@ -937,6 +942,7 @@ static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_m
     return arena;
 }
 
+    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;
@@ -980,6 +986,7 @@ uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int
     return bytes;
 }
 
+    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;

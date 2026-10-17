@@ -25,6 +25,7 @@
 
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
+#include "test/wycheproof.h"
 
 // Match the header to the sodium implementation linked into the SDK.
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
@@ -622,3 +623,211 @@ REGISTER_UNIT_TEST( vectors_regenerate_byte_identical );
 REGISTER_UNIT_TEST( each_vector_verifies_and_opens );
 REGISTER_UNIT_TEST( deterministic_seal_matches_libsodium_open );
 REGISTER_UNIT_TEST( tampered_vector_refused );
+
+// ---------------------------------------------------------------------------
+// Wycheproof Ed25519. The rule these tests pin is RFC 8032 section 5.1.7 as
+// the shipped code applies it: sdk/rocketnet_connect_token.cpp,
+// rocketnet_verify_signed_connect_data accepts a signature only when
+// crypto_sign_verify_detached returns 0, and the verifier is the vendored
+// subset in sodium/sodium.c that the SDK links. The vectors are
+// test/wycheproof/ed25519_test.json at the pin the vendor card landed.
+
+#if !defined(ROCKETNET_USE_SYSTEM_SODIUM) // rocketnet-wycheproof-ed25519
+
+struct wp_ed25519_tally_t
+{
+    int verified;
+    int refused_verify;
+    int sig_size;
+};
+
+struct wp_ed25519_disagreement_t
+{
+    int tc_id;
+    std::string result;
+    std::string outcome;
+    size_t sig_bytes;
+};
+
+static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
+                           std::vector<wp_ed25519_disagreement_t> * disagreements )
+{
+    tally->verified = 0;
+    tally->refused_verify = 0;
+    tally->sig_size = 0;
+    if ( disagreements )
+        disagreements->clear();
+
+    std::vector<wycheproof_test_t> tests;
+    int number_of_tests = 0;
+    int number_of_groups = 0;
+    if ( !wycheproof_load( "ed25519_test.json", tests, &number_of_tests, &number_of_groups ) )
+        return -1;
+
+    int failed = 0;
+    for ( size_t i = 0; i < tests.size(); i++ )
+    {
+        const wycheproof_test_t & test = tests[i];
+
+        const std::map<std::string, std::string>::const_iterator pk_text = test.group.find( "publicKey.pk" );
+        const std::map<std::string, std::string>::const_iterator msg_text = test.fields.find( "msg" );
+        const std::map<std::string, std::string>::const_iterator sig_text = test.fields.find( "sig" );
+        if ( pk_text == test.group.end() || msg_text == test.fields.end() || sig_text == test.fields.end() )
+            return -1;
+
+        std::vector<uint8_t> pk;
+        std::vector<uint8_t> msg;
+        std::vector<uint8_t> sig;
+        if ( !wycheproof_hex( pk_text->second, pk ) || pk.size() != 32 )
+            return -1;
+        if ( !wycheproof_hex( msg_text->second, msg ) )
+            return -1;
+        if ( !wycheproof_hex( sig_text->second, sig ) )
+            return -1;
+
+        const bool expected_valid = ( test.result == "valid" );
+        bool actual_valid = false;
+        std::string outcome;
+
+        if ( sig.size() != (size_t) ROCKETNET_SIGNATURE_BYTES )
+        {
+            // rocketnet reads exactly ROCKETNET_SIGNATURE_BYTES: the size is
+            // the SDK's own refusal, before any verify is attempted
+            outcome = "sig_size";
+            actual_valid = false;
+            tally->sig_size++;
+        }
+        else if ( accept_all )
+        {
+            // the planted bug: reach the verify branch and never look at its
+            // result, as a verify that does not check would
+            outcome = "verified";
+            actual_valid = true;
+            tally->verified++;
+        }
+        else
+        {
+            static const uint8_t empty_message = 0;
+            const uint8_t * message = msg.empty() ? &empty_message : msg.data();
+            if ( crypto_sign_verify_detached( sig.data(), message, (unsigned long long) msg.size(), pk.data() ) == 0 )
+            {
+                outcome = "verified";
+                actual_valid = true;
+                tally->verified++;
+            }
+            else
+            {
+                outcome = "refused_verify";
+                actual_valid = false;
+                tally->refused_verify++;
+            }
+        }
+
+        if ( actual_valid != expected_valid )
+        {
+            failed++;
+            printf( "wycheproof ed25519_test.json tcId %d %s %s\n",
+                    test.tc_id, test.result.c_str(), outcome.c_str() );
+            printf( "wycheproof ed25519_test.json tcId %d flags", test.tc_id );
+            for ( size_t f = 0; f < test.flags.size(); f++ )
+                printf( " %s", test.flags[f].c_str() );
+            printf( "\n" );
+            if ( disagreements )
+            {
+                wp_ed25519_disagreement_t d;
+                d.tc_id = test.tc_id;
+                d.result = test.result;
+                d.outcome = outcome;
+                d.sig_bytes = sig.size();
+                disagreements->push_back( d );
+            }
+        }
+    }
+
+    return failed;
+}
+
+// Pins sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data
+// against all 151 Ed25519 vectors, then drives the SDK wrapper itself: S
+// replaced by S + L (RFC 8032 section 5.1.7), a flipped R bit, flipped data
+// and the identity public key encoding are all refused.
+static void wycheproof_ed25519_vectors()
+{
+    wp_ed25519_tally_t tally;
+    rocketnet_unit_check( wp_ed25519_run( false, &tally, NULL ) == 0 );
+    rocketnet_unit_check( tally.verified == 88 );
+    rocketnet_unit_check( tally.refused_verify == 51 );
+    rocketnet_unit_check( tally.sig_size == 12 );
+
+    uint8_t data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+        data[i] = (uint8_t) ( i & 0xff );
+
+    uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+    rocketnet_unit_check( crypto_sign_detached( signature, NULL, data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
+                                                rocketnet_test_backend_secret_key ) == 0 );
+    rocketnet_unit_check( rocketnet_verify_signed_connect_data( data, signature,
+                                                                rocketnet_test_backend_public_key ) == 1 );
+
+    // L = 2^252 + 27742317777372353535851937790883648493, little endian
+    static const uint8_t group_order[32] =
+    {
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
+        0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10
+    };
+
+    uint8_t malleable[ROCKETNET_SIGNATURE_BYTES];
+    memcpy( malleable, signature, sizeof(malleable) );
+    int carry = 0;
+    for ( int i = 0; i < 32; i++ )
+    {
+        int sum = (int) malleable[32 + i] + (int) group_order[i] + carry;
+        malleable[32 + i] = (uint8_t) ( sum & 0xff );
+        carry = sum >> 8;
+    }
+    rocketnet_unit_check( carry == 0 );
+    rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, malleable,
+                                                                 rocketnet_test_backend_public_key ) );
+
+    uint8_t flipped_r[ROCKETNET_SIGNATURE_BYTES];
+    memcpy( flipped_r, signature, sizeof(flipped_r) );
+    flipped_r[0] ^= 0x01;
+    rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, flipped_r,
+                                                                 rocketnet_test_backend_public_key ) );
+
+    uint8_t flipped_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    memcpy( flipped_data, data, sizeof(flipped_data) );
+    flipped_data[100] ^= 0x01;
+    rocketnet_unit_check( !rocketnet_verify_signed_connect_data( flipped_data, signature,
+                                                                 rocketnet_test_backend_public_key ) );
+
+    uint8_t identity[32];
+    memset( identity, 0, sizeof(identity) );
+    identity[0] = 0x01;
+    rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, signature, identity ) );
+}
+
+// The witness: wp_ed25519_run with the planted accept-all flag must go red on
+// exactly the 51 invalid vectors whose 64-byte signature the verify branch in
+// sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data exists
+// to refuse. A green witness means the main test would not catch that bug.
+static void wycheproof_ed25519_witness_accept_all_goes_red()
+{
+    wp_ed25519_tally_t tally;
+    std::vector<wp_ed25519_disagreement_t> disagreements;
+    rocketnet_unit_check( wp_ed25519_run( true, &tally, &disagreements ) == 51 );
+    rocketnet_unit_check( disagreements.size() == 51 );
+    for ( size_t i = 0; i < disagreements.size(); i++ )
+    {
+        rocketnet_unit_check( disagreements[i].result == "invalid" );
+        rocketnet_unit_check( disagreements[i].outcome == "verified" );
+        rocketnet_unit_check( disagreements[i].sig_bytes == (size_t) ROCKETNET_SIGNATURE_BYTES );
+    }
+}
+
+REGISTER_UNIT_TEST( wycheproof_ed25519_vectors );
+REGISTER_UNIT_TEST( wycheproof_ed25519_witness_accept_all_goes_red );
+
+#endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM), rocketnet-wycheproof-ed25519

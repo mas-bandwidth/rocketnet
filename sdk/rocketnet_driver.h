@@ -7,6 +7,11 @@
 // Native implementation interface. None of these symbols is a public C export.
 struct rocketnet_platform_send_t;
 
+// A preference rank this large keeps a driver out of every auto order; a pin
+// still selects it. The loopback driver is pin-only: it is chosen only by an
+// explicit name, never by auto.
+#define ROCKETNET_DRIVER_PIN_ONLY 1000
+
 enum
 {
 #define ROCKETNET_DRIVER(symbol, name, discovers, operations, platforms, server, client) ROCKETNET_DRIVER_##symbol,
@@ -76,15 +81,30 @@ struct rocketnet_client_driver_config_t
     const rocketnet_client_transport_config_t * transport;
 };
 
-// Clients retain the existing transport receive thread and buffers. A backend
-// must support receive concurrently with sends and borrow buffers only for
-// the call. destroy runs after that thread has joined and drains owned I/O.
+// A backend with wait and wake runs the client I/O thread design of
+// docs/CLIENT-IO.md; a backend without them keeps the receive thread and
+// per-packet main-thread sends.
 struct rocketnet_client_driver_operations_t
 {
     void * (*create)( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * );
     void (*destroy)( void * );
     void (*send)( void *, const rocketnet_address_t *, const uint8_t *, int );
     int (*receive)( void *, rocketnet_address_t *, uint8_t *, int );
+    // optional; I/O thread only. Sends num_packets datagrams in one batch,
+    // borrowing sends and the bytes they point at for the call only.
+    void (*send_batch)( void * driver, const rocketnet_platform_send_t * sends, int num_packets );
+    // optional; I/O thread only. Drains up to max_packets into caller
+    // storage at packet_data + i * packet_stride, writing from[i] and
+    // packet_bytes[i]; returns the count, zero when drained.
+    int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
+    // optional, with wake; I/O thread only. Blocks until a wake is set,
+    // the socket is readable (only when readable is true), or
+    // timeout_seconds pass; consumes the wake. With readable false the
+    // socket's readiness is ignored. Returns true when woken or readable.
+    bool (*wait)( void * driver, bool readable, double timeout_seconds );
+    // optional, with wait; any thread. Sets the level-triggered wake, so a
+    // wait in progress or the next wait returns at once.
+    void (*wake)( void * driver );
 };
 
 struct rocketnet_driver_backend_t
@@ -120,6 +140,7 @@ const char * rocketnet_driver_name( int driver );
 const char * rocketnet_driver_names();
 const char * rocketnet_driver_discovering_names();
 bool rocketnet_driver_discovers_bound_port( int driver );
+bool rocketnet_driver_pin_only( int driver );
 const int * rocketnet_server_driver_availability( int * num_available );
 const int * rocketnet_client_driver_availability( int * num_available );
 

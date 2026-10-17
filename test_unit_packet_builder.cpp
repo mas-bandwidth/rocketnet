@@ -49,6 +49,18 @@ static void builder_item( struct rn_packet_item_t * item, uint16_t channel, int 
     item->descriptor = RN_DESCRIPTOR_NONE;
 }
 
+// a zeroed record for a code, data a static 16-byte buffer: the base record
+// the validity refusals copy and corrupt one field of.
+
+static void valid_base_record( struct rocketnet_message_record_t * record, int code )
+{
+    static uint8_t base_data[16];
+    memset( record, 0, sizeof( *record ) );
+    record->code = code;
+    record->data = base_data;
+    record->bytes = 16;
+}
+
 // several small records pack into one packet (9.3), each whole, in class order,
 // round robin across channels.
 
@@ -264,6 +276,163 @@ static void no_allocation_after_create()
     rocketnet_unit_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
 }
 
+// rocketnet_message_record_valid (sdk/rocketnet_message.cpp) is the writer's
+// gate: absent fields are zero, present ones inside their wire widths, a block
+// has at least two fragments. Only valid records reach it in the suite, so
+// this test hands it each malformed shape and checks it is refused.
+
+static void message_record_valid_refuses_each_shape()
+{
+    // NULL is refused
+    rocketnet_unit_check( !rocketnet_message_record_valid( NULL ) );
+
+    // a zeroed base record is valid for every code 0..NUM_CODES-1
+    for ( int code = 0; code < ROCKETNET_MESSAGE_NUM_CODES; code++ )
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, code );
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 1 );
+    }
+
+    // code -1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, -1 );
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code ROCKETNET_MESSAGE_NUM_CODES
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_NUM_CODES );
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // bytes 0
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.bytes = 0;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // bytes ROCKETNET_MESSAGE_MAX_RECORD_BYTES + 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.bytes = ROCKETNET_MESSAGE_MAX_RECORD_BYTES + 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // data NULL
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.data = NULL;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code with a number (RELIABLE): number = U24_MASK + 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE );
+        record.number = ROCKETNET_MESSAGE_U24_MASK + 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code without a number (UNRELIABLE): number 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.number = 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code with sequencing (UNRELIABLE_SEQUENCED): sequencing = U24_MASK + 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED );
+        record.sequencing = ROCKETNET_MESSAGE_U24_MASK + 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code without sequencing (UNRELIABLE): sequencing 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.sequencing = 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code with a channel (UNRELIABLE_SEQUENCED): ordering = U24_MASK + 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED );
+        record.ordering = ROCKETNET_MESSAGE_U24_MASK + 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code with a channel: channel = 0x10000
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED );
+        record.channel = 0x10000;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code without a channel (UNRELIABLE): channel 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.channel = 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // holdable code (RELIABLE_ORDERED): ring = 0x10000
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
+        record.ring = 0x10000;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // code neither holdable nor a block (UNRELIABLE): ring 1
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+        record.ring = 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // fragments 1 with block 0 (RELIABLE)
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE );
+        record.fragments = 1;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // block 1 with fragments 0
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE );
+        record.block = 1;
+        record.fragments = 0;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+
+    // block 1 with fragments 1 and fragment 2
+    {
+        struct rocketnet_message_record_t record;
+        valid_base_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE );
+        record.block = 1;
+        record.fragments = 1;
+        record.fragment = 2;
+        rocketnet_unit_check( rocketnet_message_record_valid( &record ) == 0 );
+    }
+}
+
 REGISTER_UNIT_TEST( small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( no_allocation_after_create );
+REGISTER_UNIT_TEST( message_record_valid_refuses_each_shape );
