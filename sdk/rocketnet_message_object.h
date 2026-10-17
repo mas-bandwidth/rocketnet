@@ -15,6 +15,7 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_slots.h"
 
 // Layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
@@ -105,7 +106,6 @@ struct rn_message_connection_t
     uint64_t connection_id;                     // RNSlots: the connection this slot is bound to, 0 when free
     int state;                                  // RN_MESSAGE_CONNECTION_*
     int disconnect_reason;                      // ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here
-    int changed;                                // bound to a new connection in this update (RNSlots Observe)
     uint32_t serial;                            // the receipt serial of the last finished send (7.4)
 
     // the start between start and finish (one at a time, like the transport's start_packet)
@@ -138,6 +138,7 @@ struct rn_message_object_t
     rocketnet_counters_t counters;              // the message counters of every region of this object
     rn_arena_t * arena;
     rn_message_connection_t * connections;
+    struct rn_slots_t slots;                    // the slots machine (CHANNELS.md 10.2)
     uint32_t default_kbps;                      // a new connection's send budget
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time

@@ -41,6 +41,7 @@
 #include "rocketnet_packet_builder.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_send_budget.h"
+#include "rocketnet_slots.h"
 
 // ---------------------------------------------------------------
 //                          sizing
@@ -134,7 +135,6 @@ static void rn_message_connection_reset( rn_message_object_t * object, rn_messag
 
     connection->connection_id = 0;
     connection->state = RN_MESSAGE_CONNECTION_FREE;
-    connection->changed = 0;
     connection->serial = 0;
     connection->pending_type = -1;
     connection->pending_descriptor = RN_DESCRIPTOR_NONE;
@@ -217,6 +217,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->block = block;
     object->owns_block = owns_block ? 1 : 0;
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
+    rn_slots_init( &object->slots, num_connections );
 
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
     if ( !object->arena )
@@ -246,6 +247,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     {
         object->connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
         object->connections[0].connection_id = 1;
+        object->slots.connection_id[0] = 1;
     }
 
     return object;
@@ -311,11 +313,11 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // ---------------------------------------------------------------
 
 // RNSlots Admit: an entry is applied only to the connection it was received
-// for. The transport tags no batch entry with its connection, so the object
-// admits an entry only for a slot that was bound before this update's
-// transport update and is still bound to the same connection after it; a
-// slot bound or dropped by this update discards every entry of the batch (the
-// entries can only be the previous connection's, CHANNELS 10.2).
+// for. The transport tags no batch entry with its connection (P9b is a later
+// card), so the entry id is the slot's client id as the transport reports it.
+// A slot bound or dropped by this update cannot identify its entries: they
+// are presented with no tag (0, which no connection carries) and discarded
+// (CHANNELS 10.2, 11.5).
 
 static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, int k )
 {
@@ -326,7 +328,8 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
         return NULL;
     }
     rn_message_connection_t * connection = &object->connections[index];
-    if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED || connection->changed )
+    const uint64_t entry_connection_id = object->slots.changed[index] ? 0 : connection->connection_id;
+    if ( rn_slots_admit( &object->slots, index, entry_connection_id ) != RN_SLOTS_APPLY )
     {
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY );
         return NULL;
@@ -380,14 +383,15 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         memset( connection->views, 0, delivered < connection->region->delivery_entries ? delivered : connection->region->delivery_entries );
         memset( connection->cursors, 0, sizeof( uint32_t ) * connection->region->num_channels );
         connection->held = 0;
-        connection->changed = 0;
 
         // RNSlots ResetFree: a kicked connection's region is reset before the
-        // transport's update can give the slot to another client
+        // transport's update can give the slot to another client, and the
+        // slots machine sees the slot free until Observe reads the transport
         if ( connection->state == RN_MESSAGE_CONNECTION_KICKED )
         {
             const int reason = connection->disconnect_reason;
             rn_message_connection_reset( object, connection );
+            rn_slots_observe( &object->slots, i, 0 );
             connection->disconnect_reason = reason;
         }
     }
@@ -403,22 +407,19 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         {
             rn_message_connection_t * connection = &object->connections[i];
             const uint64_t id = object->link.connection( object->link.transport, i );
+            const int action = rn_slots_observe( &object->slots, i, id );
+            if ( action == RN_SLOTS_NONE )
+                continue;
 
-            if ( connection->state == RN_MESSAGE_CONNECTION_CONNECTED && id != connection->connection_id )
-            {
-                const int reason = connection->disconnect_reason;
-                rn_message_connection_reset( object, connection );
-                connection->disconnect_reason = reason;
-                connection->changed = 1;
-            }
+            const int reason = connection->disconnect_reason;
+            rn_message_connection_reset( object, connection );
+            connection->disconnect_reason = reason;
 
-            if ( connection->state == RN_MESSAGE_CONNECTION_FREE && id != 0 )
+            if ( action == RN_SLOTS_RESET )
             {
-                rn_message_connection_reset( object, connection );
                 connection->state = RN_MESSAGE_CONNECTION_CONNECTED;
                 connection->connection_id = id;
                 connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
-                connection->changed = 1;
             }
         }
     }
