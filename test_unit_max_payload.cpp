@@ -32,6 +32,7 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_test_vectors.h"
+#include "test/wycheproof.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -613,3 +614,259 @@ REGISTER_UNIT_TEST( limits_are_derived_from_the_packet_size );
 REGISTER_UNIT_TEST( sealed_packet_at_max_size_opens );
 REGISTER_UNIT_TEST( receive_ceiling_refuses_one_byte_over );
 REGISTER_UNIT_TEST( client_drops_reserved_and_wrong_direction_types );
+
+// ---------------------------------------------------------------------------
+// rocketnet-wycheproof-chacha20-poly1305: every ChaCha20-Poly1305 vector in
+// test/wycheproof/chacha20_poly1305_test.json through the vendored sodium the
+// SDK links, and every valid vector through rocketnet_write_sealed_packet and
+// rocketnet_open_sealed_packet (sdk/rocketnet_protocol.cpp), the two functions
+// that seal and open every session packet with
+// crypto_aead_chacha20poly1305_ietf_encrypt/decrypt.
+//
+// The witness plants one bug -- a decrypt that returns success without
+// comparing the tag -- and requires the 60 modified-tag vectors to go red.
+// With a system libsodium these tests are compiled out: they are a statement
+// about the code rocketnet ships.
+// ---------------------------------------------------------------------------
+
+#if !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+
+#include "sodium/sodium.h"
+
+struct wp_aead_tallies_t
+{
+    int opened;
+    int refused_open;
+    int nonce_size;
+};
+
+static bool wp_aead_field( const wycheproof_test_t & test, const char * name, std::vector<uint8_t> & out )
+{
+    std::map<std::string, std::string>::const_iterator it = test.fields.find( name );
+    if ( it == test.fields.end() )
+        return false;
+    return wycheproof_hex( it->second, out );
+}
+
+static void wp_aead_report( const wycheproof_test_t & test, const char * outcome )
+{
+    printf( "wycheproof chacha20_poly1305_test.json tcId %d %s %s flags",
+            test.tc_id, test.result.c_str(), outcome );
+    for ( size_t i = 0; i < test.flags.size(); i++ )
+        printf( " %s", test.flags[i].c_str() );
+    printf( "\n" );
+}
+
+// Returns the number of vectors whose outcome disagrees with Wycheproof and
+// fills the tally per outcome name. On a disagreement it prints the file,
+// tcId, result, outcome and flags -- never a key byte. witness_ok, when not
+// null, is cleared by any disagreeing vector that is not an invalid vector
+// with a 12-byte iv, the exact set a skipped tag comparison opens.
+static int wp_aead_run( bool skip_tag_check, struct wp_aead_tallies_t * tallies, bool * witness_ok )
+{
+    std::vector<wycheproof_test_t> tests;
+    int number_of_tests = 0, number_of_groups = 0;
+    check( wycheproof_load( "chacha20_poly1305_test.json", tests, &number_of_tests, &number_of_groups ) );
+    check( number_of_tests == 325 );
+
+    tallies->opened = 0;
+    tallies->refused_open = 0;
+    tallies->nonce_size = 0;
+    if ( witness_ok )
+        *witness_ok = true;
+
+    int disagreements = 0;
+    for ( size_t i = 0; i < tests.size(); i++ )
+    {
+        const wycheproof_test_t & test = tests[i];
+        std::vector<uint8_t> key, iv, aad, msg, ct, tag;
+        check( wp_aead_field( test, "key", key ) );
+        check( wp_aead_field( test, "iv", iv ) );
+        check( wp_aead_field( test, "aad", aad ) );
+        check( wp_aead_field( test, "msg", msg ) );
+        check( wp_aead_field( test, "ct", ct ) );
+        check( wp_aead_field( test, "tag", tag ) );
+        check( key.size() == 32 );
+
+        const bool valid = test.result == "valid";
+        bool accepted = false;
+        const char * outcome = NULL;
+
+        if ( iv.size() != 12 )
+        {
+            // rocketnet_sequence_nonce builds 12 bytes, so the sdk never
+            // offers another nonce size; the runner refuses it itself.
+            check( !valid );
+            tallies->nonce_size++;
+            outcome = "nonce_size";
+        }
+        else
+        {
+            check( tag.size() == 16 );
+            std::vector<uint8_t> sealed_input( ct );
+            sealed_input.insert( sealed_input.end(), tag.begin(), tag.end() );
+            std::vector<uint8_t> opened( msg.size() + 16 );
+            unsigned long long opened_bytes = 0;
+            const int rc = crypto_aead_chacha20poly1305_ietf_decrypt( opened.data(), &opened_bytes, NULL,
+                                                                      sealed_input.data(), (unsigned long long) sealed_input.size(),
+                                                                      aad.data(), (unsigned long long) aad.size(),
+                                                                      iv.data(), key.data() );
+            if ( rc == 0 )
+            {
+                tallies->opened++;
+                outcome = "opened";
+                accepted = true;
+            }
+            else
+            {
+                tallies->refused_open++;
+                outcome = "refused_open";
+            }
+
+            if ( skip_tag_check )
+            {
+                // the planted bug: a decrypt that never compares the tag
+                // opens whatever it was handed
+                if ( !accepted )
+                {
+                    tallies->refused_open--;
+                    tallies->opened++;
+                }
+                outcome = "opened";
+                accepted = true;
+            }
+
+            if ( valid )
+            {
+                std::vector<uint8_t> expected( ct );
+                expected.insert( expected.end(), tag.begin(), tag.end() );
+                std::vector<uint8_t> encrypted( msg.size() + 16 );
+                unsigned long long encrypted_bytes = 0;
+                check( crypto_aead_chacha20poly1305_ietf_encrypt( encrypted.data(), &encrypted_bytes,
+                                                                  msg.data(), (unsigned long long) msg.size(),
+                                                                  aad.data(), (unsigned long long) aad.size(),
+                                                                  NULL, iv.data(), key.data() ) == 0 );
+                const bool exact_output = rc == 0 && opened_bytes == msg.size() &&
+                                          ( msg.empty() || memcmp( opened.data(), msg.data(), msg.size() ) == 0 );
+                const bool exact_seal = encrypted_bytes == expected.size() &&
+                                        ( expected.empty() || memcmp( encrypted.data(), expected.data(), expected.size() ) == 0 );
+                if ( !exact_output || !exact_seal )
+                {
+                    disagreements++;
+                    wp_aead_report( test, outcome );
+                    if ( witness_ok )
+                        *witness_ok = false;
+                    continue;
+                }
+            }
+        }
+
+        if ( valid != accepted )
+        {
+            disagreements++;
+            wp_aead_report( test, outcome );
+            if ( witness_ok && !( !valid && iv.size() == 12 ) )
+                *witness_ok = false;
+        }
+    }
+
+    return disagreements;
+}
+
+static void wycheproof_chacha20_poly1305_vectors()
+{
+    // Every vector through the vendored sodium the SDK links. Valid vectors
+    // open with the exact plaintext and re-seal to ct||tag; invalid vectors
+    // are refused, the 9 other nonce sizes by the runner's own check.
+    struct wp_aead_tallies_t tallies;
+    check( wp_aead_run( false, &tallies, NULL ) == 0 );
+    check( tallies.opened == 256 );
+    check( tallies.refused_open == 60 );
+    check( tallies.nonce_size == 9 );
+
+    // Every valid vector of 1 to 1024 message bytes through the sdk wrapper:
+    // seal and open with the vector key as the session key, then refuse a
+    // flipped bit in each of the 16 tag bytes and in the first sealed byte.
+    std::vector<wycheproof_test_t> tests;
+    int number_of_tests = 0, number_of_groups = 0;
+    check( wycheproof_load( "chacha20_poly1305_test.json", tests, &number_of_tests, &number_of_groups ) );
+
+    static uint8_t packet[2048];
+    static uint8_t out[2048];
+    int sdk_vectors = 0;
+    for ( size_t i = 0; i < tests.size(); i++ )
+    {
+        const wycheproof_test_t & test = tests[i];
+        if ( test.result != "valid" )
+            continue;
+        std::vector<uint8_t> key, msg;
+        check( wp_aead_field( test, "key", key ) );
+        check( wp_aead_field( test, "msg", msg ) );
+        if ( msg.size() < 1 || msg.size() > 1024 )
+            continue;
+
+        const uint64_t sequence = 1000 + (uint64_t) sdk_vectors;
+        sdk_vectors++;
+
+        const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                                                rocketnet_test_filter_value, sequence, NULL,
+                                                                msg.data(), (int) msg.size(),
+                                                                ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                                                key.data() );
+        check( packet_bytes > 0 );
+        check( packet_bytes <= (int) sizeof(packet) );
+
+        const int opened_bytes = rocketnet_open_sealed_packet( out, NULL, (int) sizeof(out),
+                                                               packet, packet_bytes,
+                                                               ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
+                                                               ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                                               key.data() );
+        check( opened_bytes == (int) msg.size() );
+        check( memcmp( out, msg.data(), msg.size() ) == 0 );
+
+        const int tag_offset = packet_bytes - ROCKETNET_PACKET_TAG_BYTES;
+        for ( int t = 0; t < ROCKETNET_PACKET_TAG_BYTES; t++ )
+        {
+            packet[tag_offset + t] ^= 1;
+            check( rocketnet_open_sealed_packet( out, NULL, (int) sizeof(out),
+                                                 packet, packet_bytes,
+                                                 ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
+                                                 ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                                 key.data() ) == -1 );
+            packet[tag_offset + t] ^= 1;
+        }
+
+        const int first_sealed = ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES;
+        packet[first_sealed] ^= 1;
+        check( rocketnet_open_sealed_packet( out, NULL, (int) sizeof(out),
+                                             packet, packet_bytes,
+                                             ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
+                                             ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                             key.data() ) == -1 );
+        packet[first_sealed] ^= 1;
+
+        // restored, the same packet opens again
+        check( rocketnet_open_sealed_packet( out, NULL, (int) sizeof(out),
+                                             packet, packet_bytes,
+                                             ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, sequence,
+                                             ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                             key.data() ) == (int) msg.size() );
+    }
+    check( sdk_vectors == 254 );
+}
+
+static void wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red()
+{
+    // The planted bug removes exactly the tag comparison. The 60 invalid
+    // vectors with a 12-byte iv are the only ones it opens, so the runner
+    // returns exactly 60 and every disagreement is one of them.
+    struct wp_aead_tallies_t tallies;
+    bool witness_ok = false;
+    check( wp_aead_run( true, &tallies, &witness_ok ) == 60 );
+    check( witness_ok );
+}
+
+REGISTER_UNIT_TEST( wycheproof_chacha20_poly1305_vectors );
+REGISTER_UNIT_TEST( wycheproof_chacha20_poly1305_witness_skipped_tag_goes_red );
+
+#endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM)
