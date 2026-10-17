@@ -295,15 +295,46 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
         return NULL;
 
+    // the operator memory budget (#155): each candidate's pre-allocation plan
+    // is compared to the budget before any allocation, and a candidate whose
+    // plan exceeds it is refused exactly as a refusing driver is -- logged with
+    // the plan and the budget, and skipped so the ladder falls to the next
+    // candidate. a budget that no candidate fits refuses the create before the
+    // first allocation.
+    const uint64_t memory_budget = config->memory_budget_bytes;
+    bool budget_refused[ROCKETNET_NUM_DRIVERS];
+    memset( budget_refused, 0, sizeof(budget_refused) );
+    int budget_refused_total = 0;
+    int budget_allowed = 0;
+
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
-        const char * name = rocketnet_driver_name( ladder.candidates[i] );
+        const int candidate = ladder.candidates[i];
+        const char * name = rocketnet_driver_name( candidate );
         rocketnet_client_memory_plan_t plan;
         if ( rocketnet_client_transport_memory_plan( config, name, plan ) )
+        {
             rocketnet_info( "client memory plan [%s]: %llu allocator bytes, %d sockets; excludes OS stacks, kernel queues, loader and application memory",
                 name, (unsigned long long) plan.total_bytes, plan.sockets );
+            if ( memory_budget > 0 && plan.total_bytes > memory_budget )
+            {
+                rocketnet_warn( "client driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                    name, (unsigned long long) plan.total_bytes, (unsigned long long) memory_budget );
+                budget_refused[candidate] = true;
+                budget_refused_total++;
+            }
+            else
+                budget_allowed++;
+        }
         else
             rocketnet_info( "client memory plan [%s]: unavailable; consult this driver's resource policy", name );
+    }
+
+    if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
+    {
+        rocketnet_error( "client driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+            (unsigned long long) memory_budget );
+        return NULL;
     }
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) rocketnet_malloc( context, sizeof(rocketnet_client_transport_t) );
@@ -423,6 +454,16 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     for ( int i = 0; i < ladder.num_candidates && granted_driver < 0; i++ )
     {
         const int candidate = ladder.candidates[i];
+
+        // a candidate whose memory plan the operator budget refused was logged
+        // and refused in the plan loop above; record it for the exhausted
+        // summary and fall to the next candidate, never opening it
+        if ( budget_refused[candidate] )
+        {
+            const size_t used = strlen( refused_names );
+            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            continue;
+        }
 
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
         const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
