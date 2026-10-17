@@ -155,6 +155,39 @@ _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, pad ) 
 _Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_config_t, public_address_ipv6 ) == 16, "the XDP config IPv6 destination is 4-byte aligned" );
 #endif // #ifdef __cplusplus
 
+// The kernel replay map's key and value, in the same shared-wire discipline
+// as the config above: one definition serves the BPF program and userspace,
+// and the padding is explicit so the layout cannot depend on either compiler.
+// The key is 4 + 2 + 16 = 20 bytes with no implicit holes; the value 8 bytes.
+// The port and address are network order; an IPv4 source occupies the first 4
+// address bytes with the rest zero.
+
+struct rocketnet_server_xdp_replay_key_t
+{
+    uint8_t family;                     // 4 or 6
+    uint8_t pad;                        // zero; fills offset 1, up to the port
+    uint16_t port;                      // network order, the UDP source port
+    uint8_t address[16];                // network order; IPv4 in the first 4 bytes, the rest zero
+};
+
+struct rocketnet_server_xdp_replay_value_t
+{
+    uint32_t high_water;                // the highest sequence the map has marked
+    uint32_t pad;                       // zero; keeps the value at 8 bytes
+};
+
+#ifdef __cplusplus
+static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
+static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
+static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
+static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
+#else // #ifdef __cplusplus
+_Static_assert( sizeof(struct rocketnet_server_xdp_replay_key_t) == 20, "the XDP replay key is 20 bytes" );
+_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, port ) == 2, "the XDP replay port is at offset 2" );
+_Static_assert( __builtin_offsetof( struct rocketnet_server_xdp_replay_key_t, address ) == 4, "the XDP replay address is at offset 4" );
+_Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XDP replay value is 8 bytes" );
+#endif // #ifdef __cplusplus
+
 // The kernel filter's counters, incremented in the XDP program per verdict
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
