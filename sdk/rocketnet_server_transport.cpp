@@ -278,6 +278,7 @@ struct rocketnet_server_frame_t
     uint64_t packet_id;             // the staged drivers' bookkeeping id; unused on the portable path
 };
 
+// tla/RNDriverSendStaging.tla Reserve
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                                 const rocketnet_address_t * to,
                                                                 struct rocketnet_server_frame_t * frame )
@@ -306,6 +307,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
     return frame->data;
 }
 
+// tla/RNDriverSendStaging.tla Commit
 static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                           struct rocketnet_server_frame_t * frame,
                                                           int packet_bytes )
@@ -1068,6 +1070,7 @@ void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_
     server_transport->admission_context = context;
 }
 
+// tla/RNDriverSendStaging.tla Update
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -1855,6 +1858,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
+// tla/RNDriverSendStaging.tla SendPackets
 void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -1952,6 +1956,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
+// tla/RNDriverSendStaging.tla DisconnectClient
 void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
