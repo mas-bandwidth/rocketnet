@@ -376,7 +376,7 @@ static int block_cost_small_held( const rocketnet_channel_harness_t * h )
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( slot->acked )
             continue;
-        return ( slot->last_send <= 0.0 || h->now >= slot->last_send + rn_window_ack_resend_delay( ack ) ) ? 1 : 0;
+        return ( rn_send_number_unsent_due( slot->last_send ) || h->now >= slot->last_send + rn_window_ack_resend_delay( ack ) ) ? 1 : 0;
     }
     return 0;
 }

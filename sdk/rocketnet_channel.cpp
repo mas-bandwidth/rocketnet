@@ -1010,7 +1010,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
             continue;
         }
 
-        const bool unsent = slot->last_send <= 0.0;
+        const bool unsent = rn_send_number_unsent_due( slot->last_send );
         if ( !unsent && !( now >= slot->last_send + delay ) )
             return true;
 
