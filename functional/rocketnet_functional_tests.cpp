@@ -4516,6 +4516,8 @@ extern void large_unreliable_sequenced_uses_transport_fragments();
 extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
 extern void reliable_mixed_sizes_over_lossy_link();
+extern void unreliable_dropped_while_reliable_waits_never_arrives();
+extern void unreliable_dropped_when_builder_out_of_budget_never_arrives();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -4607,6 +4609,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link },
     { "ordered_small_and_large_interleaved", ordered_small_and_large_interleaved },
     { "reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link },
+    { "unreliable_dropped_while_reliable_waits_never_arrives", unreliable_dropped_while_reliable_waits_never_arrives },
+    { "unreliable_dropped_when_builder_out_of_budget_never_arrives", unreliable_dropped_when_builder_out_of_budget_never_arrives },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
