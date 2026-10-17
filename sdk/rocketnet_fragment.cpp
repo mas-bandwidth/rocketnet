@@ -81,6 +81,7 @@ uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots
     uint64_t total = sizeof(rocketnet_reassembly_set_t);
     const uint64_t slots = (uint64_t)num_connections * (uint64_t)num_slots;
     if (!rocketnet_memory_add(total, slots, sizeof(rocketnet_reassembly_slot_t)) ||
+        !rocketnet_memory_add(total, (uint64_t)num_connections, sizeof(uint32_t)) ||
         !rocketnet_memory_add(total, slots, (uint64_t)max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES) ||
         !rocketnet_memory_add(total, (uint64_t)delivered_capacity, (uint64_t)max_payload_bytes) || total > SIZE_MAX)
         return 0;
@@ -123,7 +124,11 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
     set->slot_arena_bytes = (size_t) max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
     set->delivered_capacity = delivered_capacity;
 
-    set->slots = (struct rocketnet_reassembly_slot_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
+    // the per-connection stale-rule references ride at the tail of the slot
+    // records' allocation, so the set keeps its allocation count
+
+    const size_t slot_records_bytes = (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t);
+    set->slots = (struct rocketnet_reassembly_slot_t*) rocketnet_malloc( context, slot_records_bytes + (size_t) num_connections * sizeof(uint32_t) );
     set->arena = (uint8_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
 
     // The delivered mirror is this implementation's own addition beyond
@@ -146,7 +151,9 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
         return NULL;
     }
 
-    memset( set->slots, 0, (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
+    memset( set->slots, 0, slot_records_bytes );
+    set->newest_completed = (uint32_t*) ( (uint8_t*) set->slots + slot_records_bytes );
+    memset( set->newest_completed, 0, (size_t) num_connections * sizeof(uint32_t) );
 
     return set;
 }
@@ -168,6 +175,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
     rocketnet_assert( set );
     rocketnet_assert( connection_index >= 0 && connection_index < set->num_connections );
     memset( set->slots + connection_index * set->num_slots, 0, (size_t) set->num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
+    set->newest_completed[connection_index] = 0;
 }
 
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set )
@@ -198,8 +206,9 @@ static void rocketnet_reassembly_set_bit( struct rocketnet_reassembly_slot_t * s
 
 // tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
 // placement and delivery inside this call (DeliveredExact, DeliveredOnce,
-// CompleteDelivers, ArenaBounded, CountPinned; the stale test fails
-// StaleOnlyIfOlder, finding D1 in tla/README-FragmentsAndAcks.md)
+// CompleteDelivers, ArenaBounded, CountPinned). The stale test is the rule
+// StaleOnlyIfOlder asks for: an honest fragment newer than its slot's
+// occupant is never refused (finding D1 in tla/README-FragmentsAndAcks.md)
 
 int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * set,
                                            int connection_index,
@@ -251,21 +260,41 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     uint8_t * slot_payload = set->arena + ( (size_t) connection_index * set->num_slots + (size_t) ( payload_id % (uint32_t) set->num_slots ) ) * set->slot_arena_bytes;
     uint8_t * slot_staging = slot_payload + set->max_payload_bytes;
 
-    // a payload id older than the slot's occupant was already superseded;
-    // accepting its bytes into the newer payload is the aliasing this
-    // check exists to prevent. A slot holds only a short run of live ids:
-    // the sender's id counter advances by one per fragmented payload, and
-    // this slot recurs every num_slots ids, so the next honest id for the
-    // slot is at most ROCKETNET_MAX_FRAGMENTS ahead of its occupant -- which
-    // also covers the rollover past 0xFFFFFFFF. An id behind the occupant,
-    // or far ahead of it, is stale. The far-ahead case is the one a plain
-    // half-space serial comparison misses: an id just under 2^31 ahead
-    // reads as "newer", so one hostile id evicts the occupant and every
-    // honest id behind it then reads as old -- the slot poisoned for the
-    // connection's life. Unsigned subtraction keeps the comparison defined.
+    // the stale test, STANDARD.md _Fragmentation_, against two references.
+    // Ids are compared as unsigned differences, so the rollover past
+    // 0xFFFFFFFF is ordinary arithmetic.
+    //
+    // First the connection's newest completed payload id (0, the id before
+    // the sender's first, until one completes): an honest id is within
+    // ROCKETNET_REASSEMBLY_REACH of it -- ahead by the payloads lost whole
+    // since, or behind as a late fragment -- and an id further away in both
+    // directions is stale. That is the hostile id: one fragment with an id
+    // near half the space ahead, which a plain serial comparison would read
+    // as newer than every honest id, refuses here whether its slot is
+    // occupied or empty, so it neither evicts nor holds a slot. Only a
+    // completed payload moves the reference, never a lone fragment.
+    //
+    // Then the slot's occupant: an id at most ROCKETNET_REASSEMBLY_BEHIND
+    // behind it was superseded -- accepting its bytes into the newer payload
+    // is the aliasing this check exists to prevent. Any other id displaces
+    // the occupant. A newer id does so however many of the slot's ids were
+    // lost whole in between, and an id further behind the occupant than a
+    // late fragment can be shows the occupant is no honest predecessor: a
+    // delayed fragment that re-occupied a slot a completion emptied, or an id
+    // ahead within the bound, holds the slot only until the next live id of
+    // its series.
+
+    const uint32_t reference = set->newest_completed[connection_index];
+
+    if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
+    {
+        rocketnet_spam( "reassembly refused fragment. payload id far from the newest completed" );
+        counters[table->stale]++;
+        return 0;
+    }
 
     if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
-         payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS )
+         slot->payload_id - payload_id <= ROCKETNET_REASSEMBLY_BEHIND )
     {
         rocketnet_spam( "reassembly refused fragment. stale payload id" );
         counters[table->stale]++;
@@ -467,6 +496,13 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
         }
 
         counters[table->reassembled]++;
+
+        // the stale rule's reference advances to the newest completed id,
+        // serially: a completion older than it leaves it where it is
+
+        const uint32_t advance = slot->payload_id - set->newest_completed[connection_index];
+        if ( advance != 0 && advance < 0x80000000u )
+            set->newest_completed[connection_index] = slot->payload_id;
 
         rocketnet_reassembly_clear_slot( slot );
     }
