@@ -277,10 +277,14 @@ if(ROCKETNET_BUILD_TESTS)
     add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp)
     target_link_libraries(rocketnet_test_support PUBLIC rocketnet)
     rocketnet_use_sodium(rocketnet_test_support)
+    # The filter epoch window's MAC tally (test_unit_filter_epochs.cpp) exists
+    # only for the unit suite.
+    target_compile_definitions(rocketnet PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
     # Every test_unit_<topic>.cpp at the repository root registers with
     # REGISTER_UNIT_TEST from test_unit_registry.h and is built into ./bin/test.
     file( GLOB ROCKETNET_UNIT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test_unit_*.cpp" )
     add_executable(test test.cpp test_channels.cpp ${ROCKETNET_UNIT_TEST_SOURCES})
+    target_compile_definitions(test PRIVATE ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1)
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
     # tests that must name every counter, and the sdk files that count them.
     # Both lists reach it as compile definitions, relative to the source
