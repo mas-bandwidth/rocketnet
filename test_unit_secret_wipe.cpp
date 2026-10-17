@@ -30,8 +30,21 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_test_vectors.h"
 
+#include "test/wycheproof.h"
+
+// Match the header to the sodium implementation linked into the SDK.
+#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#include <sodium.h>
+#else
+#include "sodium/sodium.h"
+#endif
+
 #include <stdint.h>
 #include <string.h>
+
+#include <set>
+#include <string>
+#include <vector>
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "test/counters_expect.h"
@@ -318,6 +331,210 @@ static void TestClientEphemeralSecretWipedOnConnectionResponseTimeout()
 // keys stay live across requests; server eph pair and derived keys are created
 // only after successful token open). These paths are therefore not-applicable
 // for a canary scan in this oracle.
+
+// ---------------------------------------------------------------------------
+// the vendored sodium subset, measured against every Wycheproof X25519 vector
+// (rocketnet-wycheproof-x25519)
+// ---------------------------------------------------------------------------
+
+#if !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+
+// The tests below drive the vendored subset the SDK links (sodium/sodium.c),
+// never a system libsodium, so a green run is a statement about the code
+// rocketnet ships. Under ROCKETNET_USE_SYSTEM_SODIUM they are compiled out.
+
+struct wp_x25519_tally_t
+{
+    int accepted;
+    int refused_low_order;
+};
+
+static bool wp_x25519_all_zero( const uint8_t * bytes )
+{
+    for ( int i = 0; i < 32; i++ )
+        if ( bytes[i] != 0 )
+            return false;
+    return true;
+}
+
+static bool wp_x25519_field( const wycheproof_test_t & test, const char * name, uint8_t out[32] )
+{
+    std::map<std::string, std::string>::const_iterator it = test.fields.find( name );
+    if ( it == test.fields.end() )
+        return false;
+    std::vector<uint8_t> bytes;
+    if ( !wycheproof_hex( it->second, bytes ) )
+        return false;
+    if ( bytes.size() != 32 )
+        return false;
+    memcpy( out, &bytes[0], 32 );
+    return true;
+}
+
+static void wp_x25519_print_disagreement( const wycheproof_test_t & test, const char * outcome )
+{
+    printf( "wycheproof %s tcId %d %s %s", "x25519_test.json", test.tc_id, test.result.c_str(), outcome );
+    for ( size_t i = 0; i < test.flags.size(); i++ )
+        printf( " %s", test.flags[i].c_str() );
+    printf( "\n" );
+    fflush( stdout );
+}
+
+// The rule: every x25519_test.json vector is judged by the same
+// crypto_scalarmult call sdk/rocketnet_keys.cpp makes in
+// rocketnet_derive_connection_keys -- a non-zero result refuses the vector,
+// and the 32 shared bytes are all zero exactly on the 31 low-order vectors.
+// The runner returns the disagreements and fills the outcome tallies. When
+// skip_zero_check is set it models a scalarmult with the all-zero refusal
+// removed, recording those vectors accepted whatever the call returned.
+static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally,
+                          bool * every_disagreement_zero_shared )
+{
+    std::vector<wycheproof_test_t> tests;
+    int number_of_tests = 0;
+    int number_of_groups = 0;
+    rocketnet_unit_check( wycheproof_load( "x25519_test.json", tests, &number_of_tests, &number_of_groups ) );
+    rocketnet_unit_check( number_of_tests == 518 );
+    rocketnet_unit_check( number_of_groups == 1 );
+    rocketnet_unit_check( tests.size() == 518 );
+
+    int disagreements = 0;
+    for ( size_t i = 0; i < tests.size(); i++ )
+    {
+        const wycheproof_test_t & test = tests[i];
+        uint8_t private_key[32];
+        uint8_t public_key[32];
+        uint8_t shared[32];
+        rocketnet_unit_check( wp_x25519_field( test, "private", private_key ) );
+        rocketnet_unit_check( wp_x25519_field( test, "public", public_key ) );
+        rocketnet_unit_check( wp_x25519_field( test, "shared", shared ) );
+
+        uint8_t out[32];
+        memset( out, 0, sizeof(out) );
+        const int result = crypto_scalarmult( out, private_key, public_key );
+        const bool all_zero = wp_x25519_all_zero( shared );
+
+        if ( all_zero )
+        {
+            if ( skip_zero_check )
+            {
+                tally->accepted++;
+                disagreements++;
+                wp_x25519_print_disagreement( test, "accepted" );
+            }
+            else if ( result != 0 )
+            {
+                tally->refused_low_order++;
+            }
+            else
+            {
+                tally->accepted++;
+                disagreements++;
+                wp_x25519_print_disagreement( test, "accepted" );
+            }
+        }
+        else if ( result != 0 )
+        {
+            tally->refused_low_order++;
+            disagreements++;
+            *every_disagreement_zero_shared = false;
+            wp_x25519_print_disagreement( test, "refused_low_order" );
+        }
+        else if ( memcmp( out, shared, sizeof(shared) ) != 0 )
+        {
+            tally->accepted++;
+            disagreements++;
+            *every_disagreement_zero_shared = false;
+            wp_x25519_print_disagreement( test, "accepted" );
+        }
+        else
+        {
+            tally->accepted++;
+        }
+    }
+    return disagreements;
+}
+
+// The rule: the 31 low-order vectors in x25519_test.json must be refused, not
+// accepted, and every other vector must yield exactly its shared value. The
+// check under test is the crypto_scalarmult zero-shared refusal reached from
+// rocketnet_derive_connection_keys in sdk/rocketnet_keys.cpp. The sdk wrapper
+// is driven too: it returns 0 on those 31 and 1 on the other 487, and each
+// success feeds the shared secret into session_client_to_server, so those 487
+// session keys are pairwise distinct without any key being printed.
+static void wycheproof_x25519_vectors()
+{
+    struct wp_x25519_tally_t tally;
+    tally.accepted = 0;
+    tally.refused_low_order = 0;
+    bool every_disagreement_zero_shared = true;
+    rocketnet_unit_check( wp_x25519_run( false, &tally, &every_disagreement_zero_shared ) == 0 );
+    rocketnet_unit_check( every_disagreement_zero_shared );
+    rocketnet_unit_check( tally.accepted == 487 );
+    rocketnet_unit_check( tally.refused_low_order == 31 );
+
+    std::vector<wycheproof_test_t> tests;
+    int number_of_tests = 0;
+    int number_of_groups = 0;
+    rocketnet_unit_check( wycheproof_load( "x25519_test.json", tests, &number_of_tests, &number_of_groups ) );
+    rocketnet_unit_check( tests.size() == 518 );
+
+    std::set<std::string> session_client_to_server_keys;
+    int sdk_accepted = 0;
+    for ( size_t i = 0; i < tests.size(); i++ )
+    {
+        const wycheproof_test_t & test = tests[i];
+        uint8_t private_key[32];
+        uint8_t public_key[32];
+        uint8_t shared[32];
+        rocketnet_unit_check( wp_x25519_field( test, "private", private_key ) );
+        rocketnet_unit_check( wp_x25519_field( test, "public", public_key ) );
+        rocketnet_unit_check( wp_x25519_field( test, "shared", shared ) );
+
+        struct rocketnet_connection_keys_t keys;
+        memset( &keys, 0, sizeof(keys) );
+        const int accepted = rocketnet_derive_connection_keys( &keys,
+                                                               rocketnet_test_token_c2s_key,
+                                                               rocketnet_test_token_s2c_key,
+                                                               rocketnet_test_salt,
+                                                               rocketnet_test_session_nonce,
+                                                               private_key,
+                                                               public_key,
+                                                               rocketnet_test_client_eph_public,
+                                                               rocketnet_test_server_eph_public );
+        if ( wp_x25519_all_zero( shared ) )
+        {
+            rocketnet_unit_check( accepted == 0 );
+        }
+        else
+        {
+            rocketnet_unit_check( accepted == 1 );
+            sdk_accepted++;
+            session_client_to_server_keys.insert( std::string( (const char *) keys.session_client_to_server, 32 ) );
+        }
+    }
+    rocketnet_unit_check( sdk_accepted == 487 );
+    rocketnet_unit_check( session_client_to_server_keys.size() == 487 );
+}
+
+// The witness: with the zero-shared refusal removed the runner must go red on
+// exactly the 31 low-order vectors, and no other vector may disagree. The
+// removed check is the crypto_scalarmult all-zero refusal in
+// sdk/rocketnet_keys.cpp, rocketnet_derive_connection_keys.
+static void wycheproof_x25519_witness_skipped_zero_check_goes_red()
+{
+    struct wp_x25519_tally_t tally;
+    tally.accepted = 0;
+    tally.refused_low_order = 0;
+    bool every_disagreement_zero_shared = true;
+    rocketnet_unit_check( wp_x25519_run( true, &tally, &every_disagreement_zero_shared ) == 31 );
+    rocketnet_unit_check( every_disagreement_zero_shared );
+}
+
+REGISTER_UNIT_TEST( wycheproof_x25519_vectors );
+REGISTER_UNIT_TEST( wycheproof_x25519_witness_skipped_zero_check_goes_red );
+
+#endif // !defined(ROCKETNET_USE_SYSTEM_SODIUM) -- rocketnet-wycheproof-x25519
 
 REGISTER_UNIT_TEST( TestClientTokenKeysAreWipedOnDisconnect );
 REGISTER_UNIT_TEST( TestClientEphemeralSecretWipedOnConnectionResponseTimeout );

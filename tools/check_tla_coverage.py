@@ -4,6 +4,7 @@
 import argparse
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,10 @@ def main():
     failures = []
     for row in rows:
         failures.extend(check_row(row))
+
+    for machine, count in Counter(row["machine"] for row in rows).items():
+        if count > 1:
+            failures.append(f"{machine}: row appears twice in tla/COVERAGE.tsv")
 
     have = {row["module"] for row in rows}
     required = set()

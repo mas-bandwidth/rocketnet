@@ -31,10 +31,14 @@
 
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
+#include "test/wycheproof.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // rocketnet_base64_decode_data never returns a negative value.
@@ -177,7 +181,121 @@ static void address_to_string_without_port_each_type()
     rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
 }
 
+// ---------------------------------------------------------------------------
+// the vendored Wycheproof files load and hold the counts, id range, result
+// set and tallies at the pin, and every hex field the sibling cards read
+// decodes.
+// ---------------------------------------------------------------------------
+
+static void wycheproof_files_load_and_count()
+{
+    std::vector<wycheproof_test_t> tests;
+    int num_tests = 0;
+    int num_groups = 0;
+
+    // chacha20_poly1305_test.json pins the aead hex fields key iv aad msg ct
+    // tag.
+    rocketnet_unit_check( wycheproof_load( "chacha20_poly1305_test.json", tests, &num_tests, &num_groups ) );
+    rocketnet_unit_check( (int) tests.size() == num_tests );
+    rocketnet_unit_check( num_tests == 325 );
+    rocketnet_unit_check( num_groups == 10 );
+    static const char * chacha_fields[] = { "key", "iv", "aad", "msg", "ct", "tag" };
+    int chacha_valid = 0, chacha_invalid = 0, chacha_acceptable = 0;
+    for ( int i = 0; i < num_tests; i++ )
+    {
+        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        if ( tests[i].result == "valid" ) chacha_valid++;
+        else if ( tests[i].result == "invalid" ) chacha_invalid++;
+        else if ( tests[i].result == "acceptable" ) chacha_acceptable++;
+        else rocketnet_unit_check( 0 );
+        std::vector<uint8_t> bytes;
+        for ( int f = 0; f < 6; f++ )
+        {
+            std::map<std::string, std::string>::const_iterator it = tests[i].fields.find( chacha_fields[f] );
+            rocketnet_unit_check( it != tests[i].fields.end() );
+            rocketnet_unit_check( wycheproof_hex( it->second, bytes ) );
+        }
+    }
+    rocketnet_unit_check( chacha_valid == 256 && chacha_invalid == 69 && chacha_acceptable == 0 );
+
+    // x25519_test.json pins the hex fields public private shared.
+    rocketnet_unit_check( wycheproof_load( "x25519_test.json", tests, &num_tests, &num_groups ) );
+    rocketnet_unit_check( (int) tests.size() == num_tests );
+    rocketnet_unit_check( num_tests == 518 );
+    static const char * x25519_fields[] = { "public", "private", "shared" };
+    int x25519_valid = 0, x25519_invalid = 0, x25519_acceptable = 0;
+    for ( int i = 0; i < num_tests; i++ )
+    {
+        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        if ( tests[i].result == "valid" ) x25519_valid++;
+        else if ( tests[i].result == "invalid" ) x25519_invalid++;
+        else if ( tests[i].result == "acceptable" ) x25519_acceptable++;
+        else rocketnet_unit_check( 0 );
+        std::vector<uint8_t> bytes;
+        for ( int f = 0; f < 3; f++ )
+        {
+            std::map<std::string, std::string>::const_iterator it = tests[i].fields.find( x25519_fields[f] );
+            rocketnet_unit_check( it != tests[i].fields.end() );
+            rocketnet_unit_check( wycheproof_hex( it->second, bytes ) );
+        }
+    }
+    rocketnet_unit_check( x25519_valid == 264 && x25519_acceptable == 254 && x25519_invalid == 0 );
+
+    // ed25519_test.json pins msg and sig, and the group publicKey.pk.
+    rocketnet_unit_check( wycheproof_load( "ed25519_test.json", tests, &num_tests, &num_groups ) );
+    rocketnet_unit_check( (int) tests.size() == num_tests );
+    rocketnet_unit_check( num_tests == 151 );
+    rocketnet_unit_check( num_groups == 78 );
+    int ed25519_valid = 0, ed25519_invalid = 0, ed25519_acceptable = 0;
+    for ( int i = 0; i < num_tests; i++ )
+    {
+        rocketnet_unit_check( tests[i].tc_id == i + 1 );
+        if ( tests[i].result == "valid" ) ed25519_valid++;
+        else if ( tests[i].result == "invalid" ) ed25519_invalid++;
+        else if ( tests[i].result == "acceptable" ) ed25519_acceptable++;
+        else rocketnet_unit_check( 0 );
+        std::vector<uint8_t> bytes;
+        std::map<std::string, std::string>::const_iterator msg = tests[i].fields.find( "msg" );
+        std::map<std::string, std::string>::const_iterator sig = tests[i].fields.find( "sig" );
+        std::map<std::string, std::string>::const_iterator pk = tests[i].group.find( "publicKey.pk" );
+        rocketnet_unit_check( msg != tests[i].fields.end() );
+        rocketnet_unit_check( sig != tests[i].fields.end() );
+        rocketnet_unit_check( pk != tests[i].group.end() );
+        rocketnet_unit_check( wycheproof_hex( msg->second, bytes ) );
+        rocketnet_unit_check( wycheproof_hex( sig->second, bytes ) );
+        rocketnet_unit_check( wycheproof_hex( pk->second, bytes ) );
+    }
+    rocketnet_unit_check( ed25519_valid == 88 && ed25519_invalid == 63 && ed25519_acceptable == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// the strict reader refuses malformed JSON and bad hex.
+// ---------------------------------------------------------------------------
+
+static void wycheproof_reader_refuses_malformed_json()
+{
+    wyj::node_t node;
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": [1, 2", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": 1,}", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": 1} x", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": 1, \"a\": 2}", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": 1.5}", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "{\"a\": \"é\"}", node ) );
+    rocketnet_unit_check( !wyj::parse_text( "[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]", node ) );
+    rocketnet_unit_check( wyj::parse_text( "{\"a\": [1, -2, \"x\\n\", true, false, null]}", node ) );
+
+    std::vector<uint8_t> bytes;
+    rocketnet_unit_check( !wycheproof_hex( "abc", bytes ) );
+    rocketnet_unit_check( !wycheproof_hex( "zz", bytes ) );
+    rocketnet_unit_check( wycheproof_hex( "", bytes ) );
+    rocketnet_unit_check( wycheproof_hex( "0aFf", bytes ) );
+    rocketnet_unit_check( bytes.size() == 2 && bytes[0] == 0x0a );
+    rocketnet_unit_check( bytes[1] == 0xff );
+}
+
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( address_load_ipv4_round_trips );
 REGISTER_UNIT_TEST( address_to_string_without_port_each_type );
+REGISTER_UNIT_TEST( wycheproof_files_load_and_count );
+REGISTER_UNIT_TEST( wycheproof_reader_refuses_malformed_json );

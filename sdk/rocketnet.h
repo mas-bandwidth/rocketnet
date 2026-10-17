@@ -121,14 +121,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
     #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
-// The number of unique ROCKETNET_EXPORT_FUNC entry points compiled into the
-// non-development library (ROCKETNET_DEVELOPMENT=0). The public-API NULL audit
-// in sdk/rocketnet_tests.cpp holds a mirror of these names and fails when the
-// two drift, so a new exported entry point without a NULL case is caught at
-// test time. rocketnet_init is declared once for C and once for C++ and counts
-// once; the development-only rocketnet_write_dev_connect_token is not in this
-// count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 144
+// tools/check_exports.py derives the set of exported entry points from these
+// ROCKETNET_EXPORT_FUNC declarations and refuses any name missing from the
+// rocketnet_test_exports mirror in sdk/rocketnet_tests.cpp, any table name this
+// header does not declare, and any duplicate. rocketnet_init is declared once
+// for C and once for C++ and counts once; the development-only
+// rocketnet_write_dev_connect_token is excluded, its behaviour covered by the
+// development library's own tests.
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -685,6 +684,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
+// The _ex form: same contract, and when status is not NULL it is written with
+// ROCKETNET_STATUS_OK on success and the section-2.1 code of the refusal on
+// every failure exit. The non-_ex form is a thin wrapper passing NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
+
 // a NULL client_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
 
@@ -913,6 +917,12 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
 // config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
+
+// As rocketnet_server_transport_create, with the exact section-2.1 code
+// written to *status on every return path when status is not NULL
+// (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
+// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 
 // a NULL server_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first

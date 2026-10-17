@@ -100,6 +100,22 @@ ROCKETNET_EXPORT_FUNC int rocketnet_platform_socket_receive_packets( struct rock
 
 ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_socket_pump( struct rocketnet_platform_socket_t * socket );
 
+// The client I/O wake (the design's The wake section): a level-triggered wake
+// beside a socket. wait blocks until the wake is set, the socket is readable
+// (only when readable is true) or timeout_seconds pass, consumes a set wake,
+// and returns true when woken or readable; with readable false the socket's
+// readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
+// runs makes the next wait return at once. Platforms that define
+// ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__)
+#define ROCKETNET_PLATFORM_HAS_WAKE 1
+#endif
+struct rocketnet_platform_wake_t;
+struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
+void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
+bool rocketnet_platform_wake_wait( struct rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds );
+void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
+
 // ----------------------------------------------------------------
 
 ROCKETNET_EXPORT_FUNC struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );

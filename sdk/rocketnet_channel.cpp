@@ -236,6 +236,7 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
     return ROCKETNET_CHANNEL_SEND_OK;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -253,6 +254,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -269,6 +271,7 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
     return sequencing;
 }
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -281,6 +284,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
+// tla/RNChannel.tla DeliverMessage
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -316,6 +320,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
+// tla/RNChannel.tla OpenPacket
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -385,6 +390,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //                  RELIABLE_ORDERED, the receive side
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 {
     // 7.2 Drain: after an ordered delivery on a channel, deliver the held
@@ -425,6 +431,7 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
     }
 }
 
+// tla/RNChannel.tla DeliverMessage
 int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -533,8 +540,11 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 }
 
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
-// whole message dispatched as one only when every chunk is in.
+// whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
+// RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
+// and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
 
+// tla/RNChannel.tla DeliverMessage
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
 {
     rn_region_t * region = channels->region;
@@ -621,6 +631,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Placed by index, not by arrival: ring + index * F, which is this chunk's
     // own offset (THE COPIES (b): a chunk must outlive the batch).
+    // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
     memcpy( region->receive_ring + (uint64_t) record->ring * 16, record->data, (size_t) record->bytes );
     anchor->block_have++;
 
@@ -654,6 +665,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Its turn: delivered whole, in place, a view of the ring (no reassembly
     // buffer, no second copy), then the coupling and the drain.
+    // RNBlocks!Deliver (DeliveredEqualsSent, NoPartialDelivery,
+    // OneOrderingSlotPerBlock).
     rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
     if ( !delivery )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -673,6 +686,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
+// tla/RNChannel.tla ReceiveAck
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into
@@ -710,6 +724,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
+// tla/RNChannel.tla EndUpdate
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
     if ( !channels )
@@ -736,6 +751,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla Enqueue
 static void rn_ready_push( rn_channels_t * channels, uint32_t channel )
 {
     rn_channel_send_t * send = channels->region->channel_send;
@@ -765,6 +781,7 @@ static void rn_ready_remove( rn_channels_t * channels, uint32_t channel )
     send[channel].ready_next = RN_DESCRIPTOR_NONE;
 }
 
+// tla/RNChannel.tla RefuseSend
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes )
 {
     if ( !channels || channels->pending != RN_DESCRIPTOR_NONE )
@@ -801,6 +818,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     return rn_region_send_write_pointer( region, d );
 }
 
+// tla/RNChannel.tla Enqueue
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
@@ -822,7 +840,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     // RNChannelTypes!Enqueue: code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
-    // takes one number; a larger block takes one number per chunk.
+    // takes one number; a larger block takes one number per chunk
+    // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
     const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
@@ -908,6 +927,7 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
+// tla/RNChannel.tla WritePacket
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
     const rn_region_t * region = ordered->channels.region;
@@ -938,6 +958,8 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
 
     if ( descriptor->fragments > 1 )
     {
+        // RNBlocks!SendRecord: the fragment carries its index, k - 1 and its
+        // own ring offset, p + index * F.
         item->block = 1;                                        // one chunk, in its own packet (8)
         item->alone = 1;
         item->fragment = slot->fragment;
@@ -1076,6 +1098,8 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
         // RNChannelTypes!WritePacket: code 2 uses the same late, stable
         // reliable number and transport-ACK resend table as code 3.
+        // RNBlocks!NumberMessage: a block's k consecutive numbers and one
+        // contiguous span, fragment i at p + i * F, admitted once.
         if ( descriptor->fragments > 1 )
             numbers = rn_window_send_first_write_block( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start );
         else if ( rn_window_send_first_write( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start ) == RN_WINDOW_SEND_NUMBERED )
