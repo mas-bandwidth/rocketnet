@@ -65,31 +65,16 @@ case "$jobs" in *[!0-9]*|0) usage ;; esac
 
 export SWEEP_BIN="$bin" SWEEP_TIMEOUT="$timeout_seconds"
 
-# one run: prints "FAIL ..." on failure, "ok" never (the count is the runs)
-run_one()
-{
-    local case_name=$1 seed=$2 out status reason
-    out=$( ROCKETNET_CHANNEL_SEED=$seed timeout "$SWEEP_TIMEOUT" "$SWEEP_BIN" --run "$case_name" 2>&1 )
-    status=$?
-    [ $status -eq 0 ] && return 0
-    if [ $status -eq 124 ]; then
-        reason="timeout_${SWEEP_TIMEOUT}s"
-    else
-        # the measurement line names the shape (budget_multiple, incomplete, ...)
-        reason=$( printf '%s\n' "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
-        if [ -z "$reason" ]; then
-            reason=$( printf '%s\n' "$out" | sed -n -E 's/^check failed: \( (.*) \), function .*/\1/p' | head -1 )
-        fi
-        [ -n "$reason" ] || reason="exit_${status}"
-    fi
-    echo "FAIL seed=$seed case=$case_name reason=$reason"
-}
-export -f run_one
-
+# Each lane is its own short bash process; it is dispatched by xargs with the
+# case and seed as $1 and $2. Exported shell functions do not reach a child
+# bash on this platform, so the run logic lives inline here, not in a function.
+# Every lane appends one newline to $RUNS_FILE (the run count comes from
+# executions actually attempted) and prints a "FAIL ..." line only on failure.
 report=$( mktemp )
-trap 'rm -f "$report"' EXIT
+runs_file=$( mktemp )
+export RUNS_FILE="$runs_file"
+trap 'rm -f "$report" "$runs_file"' EXIT
 
-runs=0
 {
     IFS=, read -r -a case_list <<< "$cases"
     for c in "${case_list[@]}"; do
@@ -99,10 +84,28 @@ runs=0
             seed=$(( seed + 1 ))
         done
     done
-} | xargs -P "$jobs" -L 1 bash -c 'run_one "$@"' _ > "$report"
+} | xargs -P "$jobs" -L 1 bash -c '
+set -u
+bin="$SWEEP_BIN"; timeout="$SWEEP_TIMEOUT"; runs_file="$RUNS_FILE"
+case_name=${1:-}; seed=${2:-}
+out=$( ROCKETNET_CHANNEL_SEED=$seed timeout "$timeout" "$bin" --run "$case_name" 2>&1 )
+status=$?
+printf "\n" >> "$runs_file"
+[ $status -eq 0 ] && exit 0
+if [ $status -eq 124 ]; then
+    reason="timeout_${timeout}s"
+else
+    # the measurement line names the shape (budget_multiple, incomplete, ...)
+    reason=$( printf "%s\n" "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
+    if [ -z "$reason" ]; then
+        reason=$( printf "%s\n" "$out" | sed -n -E "s/^check failed: \( (.*) \), function .*/\1/p" | head -1 )
+    fi
+    [ -n "$reason" ] || reason="exit_${status}"
+fi
+printf "FAIL seed=%s case=%s reason=%s\n" "$seed" "$case_name" "$reason"
+' _ > "$report"
 
-IFS=, read -r -a case_list <<< "$cases"
-runs=$(( ${#case_list[@]} * ( last - first + 1 ) ))
+runs=$( wc -l < "$runs_file" )
 failures=$( grep -c '^FAIL ' "$report" )
 sort -k3,3 -k2.6,2n "$report"
 echo "sweep: $runs runs, $failures failures"
