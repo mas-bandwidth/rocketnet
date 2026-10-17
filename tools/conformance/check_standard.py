@@ -513,6 +513,12 @@ def main():
         compare("replay window bits", ints(cell)[0],
                 code["ROCKETNET_REPLAY_WINDOW_BITS"])
 
+    cell = row("Kernel replay prefilter")
+    if cell is not None:
+        implemented = require("XDP_REPLAY_WINDOW")
+        if implemented is not None:
+            compare("kernel replay prefilter window", ints(cell)[0], implemented)
+
     cell = row("Used-token history")
     if cell is not None:
         implemented = require("SIZING_USED_TOKEN_HISTORY_RATIO")

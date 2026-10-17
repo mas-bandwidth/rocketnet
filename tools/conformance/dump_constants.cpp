@@ -25,6 +25,7 @@
 #include "rocketnet_replay.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
+#include "rocketnet_xdp_limits.h"
 
 // Timing defaults, sizing ratios and KDF context strings are macros in the
 // translation unit that assigns or passes them. Including that unit under
@@ -198,6 +199,8 @@ int main()
     print_int( "ROCKETNET_HISTORY_PACKETS", ROCKETNET_HISTORY_PACKETS );
     print_int( "ROCKETNET_REPLAY_WINDOW_BITS", ROCKETNET_REPLAY_WINDOW_BITS );
     print_int( "ROCKETNET_DEFAULT_REASSEMBLY_SLOTS", ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
+
+    print_int( "XDP_REPLAY_WINDOW", ROCKETNET_XDP_REPLAY_WINDOW );
 
     print_int( "REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     print_int( "CLIENT_REDUNDANT_DISCONNECT_PACKETS", ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
