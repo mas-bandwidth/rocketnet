@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 135
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 142
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -616,6 +616,27 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 #define ROCKETNET_CONFIG_STRUCT_BYTES( name, size, def, flags )         uint8_t name[size];
 #define ROCKETNET_CONFIG_STRUCT_STRING( name, capacity, def, flags )    char name[capacity];
 
+// Sized configs (docs/ABI-EVOLUTION.md). Each config struct has the sized
+// entry points beside its unsized ones: the caller passes sizeof the struct it
+// was compiled against. A struct only grows at its end, so every size it has
+// had is a prefix of today's; ROCKETNET_<STRUCT>_KNOWN_BYTES lists those sizes,
+// oldest first, each one the end of that revision's last field rounded up to
+// that revision's alignment (ROCKETNET_CONFIG_REVISION_BYTES). A known size
+// reads the caller's prefix and defaults the rest; an unknown size, larger or
+// smaller, is refused with a log line and nothing is read or written. The
+// unsized entry points stay, and read and write exactly revision 1.
+
+#define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
+
+// Internal to the SDK: the one read and the one write every sized entry point
+// makes (docs/ABI-EVOLUTION.md 3). write copies the first config_bytes of
+// defaults into config; read sets config to defaults, then copies the first
+// source_bytes of source over it. Each returns 1, or 0 with a log line naming
+// type when the size is not in known (and then write leaves config untouched,
+// read leaves it at the defaults).
+int rocketnet_config_write_sized( const char * type, void * config, size_t config_bytes, const void * defaults, size_t defaults_bytes, const size_t * known, int num_known );
+int rocketnet_config_read_sized( const char * type, void * config, const void * defaults, size_t defaults_bytes, const void * source, size_t source_bytes, const size_t * known, int num_known );
+
 // The client connects with a token, never an address: the token names the
 // server, carries the keys, and is the credential -- minted by a backend in
 // production, or locally by rocketnet_write_dev_connect_token against the
@@ -637,6 +658,15 @@ struct rocketnet_client_transport_config_t
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
 
+// docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, state_change_callback ) + sizeof( void * ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
+
+// the defaults for a caller whose struct is config_bytes long, one of the
+// known sizes above. 1 written; 0 refused, nothing written. a NULL config is a
+// counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_default_config_sized( struct rocketnet_client_transport_config_t * config, size_t config_bytes );
+
 #if ROCKETNET_DEVELOPMENT
 // a NULL server_address_string or connect_token is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
@@ -649,6 +679,12 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // a NULL connect_token is a counted no-op that returns NULL; a NULL config is
 // the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+
+// create with a config config_bytes long: a known size is read over the
+// defaults and created as above; an unknown size is refused with a log line and
+// returns NULL before any other check. a NULL config is the default shape,
+// whatever config_bytes says.
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, double time );
 
 // a NULL client_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
@@ -862,6 +898,15 @@ struct rocketnet_server_transport_config_t
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config );
 
+// docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
+
+// the defaults for a caller whose struct is config_bytes long, one of the
+// known sizes above. 1 written; 0 refused, nothing written. a NULL config is a
+// counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_default_config_sized( struct rocketnet_server_transport_config_t * config, size_t config_bytes );
+
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config );
 
@@ -878,6 +923,12 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // a NULL public_address_string is a counted no-op that returns NULL; a NULL
 // config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
+
+// create with a config config_bytes long: a known size is read over the
+// defaults and created as above; an unknown size is refused with a log line and
+// returns NULL before any other check. a NULL config is the default shape,
+// whatever config_bytes says.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, size_t config_bytes );
 
 // a NULL server_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
@@ -1388,6 +1439,15 @@ struct rocketnet_message_config_t
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
 
+// docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+#define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
+#define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1
+
+// the defaults for a caller whose struct is config_bytes long, one of the
+// known sizes above. 1 written; 0 refused, nothing written. a NULL config is a
+// counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_default_config_sized( struct rocketnet_message_config_t * config, size_t config_bytes );
+
 // 1 when the config is accepted, else 0 with a log line naming the rule.
 // NULL means the defaults. Allocation-free; safe before init.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config );
@@ -1578,6 +1638,15 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_clie
                                                                                          const struct rocketnet_message_config_t * message_config,
                                                                                          void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
+// create with configs transport_config_bytes and message_config_bytes long: each
+// known size is read over its defaults and created as above; an unknown size is
+// refused with a log line and returns NULL before any other check. a NULL config
+// is its defaults, whatever its size says.
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void * context, const uint8_t * connect_token,
+                                                                                               const struct rocketnet_client_transport_config_t * transport_config, size_t transport_config_bytes,
+                                                                                               const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
+                                                                                               void * memory, uint64_t memory_bytes, uint32_t send_kbps );
+
 // a NULL client is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
@@ -1635,6 +1704,15 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_serv
                                                                                          const struct rocketnet_server_transport_config_t * transport_config,
                                                                                          const struct rocketnet_message_config_t * message_config,
                                                                                          void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+
+// create with configs transport_config_bytes and message_config_bytes long: each
+// known size is read over its defaults and created as above; an unknown size is
+// refused with a log line and returns NULL before any other check. a NULL config
+// is its defaults, whatever its size says.
+ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void * context, const char * address,
+                                                                                               const struct rocketnet_server_transport_config_t * transport_config, size_t transport_config_bytes,
+                                                                                               const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
+                                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
 // a NULL server is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
