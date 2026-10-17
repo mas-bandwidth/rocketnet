@@ -268,7 +268,6 @@ static void resend_timing_witness_replays()
                 attempts++;
     }
 
-    printf( "resend_timing_witness_replays attempts=%d before reliable_timeout\n", attempts );
     check( sampled );
     check( timed_out );                                            // every send lost: the timeout ends it
     check( f.ack.error == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
@@ -360,7 +359,6 @@ static void chunk_resend_paced_by_rtt_not_interval()
 
     uint64_t out[64];
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 0.101, out );
-    printf( "chunk_resend_paced_by_rtt_not_interval: at +101 ms on a 200 ms path %u of %u chunks resent\n", resent, n );
     check( resent == 0 );                                          // not at the 100 ms cap
     check( resend_timing_pass_numbers( &f, t1 + 0.249, out ) == 0 );
     resent = resend_timing_pass_numbers( &f, t1 + 0.251, out );
