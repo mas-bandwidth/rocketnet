@@ -6,12 +6,13 @@
 (* committed cfg is the honest sender under the code's rules checked for   *)
 (* safety (SpecSafety, the nine invariants and CountPinned);               *)
 (* MCFragmentsAndAcksLive.cfg is the same instance under Spec with the     *)
-(* liveness property.  README-FragmentsAndAcks.md gives every other run    *)
-(* (the findings, the defective sender, the six reversed witnesses, the    *)
-(* fairness record) as edits to the committed cfg's lines.                 *)
+(* liveness property.  Every other run (the findings, the defective       *)
+(* sender, the six reversed witnesses) is its own root cfg, named once in *)
+(* tla/CASES.tsv; README-FragmentsAndAcks.md maps the runs to the cfgs.   *)
 (*                                                                         *)
 (* SpecSafety drops the fairness for the safety runs; SpecLinkFair is the  *)
-(* run that records why Spec does not use Link!Fairness.                   *)
+(* probe that records why Spec does not use Link!Fairness (TLC refuses    *)
+(* it as a tautology, so it has no case in tla/CASES.tsv).                *)
 (***************************************************************************)
 EXTENDS FragmentsAndAcks
 

@@ -10,13 +10,14 @@ and its server mirror in `sdk/rocketnet_server_transport.cpp`;
 `rocketnet_client_protocol_start_fragments` in `sdk/rocketnet_client_protocol.cpp`). B is
 the replay window as a set (`sdk/rocketnet_replay.cpp`), the block builder
 (`rocketnet_ack_block_build`) and reassembly (`rocketnet_reassembly_process_fragment` in
-`sdk/rocketnet_fragment.cpp`). The code is origin/main at `3ad4179`.
+`sdk/rocketnet_fragment.cpp`). The model was written against the code at `3ad4179`; the
+line citations below are re-checked against the code it lands on (`617d498`).
 
 `tla/MCFragmentsAndAcks.tla` and `tla/MCFragmentsAndAcks.cfg` are the small instance
-(safety); `tla/MCFragmentsAndAcksLive.cfg` is the liveness run on the same instance. The
-rows for `tla/RUNS.tsv` are listed at the end of this file and not added by this change
-(six models land on that file in parallel). The inventory this card worked from is
-`docs/TLA-INVENTORY.md`, M8 and M9.
+(safety); `tla/MCFragmentsAndAcksLive.cfg` is the liveness run on the same instance. Every
+other run is its own root cfg, named once in `tla/CASES.tsv` (group `fragmentsandacks`),
+and its measured record is in `tla/RUNS.tsv`, written by `tlacheck` (`tla/README.md`). The
+inventory rows are `docs/TLA-INVENTORY.md`, M8 and M9.
 
 ## What the model covers
 
@@ -52,7 +53,7 @@ sequences), `surfacedCount`, `deliveredCount`, `openedEver`, `namedEver`, `badSt
 | `StartPayload` | the application | `start_packet` + `finish_packet` on the wire route: one sequence, one record with the packet id |
 | `StartFragmented(cnt)` | the application | the arena route: `rocketnet_fragment_plan`, `start_fragments` reserves `cnt - 1` sequences after the one `start_packet` spent, the payload id is drawn, `open_aggregate` pins the packet id behind `cnt` acknowledgments, `seal_fragment` records each fragment |
 | `BurnOne` | a failed finish | a sequence spent and never sent (USAGE.md, "Not every NULL from start_packet spends one") |
-| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`sdk/rocketnet_client_transport.cpp:805-826`, the draw at 828) and burns the one sequence `start_packet` spent, which is `BurnOne` |
+| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`sdk/rocketnet_client_transport.cpp:871-903`, the draw at 905) and burns the one sequence `start_packet` spent, which is `BurnOne` |
 | `DefectiveSend` | a defective sender | a sealed fragment whose header says anything (`DefectIds` non-empty) |
 | `Flush` | `send_packets` | the staged packets go to the wire in fill order, `Link!Send` |
 | `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the walk, the retained window, unknown sequences, the batch and its deferral, aggregates |
@@ -73,7 +74,7 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:122-124 allows at the fragment level; the gap is real and D1 and D2 both sit in it |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and D1 and D2 both sit in it |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
 | `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
@@ -110,9 +111,11 @@ window refuses.
 ## What the model abstracts away
 
 - **The replay window's representation.** `opened` is a set; the 64-word bitmap and
-  its large-skip clear (F1, `docs/TLA-INVENTORY.md`) belong to the RNReplayWindow
+  its large-skip clear (F1, `docs/TLA-INVENTORY.md`) belong to the ReplayWindow
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
-  what the ack layer does with truthful blocks; F1 breaks it from below.
+  what the ack layer does with truthful blocks. F1 broke it from below; the code now
+  clears the whole window on a large skip (`rocketnet_replay_advance`,
+  `sdk/rocketnet_replay.cpp:56-61`).
 - **The 32-bit wire fields.** `largest received` is carried whole; the reconstruction
   against `highest_sent` (`rocketnet_reconstruct_ack_largest`) and the u16 range caps
   are not modelled. Payload ids are modulo `IdSpace` instead of 2^32, with `FirstId` to
@@ -126,10 +129,11 @@ window refuses.
 - **Many fill threads.** One sender stages one payload at a time; the sequence block a
   fragmented payload reserves is therefore contiguous, as the code's comment says it
   need not be.
-- **The merged code's run pre-scan** in `rocketnet_ack_apply_run` (skip a run with
-  nothing left to acknowledge): it changes only the `ACK_UNKNOWN_SEQUENCE` counter, which
-  is not state here. (It also means a run of only burned sequences no longer counts
-  them; a counter observation, not a defect.)
+- **Counters.** `ACK_UNKNOWN_SEQUENCE`, and the eviction classification of
+  `rocketnet_ack_endpoint_record_sent_classified` (`SEND_HISTORY_LOST`,
+  `SEND_HISTORY_OVERFLOW`, from `largest_acked_sequence`), are not state here; the
+  classification is `tla/RNSentHistory.tla`'s. (The run pre-scan in
+  `rocketnet_ack_apply_run` that the code at `3ad4179` carried is gone at `617d498`.)
 - **Keep-alive, disconnect and standalone-ack records** (no packet id): nothing
   surfaces for them, so they are not sent.
 
@@ -184,12 +188,18 @@ finish (see the results).
 
 ## How to run it
 
-On a Linux bench with the TLA+ tools (`tla2tools.jar`, TLC 2.19), from `tla/`, each run
-with its own `-metadir` and `java.io.tmpdir` (parallel starts collide on both):
+Each run is a root cfg named once in `tla/CASES.tsv` (group `fragmentsandacks`) and runs
+through the pinned `tlacheck` as `tla/README.md` describes, each case its own shard under
+the 110 s budget:
 
 ```sh
-java -Djava.io.tmpdir=./meta-main -cp tla2tools.jar tlc2.TLC -workers 4 -cleanup \
-     -metadir ./meta-main -config MCFragmentsAndAcks.cfg MCFragmentsAndAcks
+for i in $(seq 0 20); do
+  "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
+    --group fragmentsandacks --shards 21 --shard "$i" --timeout 110s \
+    --dir "$job/fragmentsandacks-$i"
+done
+"$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
+  --out "$job/RUNS.tsv" "$job"/fragmentsandacks-*/RUNS.tsv
 ```
 
 `MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
@@ -202,71 +212,111 @@ instance: `MaxSeq = 4`, `SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`,
 `DrainCap = 4`, `DeliveredCap = 2`, `Capacity = 2`, `MaxDelay = 0`, duplication and
 reordering on. Four sequences are two payload ids' worth: enough for an eviction, a
 burn beside a send, a deferral and every witness. The safety state space at this size
-is 44.9 million distinct states (depth 49, 12 minutes with 4 workers); at `MaxSeq = 6`
+is 44.9 million distinct states (depth 49, 12 minutes with 4 workers), far over the
+110 s budget, so the committed run is a `bench` row with its debt named; at `MaxSeq = 6`
 with jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8`
-it passes 95 million. The two findings reproduce in seconds at any of these sizes, so
-their rows keep the larger instances.
+it passes 95 million. The two findings reproduce in seconds, so their rows keep the
+larger instances.
 
-The other runs are the committed file with a few lines changed. Three shapes recur:
+The other cfgs are the committed file with a few lines changed. Three shapes recur:
 
 - *safety*: `SPECIFICATION SpecSafety`, no `PROPERTIES`;
 - *defect*: `DefectIds = {0, 1, 5}`, `MaxGen = 1`, `Capacity = 1`, duplication,
   reordering and burns off (the defective sender is about header values, not the path);
   the two defect witnesses use it. The `defect` row itself is smaller still: `DefectIds
-  = {0, 1}`, `MaxCount = 2`, counts `{2}`, because the three-id instance passes 272
-  million distinct states without finishing;
+  = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxSeq = 2`;
 - *pattern p*: both `Pattern` lines set to `p`;
 - *stale-small*: counts `{2}`, duplication and reordering off, pattern `"arbitrary"` (loss stays on, or nothing is ever left incomplete), burns on:
   the instance on which the code's stale rule and the standard's are compared.
 
-| Run | Changes | Expected |
-|---|---|---|
-| committed | none (`SpecSafety` + `CountPinned`) | passes |
-| live | `MCFragmentsAndAcksLive.cfg`: `Spec` + `OpenedSurfacesOrLaps` | not finished |
-| live-small | live with `MaxSeq = 3`, `MaxGen = 1`, duplication and reordering off | passes |
-| live-dup | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case |
-| pat-none / first / alternate / burst | pattern, `SpecSafety` + `CountPinned` | not run |
-| find-stale | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails**: D1 |
-| find-stale-small | find-stale + stale-small | **fails**: D1 |
-| find-stale-serial-small | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule |
-| find-stale-ahead2 | safety + `StaleOnlyIfOlder`, `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1` (`StaleAhead = 2`: two whole payloads lost poison) | **fails**: D1 |
-| find-stale-plain | find-stale + `StaleRule = "plain"`, `FirstId = 6` | **fails**: the standard's own witness, a plain comparison across the wrap |
-| find-batchfull | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, duplication and burns off | **fails**: D2 |
-| defect | the small defect instance, `SpecSafety`, invariants + `CountPinned` | passes |
-| wit-firstfrag | safety, `Witness = "firstfrag"` | **fails** `SurfacedOnlyIfOpened` |
-| wit-dropfull | safety, `Witness = "dropfull"` | **fails** `AckedMeansSurfaced` |
-| wit-overclaim | safety, `Witness = "overclaim"` | **fails** `BurnedNeverNamed` |
-| wit-noclear | safety, `Witness = "noclear"` | **fails** `DeliveredExact` |
-| wit-nosizecheck | defect + safety, `Witness = "nosizecheck"` | **fails** `ArenaBounded` |
-| wit-nopin | defect, `Witness = "nopin"` | **fails** `CountPinned` |
-| link-fair | `SPECIFICATION SpecLinkFair` | TLC: tautology, 0 branches (the fairness note above) |
+| Run | Cfg | Changes | Expected | Gate |
+|---|---|---|---|---|
+| committed | `MCFragmentsAndAcks.cfg` | none (`SpecSafety` + `CountPinned`) | passes | bench: over budget |
+| live | `MCFragmentsAndAcksLive.cfg` | `Spec` + `OpenedSurfacesOrLaps` | passes | bench: over budget |
+| live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
+| live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
+| pat-none / first / burst | `MCFragmentsAndAcksPatNone.cfg`, `...PatFirst.cfg`, `...PatBurst.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | bench: over budget |
+| pat-alternate | `MCFragmentsAndAcksPatAlternate.cfg` | pattern, `SpecSafety` + `CountPinned` | passes | required |
+| find-stale | `MCFragmentsAndAcksFindStale.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1` (the `num_slots = 256` geometry: one whole payload lost poisons) | **fails** `StaleOnlyIfOlder`: D1 | required |
+| find-stale-small | `MCFragmentsAndAcksFindStaleSmall.cfg` | find-stale + stale-small | **fails** `StaleOnlyIfOlder`: D1 | required |
+| find-stale-serial-small | `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | find-stale-small + `StaleRule = "serial"` | passes: the standard's rule | bench: over budget |
+| find-stale-ahead2 | `MCFragmentsAndAcksFindStaleAhead2.cfg` | safety + `StaleOnlyIfOlder`, `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1` (`StaleAhead = 2`: two whole payloads lost poison), counts `{2}`, duplication and reordering off, ack link `"none"`, `Capacity = 1` | **fails** `StaleOnlyIfOlder`: D1 | required |
+| find-stale-plain | `MCFragmentsAndAcksFindStalePlain.cfg` | find-stale + `StaleRule = "plain"`, `FirstId = 6` | **fails** `StaleOnlyIfOlder`: the standard's own witness, a plain comparison across the wrap | required |
+| find-batchfull | `MCFragmentsAndAcksFindBatchFull.cfg` | safety + `BatchFullNeverFires`, `MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, `StaleRule = "serial"`, counts `{2}`, pattern none, duplication and burns off | **fails** `BatchFullNeverFires`: D2 | required |
+| defect | `MCFragmentsAndAcksDefect.cfg` | the small defect instance, `SpecSafety`, invariants + `CountPinned` | passes | required |
+| wit-firstfrag | `MCFragmentsAndAcksWitFirstfrag.cfg` | safety, `Witness = "firstfrag"` | **fails** `SurfacedOnlyIfOpened` | required |
+| wit-dropfull | `MCFragmentsAndAcksWitDropfull.cfg` | safety, `Witness = "dropfull"` | **fails** `AckedMeansSurfaced` | required |
+| wit-overclaim | `MCFragmentsAndAcksWitOverclaim.cfg` | safety, `Witness = "overclaim"` | **fails** `BurnedNeverNamed` | required |
+| wit-noclear | `MCFragmentsAndAcksWitNoclear.cfg` | safety, `Witness = "noclear"` | **fails** `DeliveredExact` | required |
+| wit-nosizecheck | `MCFragmentsAndAcksWitNosizecheck.cfg` | defect + safety, `Witness = "nosizecheck"` | **fails** `ArenaBounded` | required |
+| wit-nopin | `MCFragmentsAndAcksWitNopin.cfg` | defect, `Witness = "nopin"` | **fails** `CountPinned` | required |
+| link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
-### Results, hetzner2, 2026-10-13 (TLC 2.19, 4 workers, `-Xmx6g`)
+Three instances were shrunk to fit the 110 s budget at two TLC workers: `live-small`
+from `MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defect` from
+`MaxSeq = 4` to `MaxSeq = 2`; and the D1 witness `find-stale-ahead2`, which keeps its
+`MaxSeq`, `MaxGen`, `StaleAhead` and jitter and drops counts `{2, 3}`, duplication,
+reordering, ack loss and the second wire slot, and still fails `StaleOnlyIfOlder` in the
+same 11 states (ids 2 and 3 burned whole, id 4's fragment 0 refused). The
+`find-stale-serial-small` pass needs the instance on which the code's rule fails
+(`MaxSeq = 6`; at `MaxSeq = 5` the code's rule finds no violation in 5 minutes), which
+is 19.7 million distinct states, so it stays a `bench` row rather than shrink below the
+comparison it exists for.
+
+`link-fair` has no case: TLC exits 77 with "Temporal formula is a tautology (its
+negation is unsatisfiable)" after "Implied-temporal checking--satisfiability problem
+has 0 branches" (24 s), an outcome `tlacheck` has no kind for (a pass, an invariant, an
+action or a temporal violation). `SpecLinkFair` stays in `MCFragmentsAndAcks.tla` so the
+probe can be repeated by hand.
+
+### Records
+
+The measured records are the `fragmentsandacks` rows of `tla/RUNS.tsv` (TLC 2.19, the
+pinned jar, two workers for a passing case and one for a counterexample, 110 s per
+case). Fifteen cases reach their declared result; six are `bench` debt and time out
+(exit 124), which is a failed measurement, not a proof.
+
+| Case | Result | Generated | Distinct | Time |
+|---|---|---|---|---|
+| `MCFragmentsAndAcks.cfg` | timeout, bench debt | | | 110.8 s |
+| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt | | | 111.6 s |
+| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 9,423 | 3,051 | 33.7 s |
+| `MCFragmentsAndAcksLiveDup.cfg` | pass | 24,664 | 5,308 | 34.6 s |
+| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt | | | 111.2 s |
+| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt | | | 111.8 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 2,015,557 | 483,020 | 93.1 s |
+| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt | | | 110.4 s |
+| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 175,552 | 59,816 | 68.6 s |
+| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 53,587 | 19,394 | 35.7 s |
+| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt | | | 110.5 s |
+| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 275,360 | 75,678 | 43.2 s |
+| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 175,552 | 59,816 | 16.4 s |
+| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 545,802 | 196,942 | 32.4 s |
+| `MCFragmentsAndAcksDefect.cfg` | pass | 311,709 | 72,184 | 36.5 s |
+| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,480 | 650 | 13.3 s |
+| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 20,325 | 7,250 | 4.3 s |
+| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,753 | 776 | 5.1 s |
+| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 26,941 | 9,465 | 5.5 s |
+| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 2.3 s |
+| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,163 | 75,805 | 19.2 s |
+
+### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
+
+These runs completed outside the 110 s budget, before the per-case records existed. They
+are not current records; they are the evidence for the bench rows above.
 
 | Run | Result | States | Distinct | Depth | Time |
 |---|---|---|---|---|---|
 | committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
-| live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; no row, it carries no evidence | | | | |
+| live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
-| live-dup (`MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, `OpenedSurfacesOrLaps` only; data link `"none"`, ack link `"arbitrary"` with duplication, no reordering; the lasso instance of the first cold read, re-run by that reader at `e8c1a22` on hetzner1, `scratchpad/r210c-live`) | pass, 2 branches | 24,664 | 5,308 | 29 | 5 s |
-| find-stale (`MaxSeq = 6`, `MaxGen = 3`, `StaleAhead = 1`) | **StaleOnlyIfOlder violated**, 10 states (D1) | 852,185 | 185,694 | | 4 s |
-| find-stale-small (find-stale, counts `{2}`, no dup, no reorder) | **StaleOnlyIfOlder violated**, 10 states (D1) | 65,364 | 23,258 | | 0 s |
 | find-stale-serial-small (find-stale-small, `StaleRule = "serial"`) | pass: the standard's rule on the instance the code's rule fails | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
-| find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
-| find-stale-plain (find-stale, `"plain"`, `FirstId = 6`) | **StaleOnlyIfOlder violated**, 10 states (the standard's witness) | 693,732 | 152,783 | | 4 s |
-| find-batchfull (`MaxSeq = 6`, `MaxGen = 3`, `Slots = 2`, serial, counts `{2}`, none, no dup, no burns) | **BatchFullNeverFires violated**, 18 states (D2) | 527,835 | 190,328 | | 4 s |
-| defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
-| wit-firstfrag | SurfacedOnlyIfOpened violated, 6 states | 2,042 | 887 | | 0 s |
-| wit-dropfull | AckedMeansSurfaced violated, 9 states | 21,845 | 7,792 | | 1 s |
-| wit-overclaim | BurnedNeverNamed violated, 6 states | 3,350 | 1,412 | | 0 s |
-| wit-noclear | DeliveredExact violated, 9 states | 29,470 | 10,359 | | 0 s |
-| wit-nosizecheck (`DefectIds = {0, 1, 5}`, `MaxGen = 1`, `Capacity = 1`, no dup, no reorder, no burns) | ArenaBounded violated, 4 states | 16,193 | 10,853 | | 0 s |
-| wit-nopin (same defect settings) | CountPinned violated, 9 states | 362,985 | 171,050 | | 2 s |
-| link-fair | TLC: "Temporal formula is a tautology", 0 branches | | | | 3 s |
+| find-stale-ahead2 (`MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on) | **StaleOnlyIfOlder violated**, 11 states (D1) | 8,174,784 | 1,739,380 | | 21 s |
+| defect (`DefectIds = {0, 1}`, `MaxCount = 2`, counts `{2}`, `MaxGen = 1`, `MaxSeq = 4`, `Capacity = 1`, no dup, no reorder, no burns) | pass | 82,754,545 | 17,468,462 | 30 | 2 min 44 s |
 
-Not run: `pat-none`, `pat-first`, `pat-alternate`, `pat-burst`. Stopped without finishing
-and not recorded: the `live` run above, a three-id defect instance (272 million distinct
-states in 50 minutes) and the serial rule at `MaxSeq = 6` with jitter (106 million).
+Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
+a three-id defect instance (272 million distinct states in 50 minutes) and the serial
+rule at `MaxSeq = 6` with jitter (106 million).
 
 ## What TLC found
 
@@ -276,12 +326,12 @@ Every counterexample below was replayed by hand through the functions it names.
 life, and the payloads it refuses were acknowledged to the sender (the ack block is
 built from the replay window, before reassembly), so a delta-compression scheme built on
 the notifications takes a baseline the peer never delivered. Its fix is the serial
-comparison STANDARD.md:1913-1919 specifies. D2 is MEDIUM on the server and LOW on the
+comparison STANDARD.md:1981-1987 specifies. D2 is MEDIUM on the server and LOW on the
 client.
 
 ### D1. A loss burst, or one late fragment, poisons a reassembly slot for the connection's life (defect, HIGH)
 
-`sdk/rocketnet_fragment.cpp:262-268`, the stale test:
+`sdk/rocketnet_fragment.cpp:267-273`, the stale test:
 
 ```c
 if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
@@ -311,23 +361,22 @@ reserves for superseded payloads.
 
 Replayed through the code at the shipped geometry, there are two routes in.
 
-*The loss route.* With `num_slots = 8` (the default, `sdk/rocketnet.h:433`) the ids of
+*The loss route.* With `num_slots = 8` (the default, `sdk/rocketnet.h:531`) the ids of
 one slot are 8 apart, so with an incomplete occupant X the slot tolerates the next 32
 payloads of its own series lost whole (X+8 .. X+256; X+256 is exactly 256 ahead and
 passes) and refuses the 33rd, X+264, and everything after. Only the slot's series has to
 be lost: the other seven slots' payloads can arrive and complete throughout. At
-`num_slots = 256`, which the configuration admits (`sdk/rocketnet.h:512`, up to
+`num_slots = 256`, which the configuration admits (`sdk/rocketnet.h:611` and `:851`, up to
 `ROCKETNET_MAX_FRAGMENTS`), the tolerance is zero. A seal refusal inside the fragment
 loop (`BurnFragmented`) consumes an id with nothing reaching the wire and counts toward
 the same 32.
 
 *The one-packet route.* The stale test is skipped for an empty slot
-(`slot->payload_id != 0`, `fragment.cpp:262`). A delayed fragment of a payload that was
+(`slot->payload_id != 0`, `fragment.cpp:267`). A delayed fragment of a payload that was
 abandoned long ago lands in a slot that a completion has just emptied, re-occupies it
 with its old id, and from then on every live id is more than 256 ahead of the occupant:
 from id X+264 on, every payload in that slot is refused, with no loss burst at all. The
-reader's harness (`scratchpad/d1h/harness.cpp` on the Studio, to become the fix card's
-test) drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
+reader's harness (to become the fix card's test) drove this: 644 of 736 payloads delivered, 92 `FRAGMENT_STALE`, exactly one slot
 in eight, no other loss. It holds for payloads of up to about 15 fragments (past that the
 delayed fragment is outside the 4,096-sequence replay window and refused there). The
 model's window (`Window = SentRing = MaxSeq = 4`) is too small to tell "late but inside
@@ -339,7 +388,7 @@ counter never fires for them: the loss is reported as "stale", which the standar
 reserves for superseded payloads.
 
 The standard (Fragmentation, "Older is serial-number arithmetic on the 32-bit values,
-so no id can poison a slot", STANDARD.md:1913-1919) specifies the half-space comparison.
+so no id can poison a slot", STANDARD.md:1981-1987) specifies the half-space comparison.
 The model's `StaleRule = "serial"` is that comparison; `find-stale-serial-small` checks
 it on the instance where the code's rule fails (`find-stale-small`), and the result is
 in the table. The code's comment chose the bounded difference against a hostile id
@@ -350,7 +399,7 @@ this one: the serial comparison the standard names.
 
 ### D2. `BATCH_FULL` fires under legitimate load (design claim contradicted; MEDIUM on the server, LOW on the client)
 
-`sdk/rocketnet_fragment.h:107-115` and `sdk/rocketnet_client_transport.cpp:222-229`:
+`sdk/rocketnet_fragment.h:108-117` and `sdk/rocketnet_client_transport.cpp:260-267`:
 `delivered_capacity` is sized to half the receive drain ("a payload takes at least two
 fragments, so one update completes at most half the packets it drains"), and
 `BATCH_FULL` is called "a true invariant: zero under any legitimate load". On the client
@@ -364,7 +413,7 @@ fragment 0 of payload 1 (sequence 1) and fragment 0 of payload 2 (sequence 3, re
 ahead of sequence 2), two slots half full; `Tick`; update 2 drains sequence 2 (payload 1
 complete, delivered), sequence 4 (payload 2 complete, delivered, `num_delivered = 2 =
 delivered_capacity`), then sequences 5 and 6, payload 3, whose completion is dropped at
-`sdk/rocketnet_fragment.cpp:458-462`, counted `FRAGMENT_PAYLOAD_BATCH_FULL`, the slot
+`sdk/rocketnet_fragment.cpp:463-467`, counted `FRAGMENT_PAYLOAD_BATCH_FULL`, the slot
 cleared: a payload lost with nothing lost on the wire, four packets drained in the
 update that the sizing says can complete at most two.
 
@@ -374,17 +423,17 @@ Replayed at the shipped sizes.
 2`), 8 slots: 8 carried-over completions plus `(1024 - 8) / 2 = 508` fresh ones is 516.
 This needs the carried-over half payloads, which take reordering (as in the trace) or
 interleaved fill threads on the sender (each fragment's ring slot is its own
-`atomic_add`, `sdk/rocketnet_client_transport.cpp:804`), and a 1,024-packet update.
+`atomic_add`, `sdk/rocketnet_client_transport.cpp:881`), and a 1,024-packet update.
 
 *Server (MEDIUM).* The server has no per-client drain. It drains one global array of
 `ROCKETNET_RECEIVE_PACKETS_PER_CLIENT × ROCKETNET_MAX_CLIENTS = 16 × 1000 = 16,000`
-packets per update (`sdk/rocketnet_constants.h:30`,
-`sdk/rocketnet_server_socket_linux.cpp:2005`), while the delivered pool is
-`max_clients × num_reassembly_slots` (`sdk/rocketnet_server_transport.cpp:834`), 64 × 8
-= 512 at the defaults (`sdk/rocketnet.h:718`). So it overflows with no carried-over
+packets per update (`sdk/rocketnet_constants.h:63`,
+`sdk/rocketnet_server_socket_linux.cpp:1946`), while the delivered pool is
+`max_clients × num_reassembly_slots` (`sdk/rocketnet_server_transport.cpp:851-852`), 64 × 8
+= 512 at the defaults (`sdk/rocketnet.h:842`). So it overflows with no carried-over
 payloads at all: 64 clients each completing 9 two-fragment payloads in one update is
 1,152 fragments drained, 576 reassembled, 64 `BATCH_FULL`. The comment at
-`sdk/rocketnet_server_transport.cpp:826-831` makes the same false claim as
+`sdk/rocketnet_server_transport.cpp:842-849` makes the same false claim as
 `fragment.h` ("completions cap at eight per client at the defaults"). `drain / 2 +
 num_slots` would not fix the server; the pool has to follow the drain (16,000 / 2) or
 the drain the pool. A model of one connection cannot see this: the overflow is across
@@ -403,29 +452,3 @@ connections, in a pool the model's receiver does not share. The fix is a code ca
 4. **Unsound per-link fairness** (found by the first cold read, see "Fairness"): the
    ack-link assumption did not name the current block, so stale duplicates satisfied it.
    Fixed by `Head(r2dWire).pkt = Block` in the delivery step it demands.
-
-## RUNS.tsv
-
-The rows this card would add, in the layout `tla/README.md` describes (module, config,
-states, distinct, result, bench, date). They are not added here because six models land
-in parallel on that file.
-
-```
-FragmentsAndAcks	MCFragmentsAndAcks.cfg (SpecSafety; checks the nine invariants, CountPinned)	317743656	44927746	pass	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcksLive.cfg with MaxSeq 3, MaxGen 1, Duplication FALSE, Reordering FALSE (Spec; checks the nine invariants, CountPinned, OpenedSurfacesOrLaps)	229436	54283	pass	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcksLive.cfg with MaxSeq 1, MaxGen 1, MaxCount 2, Counts {2}, Burns FALSE, D2RPattern "none", R2DPattern "arbitrary", Duplication TRUE, Reordering FALSE (Spec; INVARIANTS and CountPinned removed; checks OpenedSurfacesOrLaps; the old fairness's lasso instance, run by the cold reader at e8c1a22)	24664	5308	pass	hetzner1	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1; checks StaleOnlyIfOlder	852185	185694	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, Counts {2}, Duplication FALSE, Reordering FALSE; checks StaleOnlyIfOlder	65364	23258	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, Counts {2}, Duplication FALSE, Reordering FALSE, StaleRule "serial"; checks StaleOnlyIfOlder	90830297	19697444	pass	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 8, MaxGen 4, MaxDelay 1; checks StaleOnlyIfOlder	8174784	1739380	fail as expected (D1): Invariant StaleOnlyIfOlder is violated, 11 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, StaleAhead 1, StaleRule "plain", FirstId 6; checks StaleOnlyIfOlder (the standard's witness)	693732	152783	fail as expected: Invariant StaleOnlyIfOlder is violated, 10 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with MaxSeq 6, MaxGen 3, Slots 2, StaleRule "serial", Counts {2}, D2RPattern "none", R2DPattern "none", Duplication FALSE, Burns FALSE; checks BatchFullNeverFires	527835	190328	fail as expected (D2): Invariant BatchFullNeverFires is violated, 18 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with DefectIds {0, 1}, MaxCount 2, Counts {2}, MaxGen 1, Capacity 1, Duplication FALSE, Reordering FALSE, Burns FALSE; checks the nine invariants, CountPinned	82754545	17468462	pass	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "firstfrag" (reversed witness)	2042	887	fail as expected: Invariant SurfacedOnlyIfOpened is violated, 6 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "dropfull" (reversed witness)	21845	7792	fail as expected: Invariant AckedMeansSurfaced is violated, 9 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "overclaim" (reversed witness)	3350	1412	fail as expected: Invariant BurnedNeverNamed is violated, 6 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with Witness "noclear" (reversed witness)	29470	10359	fail as expected: Invariant DeliveredExact is violated, 9 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with DefectIds {0, 1, 5}, MaxGen 1, Capacity 1, Duplication FALSE, Reordering FALSE, Burns FALSE, Witness "nosizecheck" (reversed witness)	16193	10853	fail as expected: Invariant ArenaBounded is violated, 4 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with DefectIds {0, 1, 5}, MaxGen 1, Capacity 1, Duplication FALSE, Reordering FALSE, Burns FALSE, Witness "nopin" (reversed witness)	362985	171050	fail as expected: Action property CountPinned is violated, 9 states	hetzner2	2026-10-13
-FragmentsAndAcks	MCFragmentsAndAcks.cfg with SpecLinkFair (Link!Fairness on both links)	0	0	TLC 2.19: Temporal formula is a tautology (0 branches); see README-FragmentsAndAcks.md	hetzner2	2026-10-13
-```
