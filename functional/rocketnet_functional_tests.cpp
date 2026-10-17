@@ -3784,6 +3784,311 @@ void rocketnet_test_server_gso_send_overflow()
     rocketnet_server_gso_destroy( gso );
 }
 
+
+// The io_uring driver's own tests, linux only, in the gso section's shape:
+// over the wire on loopback through real sockets and a real io_uring, the
+// peer the portable platform socket. A build without liburing, or a kernel
+// that refuses the ring, prints a named SKIPPED line instead.
+
+#include "rocketnet_server_uring.h"
+
+// when the driver is unavailable, create must refuse with a log line naming
+// why (built without liburing, or a kernel that refuses the ring); the case
+// prints that reason in its SKIPPED line
+
+static bool rocketnet_test_server_uring_skipped( const char * test_name )
+{
+    if ( rocketnet_server_uring_available() )
+        return false;
+
+    rocketnet_address_t refused_address;
+    rocketnet_check( rocketnet_address_parse( &refused_address, "127.0.0.1" ) );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    rocketnet_check( refused == NULL );
+
+    char reason[256];
+    reason[0] = '\0';
+    const char * line = strstr( rocketnet_test_captured_log, "io_uring driver refused" );
+    rocketnet_check( line != NULL );
+    if ( line )
+    {
+        snprintf( reason, sizeof(reason), "%s", line );
+        char * newline = strchr( reason, '\n' );
+        if ( newline )
+            *newline = '\0';
+    }
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED %s]", test_name, reason );
+    return true;
+}
+
+void rocketnet_test_server_uring_probe()
+{
+    if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
+        return;
+
+    // create discovers an ephemeral port and reports it back; the queue
+    // count is a fact and every counter starts at zero
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+    rocketnet_check( bind_address.port == 0 );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2 );
+    rocketnet_check( uring );
+    rocketnet_check( bind_address.port != 0 );
+    rocketnet_check( rocketnet_server_uring_num_queues( uring ) == 2 );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    for ( int i = 0; i < ROCKETNET_SERVER_URING_NUM_COUNTERS; i++ )
+    {
+        if ( i == ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS )
+            continue;                               // create submits the multishot receives
+        rocketnet_check( counters[i] == 0 );
+    }
+
+    // destroy cancels the multishots and drains: a second driver binds the
+    // same port afterwards, so the sockets are gone
+
+    const uint16_t port = bind_address.port;
+    rocketnet_server_uring_destroy( uring );
+
+    rocketnet_address_t again_address;
+    rocketnet_check( rocketnet_address_parse( &again_address, "127.0.0.1" ) );
+    again_address.port = port;
+    struct rocketnet_server_uring_t * again = rocketnet_server_uring_create( NULL, &again_address, 0 );
+    rocketnet_check( again );
+    rocketnet_check( again_address.port == port );
+    rocketnet_check( rocketnet_server_uring_num_queues( again ) == ROCKETNET_URING_DEFAULT_QUEUES );
+    rocketnet_server_uring_destroy( again );
+
+    // a queue count past the geometry refuses, never clamps
+
+    rocketnet_address_t over_address;
+    rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
+
+    // a destroy whose wait gives up never frees what the kernel may still
+    // write (RNUringDriver FreedOnlyWhenDrained): one completion that never
+    // arrives, rounds counted and never slept; the ring and the sockets
+    // close, the memory is leaked and counted, and the driver's bytes are
+    // still there to read afterwards
+
+    rocketnet_address_t stall_address;
+    rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
+    struct rocketnet_server_uring_t * stalled = rocketnet_server_uring_create( NULL, &stall_address, 2 );
+    rocketnet_check( stalled );
+    const uint16_t stall_port = stall_address.port;
+
+    const uint64_t leaked_bytes_before = rocketnet_server_uring_leaked_bytes();
+    const uint64_t leaked_drivers_before = rocketnet_server_uring_leaked_drivers();
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int stall_saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    rocketnet_server_uring_test_stall_destroy( stalled );
+    rocketnet_server_uring_destroy( stalled );
+
+    rocketnet_log_level( stall_saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    rocketnet_check( strstr( rocketnet_test_captured_log, "destroy gave up waiting" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "leaked, not freed" ) != NULL );
+    rocketnet_check( rocketnet_server_uring_leaked_drivers() == leaked_drivers_before + 1 );
+    rocketnet_check( rocketnet_server_uring_leaked_bytes() - leaked_bytes_before + 4096 >= rocketnet_server_uring_allocation_bytes( 2 ) );   // both allocations, less their small overhead
+    rocketnet_check( rocketnet_server_uring_num_queues( stalled ) == 2 );      // not freed: freeing clears the allocation
+
+    rocketnet_address_t rebind_address;
+    rocketnet_check( rocketnet_address_parse( &rebind_address, "127.0.0.1" ) );
+    rebind_address.port = stall_port;
+    struct rocketnet_server_uring_t * rebound = rocketnet_server_uring_create( NULL, &rebind_address, 2 );
+    rocketnet_check( rebound );                                                 // the sockets closed
+    rocketnet_server_uring_destroy( rebound );
+    rocketnet_check( rocketnet_server_uring_leaked_drivers() == leaked_drivers_before + 1 );   // a drained destroy leaks nothing
+}
+
+// the wire exchange, the gso exchange's shape for this driver: a plain UDP
+// peer sends tagged packets of every size the wire allows into the driver,
+// each must surface byte-exact with the right source; then the driver sends
+// tagged packets back, including equal-size same-destination runs, and the
+// peer must receive each byte-exact
+
+void rocketnet_test_server_uring_wire_ipv4()
+{
+    if ( rocketnet_test_server_uring_skipped( "test_server_uring_wire_ipv4" ) )
+        return;
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2 );
+    rocketnet_check( uring );
+
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+    rocketnet_check( peer_address.port != 0 );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind_address.port;
+
+    #define ROCKETNET_URING_TEST_PACKETS 200
+
+    // peer -> driver
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
+    for ( int i = 0; i < ROCKETNET_URING_TEST_PACKETS; i++ )
+    {
+        const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( i * 37 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
+        packet[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            packet[j] = (uint8_t) ( i * 31 + j );
+        rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+    }
+
+    bool seen[ROCKETNET_URING_TEST_PACKETS];
+    memset( seen, 0, sizeof(seen) );
+    int num_seen = 0;
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_URING_TEST_PACKETS )
+    {
+        rocketnet_server_uring_receive_packets( uring );
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            const int tag = received->packet_data[i][0];
+            const int expected_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( tag * 37 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
+            rocketnet_check( tag < ROCKETNET_URING_TEST_PACKETS );
+            rocketnet_check( !seen[tag] );
+            rocketnet_check( received->packet_bytes[i] == expected_bytes );
+            for ( int j = 1; j < expected_bytes; j++ )
+                rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 31 + j ) );
+            rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 );
+            rocketnet_check( received->from[i].port == peer_address.port );
+            seen[tag] = true;
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == ROCKETNET_URING_TEST_PACKETS );
+
+    // driver -> peer: the first half all one size (adjacent equal-size
+    // same-destination slots), the second half cycling sizes, with one
+    // aborted slot in the middle that must never reach the wire
+
+    int num_staged = 0;
+    for ( int i = 0; i < ROCKETNET_URING_TEST_PACKETS; i++ )
+    {
+        const int packet_bytes = i < ROCKETNET_URING_TEST_PACKETS / 2 ? 400
+                               : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( i * 53 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_uring_start_packet( uring, &peer_address, &packet_id );
+        rocketnet_check( frame );
+        uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+        wire[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            wire[j] = (uint8_t) ( i * 47 + j );
+        rocketnet_server_uring_finish_packet( uring, packet_id, frame, packet_bytes );
+        num_staged++;
+
+        if ( i == ROCKETNET_URING_TEST_PACKETS / 2 )
+        {
+            uint64_t aborted_id = 0;
+            uint8_t * aborted = rocketnet_server_uring_start_packet( uring, &peer_address, &aborted_id );
+            rocketnet_check( aborted );
+            aborted[ROCKETNET_FRAME_WIRE_OFFSET] = 0xFF;
+            rocketnet_server_uring_abort_packet( uring, aborted_id, aborted );
+        }
+    }
+    rocketnet_check( num_staged == ROCKETNET_URING_TEST_PACKETS );
+
+    rocketnet_server_uring_send_packets( uring );
+
+    // send_packets reaps every send of its own before it returns
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == ROCKETNET_URING_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+
+    memset( seen, 0, sizeof(seen) );
+    num_seen = 0;
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_URING_TEST_PACKETS )
+    {
+        rocketnet_address_t from;
+        int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        if ( packet_bytes == 0 )
+        {
+            rocketnet_platform_sleep( 0.001 );
+            continue;
+        }
+        const int tag = packet[0];
+        const int expected_bytes = tag < ROCKETNET_URING_TEST_PACKETS / 2 ? 400
+                                 : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( tag * 53 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
+        rocketnet_check( tag < ROCKETNET_URING_TEST_PACKETS );
+        rocketnet_check( !seen[tag] );
+        rocketnet_check( packet_bytes == expected_bytes );
+        for ( int j = 1; j < expected_bytes; j++ )
+            rocketnet_check( packet[j] == (uint8_t) ( tag * 47 + j ) );
+        rocketnet_check( from.port == server_address.port );
+        seen[tag] = true;
+        num_seen++;
+    }
+    rocketnet_check( num_seen == ROCKETNET_URING_TEST_PACKETS );
+
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == ROCKETNET_URING_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS] > 0 );
+
+    // a runt and an oversize packet die at the driver's size pass, counted,
+    // never surfaced
+
+    const uint64_t dropped_before = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE];
+    uint8_t runt[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1];
+    memset( runt, 0xEE, sizeof(runt) );
+    rocketnet_platform_socket_send_packet( peer, &server_address, runt, (int) sizeof(runt) );
+    uint8_t oversize[ROCKETNET_RECEIVE_CEILING + 74];
+    memset( oversize, 0xEF, sizeof(oversize) );
+    rocketnet_platform_socket_send_packet( peer, &server_address, oversize, (int) sizeof(oversize) );
+
+    start = rocketnet_platform_time();
+    uint64_t dropped_after = dropped_before;
+    while ( rocketnet_platform_time() - start < 5.0 && dropped_after < dropped_before + 2 )
+    {
+        rocketnet_server_uring_receive_packets( uring );
+        rocketnet_check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
+        rocketnet_server_uring_counters( uring, counters );
+        dropped_after = counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE];
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( dropped_after == dropped_before + 2 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == ROCKETNET_URING_TEST_PACKETS );
+
+    rocketnet_platform_socket_destroy( peer );
+    rocketnet_server_uring_destroy( uring );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 
@@ -4334,6 +4639,8 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_plain, "tes
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_ipv6, "test_server_gso_wire_ipv6", "linux only: the gso driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_wire_dual_stack, "test_server_gso_wire_dual_stack", "linux only: the gso driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_send_overflow, "test_server_gso_send_overflow", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_probe, "test_server_uring_probe", "linux only: the io_uring driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_wire_ipv4, "test_server_uring_wire_ipv4", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
 
@@ -4582,6 +4889,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_test_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_test_server_gso_send_overflow },
+    { "test_server_uring_probe", rocketnet_test_server_uring_probe },
+    { "test_server_uring_wire_ipv4", rocketnet_test_server_uring_wire_ipv4 },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_functional_skip_server_driver_pin_gso },
     { "test_server_driver_pin_xdp", rocketnet_functional_skip_server_driver_pin_xdp },
@@ -4592,6 +4901,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_gso_wire_ipv6", rocketnet_functional_skip_server_gso_wire_ipv6 },
     { "test_server_gso_wire_dual_stack", rocketnet_functional_skip_server_gso_wire_dual_stack },
     { "test_server_gso_send_overflow", rocketnet_functional_skip_server_gso_send_overflow },
+    { "test_server_uring_probe", rocketnet_functional_skip_server_uring_probe },
+    { "test_server_uring_wire_ipv4", rocketnet_functional_skip_server_uring_wire_ipv4 },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },

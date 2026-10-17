@@ -29,3 +29,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
     endforeach()
 endif()
+# liburing for the io_uring server driver: optional when building (absent,
+# the driver compiles to a create that refuses), required when the installed
+# package was built with it (ROCKETNET_IO_URING_REQUIRED, set by the config).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET RocketNet::Uring)
+    if(ROCKETNET_IO_URING_REQUIRED)
+        find_library(ROCKETNET_Uring_LIBRARY NAMES uring REQUIRED)
+        find_path(ROCKETNET_Uring_INCLUDE_DIR NAMES liburing.h REQUIRED)
+    else()
+        find_library(ROCKETNET_Uring_LIBRARY NAMES uring)
+        find_path(ROCKETNET_Uring_INCLUDE_DIR NAMES liburing.h)
+    endif()
+    if(ROCKETNET_Uring_LIBRARY AND ROCKETNET_Uring_INCLUDE_DIR)
+        add_library(RocketNet::Uring UNKNOWN IMPORTED)
+        set_target_properties(RocketNet::Uring PROPERTIES
+            IMPORTED_LOCATION "${ROCKETNET_Uring_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Uring_INCLUDE_DIR}")
+    else()
+        message(STATUS "liburing not found: the io_uring server driver is built to refuse")
+    endif()
+endif()
