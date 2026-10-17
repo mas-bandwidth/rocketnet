@@ -5076,6 +5076,64 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     rocketnet_message_server_destroy( server );
 }
 
+// The level-triggered wake beside a real socket on Linux: the eventfd is set
+// and consumed, a socket's readiness is seen only when readable is true, and
+// with readable false a full receive buffer waits on the wake alone
+// (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and IoWake). A
+// real socket and a real eventfd, so this case lives in the functional tier.
+
+void rocketnet_test_platform_wake_linux_wakes_and_reads()
+{
+    // a non-blocking socket on 127.0.0.1 port 0
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+
+    // create returns non-NULL; create with a NULL socket returns NULL
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
+
+    // wait(true, 0) is false: no wake set and nothing readable
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set, then wait(true, 1.0) is true and the next wait(true, 0) is false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set twice, one wait(true, 0) true then false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // send a datagram from a second socket to the first
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    uint8_t packet[8];
+    memset( packet, 0xAB, sizeof(packet) );
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+
+    // the socket is readable now, so wait(true, 1.0) is true
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+
+    // with that datagram still unread, wait(false, 0) is false (socket ignored)
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    // then set and wait(false, 0) is true
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+    rocketnet_platform_socket_destroy( sender );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 // a test a platform's build compiles out still registers its name, printing a
@@ -5110,6 +5168,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_send_overflow,
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_receive_rearms_after_no_buffers, "test_server_uring_receive_rearms_after_no_buffers", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5322,6 +5381,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "platform_wake_linux_wakes_and_reads", rocketnet_test_platform_wake_linux_wakes_and_reads },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "platform_wake_linux_wakes_and_reads", rocketnet_functional_skip_platform_wake_linux_wakes_and_reads },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },

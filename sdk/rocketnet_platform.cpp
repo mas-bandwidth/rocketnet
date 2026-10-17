@@ -40,6 +40,8 @@
 #include <linux/rtnetlink.h>
 #include <linux/wireless.h>
 #include <alloca.h>
+#include <sys/eventfd.h>
+#include <poll.h>
 #endif // #if defined(__linux__)
 
 // the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
@@ -592,6 +594,95 @@ receive_again:
 
     return result;
 }
+
+// ---------------------------------------------------
+
+#if defined(__linux__)
+
+// The client I/O wake on Linux: an eventfd beside the socket. The wake is
+// level-triggered (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's
+// IoWake, IoWait and Wake), so a set made while no wait runs makes the next
+// wait return at once. wait polls the eventfd (and the socket only when
+// readable is true); a readable eventfd is drained by reading its 8-byte
+// counter, consuming the wake(s).
+
+struct rocketnet_platform_wake_t
+{
+    void * context;
+    int socket_fd;
+    int event_fd;
+};
+
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return NULL;
+    rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
+    if ( !wake )
+        return NULL;
+    wake->context = context;
+    wake->socket_fd = socket->handle;
+    wake->event_fd = eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+    if ( wake->event_fd < 0 )
+    {
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    return wake;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    if ( wake->event_fd >= 0 )
+        close( wake->event_fd );
+    rocketnet_free( wake->context, wake );
+}
+
+bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+    struct pollfd fds[2];
+    int nfds = 0;
+    fds[nfds].fd = wake->event_fd;
+    fds[nfds].events = POLLIN;
+    fds[nfds].revents = 0;
+    nfds++;
+    if ( readable )
+    {
+        fds[nfds].fd = wake->socket_fd;
+        fds[nfds].events = POLLIN;
+        fds[nfds].revents = 0;
+        nfds++;
+    }
+    const int timeout_ms = timeout_seconds > 0.0 ? (int) ceil( timeout_seconds * 1000.0 ) : 0;
+    const int poll_result = poll( fds, nfds, timeout_ms );
+    if ( poll_result <= 0 )
+        return false;
+    for ( int i = 0; i < nfds; i++ )
+    {
+        if ( !( fds[i].revents & POLLIN ) )
+            continue;
+        if ( fds[i].fd == wake->event_fd )
+        {
+            uint64_t value;
+            ssize_t n = read( wake->event_fd, &value, sizeof( value ) );
+            (void) n;
+        }
+        return true;
+    }
+    return false;
+}
+
+void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    uint64_t one = 1;
+    ssize_t n = write( wake->event_fd, &one, sizeof( one ) );
+    (void) n;
+}
+
+#endif // #if defined(__linux__)
 
 // ---------------------------------------------------
 
@@ -3158,6 +3249,41 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 }
 
 #endif // #if !defined( ROCKETNET_PLATFORM_HAS_BATCH_PUMP )
+
+// ----------------------------------------------------------------
+
+// the client I/O wake's portable fallback: a platform that does not define
+// ROCKETNET_PLATFORM_HAS_WAKE has no wake. create returns NULL, destroy
+// asserts its argument is NULL, wait returns false and set does nothing.
+
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
+
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+{
+    (void) context;
+    (void) socket;
+    return NULL;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( !wake );
+}
+
+bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
+{
+    (void) wake;
+    (void) readable;
+    (void) timeout_seconds;
+    return false;
+}
+
+void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
+{
+    (void) wake;
+}
+
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // ----------------------------------------------------------------
 
