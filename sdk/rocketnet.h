@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 135
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 136
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -335,6 +335,16 @@ ROCKETNET_EXPORT_FUNC int rocketnet_get_log_level( void );
 ROCKETNET_EXPORT_FUNC const char * rocketnet_log_level_string( int level );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
+
+// a preformatted, FFI-safe log callback (docs/ERRORS-AND-LOGGING.md 3.2). the
+// callback receives the already-formatted bytes and their exact length; message[length]
+// is always NUL-terminated and length is clamped to 1023. message borrows the
+// logging frame's stack buffer and is valid only for the synchronous duration of the
+// call. the callback must be thread-safe and must not call rocketnet_set_log_callback
+// or rocketnet_log_function re-entrantly.
+typedef void (*rocketnet_log_callback_t)( void * context, int level, const char * message, size_t length );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context );
 
 // a NULL format is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_printf( int level, const char * format, ... );
@@ -636,6 +646,16 @@ struct rocketnet_client_transport_config_t
 
 // a NULL config is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config );
+
+// Allocation-free constructor memory plan for one built-in driver name.
+// Includes SDK allocator requests (alignment/ownership overhead). Excludes OS
+// stacks, kernel/libc resources and application memory; this is not a host RAM
+// limit. Uses the supplied numeric config exactly (NULL means defaults); no
+// environment overlay, key validation, socket probe or budget refusal. Zero
+// means invalid geometry, overflow, unknown/custom driver, or driver not built
+// for this platform. Query each candidate separately: "auto" and driver lists
+// are not concrete plans.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * driver );
 
 #if ROCKETNET_DEVELOPMENT
 // a NULL server_address_string or connect_token is a counted no-op that returns 0.

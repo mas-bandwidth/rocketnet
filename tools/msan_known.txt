@@ -29,9 +29,9 @@ memcmp (bin/test)
 # origin: Uninitialized value was created by an allocation of 'buffer' in the stack frame
 # origin: rocketnet_test_random_bytes() sdk/rocketnet_tests.cpp:889:5
 
-rocketnet_random_float sdk/rocketnet.cpp:463:5
+rocketnet_random_float sdk/rocketnet.cpp:510:5
 # origin: Uninitialized value was stored to memory at
-# origin: rocketnet_random_float sdk/rocketnet.cpp:462:12
+# origin: rocketnet_random_float sdk/rocketnet.cpp:509:12
 # origin: rocketnet_test_random_float() sdk/rocketnet_tests.cpp:1047:23
 # origin: rocketnet_unit_run_named(char const*) sdk/rocketnet_tests.cpp:12956:9
 # origin: rocketnet_unit_worker(char const*) test.cpp:86:18
@@ -49,9 +49,9 @@ load64_be sodium/sodium.h:1464:5
 # origin: rocketnet_sodium_crypto_hash_sha512 sodium/sodium.c:22090:5
 # origin: rocketnet_sodium_crypto_sign_ed25519_seed_keypair sodium/sodium.c:28863:5
 
-rocketnet_random_uint32 sdk/rocketnet.cpp:484:5
+rocketnet_random_uint32 sdk/rocketnet.cpp:531:5
 # origin: Uninitialized value was created by an allocation of 'value' in the stack frame
-# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:482:5
+# origin: rocketnet_random_uint32 sdk/rocketnet.cpp:529:5
 
 std::_Rb_tree_node_base* std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_M_copy<false, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node>(std::_Rb_tree_node<unsigned long>*, std::_Rb_tree_node_base*, std::_Rb_tree<unsigned long, unsigned long, std::_Identity<unsigned long>, std::less<unsigned long>, std::allocator<unsigned long>>::_Alloc_node&) include/c++/bits/stl_tree.h:2552:10
 # origin: Uninitialized value was created by a heap allocation
@@ -71,8 +71,8 @@ posix_spawn (bin/test)
 # uninstrumented std::string/std::set operations or the suite custom new.
 # Exact-head hulk origin traces are retained in the repair report.
 xdp_host_read_file[abi:cxx11](char const*) test_unit_xdp_filter_host.cpp:934:19
-counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:440:19
-counters_find(char const*) test_unit_counter_classes.cpp:305:14
+counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:441:19
+counters_find(char const*) test_unit_counter_classes.cpp:306:14
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
 ctv_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_connect_token_vectors.cpp:314:19
 ctv_unhex(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned char*, int) test_unit_connect_token_vectors.cpp:219:18

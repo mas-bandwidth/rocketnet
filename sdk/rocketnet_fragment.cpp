@@ -196,6 +196,11 @@ static void rocketnet_reassembly_set_bit( struct rocketnet_reassembly_slot_t * s
     slot->num_received++;
 }
 
+// tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
+// placement and delivery inside this call (DeliveredExact, DeliveredOnce,
+// CompleteDelivers, ArenaBounded, CountPinned; the stale test fails
+// StaleOnlyIfOlder, finding D1 in tla/README-FragmentsAndAcks.md)
+
 int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * set,
                                            int connection_index,
                                            const uint8_t * type_data,
