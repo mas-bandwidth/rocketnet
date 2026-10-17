@@ -32,7 +32,7 @@ int fake_receive( void *, rocketnet_address_t *, uint8_t *, int )
     return 0;
 }
 
-bool fake_wait( void *, double )
+bool fake_wait( void *, bool, double )
 {
     return false;
 }
