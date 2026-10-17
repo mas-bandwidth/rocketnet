@@ -336,6 +336,16 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_log_level_string( int level );
 
 ROCKETNET_EXPORT_FUNC void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 
+// a preformatted, FFI-safe log callback (docs/ERRORS-AND-LOGGING.md 3.2). the
+// callback receives the already-formatted bytes and their exact length; message[length]
+// is always NUL-terminated and length is clamped to 1023. message borrows the
+// logging frame's stack buffer and is valid only for the synchronous duration of the
+// call. the callback must be thread-safe and must not call rocketnet_set_log_callback
+// or rocketnet_log_function re-entrantly.
+typedef void (*rocketnet_log_callback_t)( void * context, int level, const char * message, size_t length );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context );
+
 // a NULL format is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_printf( int level, const char * format, ... );
 
