@@ -392,6 +392,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     rn_send_store_init( &region->store, region->store_memory, region->store_bytes );
 }
 
+    // tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
 void rn_region_carve( rn_region_t * region )
 {
     rocketnet_assert( region && region->base );
@@ -937,6 +938,7 @@ static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_m
     return arena;
 }
 
+    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;
@@ -980,6 +982,7 @@ uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int
     return bytes;
 }
 
+    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;
