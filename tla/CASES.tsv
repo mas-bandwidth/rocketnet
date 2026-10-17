@@ -112,3 +112,6 @@ MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg	MCRNScheduler.tla	temporal	NoSta
 MCRNResendTiming.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
 MCRNResendTimingBrokenBackoff.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
 MCRNResendTimingBrokenOneFifo.cfg	MCRNResendTiming.tla	invariant	SmallNeverHeldByChunk	check	rnresendtiming	required	-
+MCRNUringDriver.cfg	MCRNUringDriver.tla	pass	-	check	rnuringdriver	required	-
+MCRNUringDriverBrokenResetBeforeReap.cfg	MCRNUringDriver.tla	invariant	NoReuseWhileKernelOwned	check	rnuringdriver	required	-
+MCRNUringDriverBrokenOneBank.cfg	MCRNUringDriver.tla	invariant	ExposedStable	check	rnuringdriver	required	-
