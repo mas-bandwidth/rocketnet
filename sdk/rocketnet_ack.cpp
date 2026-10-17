@@ -359,6 +359,8 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
+// (tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
+// AckedMeansSurfaced, BurnedNeverNamed)
 
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,
