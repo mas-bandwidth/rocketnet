@@ -74,7 +74,8 @@ static void keyed_filter_value_known_answers()
     // the reference vector: magic 00..0f, message 00 01 02 03 04 05 06.
     // packet type 0, packet length 0x0201 (little-endian bytes 01 02), the
     // four bytes 03 04 05 06.
-    rocketnet_keyed_filter_value( ref_magic, 0x00, 0x0201, (const uint8_t[]) { 0x03, 0x04, 0x05, 0x06 }, out );
+    static const uint8_t ref_four[4] = { 0x03, 0x04, 0x05, 0x06 };
+    rocketnet_keyed_filter_value( ref_magic, 0x00, 0x0201, ref_four, out );
     check_equal( out, ref_expected );
 
     // two further fixed magics and inputs whose expectation is computed from
