@@ -1977,16 +1977,30 @@ in order, each with its own counter:
 
 * A payload id of zero refuses (`FRAGMENT_ZERO_PAYLOAD_ID`) — zero is what an
   uninitialized sender produces, the same argument as sequence zero.
-* A payload id older than the id currently occupying its slot refuses as
-  stale (`FRAGMENT_STALE`): its payload was already superseded, and accepting
-  its bytes into the newer payload's slot is the aliasing this check exists
-  to prevent. Older is serial-number arithmetic on the 32-bit values, so no
-  id can poison a slot: a
-  plain comparison would let one defective near-maximum id refuse every later
-  id as stale forever, where under the wrapping comparison a later id is
-  newer, displaces the occupant (counted abandoned), and the slot recovers as
-  ids advance. At worst payloads die at the wrap boundary; nothing opens
-  wrongly.
+* A payload id is stale (`FRAGMENT_STALE`) in two cases, both measured as
+  unsigned 32-bit differences, so the wrap is ordinary arithmetic. First,
+  against the connection's newest completed payload id (zero, the id before
+  the sender's first, until a payload completes): an id more than a quarter
+  of the id space (2^30) from it in both directions refuses. An honest id is
+  never that far — ahead by the payloads lost whole since, or behind as a
+  late fragment — and the refusal is what keeps one defective or hostile
+  fragment with an id near half the space ahead, which a plain serial
+  comparison would read as newer than every honest id, from evicting an
+  occupant or holding an empty slot. Only a completed payload moves this
+  reference. Second, against the id currently occupying the slot: an id 1 to
+  256 (the maximum fragment count) behind the occupant was already
+  superseded, and accepting its bytes into the newer payload's slot is the
+  aliasing this check exists to prevent. Any other id displaces the occupant
+  (counted abandoned): a newer id however many of the slot's ids were lost
+  whole in between, and an id further behind the occupant, which shows the
+  occupant is no live predecessor — a delayed fragment that re-occupied a
+  slot a completion emptied holds it only until the next live id of its
+  series. So no loss pattern stales a slot. One defective fragment, with an
+  id no honest payload yet carries, costs at most the payloads of its slot's
+  series that trail its id by 1 to 256 — at most 256 / the number of slots
+  (32 at eight slots), refused stale or, for the occupant, abandoned — and
+  the payload with its own id shares its slot state; an id further from the
+  live series costs the one occupant it displaces. Nothing opens wrongly.
 * Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
   of 1 refuses — `FRAGMENT_COUNT_INVALID`).
 * Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).
