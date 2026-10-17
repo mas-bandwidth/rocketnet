@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 132
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 133
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -1609,6 +1609,14 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_server_abort( struct rocketnet_mess
 
 // The convenience over start and finish; it copies data into the region record. a NULL server or data is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
+
+// Sends data to every connected slot exactly as rocketnet_message_server_send
+// would, one copy per connection: each connection's region holds its own copy,
+// the R3 copy this API cannot avoid (docs/CHANNELS.md section 12, Broadcast).
+// Returns the number of slots it was queued for; a slot that refuses
+// (exhausted, not connected) is skipped. a NULL server or data is a counted
+// no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
 // a NULL server, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
