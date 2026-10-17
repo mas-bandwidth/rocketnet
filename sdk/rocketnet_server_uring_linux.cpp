@@ -53,6 +53,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 
 // one receive bank holds a whole process batch, so the swap never drops
 // below the process arrays
@@ -113,6 +115,7 @@ struct rocketnet_server_uring_queue_t
     bool armed;                                 // a multishot RECVMSG is in the kernel (or queued to submit)
     bool cancel_pending;                        // destroy's cancel SQE has no CQE yet
     struct io_uring_buf_ring * buf_ring;
+    bool buf_ring_inverted_resv;                // registered through the inverted resv check (see setup_buf_ring)
     struct msghdr receive_message;              // the multishot's msghdr: the name area reserved, no control
     alignas(64) uint8_t buffers[ROCKETNET_URING_RECV_BUFFERS][ROCKETNET_URING_RECV_BUFFER_BYTES];
 };
@@ -322,6 +325,64 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
 
 // ---------------------------------------------------------------------------
 
+// the provided buffer ring. Ubuntu 24.04 kernels 6.8.0-136 through 6.8.0-148
+// carry a broken backport in io_uring/kbuf.c: the resv check in
+// io_register_pbuf_ring and io_unregister_pbuf_ring is inverted, so every
+// correct registration (resv all zero) is refused with EINVAL and one with a
+// nonzero resv is taken. When the plain form is refused with EINVAL, register
+// once more with resv[0] = 1: a correct kernel refuses that too, so the retry
+// only succeeds where the check is inverted, and the ring is the same ring
+// either way. Unregister then has to carry the same nonzero resv.
+
+static struct io_uring_buf_ring * rocketnet_server_uring_setup_buf_ring( struct io_uring * ring, unsigned int entries, int bgid, bool * inverted_resv, int * error )
+{
+    *inverted_resv = false;
+    struct io_uring_buf_ring * buf_ring = io_uring_setup_buf_ring( ring, entries, bgid, 0, error );
+    if ( buf_ring || *error != -EINVAL )
+        return buf_ring;
+
+    const size_t bytes = (size_t) entries * sizeof(struct io_uring_buf);
+    void * memory = mmap( NULL, bytes, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0 );
+    if ( memory == MAP_FAILED )
+        return NULL;                                // keep the EINVAL of the plain form
+
+    struct io_uring_buf_reg reg;
+    memset( &reg, 0, sizeof(reg) );
+    reg.ring_addr = (uint64_t) (uintptr_t) memory;
+    reg.ring_entries = entries;
+    reg.bgid = (uint16_t) bgid;
+    reg.resv[0] = 1;
+    if ( syscall( __NR_io_uring_register, ring->ring_fd, IORING_REGISTER_PBUF_RING, &reg, 1 ) != 0 )
+    {
+        munmap( memory, bytes );
+        return NULL;                                // a correct kernel: the EINVAL of the plain form stands
+    }
+
+    buf_ring = (struct io_uring_buf_ring *) memory;
+    io_uring_buf_ring_init( buf_ring );
+    *inverted_resv = true;
+    *error = 0;
+    return buf_ring;
+}
+
+static void rocketnet_server_uring_free_buf_ring( struct io_uring * ring, struct io_uring_buf_ring * buf_ring, unsigned int entries, int bgid, bool inverted_resv )
+{
+    if ( !inverted_resv )
+    {
+        io_uring_free_buf_ring( ring, buf_ring, entries, bgid );
+        return;
+    }
+
+    struct io_uring_buf_reg reg;
+    memset( &reg, 0, sizeof(reg) );
+    reg.bgid = (uint16_t) bgid;
+    reg.resv[0] = 1;
+    syscall( __NR_io_uring_register, ring->ring_fd, IORING_UNREGISTER_PBUF_RING, &reg, 1 );
+    munmap( buf_ring, (size_t) entries * sizeof(struct io_uring_buf) );
+}
+
+// ---------------------------------------------------------------------------
+
 bool rocketnet_server_uring_available()
 {
     // the probe: a ring, the three opcodes, and a provided buffer ring.
@@ -348,9 +409,10 @@ bool rocketnet_server_uring_available()
         if ( ok )
         {
             int error = 0;
-            struct io_uring_buf_ring * buf_ring = io_uring_setup_buf_ring( &ring, 1, 0, 0, &error );
+            bool inverted_resv = false;
+            struct io_uring_buf_ring * buf_ring = rocketnet_server_uring_setup_buf_ring( &ring, 1, 0, &inverted_resv, &error );
             if ( buf_ring )
-                io_uring_free_buf_ring( &ring, buf_ring, 1, 0 );
+                rocketnet_server_uring_free_buf_ring( &ring, buf_ring, 1, 0, inverted_resv );
             else
                 ok = false;
         }
@@ -673,7 +735,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
         struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
 
         int error = 0;
-        queue->buf_ring = io_uring_setup_buf_ring( &uring->ring, ROCKETNET_URING_RECV_BUFFERS, i, 0, &error );
+        queue->buf_ring = rocketnet_server_uring_setup_buf_ring( &uring->ring, ROCKETNET_URING_RECV_BUFFERS, i, &queue->buf_ring_inverted_resv, &error );
         if ( !queue->buf_ring )
         {
             rocketnet_error( "io_uring driver: io_uring_setup_buf_ring failed for queue %d: %s", i, strerror( -error ) );
@@ -763,7 +825,8 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
         {
             if ( uring->queues[i].buf_ring )
             {
-                io_uring_free_buf_ring( &uring->ring, uring->queues[i].buf_ring, ROCKETNET_URING_RECV_BUFFERS, i );
+                rocketnet_server_uring_free_buf_ring( &uring->ring, uring->queues[i].buf_ring, ROCKETNET_URING_RECV_BUFFERS, i,
+                                                       uring->queues[i].buf_ring_inverted_resv );
                 uring->queues[i].buf_ring = NULL;
             }
         }
