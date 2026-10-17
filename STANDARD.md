@@ -1987,17 +1987,20 @@ in order, each with its own counter:
   fragment with an id near half the space ahead, which a plain serial
   comparison would read as newer than every honest id, from evicting an
   occupant or holding an empty slot. Only a completed payload moves this
-  reference. Second, against the id currently occupying the slot: an id at
-  most one replay window of ids (`ROCKETNET_HISTORY_PACKETS`) behind the
-  occupant was already superseded, and accepting its bytes into the newer
-  payload's slot is the aliasing this check exists to prevent. Any other id
-  displaces the occupant (counted abandoned): a newer id however many of the
-  slot's ids were lost whole in between, and an id further behind the
-  occupant than a late fragment can be, which shows the occupant is no honest
-  predecessor — a delayed fragment that re-occupied a slot a completion
-  emptied holds it only until the next live id of its series. So no loss
-  pattern and no single fragment poisons a slot; at worst one payload dies
-  to a displacement, and nothing opens wrongly.
+  reference. Second, against the id currently occupying the slot: an id 1 to
+  256 (the maximum fragment count) behind the occupant was already
+  superseded, and accepting its bytes into the newer payload's slot is the
+  aliasing this check exists to prevent. Any other id displaces the occupant
+  (counted abandoned): a newer id however many of the slot's ids were lost
+  whole in between, and an id further behind the occupant, which shows the
+  occupant is no live predecessor — a delayed fragment that re-occupied a
+  slot a completion emptied holds it only until the next live id of its
+  series. So no loss pattern stales a slot. One defective fragment, with an
+  id no honest payload yet carries, costs at most the payloads of its slot's
+  series that trail its id by 1 to 256 — at most 256 / the number of slots
+  (32 at eight slots), refused stale or, for the occupant, abandoned — and
+  the payload with its own id shares its slot state; an id further from the
+  live series costs the one occupant it displaces. Nothing opens wrongly.
 * Fragment count − 1 must not exceed the maximum (count of 2 to 256; a count
   of 1 refuses — `FRAGMENT_COUNT_INVALID`).
 * Fragment index must be less than the count (`FRAGMENT_INDEX_OUT_OF_RANGE`).

@@ -5,8 +5,9 @@
 
 // The reassembly stale rule (STANDARD.md _Fragmentation_, tla/FragmentsAndAcks.tla
 // StaleOnlyIfOlder): an honest sender's payloads are never refused as stale after
-// any loss pattern, and one hostile fragment with an id far ahead neither evicts
-// an occupant nor holds a slot. Each test drives the reassembly engine directly
+// any loss pattern, one hostile fragment with an id far ahead neither evicts
+// an occupant nor holds a slot, and one bad fragment nearer costs at most the
+// stale window's payloads of its slot. Each test drives the reassembly engine directly
 // with an honest sender's id sequence -- one id per fragmented payload, two
 // fragments each -- and a scripted loss or delay. The engine takes no time and
 // no sockets: the scripted order is the arrival order.
@@ -238,6 +239,70 @@ static void reassembly_hostile_far_ahead_id_cannot_poison()
     stale_rule_end( &h );
 }
 
+// The bound on one bad fragment: an id no honest payload yet carries, inside
+// the reach, landing in an occupied slot. Its worst case is an id exactly
+// ROCKETNET_REASSEMBLY_BEHIND (256) ahead of the occupant, in the occupant's
+// slot: it displaces occupant 5 (abandoned), and the slot's series behind it,
+// 13 .. 253, refuses stale until the series reaches 261 -- 32 payloads lost,
+// 5 and 31 more, the limit of the stale test before this rule. Payload 261
+// itself delivers, its early copy a duplicate. The same fragment further
+// ahead (4005) holds the slot only until 5's own final displaces it: one
+// payload lost, nothing stale.
+
+static void reassembly_one_bad_fragment_costs_at_most_the_window()
+{
+    const uint32_t last = 2000;
+
+    {
+        struct stale_rule_harness_t h;
+        stale_rule_begin( &h, 8 );
+
+        const uint32_t bad = 5 + ROCKETNET_REASSEMBLY_BEHIND;
+
+        for ( uint32_t id = 1; id <= last; id++ )
+        {
+            stale_rule_offer( &h, id, 0 );
+            if ( id == 5 )
+                rocketnet_unit_check( stale_rule_offer( &h, bad, 0 ) == 1 );   // displaces the occupant
+            stale_rule_offer( &h, id, 1 );
+        }
+
+        stale_rule_report( "reassembly_one_bad_fragment_costs_at_most_the_window (256 ahead)", &h, (int) last );
+
+        const int lost = (int) ( ROCKETNET_REASSEMBLY_BEHIND / 8 );                    // 32: 5, 13 .. 253
+        rocketnet_unit_check( lost == 32 );
+        rocketnet_unit_check( h.delivered == (int) last - lost );
+        rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 1 + 2 * 31 );   // 5's final, both of 13 .. 253
+        rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 1 );
+        rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_DUPLICATE_INDEX] == 1 );   // 261's own first
+
+        stale_rule_end( &h );
+    }
+
+    {
+        struct stale_rule_harness_t h;
+        stale_rule_begin( &h, 8 );
+
+        const uint32_t bad = 4005;
+
+        for ( uint32_t id = 1; id <= last; id++ )
+        {
+            stale_rule_offer( &h, id, 0 );
+            if ( id == 5 )
+                rocketnet_unit_check( stale_rule_offer( &h, bad, 0 ) == 1 );   // displaces the occupant
+            stale_rule_offer( &h, id, 1 );
+        }
+
+        stale_rule_report( "reassembly_one_bad_fragment_costs_at_most_the_window (4000 ahead)", &h, (int) last );
+
+        rocketnet_unit_check( h.delivered == (int) last - 1 );                      // every payload but 5
+        rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 0 );
+
+        stale_rule_end( &h );
+    }
+}
+
 REGISTER_UNIT_TEST( reassembly_lost_run_does_not_stale_the_slot );
+REGISTER_UNIT_TEST( reassembly_one_bad_fragment_costs_at_most_the_window );
 REGISTER_UNIT_TEST( reassembly_late_fragment_after_completion_does_not_poison );
 REGISTER_UNIT_TEST( reassembly_hostile_far_ahead_id_cannot_poison );

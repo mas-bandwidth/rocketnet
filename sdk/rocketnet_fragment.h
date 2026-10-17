@@ -12,7 +12,6 @@
 #include <stddef.h>
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
-#include "rocketnet_history.h"
 
 // Fragmentation and reassembly, per STANDARD.md _Fragmentation_: a payload
 // larger than one packet's capacity is split into fragments, each riding an
@@ -73,16 +72,18 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // Storage is allocated once, at create, and never grown.
 
 // The stale rule's two bounds, per STANDARD.md _Fragmentation_ and
-// tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: an honest late
-// fragment is inside the replay window, and every payload id between it and
-// a newer one consumed at least two sequences, so it trails a newer id by
-// less than one window of ids. REACH: how far from the connection's newest
-// completed payload id, in either direction, an id may be -- a quarter of the
-// id space, which no honest loss run or late fragment reaches, and well short
-// of the half-space point where a hostile id would read as newer than every
-// honest one.
+// tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
+// slot's occupant an id refuses as superseded -- the window of the stale
+// test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one
+// bad fragment can cost: it refuses only the ids of its slot's series that
+// trail it by at most BEHIND, at most BEHIND / num_slots payloads (32 at the
+// default eight slots), the same limit as before. REACH: how far from the
+// connection's newest completed payload id, in either direction, an id may
+// be -- a quarter of the id space, which no honest loss run or late fragment
+// reaches, and well short of the half-space point where a hostile id would
+// read as newer than every honest one.
 
-#define ROCKETNET_REASSEMBLY_BEHIND             ( (uint32_t) ROCKETNET_HISTORY_PACKETS )
+#define ROCKETNET_REASSEMBLY_BEHIND             ( (uint32_t) ROCKETNET_MAX_FRAGMENTS )
 #define ROCKETNET_REASSEMBLY_REACH              ( 0x40000000u )
 
 struct rocketnet_reassembly_slot_t

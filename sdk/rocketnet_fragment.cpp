@@ -274,15 +274,22 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // occupied or empty, so it neither evicts nor holds a slot. Only a
     // completed payload moves the reference, never a lone fragment.
     //
-    // Then the slot's occupant: an id at most ROCKETNET_REASSEMBLY_BEHIND
+    // Then the slot's occupant: an id 1..ROCKETNET_REASSEMBLY_BEHIND (256)
     // behind it was superseded -- accepting its bytes into the newer payload
     // is the aliasing this check exists to prevent. Any other id displaces
-    // the occupant. A newer id does so however many of the slot's ids were
-    // lost whole in between, and an id further behind the occupant than a
-    // late fragment can be shows the occupant is no honest predecessor: a
-    // delayed fragment that re-occupied a slot a completion emptied, or an id
-    // ahead within the bound, holds the slot only until the next live id of
-    // its series.
+    // the occupant, counted abandoned. A newer id does so however many of
+    // the slot's ids were lost whole in between; an id further behind the
+    // occupant shows the occupant is no live predecessor -- a delayed
+    // fragment that re-occupied a slot a completion emptied, or a bad id far
+    // ahead, holds the slot only until the next live id of its series.
+    //
+    // The bound on one bad fragment with id B that no honest payload yet
+    // carries, inside REACH: the ids of its slot's series that trail B by
+    // 1..BEHIND refuse stale until the series reaches B, at most
+    // BEHIND / num_slots payloads (32 at eight slots), the displaced occupant
+    // among them when it is that close; payload B itself shares its slot
+    // state. Further from the live series, B costs the one occupant it
+    // displaces. The stale test before this rule had the same worst case.
 
     const uint32_t reference = set->newest_completed[connection_index];
 
