@@ -634,7 +634,6 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
     INT_FIELD(    max_payload_bytes,     0,                              ROCKETNET_MAX_PAYLOAD_BYTES,                                                       \
                                                                          ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_reassembly_slots,  0,                              1, ROCKETNET_MAX_FRAGMENTS,                            ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
-    UINT64_FIELD( memory_budget_bytes,   0,                              0 )                                                    \
     STRING_FIELD( driver,                ROCKETNET_DRIVER_STRING_LENGTH, "auto",                                               0 )
 
 #define ROCKETNET_CONFIG_STRUCT_INT( name, def, min, max, flags )       int name;
@@ -875,7 +874,6 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // The handshake deadline is fixed at the challenge, never refreshed, and discharged on connect.
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
-    UINT64_FIELD( memory_budget_bytes,   0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,          64,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \

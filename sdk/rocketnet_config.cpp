@@ -381,6 +381,32 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
     }
 }
 
+bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out )
+{
+    rocketnet_assert( transport_name );
+    rocketnet_assert( field_name );
+    rocketnet_assert( out );
+
+    char env_name[128];
+    if ( !rocketnet_config_env_var_name_for( transport_name, field_name, env_name, sizeof(env_name) ) )
+    {
+        rocketnet_error( "%s config field name \"%s\" does not fit an env var name", transport_name, field_name );
+        return false;
+    }
+
+    const char * value = rocketnet_platform_getenv( env_name );
+    if ( !value || value[0] == '\0' )
+        return true;
+
+    if ( !rocketnet_config_parse_uint64( value, out ) )
+    {
+        rocketnet_error( "%s config could not parse %s=\"%s\" as an unsigned 64 bit integer", transport_name, env_name, value );
+        return false;
+    }
+
+    return true;
+}
+
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
     rocketnet_assert( transport_name );

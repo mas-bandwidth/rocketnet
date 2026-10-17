@@ -605,7 +605,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
-    const uint64_t memory_budget = config->memory_budget_bytes;
+    uint64_t memory_budget = 0;
+    if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+        return NULL;
     bool budget_refused[ROCKETNET_NUM_DRIVERS];
     memset( budget_refused, 0, sizeof(budget_refused) );
     int budget_refused_total = 0;
