@@ -354,7 +354,9 @@ BAEnvironment == BA!Environment /\ UNCHANGED <<epVars, abVars>>
 
 WriteAny(e)  == \E S \in SUBSET Due(e), Us \in SUBSET unrelQ[e] :
                     WritePacket(e, S, Us) \/ PacketFailed(e, S, Us)
-OpenAny(e)   == \E p \in Pkts : OnPayload(e, p)
+\* Link delivers only the head of a wire, so opening the head is every open
+OpenHead(e) == WireInto(e) # <<>> /\ OnPayload(e, Head(WireInto(e)).pkt)
+OpenAny(e)   == OpenHead(e)
 
 Next ==
     \/ \E e \in E :
@@ -381,7 +383,6 @@ WriteOldest(e) ==
 WriteUnrel(e) ==
     \E S \in SUBSET Due(e), Us \in SUBSET unrelQ[e] :
          Us # {} /\ WritePacket(e, S, Us)
-OpenHead(e) == WireInto(e) # <<>> /\ OnPayload(e, Head(WireInto(e)).pkt)
 
 Fairness ==
     \A e \in E :

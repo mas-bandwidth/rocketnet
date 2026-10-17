@@ -59,13 +59,13 @@ An end in error does nothing more: the object disconnects it (section 11).
   held on their channel. The 24-bit wire number, `U'` inside blocks and the
   descriptor slots are not restated.
 - **The RTO** is abstract, as in `RNWindow`: an unacked record inside the
-  window may be resent at any step. `RtoAboveRtt = TRUE` (the liveness cases)
+  window may be resent at any step. `RtoAboveRtt = TRUE` (every committed case)
   narrows this to the real ordering of the RTO above the RTT: a record is due
   again only once no copy of it is in flight and no ack of it is pending or in
   flight back. The timing that makes this so is `RNResendTiming`'s.
-- **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (the safety cases)
+- **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (a bench run, see the records)
   `Tick` may fire at any moment, so safety holds wherever the timeout lands.
-  Under `FALSE` (the liveness cases) it fires only once the peer is in error
+  Under `FALSE` (every committed case) it fires only once the peer is in error
   and silent: that a live peer's resends land before `reliable_timeout` is
   `RNResendTiming`'s `AttemptsBeforeTimeout`.
 - **A configuration** is its `num_channels`, the field the instances vary.
@@ -75,8 +75,8 @@ An end in error does nothing more: the object disconnects it (section 11).
   `fragment_bytes`): any differing field is the same mismatch.
 - **Duplicated packets** are the transport replay window's to drop
   (`ReplayWindow`), so the instances run Link with `Duplication = FALSE`.
-  Resends still put several copies of one reliable record in flight in the
-  safety cases, and the receiver's dedupe is what keeps them exactly once.
+  A record whose ack is lost is resent and arrives again, and the receiver's
+  dedupe is what keeps it exactly once.
 - **Inside one packet** the records are processed CONFIG first, then data; a
   data record outside the receiver's bounds refuses the packet's data as a
   whole. The order of records inside a packet beyond that is section 9.3's.
@@ -102,7 +102,7 @@ Safety (every case lists them):
 | `MismatchErrorsBothEnds` | an end that takes the peer's CONFIG takes an equal one, and `CONFIG_MISMATCH` means a real difference: every end that opens a differing CONFIG errors |
 | `NoViolationWhenEqual` | with equal configurations, data records before CONFIG never trip the receiver's bounds (R6) |
 
-Liveness (`MCRNEndpointLive.cfg`, under `LiveSpec`):
+Liveness (under `LiveSpec`; `MCRNEndpointLive.cfg` checks the first and the third):
 
 | Property | Meaning |
 |---|---|
@@ -125,35 +125,37 @@ two configurations, equal (`num_channels` 2 at both ends) and differing
 
 | Case | Spec and terrain | Expected |
 |---|---|---|
-| `MCRNEndpoint.cfg` | `Spec`, N = 3, `"arbitrary"` loss both ways, failed sends, ack silence, timeouts at any time, abstract RTO | pass |
-| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, `"first"` loss both ways, `RtoAboveRtt` | pass |
+| `MCRNEndpoint.cfg` | `Spec`, N = 3, each link losing its first two sends (`"burst"`), failed sends, `RtoAboveRtt` | pass |
+| `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, `"first"` loss both ways, `RtoAboveRtt`; properties `ConfigVerifiedDespiteFirstLoss` and `MismatchBothEndsError` | pass |
 | `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE` | temporal `ConfigVerifiedDespiteFirstLoss` |
 | `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE` | invariant `MismatchErrorsBothEnds` |
 
 ### Measured records
 
-Measured with the pinned runner and JAR on a loaded Linux bench (one-minute
-load near 200 on 64 logical CPUs), each case its own 110-second shard,
-merged into `tla/RUNS.tsv` (`groups --stale` prints `[]`):
+Measured with the pinned runner and JAR on an idle 64-CPU Linux bench, each
+case its own 110-second shard, merged into `tla/RUNS.tsv` by
+`tlacheck merge --keep` (`groups --stale` prints `[]`). All four are
+required cases.
 
-| Case | Gate | Exit | Result | Generated | Distinct | Seconds |
-|---|---|---:|---|---:|---:|---:|
-| `MCRNEndpoint.cfg` | bench | 124 | FAIL (budget) | - | - | 110.270 |
-| `MCRNEndpointLive.cfg` | bench | 124 | FAIL (budget) | - | - | 110.249 |
-| `MCRNEndpointBrokenConfigUnreliable.cfg` | bench | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 32.649 |
-| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 2.161 |
+| Case | Exit | Result | Generated | Distinct | Seconds |
+|---|---:|---|---:|---:|---:|
+| `MCRNEndpoint.cfg` | 0 | PASS | 1267855 | 352435 | 31.138 |
+| `MCRNEndpointLive.cfg` | 0 | PASS | 155401 | 54965 | 38.729 |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 6.436 |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 396 | 156 | 1.094 |
 
-**The two controls are debt, not proofs.** Neither completed inside the
-budget. Longer manual runs on the same bench, outside the records, also did
-not complete: the safety case reached 55,421 distinct states at depth 10 in
-500 s with no violation and a growing queue; the liveness case reached
-31,447 distinct states (80,218 explored by the temporal check) in 500 s with
-no violation. No invariant or property was found false in any explored
-state, but the exploration is incomplete and is labelled so. The debt is a
-smaller committed instance or a quieter bench, and it is owed before the
-model gates the endpoint card. The unreliable-CONFIG witness is declared
-bench conservatively; it ran in 33 s and can move to required on the next
-record refresh.
+**How the instance was sized.** The terrain the model allows is wider than
+the committed cases run. Bench runs outside the records, each stopped at
+150 s with no violation in any explored state and the queue still growing,
+none of them a proof: `"arbitrary"` or `"alternate"` loss with N = 3
+(1.0 to 2.6 million distinct states), `TimeoutAnyTime = TRUE` (about nine
+times the states of the same case without it), `Silence = TRUE` (about five
+times). The committed safety case keeps failed sends, two lost sends on each
+link (so CONFIG, data and ack-only packets are all lost before any gets
+through) and the dedupe that a lost ack forces; `EveryReliableDelivered`
+passes on the liveness instance too (97 s, outside the records), and is
+left out of the committed case to stay inside the budget. Arbitrary loss,
+ack silence and timeouts at any time are a bench run, owed.
 
 ## Reversed witnesses, each checked by hand
 
@@ -163,14 +165,15 @@ error code), so the check is against the design, which is the spec the
 two code cards implement.
 
 **`MCRNEndpointBrokenConfigNotCompared.cfg`** (`ConfigCompared = FALSE`,
-invariant `MismatchErrorsBothEnds`, 3 states). Init picks the differing
-configurations, `num_channels` 2 at a and 1 at b. a writes its first packet,
-`[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, at the head of
-IMMEDIATE with reliable number 0 (10.3). b opens it with no comparison and
-records `peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section
-13.4 requires "any difference is ERROR_CONFIG_MISMATCH"; without the
-comparison b goes on as if both ends were configured the same, so the
-"identical and verified" model of 10.3 is lost on the first CONFIG.
+invariant `MismatchErrorsBothEnds`, 5 states). Init picks the differing
+configurations, `num_channels` 2 at a and 1 at b. a writes CONFIG twice
+and the AB link loses both (the burst); a writes it a third time,
+`[rel |-> {0}, unrel |-> {}, acks |-> {}]`: CONFIG alone, still unacked,
+with reliable number 0 (10.3). b opens it with no comparison and records
+`peerCfg[b] = 2` while its own `cfg[b] = 1`, with no error. Section 13.4
+requires "any difference is ERROR_CONFIG_MISMATCH"; without the comparison
+b goes on as if both ends were configured the same, so the "identical and
+verified" model of 10.3 is lost on the first CONFIG that arrives.
 
 **`MCRNEndpointBrokenConfigUnreliable.cfg`** (`ConfigReliable = FALSE`,
 temporal `ConfigVerifiedDespiteFirstLoss`, 14 states then stuttering).
