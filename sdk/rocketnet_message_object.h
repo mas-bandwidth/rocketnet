@@ -14,6 +14,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_endpoint.h"
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
 
@@ -22,7 +23,11 @@
 // objects over the transports. tla/RNSlots.tla is the spec of the object's
 // update, release and slot rules; tla/RNConnectionMemory.tla of exhaustion and
 // reuse; each function in sdk/rocketnet_message_client.cpp and
-// sdk/rocketnet_message_server.cpp names the action it implements (R7).
+// sdk/rocketnet_message_server.cpp names the action it implements (R7). Each
+// connection's own message state is its endpoint (layer 7, CHANNELS.md 10.1,
+// sdk/rocketnet_endpoint.h), which the object calls for everything per
+// connection; the object keeps the transport link, the slots and the update
+// order.
 //
 // One object is one block made at create (owner rule R2): the object, its
 // connections, each connection's receive bookkeeping, and the arena of regions
@@ -96,26 +101,15 @@ struct rn_message_link_t
 #define RN_MESSAGE_VIEW_HELD                1   // handed out by receive, not yet released
 #define RN_MESSAGE_VIEW_RELEASED            2   // released, or refused because the connection ended
 
-struct rn_message_connection_t
-{
-    rn_region_t * region;
-    rn_ordered_t ordered;                       // layers 3 to 6, RELIABLE_ORDERED, over the region
-    rn_packet_builder_t unreliable_builder;     // layer 6 for UNRELIABLE records (no reliable numbers)
-    rocketnet_send_budget_t budget;             // R6
+// A connection is its endpoint (CHANNELS.md 10.1, sdk/rocketnet_endpoint.h:
+// the region, layers 3 to 6, the budget, the queued sends and the write pass)
+// plus what the object keeps per slot: the slot binding and the receive views.
 
+struct rn_message_connection_t : rn_endpoint_t
+{
     uint64_t connection_id;                     // RNSlots: the connection this slot is bound to, 0 when free
     int state;                                  // RN_MESSAGE_CONNECTION_*
     int disconnect_reason;                      // ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here
-    uint32_t serial;                            // the receipt serial of the last finished send (7.4)
-
-    // the start between start and finish (one at a time, like the transport's start_packet)
-    int pending_type;                           // -1 when no start is pending
-    uint32_t pending_descriptor;                // UNRELIABLE: its send descriptor
-    uint32_t pending_bytes;
-
-    // the queued UNRELIABLE sends: send descriptors linked through their `next`
-    uint32_t unreliable_head, unreliable_tail;
-    uint32_t unreliable_count;
 
     // the receive bookkeeping (RNSlots Release): one state per delivery entry,
     // one cursor per channel, and the views held now

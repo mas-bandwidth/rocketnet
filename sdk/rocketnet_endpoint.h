@@ -1,0 +1,169 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#pragma once
+
+#ifndef ROCKETNET_ENDPOINT_H
+#define ROCKETNET_ENDPOINT_H
+
+#include <stdint.h>
+
+#include "rocketnet.h"
+#include "rocketnet_allocator.h"
+#include "rocketnet_channel.h"
+#include "rocketnet_packet_builder.h"
+#include "rocketnet_send_budget.h"
+
+// Layer 7 of the message layer: the endpoint, one connection as a pure machine
+// (docs/CHANNELS.md 10.1 and 16.3). It is the composition of layers 3 to 6 for
+// one connection -- the window, the channels, the blocks, the scheduler and the
+// packet builder (rn_ordered_t), the unreliable packet builder and the send
+// budget -- behind one struct that points into the connection's region. Events
+// come in (send, acked, payload, tick), actions go out (bytes into a frame the
+// caller supplies, deliveries, receipts, an error, a deadline). The endpoint
+// never reads a clock (time is the `now` argument), never calls the transport
+// and never allocates. tla/RNEndpoint.tla is its spec; each function names the
+// action it implements.
+//
+// The message objects (sdk/rocketnet_message_object.h) hold one endpoint per
+// connection: rn_message_connection_t is an rn_endpoint_t plus the object's own
+// per-slot state (the slot binding and the receive views). The objects keep the
+// transport link, the slots machine and the update order.
+
+#define RN_ENDPOINT_WRITE_IDLE              0   // no write pass open
+#define RN_ENDPOINT_WRITE_RELIABLE          1   // the reliable path: retransmits and ordered progress
+#define RN_ENDPOINT_WRITE_UNRELIABLE        2   // the queued unreliable records
+#define RN_ENDPOINT_WRITE_DONE              3   // the pass is over; the next next_packet_bytes answers 0
+
+#define RN_ENDPOINT_PACKET_NONE             0
+#define RN_ENDPOINT_PACKET_ORDERED          1   // rn_ordered_write's packet
+#define RN_ENDPOINT_PACKET_UNRELIABLE       2   // small unreliable records packed by the unreliable builder
+#define RN_ENDPOINT_PACKET_SEQUENCED_LARGE  3   // one code-1 record larger than a packet, fragmented by the transport
+
+#define RN_ENDPOINT_NO_DEADLINE             1.0e300
+
+struct rn_endpoint_config_t
+{
+    const struct rocketnet_message_config_t * config;   // the connection's message config; outlives the endpoint
+    uint32_t send_kbps;                                 // the send budget a reset starts with (R6)
+    int max_payload_bytes;                              // the transport's payload cap, for rn_endpoint_send's large unreliable check (0: ROCKETNET_MAX_PAYLOAD_BYTES)
+};
+
+struct rn_endpoint_t
+{
+    rn_region_t * region;
+    rn_ordered_t ordered;                       // layers 3 to 6 over the region
+    rn_packet_builder_t unreliable_builder;     // layer 6 for UNRELIABLE records (no reliable numbers)
+    rocketnet_send_budget_t budget;             // R6
+
+    const struct rocketnet_message_config_t * config;
+    uint32_t default_kbps;                      // the budget a reset starts with
+    uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
+    int max_payload_bytes;                      // the transport's payload cap (rn_endpoint_send)
+    int send_error;                             // ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE
+
+    uint32_t serial;                            // the receipt serial of the last finished send (7.4)
+
+    // the start between start and finish (one at a time)
+    int pending_type;                           // -1 when no start is pending
+    uint32_t pending_descriptor;                // UNRELIABLE: its send descriptor
+    uint32_t pending_bytes;
+
+    // the queued UNRELIABLE sends: send descriptors linked through their `next`
+    uint32_t unreliable_head, unreliable_tail;
+    uint32_t unreliable_count;
+
+    // the write pass (9.3): next_packet_bytes plans a packet, write_packet
+    // writes it, packet_sent or packet_failed ends it
+    int write_phase;                            // RN_ENDPOINT_WRITE_*
+    int written;                                // packets this pass, against max_packets_per_update
+    int packet_kind;                            // RN_ENDPOINT_PACKET_* of the planned packet
+    int packet_written;                         // 1 between write_packet and packet_sent or packet_failed
+    int large_bytes;                            // SEQUENCED_LARGE: the payload bytes
+    int large_admitted;                         // SEQUENCED_LARGE: the wire bytes charged to the budget
+    uint32_t large_descriptor;                  // SEQUENCED_LARGE: its send descriptor
+    uint32_t packet_records;                    // UNRELIABLE: the records the written packet carries
+    uint32_t receipt_count;                     // UNRELIABLE: the code-5 serials the written packet carries
+    uint32_t receipt_serials[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+};
+
+// Binds the endpoint to its region (carved already) and its configuration.
+// Nothing is allocated. rn_endpoint_reset starts the first connection.
+void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, const struct rn_endpoint_config_t * config );
+
+// A new connection on this endpoint: the region carved again and every layer
+// bound to it fresh, so nothing of the previous connection is reachable.
+void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
+
+// The CONFIG hook (10.3): called when the connection this endpoint was reset
+// for is connected. The CONFIG card queues the announcement here.
+void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now );
+
+// ---------------------------------------------------------------
+//                          events in
+// ---------------------------------------------------------------
+
+// The send, as one call: the bytes copied into the region record. serial 0
+// takes the endpoint's next serial. 0 when refused; then rn_endpoint_error
+// says whether the refusal ended the connection.
+uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data, int bytes,
+                           int reliability, int priority, int channel, uint32_t serial );
+
+// The send in two halves, for a caller that writes the bytes in place (R3):
+// start reserves the record and returns where to write it, finish queues it
+// and returns its serial (serial 0: the next), abort returns the room.
+// transport_max_payload_bytes is the transport's payload cap now.
+uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes );
+uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
+void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
+
+// The transport acked packet_id (R1: the only ack).
+void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );
+
+// One payload the transport opened. Its deliveries are appended to the
+// region's delivery table; out, when not NULL, also gets a copy of up to
+// out_capacity of them, and *out_count their number.
+void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * payload, int bytes,
+                             rn_delivery_t * out, int out_capacity, int * out_count, double now );
+
+// The receipts' LOSS sweep and the end of the update's receipt list.
+void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
+
+// The start of an update on the receive side: the last update's deliveries
+// expire and their room returns to the region. Returns how many there were.
+uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint );
+
+// ---------------------------------------------------------------
+//                          actions out
+// ---------------------------------------------------------------
+
+// The size of the frame payload to request for the next packet of this write
+// pass, or 0 when the pass is over (the next call opens a new pass).
+int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now );
+
+// Writes the planned packet into payload (at least next_packet_bytes bytes)
+// for the transport packet packet_id. Returns the payload bytes written, or 0
+// when nothing was written (the caller aborts its frame and asks again).
+int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now );
+
+// The written packet left: wire_bytes is the sealed size the transport
+// reported. Commits the packet to the sent map and settles the budget.
+void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now );
+
+// The planned packet did not leave: either no frame was started for it
+// (nothing written), or the transport refused the written packet.
+void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );
+
+int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct rocketnet_message_receipt_t * out, int capacity );
+
+// 0, or the ROCKETNET_MESSAGE_ERROR_* reason the connection ends with (12).
+int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
+
+// The earliest time the endpoint has work: a resend due, the reliable
+// timeout, a receipt's LOSS, or (0.0) something queued now.
+// RN_ENDPOINT_NO_DEADLINE when there is none.
+double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint );
+
+#endif // #ifndef ROCKETNET_ENDPOINT_H
