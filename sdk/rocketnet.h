@@ -913,6 +913,12 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
 
+// As rocketnet_server_transport_create, with the exact section-2.1 code
+// written to *status on every return path when status is not NULL
+// (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
+// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
+
 // a NULL server_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
 
