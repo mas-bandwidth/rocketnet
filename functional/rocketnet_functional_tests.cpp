@@ -5530,6 +5530,8 @@ extern void reliable_sequenced_held_record_released();
 extern void large_unreliable_sequenced_uses_transport_fragments();
 extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
+extern void config_mismatch_over_loopback();
+extern void config_equal_over_lossy_loopback();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
@@ -5661,6 +5663,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments },
     { "ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link },
     { "ordered_small_and_large_interleaved", ordered_small_and_large_interleaved },
+    { "config_mismatch_over_loopback", config_mismatch_over_loopback },
+    { "config_equal_over_lossy_loopback", config_equal_over_lossy_loopback },
     { "reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link },
     { "reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once },
     { "unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link },
