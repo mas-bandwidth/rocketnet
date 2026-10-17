@@ -8578,13 +8578,14 @@ void rocketnet_test_ack_apply_skips_acked_range()
 
     // Second apply: every record in range is already acked, so nothing is
     // newly acked, no packet id is appended, no unknown sequence is counted,
-    // and the walk still visits each record in the range once
+    // and the walk visits no record in the range (an acknowledged record is
+    // not visited)
     g_ack_visit_count = 0;
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == 0 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 11 );
+    rocketnet_check( g_ack_visit_count == 0 );
 
     rocketnet_free( NULL, endpoint );
 }
@@ -8623,9 +8624,11 @@ void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
     rocketnet_check( acked_count == 2 );
     rocketnet_check( unknown == 0 );
 
-    // a single run naming 100 through 102 visits the hole at 101 exactly once:
-    // nothing new is acked, no packet id is appended, the return is 0, and the
-    // unknown counter rises by one
+    // a single run naming 100 through 102 counts the hole at 101 unknown: the
+    // held count yields it arithmetically (nothing new is acked, no packet id
+    // is appended, the return is 0, and the unknown counter rises by one). the
+    // walk visits nothing: 100 and 102 are already acked, and 101 was never
+    // held
     struct rocketnet_ack_block_t full;
     memset( &full, 0, sizeof(full) );
     full.largest = 102;
@@ -8640,7 +8643,7 @@ void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == unknown_before + 1 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 3 );
+    rocketnet_check( g_ack_visit_count == 0 );
 
     // a run naming only the already-acked 100 does not move the counter
     struct rocketnet_ack_block_t one;
