@@ -320,3 +320,102 @@ static void no_allocation_after_create()
 }
 
 REGISTER_UNIT_TEST( no_allocation_after_create );
+
+// A control record frees its number's descriptor and is never an application
+// view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
+static void reliable_control_record_frees_its_number()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 3;
+    record.control = 1;
+    record.data = data;
+    record.bytes = 16;
+
+    uint32_t slot = RN_DESCRIPTOR_NONE;
+    check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( node.region->receive_descriptors[slot].live == 1 );
+
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_CONTROL );
+    check( node.region->receive_descriptors[slot].live == 0 );
+    check( node.ordered.channels.deliveries == 0 );
+    check( node.ordered.channels.error == ROCKETNET_MESSAGE_ERROR_NONE );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_control_record_frees_its_number );
+
+// A channel set whose mask does not enable code 2 refuses it
+// (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
+// TYPE_NOT_ENABLED, the error set, and no delivery.
+static void reliable_record_on_a_disabled_mask_is_refused()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    rn_channels_t ch;
+    check( rn_channels_init( &ch, node.region, 1, 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 0;
+    record.data = data;
+    record.bytes = 16;
+
+    const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED];
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &ch, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == before + 1 );
+    check( ch.deliveries == 0 );
+    check( ch.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_record_on_a_disabled_mask_is_refused );
+
+// A record whose number layer 3 never accepted is a violation
+// (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp): counted
+// PROTOCOL_VIOLATION, the error set, and no delivery.
+static void reliable_record_without_a_live_number_is_refused()
+{
+    rocketnet_message_config_t config;
+    reliable_test_config( &config );
+    reliable_test_node_t node;
+    reliable_test_init( &node, &config );
+
+    static const uint8_t data[16] = { 0 };
+    rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.channel = 0;
+    record.number = 7;
+    record.data = data;
+    record.bytes = 16;
+
+    const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
+    rn_delivery_t delivery;
+    check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before + 1 );
+    check( node.ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+    check( node.ordered.channels.deliveries == 0 );
+
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( reliable_record_without_a_live_number_is_refused );
