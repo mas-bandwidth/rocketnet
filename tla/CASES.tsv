@@ -141,3 +141,5 @@ MCFragmentsAndAcksWitOverclaim.cfg	MCFragmentsAndAcks.tla	invariant	BurnedNeverN
 MCFragmentsAndAcksWitNoclear.cfg	MCFragmentsAndAcks.tla	invariant	DeliveredExact	check	fragmentsandacks	required	-
 MCFragmentsAndAcksWitNosizecheck.cfg	MCFragmentsAndAcks.tla	invariant	ArenaBounded	check	fragmentsandacks	required	-
 MCFragmentsAndAcksWitNopin.cfg	MCFragmentsAndAcks.tla	action	CountPinned	check	fragmentsandacks	required	-
+MCRNBlocks.cfg	MCRNBlocks.tla	pass	-	check	rnblocks	required	-
+MCRNBlocksBrokenPlaceByArrival.cfg	MCRNBlocks.tla	invariant	DeliveredEqualsSent	check	rnblocks	required	-
