@@ -12,8 +12,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#if !defined(_WIN32)
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#endif
 
 #include "test_unit_registry.h"
 
