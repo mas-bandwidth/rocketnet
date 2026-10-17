@@ -449,13 +449,31 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                                                                          const char * public_address_string,
                                                                          const struct rocketnet_server_transport_config_t * config)
 {
+    return rocketnet_server_transport_create_ex( context, public_address_string, config, 0.0, NULL );
+}
+
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context,
+                                                                           const char * public_address_string,
+                                                                           const struct rocketnet_server_transport_config_t * config,
+                                                                           double time, int * status )
+{
+    // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
+    // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
+    // release (S1).
     if ( !rocketnet_api_null_guard( public_address_string ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        rocketnet_error( "server transport create: public_address_string is NULL" );
         return NULL;
+    }
 
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         rocketnet_error( "rocketnet_server_transport_create: rocketnet_init must be called first" );
         rocketnet_api_misuse_record();
         return NULL;
@@ -491,7 +509,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
 
     // the one surviving alias: ROCKETNET_SERVER_NUM_QUEUES is the pre-#106
     // spelling of the num_xdp_queues field, whose canonical per-endpoint
@@ -502,10 +524,18 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // aloud by rocketnet_config_apply_env with their replacements named.
 
     if ( !rocketnet_server_apply_env_alias( "ROCKETNET_SERVER_NUM_QUEUES", "ROCKETNET_SERVER_NUM_XDP_QUEUES", &effective_config.num_xdp_queues ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
 
     if ( !rocketnet_config_validate( "server", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
+    }
 
     config = &effective_config;
 
@@ -517,7 +547,12 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     if (!rocketnet_reassembly_memory_allowed_delivered(requested_clients, requested_slots, requested_payload,
             rocketnet_server_reassembly_delivered_capacity(requested_clients, requested_slots),
             rocketnet_server_reassembly_delivered_bytes(requested_clients, requested_slots, requested_payload)))
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
+        rocketnet_error( "server config refused: the reassembly cross-field allocation exceeds the operator memory budget" );
         return NULL;
+    }
 
 
     // the config's public_address, when set, displaces the create call's
@@ -569,6 +604,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     if ( !rocketnet_server_config_has_keys( config ) )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_MISSING_KEYS;
         rocketnet_error( "server config has no keys: fill rocketnet_server_transport_dev_config() for development, or supply production keys" );
         return NULL;
     }
@@ -576,6 +613,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
     if ( config->protocol_id == 0 )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
         rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
         return NULL;
     }
@@ -588,13 +627,19 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     struct rocketnet_driver_ladder_t ladder;
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
         return NULL;
+    }
 
     rocketnet_info( "server transport public address is %s", public_address_string );
 
     rocketnet_address_t public_address;
     if ( !rocketnet_address_parse( &public_address, public_address_string ) )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
         rocketnet_error( "could not parse public address" );
         return NULL;
     }
@@ -613,7 +658,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     // first allocation.
     uint64_t memory_budget = 0;
     if ( !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
     bool budget_refused[ROCKETNET_NUM_DRIVERS];
     memset( budget_refused, 0, sizeof(budget_refused) );
     int budget_refused_total = 0;
@@ -645,6 +694,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
         rocketnet_error("server driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
             (unsigned long long)memory_budget);
         return NULL;
@@ -652,10 +703,16 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     struct rocketnet_server_transport_t * server_transport = (struct rocketnet_server_transport_t*) rocketnet_malloc( context, sizeof(struct rocketnet_server_transport_t) );
     if ( !server_transport )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        rocketnet_error( "server transport create: could not allocate server transport" );
         return NULL;
+    }
     new ( server_transport ) rocketnet_server_transport_t();
 
     server_transport->context = context;
+    server_transport->time = time;
 
     // the fragmentation shape: zero means the defaults; the table already
     // refused anything out of range, loudly, never clamped
@@ -670,6 +727,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 #if ROCKETNET_DEVELOPMENT
         rocketnet_info( "development keys detected; running in development mode" );
 #else // !ROCKETNET_DEVELOPMENT
+        if ( status )
+            *status = ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE;
         rocketnet_error( "development keys detected in release build; refusing to start" );
         rocketnet_free( context, server_transport );
         return NULL;
@@ -827,6 +886,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
                              port_zero_refused_names, rocketnet_driver_discovering_names() );
         }
 
+        if ( status )
+            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED
+                                                             : ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
@@ -920,6 +982,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
 
     if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->reassembly || !server_transport->send_arena )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        rocketnet_error( "server transport create: could not allocate protocol storage" );
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
@@ -932,6 +997,8 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
         env_public_address_consumed.compare_exchange_strong( expected, true );
     }
 
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
     return server_transport;
 }
 
