@@ -38,6 +38,7 @@ _Static_assert( __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "the XDP host shim mo
 
 enum bpf_map_type
 {
+    BPF_MAP_TYPE_HASH = 1,
     BPF_MAP_TYPE_ARRAY = 2,
     BPF_MAP_TYPE_PERCPU_ARRAY = 6,
     BPF_MAP_TYPE_XSKMAP = 17,

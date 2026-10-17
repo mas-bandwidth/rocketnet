@@ -26,8 +26,8 @@
 extern "C" {
 #endif
 
-// config zeroed, every socket slot empty, every counter zeroed, and the
-// config lookup succeeding
+// config zeroed, every socket slot empty, every counter zeroed, every replay
+// entry removed, and the config lookup succeeding
 
 void rocketnet_xdp_host_reset( void );
 
@@ -42,6 +42,16 @@ void rocketnet_xdp_host_set_config_lookup_fails( int fails );
 // an index at or past ROCKETNET_XDP_MAX_QUEUES is ignored
 
 void rocketnet_xdp_host_set_socket_slot( uint32_t index, int populated );
+
+// writes or overwrites the replay table entry for the key; a new key is
+// appended while the table is not full and ignored once it is
+
+void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t high_water );
+
+// 1 with *high_water set when the key is present, 0 with *high_water
+// untouched when it is not
+
+int rocketnet_xdp_host_get_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t * high_water );
 
 // runs one frame through server_xdp_filter and returns its verdict (the XDP
 // action number). The frame is copied into a heap allocation of exactly
