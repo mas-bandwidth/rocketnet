@@ -71,8 +71,8 @@ posix_spawn (bin/test)
 # uninstrumented std::string/std::set operations or the suite custom new.
 # Exact-head hulk origin traces are retained in the repair report.
 xdp_host_read_file[abi:cxx11](char const*) test_unit_xdp_filter_host.cpp:934:19
-counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:433:19
-counters_find(char const*) test_unit_counter_classes.cpp:298:14
+counters_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_counter_classes.cpp:434:19
+counters_find(char const*) test_unit_counter_classes.cpp:299:14
 std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::_Identity<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>>>::_S_right(std::_Rb_tree_node_base*) include/c++/bits/stl_tree.h:790:9
 ctv_read_file(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&) test_unit_connect_token_vectors.cpp:314:19
 ctv_unhex(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned char*, int) test_unit_connect_token_vectors.cpp:219:18
