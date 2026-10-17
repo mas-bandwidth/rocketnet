@@ -177,6 +177,53 @@ const char * rocketnet_log_level_string( int level )
         return "???";
 }
 
+// docs/ERRORS-AND-LOGGING.md 2.1 item 4: the count includes the success value.
+int rocketnet_num_status_codes( void )
+{
+    return ROCKETNET_NUM_STATUS_CODES;
+}
+
+// One row per code, in the enum's order. The array is unsized so the static
+// assertion below refuses a code without a name and a name without a code.
+static const char * const rocketnet_status_names[] =
+{
+    "OK",
+    "ALREADY_INITIALIZED",
+    "NOT_INITIALIZED",
+    "LIVE_ALLOCATIONS",
+    "PLATFORM_INIT_FAILED",
+    "CRYPTO_INIT_FAILED",
+    "INVALID_ARGUMENT",
+    "CONFIG_ENV_INVALID",
+    "CONFIG_OUT_OF_RANGE",
+    "MEMORY_BUDGET_EXCEEDED",
+    "MISSING_KEYS",
+    "INVALID_PROTOCOL_ID",
+    "DEV_KEYS_IN_RELEASE",
+    "INVALID_ADDRESS",
+    "INVALID_DRIVER_LIST",
+    "INVALID_CONNECT_TOKEN",
+    "CONNECT_TOKEN_EXPIRED",
+    "DRIVER_PORT_ZERO_UNSUPPORTED",
+    "DRIVER_LADDER_EXHAUSTED",
+    "OUT_OF_MEMORY",
+    "MUTEX_CREATE_FAILED",
+    "THREAD_CREATE_FAILED",
+    "TIMER_CREATE_FAILED",
+};
+
+static_assert( sizeof( rocketnet_status_names ) / sizeof( rocketnet_status_names[0] ) == ROCKETNET_NUM_STATUS_CODES,
+               "every status code has exactly one name" );
+
+// docs/ERRORS-AND-LOGGING.md 2.1 item 4: the identifier without the
+// ROCKETNET_STATUS_ prefix, and NULL (without asserting) out of range.
+const char * rocketnet_status_string( int status )
+{
+    if ( status < 0 || status >= ROCKETNET_NUM_STATUS_CODES )
+        return NULL;
+    return rocketnet_status_names[status];
+}
+
 static void default_log_function( int level, const char * format, ... )
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf

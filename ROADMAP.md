@@ -115,6 +115,48 @@ The server socket drivers below the transport, selected at runtime by ROCKETNET_
 
 [Source data](docs/roadmap.sexp)
 
+## Planned drivers and clients
+
+The driver and client work carded today, and the later milestones behind it.
+
+| feature | done |
+|---|:---:|
+| Linux UDP_GRO receive coalescing | ✅ |
+| Windows Registered I/O (RIO) server driver | ❌ |
+| Windows USO and URO in the IOCP driver, probed with fallback | ❌ |
+| Client socket I/O off the main thread, gated by the measured main-thread cost per frame | ❌ |
+| Console client drivers (PS4, PS5, Switch, Xbox GDK) | ❌ |
+| XDP/AF_XDP on AWS GameLift fleets: research | ❌ |
+| complete | 16% |
+
+[Source data](docs/roadmap.sexp)
+
+## Browser clients (later)
+
+Browsers cannot open raw UDP, so a browser client reaches a RocketNet server through a WebTransport or WebRTC data channel front-end, either a relay or a second front-end in the server.
+
+| feature | done |
+|---|:---:|
+| WebTransport (HTTP/3 datagrams) client and front-end | ❌ |
+| WebRTC data channel client and front-end | ❌ |
+| Relay or second front-end that bridges either into the UDP transport | ❌ |
+| complete | 0% |
+
+[Source data](docs/roadmap.sexp)
+
+## Dedicated-NIC drivers (later)
+
+These drivers are only for a deployment where a second NIC is exclusively the game server's and the main NIC carries admin traffic; RocketNet never takes over a shared NIC, which is why AF_XDP (the kernel stack keeps the NIC, the server steers only its own packets) is the driver for shared NICs.
+
+| feature | done |
+|---|:---:|
+| netmap driver on FreeBSD (netmap is in the FreeBSD kernel) | ❌ |
+| netmap driver on Linux, only if netmap enters the mainline kernel (today it needs an out-of-tree module and patched NIC drivers) | ❌ |
+| DPDK driver | ❌ |
+| complete | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## XDP (later)
 
 The XDP server transport. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP in the game, tested to 10 Gbps.

@@ -97,6 +97,33 @@
    ((:feature "Server driver" :cells (y y y y y n n) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928")
     (:feature "Selectable by pin at runtime" :cells (y y y y y n n) :evidence "10308e4; rocketnet_test_server_driver_pin_portable, _gso, _msgx, _iocp, _xdp")))
 
+  (:id "planned-drivers" :title "Planned drivers and clients"
+   :text "The driver and client work carded today, and the later milestones behind it."
+   :columns ("done")
+   :rows
+   ((:feature "Linux UDP_GRO receive coalescing" :cells (y) :evidence "the gso driver enables UDP_GRO per socket and splits by the stride cmsg; GRO_BATCHES in the gso wire case")
+    (:feature "Windows Registered I/O (RIO) server driver" :cells (n) :note "stream rocketnet-windows: rocketnet-tla-rio-driver, rocketnet-rio-driver-core, rocketnet-rio-driver-wired-and-pinned")
+    (:feature "Windows USO and URO in the IOCP driver, probed with fallback" :cells (n) :note "rocketnet-iocp-uso-uro")
+    (:feature "Client socket I/O off the main thread, gated by the measured main-thread cost per frame" :cells (n) :note "stream rocketnet-client-io")
+    (:feature "Console client drivers (PS4, PS5, Switch, Xbox GDK)" :cells (n) :note "the source layers are under a different license; the owner's ruling is owed before any card")
+    (:feature "XDP/AF_XDP on AWS GameLift fleets: research" :cells (n) :note "rocketnet-gamelift-xdp-spike, docs/GAMELIFT.md")))
+
+  (:id "browser-clients" :title "Browser clients (later)"
+   :text "Browsers cannot open raw UDP, so a browser client reaches a RocketNet server through a WebTransport or WebRTC data channel front-end, either a relay or a second front-end in the server."
+   :columns ("done")
+   :rows
+   ((:feature "WebTransport (HTTP/3 datagrams) client and front-end" :cells (n))
+    (:feature "WebRTC data channel client and front-end" :cells (n))
+    (:feature "Relay or second front-end that bridges either into the UDP transport" :cells (n))))
+
+  (:id "dedicated-nic" :title "Dedicated-NIC drivers (later)"
+   :text "These drivers are only for a deployment where a second NIC is exclusively the game server's and the main NIC carries admin traffic; RocketNet never takes over a shared NIC, which is why AF_XDP (the kernel stack keeps the NIC, the server steers only its own packets) is the driver for shared NICs."
+   :columns ("done")
+   :rows
+   ((:feature "netmap driver on FreeBSD (netmap is in the FreeBSD kernel)" :cells (n))
+    (:feature "netmap driver on Linux, only if netmap enters the mainline kernel (today it needs an out-of-tree module and patched NIC drivers)" :cells (n))
+    (:feature "DPDK driver" :cells (n))))
+
   (:id "xdp" :title "XDP (later)"
    :text "The XDP server transport. Further XDP work comes later, separately, by the owner's call; RocketNet already runs with XDP in the game, tested to 10 Gbps."
    :columns ("done")

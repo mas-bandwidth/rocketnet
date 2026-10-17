@@ -413,6 +413,7 @@ if(ROCKETNET_BUILD_TESTS)
         functional/main.cpp
         functional/rocketnet_functional_tests.cpp
         functional/lifecycle_driver.cpp
+        functional/cpp_transports.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     target_compile_features(functional PRIVATE cxx_std_11)
@@ -439,9 +440,10 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(keygen keygen.cpp)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(transport_fill bench/transport_fill.cpp)
+    add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(lease_cost bench/lease_cost.cpp)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak soak_sim transport_memory transport_fill lease_cost)
+    foreach(tool soak soak_sim transport_memory transport_fill client_main_thread_cost lease_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
@@ -453,7 +455,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES sdk/rocketnet.h sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
+install(FILES sdk/rocketnet.h sdk/rocketnet.hpp sdk/rocketnet_address.h sdk/rocketnet_connect_token.h
     sdk/rocketnet_platform.h sdk/rocketnet_counters.h sdk/rocketnet_route.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)

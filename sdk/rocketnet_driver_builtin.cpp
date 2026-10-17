@@ -98,11 +98,15 @@ static void xdp_destroy( void * driver )
     rocketnet_server_socket_destroy( (rocketnet_server_socket_t*) driver );
 }
 ROCKETNET_STAGED_ADAPTER(xdp, rocketnet_server_socket_t, rocketnet_server_socket)
+static void xdp_prefilter_counters( void * driver, uint64_t * values )
+{
+    rocketnet_server_socket_xdp_counters( (rocketnet_server_socket_t*) driver, values );
+}
 static const rocketnet_server_driver_operations_t xdp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FINISH_FINAL | ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop,
-    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL
+    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters
 };
 extern const rocketnet_driver_backend_t rocketnet_xdp_driver = { &xdp_operations, NULL };
 #endif

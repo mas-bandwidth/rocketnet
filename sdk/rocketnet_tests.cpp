@@ -7550,6 +7550,8 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
+    "rocketnet_num_status_codes",
+    "rocketnet_status_string",
     "rocketnet_num_counters",
     "rocketnet_counter_value",
     "rocketnet_counter_name",
@@ -7579,6 +7581,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_message_server_finish",
     "rocketnet_message_server_abort",
     "rocketnet_message_server_send",
+    "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
     "rocketnet_message_server_release",
     "rocketnet_message_server_set_send_kbps",
@@ -7685,6 +7688,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_message_server_finish",
     "rocketnet_message_server_abort",
     "rocketnet_message_server_send",
+    "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
     "rocketnet_message_server_release",
     "rocketnet_message_server_set_send_kbps",
@@ -7724,6 +7728,8 @@ static const char * rocketnet_test_null_exempt_exports[] =
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
+    "rocketnet_num_status_codes",
+    "rocketnet_status_string",
     "rocketnet_num_counters",
     "rocketnet_counter_name",
     "rocketnet_message_client_required_memory",
@@ -8101,13 +8107,14 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_finish( NULL, 0, 4 ) == 0 );
         rocketnet_message_server_abort( NULL, 0 );
         rocketnet_check( rocketnet_message_server_send( NULL, 0, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
+        rocketnet_check( rocketnet_message_server_broadcast( NULL, 0, ROCKETNET_RELIABLE_ORDERED, packet, 4 ) == 0 );
         rocketnet_check( rocketnet_message_server_receive( NULL, 0, 0, &view, &view_bytes ) == 0 );
         rocketnet_message_server_release( NULL, 0, packet );
         rocketnet_check( rocketnet_message_server_set_send_kbps( NULL, 0, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
         rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
         rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 15 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 16 );
 
         // the sizing calls take NULL configs as the defaults: not a misuse
         before = rocketnet_api_misuse_count();

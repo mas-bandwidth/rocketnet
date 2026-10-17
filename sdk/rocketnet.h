@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 132
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 135
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -1409,6 +1409,56 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const 
 
 // -----------------------------------------
 
+// Stable status codes (docs/ERRORS-AND-LOGGING.md 2.1): OK is the sole success
+// value, every failure is a positive code, and the numbering is append-only.
+// A published value and meaning never change; a new code appends immediately
+// before ROCKETNET_NUM_STATUS_CODES.
+enum rocketnet_status_t
+{
+    ROCKETNET_STATUS_OK                                 = 0,
+
+    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
+
+    // caller arguments and configuration (client, server, frame_sync, message)
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
+    ROCKETNET_STATUS_MISSING_KEYS                       = 10,
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
+    ROCKETNET_STATUS_INVALID_DRIVER_LIST                = 14,
+
+    // client connect token pre-send checks (rocketnet_client_protocol_connect)
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
+
+    // driver ladder and OS resources
+    ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED       = 17,
+    ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED            = 18,
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
+
+    ROCKETNET_NUM_STATUS_CODES                          = 23
+};
+
+// The count includes OK. Allocation-free; callable before init.
+ROCKETNET_EXPORT_FUNC int rocketnet_num_status_codes( void );
+
+// The identifier without the ROCKETNET_STATUS_ prefix for 0 .. count - 1, and
+// NULL (without asserting) for an out-of-range value. Allocation-free.
+ROCKETNET_EXPORT_FUNC const char * rocketnet_status_string( int status );
+
+// -----------------------------------------
+
 struct rocketnet_counters_t;
 
 // Runtime introspection avoids assuming a counters-struct length across FFI.
@@ -1609,6 +1659,14 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_server_abort( struct rocketnet_mess
 
 // The convenience over start and finish; it copies data into the region record. a NULL server or data is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
+
+// Sends data to every connected slot exactly as rocketnet_message_server_send
+// would, one copy per connection: each connection's region holds its own copy,
+// the R3 copy this API cannot avoid (docs/CHANNELS.md section 11.4, Broadcast).
+// Returns the number of slots it was queued for; a slot that refuses
+// (exhausted, not connected) is skipped. a NULL server or data is a counted
+// no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
 // a NULL server, data or bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
