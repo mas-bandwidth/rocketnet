@@ -18,6 +18,21 @@ static void reliable_receipt_check( int condition, const char * what, int line )
 
 #define check_receipt( condition ) reliable_receipt_check( !!(condition), #condition, __LINE__ )
 
+// RNReceipts BlockAckedOnlyWhenAllFragmentsAcked, seen from the peer: a receipt
+// is read only after the peer holds the whole message. Each collect runs
+// before the receipts of the same update, and the ACK of a message's last
+// fragment reaches the sender at least one update after the peer took that
+// fragment, so a type-6 message is already collected when its receipt is
+// read. A type-7 message is collected by then too, unless the ordered message
+// before it is still missing (the peer holds it in order). An early receipt
+// (one sent on the ACK of a first fragment) breaks this.
+static int receipt_peer_has_whole( int matched, const uint8_t * seen )
+{
+    if ( matched < 3 )
+        return seen[matched];
+    return seen[matched] || ( matched > 3 && !seen[matched - 1] );
+}
+
 void reliable_receipts_over_lossy_link()
 {
     enum { messages = 6, max_bytes = 8192 };
@@ -90,6 +105,7 @@ void reliable_receipts_over_lossy_link()
             for ( int i = 0; i < messages; i++ )
                 if ( events[j].serial == client_serial[i] ) matched = i;
             check_receipt( matched >= 0 && !client_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_ACKED );
+            check_receipt( receipt_peer_has_whole( matched, server_seen ) );
             client_receipt[matched] = 1;
         }
         count = rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 256 );
@@ -99,6 +115,7 @@ void reliable_receipts_over_lossy_link()
             for ( int i = 0; i < messages; i++ )
                 if ( events[j].serial == server_serial[i] ) matched = i;
             check_receipt( matched >= 0 && !server_receipt[matched] && events[j].status == ROCKETNET_RECEIPT_ACKED );
+            check_receipt( receipt_peer_has_whole( matched, client_seen ) );
             server_receipt[matched] = 1;
         }
 
@@ -111,6 +128,18 @@ void reliable_receipts_over_lossy_link()
 
     for ( int i = 0; i < messages; i++ )
         check_receipt( client_receipt[i] && server_receipt[i] && server_seen[i] && client_seen[i] );
+
+    // Each receipt fires once: none follows the last.
+    for ( int step = 0; step < 60 * 3; step++ )
+    {
+        check_receipt( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
+        rocketnet_message_receipt_t events[16];
+        check_receipt( rocketnet_message_client_receipts( h.message_client, events, 16 ) == 0 );
+        check_receipt( rocketnet_message_server_receipts( h.message_server, h.client_slot, events, 16 ) == 0 );
+        rocketnet_channel_delivery_t delivery;
+        check_receipt( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ) );
+        check_receipt( !rocketnet_channel_harness_client_collect( &h, 0, &delivery ) );
+    }
     rocketnet_channel_harness_read_counters( &h );
     printf( "reliable receipts: each=%d elapsed_ms=%.1f resends=%llu wire_to_server=%lld wire_to_client=%lld\n",
             messages, ( h.now - started ) * 1000.0, (unsigned long long) h.resends,
