@@ -1,11 +1,13 @@
-# RNResendTiming: the resend timing of a reliable record
+# RNResendTiming: the resend timing of reliable records
 
-`tla/RNResendTiming.tla` is the timing of one reliable record from its first
-send to its ack or to `reliable_timeout`: when the sender resends it, and how
-many sends fit before the connection gives up on it. `tla/RNWindow.tla`
+`tla/RNResendTiming.tla` is the timing of reliable records from their first
+send to their ack or to `reliable_timeout`: when the sender resends each, how
+many sends fit before the connection gives up, and that a chunk of a block,
+paced by the RTO, never holds back a small record paced by the 100 ms cap. `tla/RNWindow.tla`
 keeps the RTO abstract (a record is resent "after the RTO"); this module is
 the schedule alone. The code is `rn_window_ack_resend_delay`,
-`rn_window_ack_resend` and `rn_window_ack_check_timeout`
+`rn_window_ack_chunk_resend_delay`, `rn_window_ack_resend` and
+`rn_window_ack_check_timeout`
 (`sdk/rocketnet_window_ack.h` and `.cpp`), the resend walk of
 `rn_ordered_write` (`sdk/rocketnet_channel.cpp`), `rn_message_ordered_due`
 (`sdk/rocketnet_message_server.cpp`) and the attempts rule of
@@ -13,7 +15,8 @@ the schedule alone. The code is `rn_window_ack_resend_delay`,
 the module. The model was written before the code.
 
 `tla/MCRNResendTiming.tla` and `tla/MCRNResendTiming.cfg` are the small
-instance. `tla/MCRNResendTimingBrokenBackoff.cfg` is the reversed witness.
+instance. `tla/MCRNResendTimingBrokenBackoff.cfg` and
+`tla/MCRNResendTimingBrokenOneFifo.cfg` are the reversed witnesses.
 The cases are rows of `tla/CASES.tsv` (group `rnresendtiming`) with measured
 records in `tla/RUNS.tsv`.
 
@@ -23,10 +26,14 @@ records in `tla/RUNS.tsv`.
   this layer's own RTT samples (`ROCKETNET_MESSAGE_RTO_SCALE_PERCENT` 125, a
   constant); `rto_initial` before the first sample. Defaults: `rto_initial`
   100 ms, `rto_min` 10 ms, `rto_max` 250 ms.
-- **The delay.** Every resend of every record waits
+- **The delay.** Every resend of a single-packet record waits
   `min( rto, resend_interval )`, `resend_interval` the constant
-  `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms). There
+  `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms). Every resend of a chunk of
+  a block (a record whose send descriptor has more than one fragment) waits
+  `min( rto, reliable_timeout / 4 )`, the RTO alone at the defaults. There
   is no back-off: the delay does not grow with the number of sends.
+- **The FIFOs.** Each delay class has its own resend FIFO, ordered by last
+  send and walked from its head while due; the small FIFO is walked first.
 - **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
   connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
 - **The validation.** A config is refused when
@@ -35,31 +42,48 @@ records in `tla/RUNS.tsv`.
 
 ## What the module covers
 
-Variables: `t` (ticks since the first send), `lastSend`, `rto`, `backoff`,
-`attempts` (saturating at `MinAttempts`) and `acked`.
+Two records, `"s"` (single-packet) and `"c"` (a chunk), both first sent at
+tick 0 in either order. Variables: `t` (ticks since the first send), and per
+record `lastSend`, `backoff`, `attempts` (saturating at `MinAttempts`) and
+`acked`; `rto`; `head`, the record at the head of the one FIFO of the broken
+shape; and `phase`, the step of the update.
+
+Two switches are definitions with the one-record defaults, overridden in a
+configuration (`Chunk <- ChunkInFlight`, `OneFifo <- OneFifoTwoDelays`):
+`Chunk` puts the chunk in flight (otherwise it starts acked and the module is
+the one-record timing of the first cut), and `OneFifo` puts both classes in
+one FIFO (the broken shape).
 
 Actions:
 
-- `Resend`: the record is due (`t >= lastSend + Min(rto, Interval) · backoff`, unacked, before the timeout) and is sent again; `backoff`
-  doubles up to `MaxBackoff`.
-- `Sample(r)`: the ack of any other packet, one RTT sample, moves `rto` to
-  any `r` in `RtoMin..RtoMax` and resets `backoff` to 1.
-- `Ack`: the record's own ack arrives (or never does: every send may be
-  lost).
-- `Tick`: the update ends with nothing due and time moves one tick. Time
-  never passes an update with a resend due.
-- `Done`: acked, or the timeout fired; a stutter, so the end is not a
-  deadlock.
+- `Sample(x)`: in the update's first step, the ack of any other packet, one
+  RTT sample, moves `rto` to any `x` in `RtoMin..RtoMax` and resets the
+  back-off to 1.
+- `Ack(r)`: in the update's first step, record `r`'s own ack arrives (or
+  never does: every send may be lost).
+- `Walk`: the resend walk. Record `r` is due when
+  `t >= lastSend[r] + Min(rto, Cap(r)) · backoff[r]`, `Cap("s") = Interval`
+  and `Cap("c") = ChunkCap = Timeout \div MinAttempts`. With one FIFO per
+  class every due record is sent; with `OneFifo` the walk goes from `head`
+  and stops at the first live record that is not due. A sent record moves to
+  its FIFO's tail and its back-off doubles up to `MaxBackoff`.
+- `Tick`: the update ends and time moves one tick.
+- `Done`: every record acked, or the timeout fired; a stutter, so the end is
+  not a deadlock.
 
 Invariants:
 
 - `TypeOK`.
 - `ConfigAccepted`: the instance passes the validation rule.
-- `AttemptsBeforeTimeout`: a record still unacked at the timeout was sent at
-  least `MinAttempts` times.
+- `AttemptsBeforeTimeout`: a record of either class still unacked at the
+  timeout was sent at least `MinAttempts` times.
 - `ResendGapBounded`: while the connection is up, an unacked record waits at
-  most `Interval · MaxBackoff` ticks between sends (under the rule, one
-  `resend_interval`).
+  most `Min(RtoMax, Cap(r)) · MaxBackoff` ticks between sends (under the
+  rule, one `resend_interval` for a small record and one `rto_max` for a
+  chunk).
+- `SmallNeverHeldByChunk`: no update ends with the small record due; a due
+  small record is sent in the update it falls due, whatever the chunk beside
+  it does.
 
 ## Abstractions
 
@@ -67,9 +91,10 @@ Invariants:
   `RtoMin..RtoMax`, so the property holds for every sequence of RTT samples,
   not one estimator trace. The scale and the `2·rttvar` term are inside that
   range.
-- **One record.** Every record waits the same delay, so the resend FIFO stays
-  in due order and records do not interact in the timing; the walk itself is
-  `RNWindow`'s `WriteOldest`.
+- **Two records.** Within a class every record waits the same delay, so each
+  class's FIFO stays in due order and records of one class do not interact in
+  the timing; one record per class is the interaction between classes. The
+  walk itself is `RNWindow`'s `WriteOldest`.
 - **Time.** One tick is 100 ms in the committed instances, and an update
   runs every tick. The code's updates are finer (60 Hz), which only makes
   the measured gaps closer to the delay; the 10 ms `rto_min` rounds up to one
@@ -84,13 +109,15 @@ Invariants:
 
 `MCRNResendTiming.cfg`: `Interval = 1`, `RtoInitial = 1`, `RtoMin = 1`,
 `RtoMax = 3`, `Timeout = 100`, `MaxBackoff = 1`, `MinAttempts = 4` (the
-defaults in 100 ms ticks). TLC explores every sample and ack schedule in
-about 1,200 distinct states and every invariant holds.
+defaults in 100 ms ticks), the chunk in flight and one FIFO per class. TLC
+explores every sample and ack schedule and both send orders in about 173,000
+distinct states and every invariant holds.
 
 ## Reversed witnesses
 
 | Configuration | Rule removed | Expected failure |
 |---|---|---|
+| `MCRNResendTimingBrokenOneFifo.cfg` | one FIFO per class: both classes in one FIFO ordered by last send, walked from its head and stopped at the first record not due, at the defaults | `SmallNeverHeldByChunk`, exit 12: the chunk is sent first, then the small record, both at 0; a sample moves `rto` to 200 ms; at 100 ms the small record is due (`min(rto, resend_interval)`) and the chunk at the head is not (`rto`), so the walk stops and the update ends with the small record unsent. Any `rto` above 100 ms does the same. |
 | `MCRNResendTimingBrokenBackoff.cfg` | the first version's schedule: `RtoInitial = 10` (1000 ms), `RtoMax = 20` (2000 ms), no cap (`Interval = RtoMax`), back-off doubling to 8 | `AttemptsBeforeTimeout`, exit 12: a sample at the first tick sets `rto` to 1.5 s, the record is sent at 0, 1.5 and 4.5 s, and the next send is due at 10.5 s, after the timeout: three sends where four are owed. Any `rto` above 10/7 s does the same. |
 
 The witness passes `ConfigAccepted` (`10 s >= 4 × 2 s`), so validation
@@ -101,3 +128,10 @@ replays this schedule against the code (the same config, one RTT sample of
 of the record after) and asserts at least four sends
 before `reliable_timeout`; at the rule's 100 ms cap the code sends the
 record every 100 ms until the timeout.
+
+The unit test `small_record_behind_a_chunk_not_held`
+(`test_unit_resend_timing.cpp`) replays the one-FIFO witness against the
+code: a block's chunks sent first, a small record 10 ms after, an RTT sample
+of 200 ms (rto 250 ms); at 111 ms the small record is resent and the chunks
+are not, and the chunks go at 251 ms. Built against the one-FIFO walk it
+fails, resending the chunks at 100 ms.

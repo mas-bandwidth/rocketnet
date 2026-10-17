@@ -444,7 +444,9 @@ functional cases (`functional/channel_unreliable_send_drops.cpp`,
 - `ring_next`, the absolute byte position, u64.
 - The per-number table of `W` entries, indexed `number % W`:
   `{ number, descriptor, fragment, ring_start, ring_end, last_send, acked }`.
-- The **resend FIFO**: a list of unacked numbers ordered by last send time.
+- The two **resend FIFOs**, one per delay class (single-packet records, and
+  the chunks of blocks): lists of unacked numbers, each ordered by last send
+  time.
 - The **sent-packet ring** of `P` entries,
   `{ packet_id, send_time, ref_first, ref_count, unreliable_receipts }`, plus a
   `16P` reference ring of numbers and a `2P` open-addressed index from
@@ -586,18 +588,29 @@ corruption.
   back-off: every resend of a record waits the same delay, as in RakNet (study
   §9), so many attempts fit before `reliable_timeout` (`tla/RNResendTiming.tla`,
   `AttemptsBeforeTimeout`).
-- **Resend.** The resend delay of every record is
+- **Resend.** The resend delay of a single-packet record is
   `delay = min( rto, resend_interval )`, with `resend_interval` the constant
   `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms): a small message is resent every 100 ms until it is acked, and
   sooner on a short path. This is a real-time game's practice; the send budget
   (R6, retransmits first, nothing over budget sent) bounds the bandwidth that
-  resends take. The resend FIFO is ordered by last send. In `write_packets`,
-  the head is due when `now >= last_send + delay`. Due records are rewritten
-  first, each in a new packet with a new id, carrying the same number, ring and
-  ordering fields. Each is then moved to the tail. One delay for every record
-  keeps the FIFO in due order, so the walk stops at the first record that is
-  not due, and the work is O(due). Pacing the chunks of a large block by RTT
-  is a later card's.
+  resends take. A chunk of a block (a record whose send descriptor has more
+  than one fragment, section 8) waits the RTO alone,
+  `chunk_delay = min( rto, reliable_timeout / ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS )`;
+  the second term keeps four chunk sends inside `reliable_timeout` under any
+  accepted `rto_max`, and at the defaults (2.5 s against `rto_max` 250 ms) it
+  never binds. A block is many records at once, so a resend that fires before
+  its ack can return costs a copy of every chunk; for one small message that
+  copy is cheap and buys latency. Each class has its own resend FIFO, ordered
+  by last send. In `write_packets` the small FIFO is walked first, then the
+  chunk FIFO (retransmits first, small before chunks); each head is due when
+  `now >= last_send + ` its class's delay. Due records are rewritten first,
+  each in a new packet with a new id, carrying the same number, ring and
+  ordering fields. Each is then moved to its FIFO's tail. One delay per FIFO
+  keeps each FIFO in due order, so each walk stops at its first record that is
+  not due and the work is O(due). Two delays in one FIFO would not: a chunk at
+  the head that is not due would hold back a small record behind it that is
+  (`tla/RNResendTiming.tla`, `SmallNeverHeldByChunk`, and its reversed witness
+  `MCRNResendTimingBrokenOneFifo.cfg`).
 - **The cost.** A record that was only delayed, not lost, is sent again when
   the delay fires before its ack returns. Below an RTT of `resend_interval`
   the RTO fires after the ack in nearly every case, and the copies per
@@ -608,7 +621,17 @@ corruption.
   at RTT 20 ms, 1.10 and 1.23 at 50 ms, 2.10 and 2.22 at 100 ms, and 2.21
   and 2.43 at 200 ms. For small messages that is cheap and it is the point:
   the latency of a lost message is one delay, not a doubling series, and no
-  message in those runs reached `reliable_timeout`.
+  message in those runs reached `reliable_timeout`. For a block it is not:
+  one 256 KiB block over RTT 200 ms at 10% loss
+  (`block_resend_cost_over_long_path`, seed 0x5eed5eed5eed5eed), written
+  inside one RTT (32 packets per update, 8000 kbps), costs 1.97 wire bytes
+  per payload byte (1.89 copies per chunk) with chunks on the 100 ms cap and
+  1.15 (1.11 copies) on the RTO; the block completes in 0.68 s on the cap
+  and 0.87 s on the RTO, a lost chunk waiting one RTO instead of 100 ms. At
+  the defaults (4 packets per update, 1000 kbps), where the first sends take
+  the budget for two seconds, it is 1.24 on the cap and 1.16 on the RTO,
+  completing in 2.53 s and 2.58 s. The single-packet rows above are
+  unchanged.
 - **Failed send.** If `finish_packet` returns 0, the numbered records in that
   packet are marked due now and the packet's unreliable records are dropped and
   counted.
@@ -623,11 +646,19 @@ corruption.
 FIFO, RTT, RTO, backoff and reliable timeout). The implementation made these
 details explicit:
 
-- **Resend FIFO (`8W`).** The region carves `W` entries of `rn_resend_link_t`
+- **Resend FIFOs (`8W`).** The region carves `W` entries of `rn_resend_link_t`
   (`{prev, next}`, 8 bytes each, `RN_RESEND_NONE = UINT32_MAX`), indexed by
   `n % W`. That gives O(1) unlink on out-of-order ack and O(1) move-to-tail on
   commit or resend without scanning `W`, and adds `8W` to section 14's region
-  formula (`104.125W`).
+  formula (`104.125W`). The two FIFOs share those links, because a number is
+  in at most one of them: `rn_window_ack_t` holds `resend_head`/`resend_tail`
+  for single-packet records and `chunk_head`/`chunk_tail` for chunks, and
+  `resend_count` counts both. A number joins the FIFO its class picks when it
+  is linked (`rn_window_ack_slot_is_chunk`: its descriptor is in use with more
+  than one fragment). Unlinking needs no class: a slot with no `prev` is the
+  head of the FIFO whose head it is, and one with no `next` the tail of the
+  FIFO whose tail it is. The second FIFO costs 16 bytes of `rn_window_ack_t`
+  and no region bytes.
 - **Commit and eviction.** `rn_window_ack_commit_packet` writes
   `{packet_id, send_time, ref_start, ref_count}` into the circular `P`-entry
   `sent_packets` ring, inserts `packet_id -> ring_slot` into the open-addressed
@@ -663,16 +694,19 @@ details explicit:
   `now - first_send >= reliable_timeout`, `ack->error` becomes
   `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
   from `resend_head` while `now >= last_send + rn_window_ack_resend_delay(ack)`
-  (`min(rto, resend_interval)`), stopping at the first entry that is not due
-  (`O(due)`). Each due number is moved to the tail with `last_send = now`,
-  committed under a fresh `packet_id`, and counted in `MESSAGE_RESENT`. The
-  ordered writer (`rn_ordered_write`) and the message server's due check
-  (`rn_message_ordered_due`) read the same delay; nothing in the three walks
-  backs off.
+  (`min(rto, resend_interval)`) and from `chunk_head` while
+  `now >= last_send + rn_window_ack_chunk_resend_delay(ack)`, each walk
+  stopping at its first entry that is not due (`O(due)`; `walk_visits` counts
+  the entries examined). Each due number is moved to its FIFO's tail with
+  `last_send = now`, committed under a fresh `packet_id`, and counted in
+  `MESSAGE_RESENT`. The ordered writer (`rn_ordered_write`, one
+  `rn_ordered_walk` per FIFO, small first) and the message server's due check
+  (`rn_message_ordered_due`, both heads) read the same two delays; nothing in
+  the three walks backs off.
   `rn_window_ack_packet_failed` handles a `finish_packet` refusal without
   entering the packet in the sent-packet map: each numbered record gets
   `first_send = now` (if unset), a negative `last_send` (due immediately),
-  and is linked at the head of the resend FIFO in order.
+  and is linked at the head of its class's resend FIFO in order.
 - **Tests.** `test_channels.cpp` pins these rules in
   `ChannelsWindowAckOfAnUnknownIdIsIgnored`,
   `ChannelsWindowAckFreesTheChunkAndAdvancesU`,
@@ -690,9 +724,24 @@ details explicit:
   `first_resend_before_any_sample_at_rto_initial`,
   `config_refuses_fewer_than_four_attempts`, and
   `resend_timing_witness_replays`, which replays the schedule of
-  `tla/MCRNResendTimingBrokenBackoff.cfg` against the code), and
+  `tla/MCRNResendTimingBrokenBackoff.cfg` against the code) and the chunk
+  class (`chunk_resend_paced_by_rtt_not_interval`,
+  `small_record_behind_a_chunk_not_held`, which replays
+  `tla/MCRNResendTimingBrokenOneFifo.cfg`, and
+  `both_fifos_walk_only_what_is_due`), and
   `functional/channel_resend_timing.cpp` measures delivery latency and copies
-  over the channel harness (`resend_timing_table_over_lossy_links`).
+  over the channel harness (`resend_timing_table_over_lossy_links`) and the
+  wire cost of a block on a long path (`block_resend_cost_over_long_path`).
+  The table case prints its percentiles and asserts the rule itself on every
+  seed, never a percentile: zero timeouts; every resend gap, from the
+  development build's resend gap record (`rn_resend_gaps_t`, measured where
+  the commit sets `last_send`), at least the delay in force at the resend and
+  at most the delay in force at the update before plus one tick; four of the
+  largest gap inside `reliable_timeout`; and each message's latency within
+  its own ceiling, one-way latency and jitter plus two ticks plus, for each
+  earlier send, `resend_interval` and a tick. The delay of the earlier send
+  is not a bound: an RTT sample between two sends moves the RTO, and the walk
+  follows the delay in force at each update.
 
 ### 6.5 The receiver's window check
 
@@ -922,7 +971,7 @@ A reliable message is a **block** when its single record would not fit in
   `k - 1`.
 - **First sends and resends.** The block's first fragment goes in the packet
   being written. Its other fragments are numbered at the same moment, never
-  sent yet, so they go to the head of the resend FIFO as due now. From there
+  sent yet, so they go to the head of the chunk resend FIFO as due now. From there
   the following packets write them, one per packet, ahead of new items. Each
   fragment is acked and resent on its own, like RakNet (study §8.1). Each
   write copies the fragment straight from its chunk in the send store into the
@@ -957,10 +1006,11 @@ after numbers wrap; and the `U'` rule prevents slot reuse.
   once from the channel's FIFO head, channels taking turns one message each,
   while the update has room; a bound that stops it stops all numbering (no
   message overtakes a block) and counts `MESSAGE_WINDOW_STALL` once. Every
-  number joins the resend FIFO as due now, behind the numbers already waiting to
-  be sent, so a chunk or a message the update had no packet or budget for goes
-  next update ahead of anything newer. Resends use the same FIFO: an RTO,
-  backed off, per number.
+  number joins its class's resend FIFO (6.4) as due now, behind the numbers
+  of that FIFO already waiting to be sent, so a chunk or a message the update
+  had no packet or budget for goes next update ahead of anything newer of its
+  class. Resends use the same FIFOs: a chunk is resent on the RTO, a small
+  message on `min( rto, resend_interval )`, neither backed off.
 - **Pacing is the send budget** (`sdk/rocketnet_send_budget.h`): a chunk that
   does not fit waits for the next window. A fixed 60 chunks a second is gone.
 - **Receive.** A chunk is copied to `ring + index·F` (placement by index), the
@@ -1792,7 +1842,9 @@ chunks, one maximal block):
 | **total** | **1,588,480** bytes, 1.51 MiB |
 
 `104.125W` already holds the resend FIFO links (`8·W`). Listing them again
-would put the sum 8,192 above the region.
+would put the sum 8,192 above the region. The two resend FIFOs of 6.4 (small
+records and chunks) share those `8·W` links, since a number is in at most one,
+so the second FIFO adds nothing here.
 
 The 460,800 bytes of the first version (`B` 65,536, `S` 131,072, no spans) become
 1,588,480. That is about 1.48 GiB for a 1000-client server, on top of the
