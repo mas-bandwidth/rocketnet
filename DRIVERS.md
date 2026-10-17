@@ -125,6 +125,12 @@ an extension chain and never drops one, so IPv6 fragments pass. Every other
 non-UDP next header, ICMPv6 (neighbor discovery) above all, passes uncounted,
 as non-UDP IPv4 does.
 
+The kernel filter's counters surface on the transport counter surface as
+`ROCKETNET_COUNTER_XDP_KERNEL_*`, assigned from the kernel's cumulative
+per-CPU totals each time `rocketnet_server_transport_counters` is read. Only a
+driver with a kernel prefilter fills them; a driver with none leaves them
+zero.
+
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
 returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
