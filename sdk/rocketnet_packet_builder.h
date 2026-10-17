@@ -64,6 +64,7 @@ struct rn_packet_item_t
     uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: an RTO resend, counted and backed off by the caller
+    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
 };
 
 struct rn_packet_builder_t

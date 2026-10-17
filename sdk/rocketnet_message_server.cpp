@@ -136,6 +136,7 @@ static void rn_message_connection_reset( rn_message_object_t * object, rn_messag
     connection->connection_id = 0;
     connection->state = RN_MESSAGE_CONNECTION_FREE;
     connection->serial = 0;
+    connection->config_wait_start = -1.0;
     connection->pending_type = -1;
     connection->pending_descriptor = RN_DESCRIPTOR_NONE;
     connection->pending_bytes = 0;
@@ -248,6 +249,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         object->connections[0].state = RN_MESSAGE_CONNECTION_CONNECTED;
         object->connections[0].connection_id = 1;
         object->slots.connection_id[0] = 1;
+        rn_ordered_announce_config( &object->connections[0].ordered, &object->config );    // RNEndpoint Reset: the client's connect (10.3)
     }
 
     return object;
@@ -306,6 +308,43 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
     if ( object->link.disconnect )
         object->link.disconnect( object->link.transport, index );
     rocketnet_info( "message connection %d ended: reason %d", index, reason );
+}
+
+// ---------------------------------------------------------------
+//                CONFIG, the one announcement (CHANNELS.md 10.3)
+// ---------------------------------------------------------------
+
+// tla/RNEndpoint.tla Reset: a connection that becomes CONNECTED (the server's
+// Observe reset, the client's connect at create) queues this end's CONFIG
+// before anything else, so it takes the connection's first reliable number.
+// No room is region exhaustion, and the next update kicks the connection (R5).
+
+static void rn_message_connection_announce( rn_message_object_t * object, rn_message_connection_t * connection )
+{
+    rn_ordered_announce_config( &connection->ordered, &object->config );
+}
+
+// tla/RNEndpoint.tla Tick, the CONFIG half: an endpoint still waiting for
+// the peer's CONFIG reliable_timeout after its connection began ends it as
+// RELIABLE_TIMEOUT. The wait starts at the first update the connection is
+// connected at: the server's from its Observe reset, the client's from the
+// first update its transport reports CONNECTED (11.3).
+
+static int rn_message_config_timeout( rn_message_object_t * object, int index, double time )
+{
+    rn_message_connection_t * connection = &object->connections[index];
+    if ( connection->ordered.config_received )
+        return ROCKETNET_MESSAGE_ERROR_NONE;
+    if ( connection->config_wait_start < 0.0 )
+    {
+        if ( object->is_server || object->link.connection( object->link.transport, index ) != 0 )
+            connection->config_wait_start = time;
+        return ROCKETNET_MESSAGE_ERROR_NONE;
+    }
+    const double reliable_timeout = (double) object->config.reliable_timeout_ms / 1000.0;
+    if ( time - connection->config_wait_start >= reliable_timeout )
+        return ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT;
+    return ROCKETNET_MESSAGE_ERROR_NONE;
 }
 
 // ---------------------------------------------------------------
@@ -420,6 +459,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
                 connection->state = RN_MESSAGE_CONNECTION_CONNECTED;
                 connection->connection_id = id;
                 connection->disconnect_reason = ROCKETNET_MESSAGE_ERROR_NONE;
+                rn_message_connection_announce( object, connection );
             }
         }
     }
@@ -469,9 +509,15 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_message_connection_t * connection = &object->connections[i];
         if ( connection->state != RN_MESSAGE_CONNECTION_CONNECTED )
             continue;
-        const int reason = rn_ordered_decide( &connection->ordered );
+        int reason = rn_ordered_decide( &connection->ordered );
+        if ( reason == ROCKETNET_MESSAGE_ERROR_NONE )
+            reason = rn_message_config_timeout( object, i, time );
         if ( reason != ROCKETNET_MESSAGE_ERROR_NONE )
+        {
+            // RNEndpoint OnPayload: a CONFIG mismatch was logged with the
+            // field and both values when the CONFIG was compared
             rn_message_object_kick( object, i, reason );
+        }
     }
 
     return result;

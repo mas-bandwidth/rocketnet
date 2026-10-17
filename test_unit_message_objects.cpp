@@ -741,6 +741,9 @@ static void release_returns_room()
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
+    // the server's CONFIG (CHANNELS.md 10.3) is acked first, so the room counted below is the application's alone
+    mo_step( &pair );
+    mo_step( &pair );
     const uint32_t descriptors = region->descriptors_free;
     for ( int round = 0; round < 3 * (int) region->window; round++ )
     {
@@ -1112,11 +1115,14 @@ static void slot_reuse_starts_clean()
     check( slot->state == RN_MESSAGE_CONNECTION_CONNECTED );
     check( slot->connection_id == pair.net->slot_connection[0] );
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE );
-    check( slot->region->descriptors_free == slot->region->queue );
+    check( slot->region->descriptors_free == slot->region->queue - 1 );          // the new connection's CONFIG, in flight (10.3)
     check( slot->region->channel_receive[0].ordered_read == 0 );
     check( slot->region->channel_send[0].ordered_write == 0 );
     check( slot->budget.kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS );
     check( slot->held == 0 && slot->unreliable_count == 0 && slot->serial == 0 );
+    mo_step( &pair );
+    mo_step( &pair );
+    check( slot->region->descriptors_free == slot->region->queue );              // CONFIG acked: every descriptor is back (10.3)
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
         check( rn_send_store_free_chunks( &slot->region->store, c ) == rn_send_store_total_chunks( &slot->region->store, c ) );
 
@@ -1161,7 +1167,7 @@ static void acks_only_from_transport_acked_packets()
         delivered += (int) got.size();
     }
     check( delivered == 1 );                                                       // once, however often it arrives
-    check( region->descriptors_free == region->queue - 1 );                        // still in flight: no ack, no release
+    check( region->descriptors_free == region->queue - 2 );                        // still in flight: no ack, no release (this message and the connection's CONFIG, 10.3)
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_RESENT ) > 0 );          // resent on its RTO
     check( mo_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > 0 );
 
