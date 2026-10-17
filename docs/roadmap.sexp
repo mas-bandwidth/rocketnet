@@ -9,7 +9,7 @@
 ; duplicate second layer numbering (channels 18-23), and fixes cards 4 and 12
 ; (ruled: the standard is right).
 (:title "RocketNet roadmap"
- :text ("Every feature RocketNet has, and every one still to come, by area. ✅ is done and tested on main; ❌ is not done yet; — does not apply. Items marked (later) are deliberately after the current work, by the owner's call.")
+ :text ("Every feature RocketNet has, and every one still to come, by area. ✅ is done and tested on main; ❌ is not done yet; — does not apply. Items marked (later) are deliberately after the current work, by the owner's call. An area marked (next milestone) is the next milestone, by the owner's call.")
  :areas
  ((:id "handshake" :title "Connect handshake and security"
    :text "The secure connect from STANDARD.md: netcode 1.02 rebuilt on public keys, with every refusal counted."
@@ -111,7 +111,7 @@
     (:feature "Ownership and retry paths regression-validated against the 10 Gbps baseline" :cells (n))
     (:feature "Privileged syscall-failure coverage in its own lab" :cells (n))))
 
-  (:id "scaling" :title "Scaling and load (later)"
+  (:id "scaling" :title "Scaling and load" :milestone "next"
    :text "Many channels and many connections, measured."
    :columns ("done")
    :rows

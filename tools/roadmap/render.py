@@ -7,6 +7,7 @@
 #   python3 tools/roadmap/render.py docs/roadmap.sexp ROADMAP.md          write the page
 #   python3 tools/roadmap/render.py --check docs/roadmap.sexp ROADMAP.md  exit 1 if it differs
 #
+# An area may carry :milestone "next": its heading is marked (next milestone).
 # A cell is y (done), n (not done) or - (does not apply). A row with any y
 # cell must carry :evidence (a commit or a test name); the renderer refuses
 # the data otherwise. Evidence stays in the data, not on the page.
@@ -97,7 +98,11 @@ def render( data ):
             raise ValueError( "area %s: duplicate id" % aid )
         seen.add( aid )
         columns = text_list( area["columns"] )
-        lines += [ "## " + area["title"], "" ]
+        milestone = area.get( "milestone" )
+        if milestone not in ( None, "next" ):
+            raise ValueError( "area %s: milestone %r is not \"next\"" % ( aid, milestone ) )
+        heading = area["title"] + ( " (next milestone)" if milestone == "next" else "" )
+        lines += [ "## " + heading, "" ]
         for para in text_list( area.get( "text" ) ):
             lines += [ para, "" ]
         lines.append( "| feature | " + " | ".join( columns ) + " |" )
