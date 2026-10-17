@@ -126,7 +126,7 @@ MCFragmentsAndAcksLiveSmall.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsand
 MCFragmentsAndAcksLiveDup.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
 MCFragmentsAndAcksPatNone.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-none-committed-instance-safety-over-budget
 MCFragmentsAndAcksPatFirst.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-first-committed-instance-safety-over-budget
-MCFragmentsAndAcksPatAlternate.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	required	-
+MCFragmentsAndAcksPatAlternate.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-alternate-committed-instance-safety-over-budget
 MCFragmentsAndAcksPatBurst.cfg	MCFragmentsAndAcks.tla	pass	-	check	fragmentsandacks	bench	pattern-burst-committed-instance-safety-over-budget
 MCFragmentsAndAcksFindStale.cfg	MCFragmentsAndAcks.tla	invariant	StaleOnlyIfOlder	check	fragmentsandacks	required	-
 MCFragmentsAndAcksFindStaleSmall.cfg	MCFragmentsAndAcks.tla	invariant	StaleOnlyIfOlder	check	fragmentsandacks	required	-
