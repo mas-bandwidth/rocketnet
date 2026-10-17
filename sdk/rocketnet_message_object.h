@@ -107,6 +107,7 @@ struct rn_message_connection_t
     int state;                                  // RN_MESSAGE_CONNECTION_*
     int disconnect_reason;                      // ROCKETNET_MESSAGE_ERROR_* of the last connection that ended here
     uint32_t serial;                            // the receipt serial of the last finished send (7.4)
+    double config_wait_start;                   // when this end began waiting for the peer's CONFIG (10.3), or -1 before it is connected
 
     // the start between start and finish (one at a time, like the transport's start_packet)
     int pending_type;                           // -1 when no start is pending

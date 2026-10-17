@@ -124,6 +124,7 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_SPAN       0x01    // the message lives in one contiguous span of the send spans, not in store chunks
 #define RN_SEND_FLAG_RECEIPT_PROMOTED 0x02 // a large public type 5 uses reliable wire code 2 and receives one ACKED outcome
 #define RN_SEND_FLAG_RECEIPT_RELIABLE 0x04 // public type 6 or 7 uses reliable wire code 2 or 3 and receives one ACKED outcome
+#define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
