@@ -349,7 +349,11 @@ static void check_base64_and_config()
     const int * available = rocketnet_server_driver_availability( &num_available );
     struct rocketnet_driver_ladder_t ladder;
     CHECK( rocketnet_driver_ladder_parse( "auto", available, num_available, &ladder ) );
-    CHECK( ladder.num_candidates == num_available );
+    int auto_available = 0;
+    for ( int i = 0; i < num_available; i++ )
+        if ( !rocketnet_driver_pin_only( available[i] ) )
+            auto_available++;
+    CHECK( ladder.num_candidates == auto_available );
     CHECK( rocketnet_driver_ladder_parse( "portable", available, num_available, &ladder ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_PORTABLE );
     CHECK( !rocketnet_driver_ladder_parse( "rocket", available, num_available, &ladder ) );

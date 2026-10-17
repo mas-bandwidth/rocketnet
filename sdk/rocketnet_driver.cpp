@@ -40,6 +40,13 @@ bool rocketnet_driver_discovers_bound_port( int driver )
     return definition && definition->discovers_bound_port;
 }
 
+bool rocketnet_driver_pin_only( int driver )
+{
+    const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( driver );
+    return definition && ( definition->server_preference >= ROCKETNET_DRIVER_PIN_ONLY ||
+                           definition->client_preference >= ROCKETNET_DRIVER_PIN_ONLY );
+}
+
 struct rocketnet_driver_lists_t
 {
     int servers[ROCKETNET_NUM_DRIVERS];
