@@ -3401,6 +3401,48 @@ void rocketnet_test_server_driver_pin_gso()
     rocketnet_test_env_restore( &driver_guard );
 }
 
+#include "rocketnet_driver.h"
+#include "rocketnet_server_uring.h"
+
+void rocketnet_test_server_driver_pin_io_uring()
+{
+    // a build without liburing has an io_uring row with no backend: the row
+    // is unavailable, and a pin of it is skipped softly by the ladder, so
+    // a ladder that names it falls to the next rung
+
+    const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( ROCKETNET_DRIVER_IO_URING );
+    rocketnet_check( definition );
+    if ( !definition->backend )
+    {
+        rocketnet_test_driver_pin_exchange( "io_uring,portable", "portable" );
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_driver_pin_io_uring [SKIPPED built without liburing: the io_uring row has no backend]" );
+        return;
+    }
+    if ( !rocketnet_server_uring_available() )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_driver_pin_io_uring [SKIPPED this kernel refuses the io_uring ring the driver needs]" );
+        return;
+    }
+
+    rocketnet_test_driver_pin_exchange( "io_uring", "io_uring" );
+
+    // per-driver bounds: a queue count past the io_uring geometry refuses
+    // the pinned rung, and with nothing left to fall to, the create, loudly,
+    // never clamped
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "io_uring" );
+    config.num_xdp_queues = ROCKETNET_URING_MAX_QUEUES + 1;
+
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
 void rocketnet_test_server_driver_pin_xdp()
 {
     // the pre-flight is called DIRECTLY here, as it also is in
@@ -5332,6 +5374,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "te
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_wire, "test_server_iocp_uso_wire", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_gso, "test_server_driver_pin_gso", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_io_uring, "test_server_driver_pin_io_uring", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_xdp, "test_server_driver_pin_xdp", "linux only: the xdp driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_ladder_fall, "test_server_driver_ladder_fall", "linux only: the gso/xdp ladder is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_probe, "test_server_gso_probe", "linux only: the gso driver is not built on this platform" )
@@ -5605,6 +5648,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_port_zero_driver", rocketnet_test_server_port_zero_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_test_server_driver_pin_gso },
+    { "test_server_driver_pin_io_uring", rocketnet_test_server_driver_pin_io_uring },
     { "test_server_driver_pin_xdp", rocketnet_test_server_driver_pin_xdp },
     { "test_server_driver_ladder_fall", rocketnet_test_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_test_server_gso_probe },
@@ -5621,6 +5665,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_uring_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_functional_skip_server_driver_pin_gso },
+    { "test_server_driver_pin_io_uring", rocketnet_functional_skip_server_driver_pin_io_uring },
     { "test_server_driver_pin_xdp", rocketnet_functional_skip_server_driver_pin_xdp },
     { "test_server_driver_ladder_fall", rocketnet_functional_skip_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_functional_skip_server_gso_probe },
