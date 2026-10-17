@@ -29,6 +29,8 @@
 
 #include <unordered_map>
 
+extern unsigned long long g_client_ack_stats_count;
+
 // every transport a test ends with is balanced before it is destroyed: the
 // server's counters and each client's, RECEIVED == the sum of its outcomes.
 // A macro, so a failure names the test that ended the transport.
@@ -1116,6 +1118,93 @@ void rocketnet_test_transport_stats()
     rocketnet_check( server_stats.packets_received_per_second == 0 );
     rocketnet_check( server_stats.bandwidth_sent_kbps == 0.0f );
     rocketnet_check( server_stats.bandwidth_received_kbps == 0.0f );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, game_time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+void rocketnet_test_client_ack_stats_computed_on_read()
+{
+    // the ack statistics are computed when they are read, not on every
+    // update: update must not touch the counter, and one stats getter call
+    // advances it by exactly one
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    double game_time = 1000.0;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    rocketnet_check( client );
+
+    // connect on the synthetic clock, bounded by the wall clock
+
+    double wall_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wall_start < 5.0 )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+        rocketnet_server_transport_update( server, game_time );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // sixty frames of traffic, one payload each way, acks flowing
+
+    uint8_t payload_data[64];
+    memset( payload_data, 0x5A, sizeof(payload_data) );
+
+    for ( int i = 0; i < 60; i++ )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+        rocketnet_server_transport_update( server, game_time );
+
+        rocketnet_client_transport_send_packet( client, payload_data, sizeof(payload_data) );
+        rocketnet_server_transport_send_packet( server, 0, payload_data, sizeof(payload_data) );
+        rocketnet_server_transport_send_packets( server );
+
+        uint8_t scratch[ROCKETNET_RECEIVE_CEILING];
+        while ( rocketnet_client_transport_receive_packet( client, scratch, (int) sizeof(scratch) ) > 0 ) {}
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // (a) client-only updates must not recompute the ack statistics
+
+    const unsigned long long before = g_client_ack_stats_count;
+    for ( int i = 0; i < 30; i++ )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+    }
+    rocketnet_check( g_client_ack_stats_count == before );
+
+    // (b) one stats read recomputes them exactly once
+
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( client, &stats );
+    rocketnet_check( g_client_ack_stats_count == before + 1 );
+
+    // (c) sane rtt and zero loss on the clean loopback
+
+    rocketnet_check( stats.rtt > 0.0f && stats.rtt < 1000.0f );
+    rocketnet_check( stats.packet_loss == 0.0f );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
@@ -5045,6 +5134,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "cpp_transports_connect_over_loopback", rocketnet_test_cpp_transports_connect_over_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },
+    { "test_client_ack_stats_computed_on_read", rocketnet_test_client_ack_stats_computed_on_read },
     { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },

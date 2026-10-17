@@ -25,6 +25,10 @@
 #include <math.h>
 #include <atomic>
 
+// counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
+// functional test
+unsigned long long g_client_ack_stats_count = 0;
+
 // The one clamp both transports share. A NaN or infinite time makes every
 // timeout comparison false and freezes a transport; a backwards step rewinds
 // its deadlines. Both become the last good time instead, counted and loud in a
@@ -699,11 +703,6 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
         client_transport->stats_frames[stats_index].packets_lost += (uint64_t) lost_packets;
     }
 
-    // the delivery bookkeeping's recompute: one connection, so it runs
-    // every update at constant shape -- the server amortizes the same
-    // recompute round-robin across its slots
-
-    rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 }
 
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
@@ -1328,6 +1327,10 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     rocketnet_assert( stats );
 
     memset( stats, 0, sizeof(struct rocketnet_client_transport_stats_t) );
+
+    g_client_ack_stats_count++;
+    // the client's only reader of the ack statistics is this getter, so they are computed here (docs/CLIENT-IO-DECRYPT.md, The ack statistics)
+    rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 
     // rtt seeds from the handshake's round trips and the acks refresh it
     // continuously from there: once positive first-ack samples exist they
