@@ -444,14 +444,6 @@ described below. Reading every `getenv` in `sdk/`, these sit outside it:
 - `ROCKETNET_PUMP` — see below, it has the sharpest edge;
 - `ROCKETNET_LOG_LEVEL`, read once at process init;
 - `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`, read by the XDP driver;
-- `ROCKETNET_XDP_ZEROCOPY`, read by the XDP driver at create: exactly `1` binds
-  the AF_XDP sockets zero-copy, anything else (unset included) binds copy mode.
-  The create log says `xdp socket queue <n> bound in <mode> mode`, and that line
-  is the only tell. A measured run whose numbers are compared with earlier
-  zero-copy runs sets it: today that is space's server launch
-  (`scripts/rocketnet_space_machine.sh --driver xdp` in robotgamedevelopers/space)
-  and rocketnet's `scripts/netem-pair-soak --driver xdp`; neither sets it yet, so
-  a run from them measures copy mode (BUILDING.md);
 - `ROCKETNET_SERVER_NUM_QUEUES` — the one surviving deprecated alias, of the
   server table's `ROCKETNET_SERVER_NUM_XDP_QUEUES`. It is honored only where
   its successor is unset, and every use is logged naming the successor.
