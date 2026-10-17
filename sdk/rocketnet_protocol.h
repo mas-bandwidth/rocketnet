@@ -34,6 +34,47 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
                                    const uint8_t * four_bytes,
                                    uint8_t * out_filter_value );
 
+// The receiver's filter epoch window, from tla/RNFilterEpochs.tla and
+// STANDARD.md "The keyed filter value": up to four live generations, oldest
+// first. Generations advance 1, 2, 3 and wrap from 255 back to 1; zero is
+// never a generation.
+
+#define ROCKETNET_FILTER_EPOCHS_LIVE     4
+#define ROCKETNET_FILTER_MAGIC_BYTES     16
+
+struct rocketnet_filter_epochs_t
+{
+    int live_count;
+    uint8_t epochs[ROCKETNET_FILTER_EPOCHS_LIVE];
+    uint8_t magics[ROCKETNET_FILTER_EPOCHS_LIVE][ROCKETNET_FILTER_MAGIC_BYTES];
+};
+
+// RNFilterEpochs Install and Retire: take the generation the backend hands,
+// which must be 1 first and otherwise the next of the newest (255 wraps to 1);
+// refuse 0 and any other epoch. When the table is full the oldest generation
+// leaves and its magic is wiped. Returns 1 when installed, 0 on refusal.
+
+int rocketnet_filter_epochs_install( struct rocketnet_filter_epochs_t * epochs,
+                                     uint8_t epoch,
+                                     const uint8_t * magic );
+
+// RNFilterEpochs Check: accept only when the packet's epoch is live and its
+// 4-byte value equals rocketnet_keyed_filter_value under that generation's
+// magic. Epoch 0 and an epoch naming no live generation are refused on the
+// comparison, before any MAC. Returns 1 on acceptance, 0 on refusal.
+
+int rocketnet_filter_epochs_check( const struct rocketnet_filter_epochs_t * epochs,
+                                   const uint8_t * packet_data,
+                                   int packet_bytes );
+
+#if defined(ROCKETNET_FILTER_EPOCH_TEST_HOOKS)
+
+// the MACs this thread's checks computed, for test_unit_filter_epochs.cpp
+
+uint64_t rocketnet_filter_epochs_mac_count();
+
+#endif // #if defined(ROCKETNET_FILTER_EPOCH_TEST_HOOKS)
+
 // The prefilter structural check from the standard's reading order: the
 // packet is at least a prefilter header, no larger than the receive ceiling,
 // and carries this title's tag. Returns the packet type on success, -1 on
