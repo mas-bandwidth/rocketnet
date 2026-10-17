@@ -108,5 +108,76 @@ static void test_address_ipv6_with_port_fits_the_buffer()
     rocketnet_unit_check( strlen( rendered ) < ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
 }
 
+// ---------------------------------------------------------------------------
+// rocketnet_address_load_ipv4 (sdk/rocketnet_address.cpp:13) round-trips:
+// its wire-big-endian inputs land as the matching typed address, parse the
+// same dotted-quad text back to equality, and rocketnet_address_ipv4
+// (sdk/rocketnet_address.cpp:318) returns the same four bytes.
+// ---------------------------------------------------------------------------
+
+static void address_load_ipv4_round_trips()
+{
+    uint32_t ipv4;
+    const uint8_t ipv4_bytes[4] = { 203, 0, 113, 10 };
+    memcpy( &ipv4, ipv4_bytes, 4 );
+
+    uint16_t port_big_endian;
+    const uint8_t port_bytes[2] = { 0x9c, 0x40 };
+    memcpy( &port_big_endian, port_bytes, 2 );
+
+    struct rocketnet_address_t address;
+    memset( &address, 0, sizeof(address) );
+    rocketnet_address_load_ipv4( &address, ipv4, port_big_endian );
+
+    rocketnet_unit_check( address.type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_unit_check( address.data.ipv4[0] == 203 );
+    rocketnet_unit_check( address.data.ipv4[1] == 0 );
+    rocketnet_unit_check( address.data.ipv4[2] == 113 );
+    rocketnet_unit_check( address.data.ipv4[3] == 10 );
+    rocketnet_unit_check( address.port == 40000 );
+
+    struct rocketnet_address_t parsed;
+    rocketnet_unit_check( rocketnet_address_parse( &parsed, "203.0.113.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_equal( &address, &parsed ) );
+
+    const uint32_t round_trip = rocketnet_address_ipv4( &address );
+    const uint8_t * round_trip_bytes = (const uint8_t*) &round_trip;
+    rocketnet_unit_check( round_trip_bytes[0] == 203 );
+    rocketnet_unit_check( round_trip_bytes[1] == 0 );
+    rocketnet_unit_check( round_trip_bytes[2] == 113 );
+    rocketnet_unit_check( round_trip_bytes[3] == 10 );
+}
+
+// ---------------------------------------------------------------------------
+// rocketnet_address_to_string_without_port (sdk/rocketnet_address.cpp:165)
+// renders each address type without its port: dotted-quad, compressed IPv6
+// and the NONE fallback for a zeroed address.
+// ---------------------------------------------------------------------------
+
+static void address_to_string_without_port_each_type()
+{
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+
+    struct rocketnet_address_t ipv4;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
+    const char * ipv4_text = rocketnet_address_to_string_without_port( &ipv4, buffer );
+    rocketnet_unit_check( ipv4_text == buffer );
+    rocketnet_unit_check( strcmp( ipv4_text, "203.0.113.10" ) == 0 );
+
+    struct rocketnet_address_t ipv6;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8::1]:40000" ) );
+    const char * ipv6_text = rocketnet_address_to_string_without_port( &ipv6, buffer );
+    rocketnet_unit_check( ipv6_text == buffer );
+    rocketnet_unit_check( strcmp( ipv6_text, "2001:db8::1" ) == 0 );
+
+    struct rocketnet_address_t none;
+    memset( &none, 0, sizeof(none) );
+    const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
+    rocketnet_unit_check( none_text == buffer );
+    rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
+}
+
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
+REGISTER_UNIT_TEST( address_load_ipv4_round_trips );
+REGISTER_UNIT_TEST( address_to_string_without_port_each_type );

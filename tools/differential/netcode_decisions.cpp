@@ -44,6 +44,7 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_token_tables.h"
 #include "rocketnet_client_slots.h"
+#include "rocketnet_client_protocol.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_fragment.h"
@@ -124,6 +125,116 @@ struct decision_t
     int accept;
     char reason[64];
 };
+
+// One client's handshake against the server, packet for packet, from one
+// address: request, cookie, challenge, response. The server's update runs
+// each step, as the transport runs it, so the per-update handshake budget
+// resets. Stops when the server holds one more connected slot than it did
+// at entry, or the client gives up, or max_seconds of the passed-in clock
+// elapse. Returns 1 when the server admitted this client.
+
+static int differential_handshake( struct rocketnet_server_protocol_t * server,
+                                   struct rocketnet_client_protocol_t * client,
+                                   const struct rocketnet_address_t * from,
+                                   uint64_t timestamp, double start_time, double max_seconds )
+{
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    const int connected_before = rocketnet_client_slots_num_connected( server->client_slots );
+
+    for ( int step = 0; step * 0.05 < max_seconds; step++ )
+    {
+        const double time = start_time + step * 0.05;
+        rocketnet_server_protocol_update( server, time );
+        rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
+        if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            break;
+        if ( packet_bytes > 0 )
+        {
+            response_bytes = 0;
+            rocketnet_server_protocol_process_packet( server, from, packet, packet_bytes, timestamp, time,
+                                                      response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+                rocketnet_client_protocol_process_packet( client, response, response_bytes, time,
+                                                          payload, sizeof(payload), &payload_bytes );
+        }
+        if ( rocketnet_client_slots_num_connected( server->client_slots ) > connected_before )
+            return 1;
+    }
+    return 0;
+}
+
+// The replay case. The server binds a token to its source when a connection
+// response opens, never at the request (STANDARD.md; tla/RNSecurityTables.tla,
+// BoundOnlyToOpener), so "a token already admitted" means a handshake driven
+// through response open: a first client holding the token connects and the
+// server admits it. A second client holding the same token then connects
+// from another address, and its handshake is driven through response open as
+// far as the server lets it. The refusal is read from the counters that
+// fired: the request ladder (already used by a different address, already
+// admitted its connection) or the response (already admitted its
+// connection). The second client holds the token keys, so it is at least as
+// strong as an attacker replaying the captured request, which cannot open
+// the challenge at all.
+
+static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server,
+                                     struct rocketnet_counters_t * counters,
+                                     const uint8_t * token, uint64_t now,
+                                     struct decision_t * d )
+{
+    struct rocketnet_address_t first_address;
+    struct rocketnet_address_t replay_address;
+    rocketnet_address_parse( &first_address, "198.51.100.7:56789" );
+    rocketnet_address_parse( &replay_address, "198.51.100.50:56789" );
+
+    struct rocketnet_counters_t first_counters;
+    struct rocketnet_counters_t replay_counters;
+    memset( &first_counters, 0, sizeof(first_counters) );
+    memset( &replay_counters, 0, sizeof(replay_counters) );
+    struct rocketnet_client_protocol_t first;
+    struct rocketnet_client_protocol_t replay;
+    rocketnet_client_protocol_init( &first, &first_counters );
+    rocketnet_client_protocol_init( &replay, &replay_counters );
+
+    const double start = (double) now;
+
+    if ( !rocketnet_client_protocol_connect( &first, token, start, now ) ||
+         !differential_handshake( server, &first, &first_address, now, start, 2.0 ) )
+    {
+        d->accept = 0;
+        strcpy( d->reason, "first-not-admitted" );
+        return;
+    }
+
+    if ( !rocketnet_client_protocol_connect( &replay, token, start + 2.0, now ) )
+    {
+        d->accept = 0;
+        strcpy( d->reason, "mint" );
+        return;
+    }
+
+    if ( differential_handshake( server, &replay, &replay_address, now, start + 2.0, 2.0 ) )
+    {
+        d->accept = 1;
+        strcpy( d->reason, "accept" );
+        return;
+    }
+
+    d->accept = 0;
+    if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
+         counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] ||
+         counters->values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] )
+        strcpy( d->reason, "replay" );
+    else
+        strcpy( d->reason, "refused" );
+}
 
 static struct decision_t rocketnet_decide( int case_id, uint64_t now )
 {
@@ -206,6 +317,12 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
         goto out;
     }
 
+    if ( case_id == CASE_REPLAYED_TOKEN )
+    {
+        rocketnet_decide_replay( &server, &counters, token, now, &d );
+        goto out;
+    }
+
     {
         struct rocketnet_connect_token_t ct;
         rocketnet_read_connect_token( &ct, token );
@@ -247,39 +364,6 @@ static struct decision_t rocketnet_decide( int case_id, uint64_t now )
         {
             d.accept = 1;
             strcpy( d.reason, "accept" );
-
-            if ( case_id == CASE_REPLAYED_TOKEN )
-            {
-                // the token is now bound to its first source. replay the same
-                // request from a different address: one hash, then refused.
-                struct rocketnet_address_t replay_address;
-                rocketnet_address_parse( &replay_address, "198.51.100.50:56789" );
-                uint8_t replayed[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-                memcpy( replayed, request, sizeof(replayed) );
-                memset( replayed + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
-
-                int rr = rocketnet_server_protocol_process_connection_request(
-                            &server, &replay_address, replayed, sizeof(replayed), now, (double) now,
-                            response, &response_bytes );
-                if ( rr == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
-                {
-                    memcpy( replayed + ROCKETNET_PREFILTER_BYTES,
-                            response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
-                            ROCKETNET_COOKIE_FIELD_BYTES );
-                    rr = rocketnet_server_protocol_process_connection_request(
-                                &server, &replay_address, replayed, sizeof(replayed), now, (double) now,
-                                response, &response_bytes );
-                }
-
-                if ( rr != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
-                {
-                    d.accept = 0;
-                    if ( counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] )
-                        strcpy( d.reason, "replay" );
-                    else
-                        strcpy( d.reason, "refused" );
-                }
-            }
         }
         else
         {
