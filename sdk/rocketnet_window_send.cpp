@@ -66,7 +66,9 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
     entry->ring_start = ring_start;
-    entry->last_send = 0.0;
+    // A new number is never sent. A carve's memset leaves unnumbered slots at
+    // 0.0, but only numbered slots are walked, so that is fine.
+    entry->last_send = RN_SEND_NUMBER_NEVER_SENT;
     entry->descriptor = descriptor;
     entry->fragment = fragment;
     entry->ring_units = (uint8_t) ( bytes16 / 16 );

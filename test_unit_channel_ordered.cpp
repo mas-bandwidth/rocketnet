@@ -1970,6 +1970,99 @@ static void rnchannel_witness_replays_ordered()
     }
 }
 
+// A record first sent at time 0.0 waits for its resend like any other: 0.0
+// is a real send time, not "never sent" (RNResendTiming!Due reads lastSend as
+// a real tick, 0 included).
+
+static void ordered_record_sent_at_zero_waits_for_its_resend()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+
+    // the game clock starts at 0.0; the first write sends the record once
+    wire_packet_t first[4];
+    check( write_packets( a, 0.0, first, 4 ) == 1 );
+    const double delay = rn_window_ack_class_delay( &a->ordered.ack, false );
+
+    // until the resend delay passes, nothing is written again: the record was
+    // sent at 0.0, it is not unsent
+    for ( int k = 1; k / 60.0 < delay; k++ )
+        check( write_packets( a, k / 60.0, first, 4 ) == 0 );
+
+    // the first update at or past the delay resends it exactly once
+    wire_packet_t resend[4];
+    check( write_packets( a, delay, resend, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+
+    // and not again the next update
+    check( write_packets( a, delay + 1.0 / 60.0, first, 4 ) == 0 );
+
+    // the first send is recorded once, at 0.0, and no reliable timeout
+    check( rn_window_ack_check_timeout( &a->ordered.ack, delay ) == 0 );
+    check( a->ordered.ack.oldest_first_send == 0.0 );
+
+    node_free( a );
+}
+
+static void ordered_record_sent_at_1000_waits_for_its_resend()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+
+    wire_packet_t first[4];
+    check( write_packets( a, 1000.0, first, 4 ) == 1 );
+    const double delay = rn_window_ack_class_delay( &a->ordered.ack, false );
+
+    for ( int k = 1; 1000.0 + k / 60.0 < 1000.0 + delay; k++ )
+        check( write_packets( a, 1000.0 + k / 60.0, first, 4 ) == 0 );
+
+    wire_packet_t resend[4];
+    check( write_packets( a, 1000.0 + delay, resend, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 1 );
+
+    check( write_packets( a, 1000.0 + delay + 1.0 / 60.0, first, 4 ) == 0 );
+
+    check( rn_window_ack_check_timeout( &a->ordered.ack, 1000.0 + delay ) == 0 );
+    check( a->ordered.ack.oldest_first_send == 1000.0 );
+
+    node_free( a );
+}
+
+static void ordered_failed_send_at_zero_is_due_next_update()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * a = node_new( &config, 4 );
+
+    check( send_message( a, 0, 16 ) != 0 );
+
+    // write at 0.0, then fail the packet in place of committing
+    alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint8_t * pointers[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+    pointers[0] = frames[0];
+    check( rn_ordered_write( &a->ordered, 0.0, pointers, 1 ) == 1 );
+    rn_ordered_packet_failed( &a->ordered, 0, 0.0 );
+
+    // the failed-send retry is due at the next update, as a first write (resend = 0)
+    wire_packet_t out[4];
+    check( write_packets( a, 1.0 / 60.0, out, 4 ) == 1 );
+    check( counter( a, ROCKETNET_COUNTER_MESSAGE_RESENT ) == 0 );
+
+    // and not again immediately after
+    check( write_packets( a, 2.0 / 60.0, out, 4 ) == 0 );
+
+    node_free( a );
+}
+
+REGISTER_UNIT_TEST( ordered_record_sent_at_zero_waits_for_its_resend );
+REGISTER_UNIT_TEST( ordered_record_sent_at_1000_waits_for_its_resend );
+REGISTER_UNIT_TEST( ordered_failed_send_at_zero_is_due_next_update );
 REGISTER_UNIT_TEST( small_in_order_exactly_once_under_loss_and_reorder );
 REGISTER_UNIT_TEST( small_packed_and_resent_until_packet_acked );
 REGISTER_UNIT_TEST( large_chunked_one_per_packet_and_delivered_whole );

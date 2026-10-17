@@ -307,6 +307,7 @@ section, and this table exists so an implementer never hunts for a number.
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
 | Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
+| Kernel replay prefilter | optional; read-only high-water, drops 16 or more behind | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
 | Admitted-token set | >= 2x slot count, no unexpired eviction | _Processing Connection Requests_ |
 
@@ -1612,7 +1613,16 @@ never frame-rate, send-rate or ACK-rate contracts.** A replay window MUST hold
 at least 4096 sequences. Implementations MUST document their retained depth and
 provide a way to choose a larger memory budget. The application does not need
 to declare a packets-per-second rate, and an implementation MUST NOT throttle
-application sends to preserve an assumed time span of history.
+ application sends to preserve an assumed time span of history.
+
+An implementation MAY drop session packets before decryption in a kernel
+prefilter that holds, per peer address, a high-water sequence written only by
+userspace after a packet opens and never by the prefilter itself; such a
+prefilter drops a packet 16 or more sequences behind that high-water in
+RocketNet (ROCKETNET_XDP_REPLAY_WINDOW). It is sized separately from the replay
+window, which keeps its own rule (at least 4096). Like an undersized window it
+may discard old legitimate packets earlier, and it never accepts a replay,
+because it only ever drops.
 
 Within the retained window, delayed and reordered packets remain eligible
 regardless of elapsed time (subject to the connection's independent lifetime).

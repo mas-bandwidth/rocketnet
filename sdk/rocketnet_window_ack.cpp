@@ -308,10 +308,10 @@ static void rn_window_ack_refresh_oldest( rn_window_ack_t * ack, double fallback
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
         if ( descriptor->in_use && rn_descriptor_has_first_send( descriptor ) )
             first_send = rn_descriptor_get_first_send( descriptor );
-        else if ( slot->last_send > 0.0 )
+        else if ( slot->last_send >= 0.0 )
             first_send = slot->last_send;
     }
-    else if ( slot->last_send > 0.0 )
+    else if ( slot->last_send >= 0.0 )
     {
         first_send = slot->last_send;
     }
@@ -511,10 +511,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         const uint32_t slot_index = (uint32_t) ( n & ( W - 1 ) );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
-        if ( slot->last_send == 0.0 )
+        if ( rn_send_number_never_sent( slot->last_send ) )
             rn_window_ack_record_first_send( ack, slot, now );
 #if ROCKETNET_DEVELOPMENT
-        if ( slot->last_send > 0.0 )                        // a resend: not a first send, not a failed send's retry
+        if ( slot->last_send >= 0.0 )                       // a resend: not a first send, not a failed send's retry
             rn_window_ack_gaps_measure( ack, slot_index, slot->last_send, now );
 #endif // #if ROCKETNET_DEVELOPMENT
         slot->last_send = now;
@@ -768,7 +768,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         const uint32_t slot_index = (uint32_t) ( n & ( W - 1 ) );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
-        if ( slot->last_send == 0.0 )
+        if ( rn_send_number_never_sent( slot->last_send ) )
             rn_window_ack_record_first_send( ack, slot, now );
         slot->last_send = due_now_sentinel;
         if ( !slot->acked )

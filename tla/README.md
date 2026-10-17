@@ -103,6 +103,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnuringdriver` | 3 | io_uring driver control (invariants and liveness) and two invariant witnesses |
 | `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
+| `rnxdpreplay` | 3 | Kernel replay high-water map control and two invariant witnesses |
+| `rnriodriver` | 3 | Windows RIO server driver design: control with two liveness properties and two invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
