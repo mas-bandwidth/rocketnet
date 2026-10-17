@@ -52,6 +52,20 @@
 #define ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES 32
 #define ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS 256
 #define ROCKETNET_CHANNEL_HARNESS_MAX_PACKETS   32
+#define ROCKETNET_CHANNEL_HARNESS_MAX_HELD      64
+
+// The scripted-order hook: each direction of the wire passes packets to the
+// simulator (the default), holds the message layer's payload packets for the
+// case to deliver in the order it chooses (control packets still pass), or
+// drops every packet. A held packet reaches the peer only through
+// rocketnet_channel_harness_deliver_held, which hands it to the simulator's
+// scripted schedule (rocketnet_network_simulator_deliver_packets).
+enum
+{
+    ROCKETNET_CHANNEL_WIRE_PASS = 0,
+    ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS = 1,
+    ROCKETNET_CHANNEL_WIRE_DROP = 2,
+};
 
 static uint64_t rocketnet_channel_allocator_calls;
 
@@ -150,6 +164,15 @@ typedef struct rocketnet_channel_harness_t
     uint64_t next_packet_id;
     int counting_allocator_installed;
     uint64_t seed; // the simulator seed this run used
+
+    // the scripted-order hook (ROCKETNET_CHANNEL_WIRE_*), per direction
+    int wire_to_server;
+    int wire_to_client;
+    int held_count;                 // payload packets held, oldest first
+    int held_bytes[ROCKETNET_CHANNEL_HARNESS_MAX_HELD];
+    int held_to_server[ROCKETNET_CHANNEL_HARNESS_MAX_HELD];
+    uint8_t (* held)[ROCKETNET_RECEIVE_CEILING];
+    uint64_t held_overflow;         // held packets past capacity, dropped
 } rocketnet_channel_harness_t;
 
 static inline uint64_t rocketnet_channel_hash( const uint8_t * data, int bytes )
@@ -283,6 +306,8 @@ static inline void rocketnet_channel_endpoint_send_control( rocketnet_channel_en
         h->wire_bytes_to_client += bytes;
     else
         h->wire_bytes_to_server += bytes;
+    if ( ( endpoint->is_server ? h->wire_to_client : h->wire_to_server ) == ROCKETNET_CHANNEL_WIRE_DROP )
+        return;
     rocketnet_network_simulator_send( h->sim, from, to, data, bytes, h->now );
 }
 
@@ -441,6 +466,22 @@ static inline void rocketnet_channel_endpoint_send_packets( void * transport )
             h->wire_bytes_to_client += bytes;
         else
             h->wire_bytes_to_server += bytes;
+        const int wire = endpoint->is_server ? h->wire_to_client : h->wire_to_server;
+        if ( wire == ROCKETNET_CHANNEL_WIRE_DROP )
+            continue;
+        if ( wire == ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS )
+        {
+            if ( h->held_count >= ROCKETNET_CHANNEL_HARNESS_MAX_HELD || bytes > ROCKETNET_RECEIVE_CEILING )
+            {
+                h->held_overflow++;
+                continue;
+            }
+            memcpy( h->held[h->held_count], endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bytes );
+            h->held_bytes[h->held_count] = bytes;
+            h->held_to_server[h->held_count] = !endpoint->is_server;
+            h->held_count++;
+            continue;
+        }
         rocketnet_network_simulator_send( h->sim, from, to,
                                           endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes, h->now );
     }
@@ -581,7 +622,9 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
         rocketnet_malloc( NULL, sizeof( *h->client_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
     h->server_endpoint.payload = (uint8_t (*)[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES])
         rocketnet_malloc( NULL, sizeof( *h->server_endpoint.payload ) * ROCKETNET_CHANNEL_HARNESS_MAX_ENDPOINT_PAYLOADS );
-    if ( !h->client_endpoint.payload || !h->server_endpoint.payload )
+    h->held = (uint8_t (*)[ROCKETNET_RECEIVE_CEILING])
+        rocketnet_malloc( NULL, sizeof( *h->held ) * ROCKETNET_CHANNEL_HARNESS_MAX_HELD );
+    if ( !h->client_endpoint.payload || !h->server_endpoint.payload || !h->held )
         goto failed;
 
     // addresses: the client and the server on the simulated wire
@@ -674,6 +717,40 @@ static inline void rocketnet_channel_harness_set_link( rocketnet_channel_harness
     rocketnet_network_simulator_config( h->sim, latency, jitter, loss_percent, duplicate_percent );
 }
 
+// The scripted-order hook: set what each direction of the wire does with the
+// packets sent from now on (ROCKETNET_CHANNEL_WIRE_PASS, _HOLD_PAYLOADS, _DROP).
+static inline void rocketnet_channel_harness_set_wire( rocketnet_channel_harness_t * h, int to_server, int to_client )
+{
+    h->wire_to_server = to_server;
+    h->wire_to_client = to_client;
+}
+
+// Hand the held packets named by index, in the order given, to the simulator's
+// scripted schedule, due now; the peer receives them in that order at its next
+// update. The held list is unchanged; rocketnet_channel_harness_clear_held
+// forgets it. Returns the number handed to the wire.
+static inline int rocketnet_channel_harness_deliver_held( rocketnet_channel_harness_t * h, const int * indices, int count )
+{
+    int handed = 0;
+    for ( int i = 0; i < count; i++ )
+    {
+        const int index = indices[i];
+        if ( index < 0 || index >= h->held_count )
+            continue;
+        const uint8_t * packet = h->held[index];
+        const int bytes = h->held_bytes[index];
+        const struct rocketnet_address_t * from = h->held_to_server[index] ? &h->client_addr : &h->server_addr;
+        const struct rocketnet_address_t * to = h->held_to_server[index] ? &h->server_addr : &h->client_addr;
+        handed += rocketnet_network_simulator_deliver_packets( h->sim, from, to, &packet, &bytes, 1, h->now );
+    }
+    return handed;
+}
+
+static inline void rocketnet_channel_harness_clear_held( rocketnet_channel_harness_t * h )
+{
+    h->held_count = 0;
+}
+
 static inline int rocketnet_channel_harness_set_budgets( rocketnet_channel_harness_t * h, uint32_t client_kbps, uint32_t server_kbps )
 {
     return rocketnet_message_client_set_send_kbps( h->message_client, client_kbps ) &&
@@ -764,6 +841,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->sim ) rocketnet_network_simulator_destroy( h->sim );
     if ( h->client_endpoint.payload ) rocketnet_free( NULL, h->client_endpoint.payload );
     if ( h->server_endpoint.payload ) rocketnet_free( NULL, h->server_endpoint.payload );
+    if ( h->held ) rocketnet_free( NULL, h->held );
     rocketnet_channel_delivery_ring_destroy( &h->to_server );
     rocketnet_channel_delivery_ring_destroy( &h->to_client );
     if ( h->counting_allocator_installed )

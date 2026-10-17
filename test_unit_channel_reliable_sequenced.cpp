@@ -4,6 +4,7 @@
 */
 
 // RNChannelTypes!Dispatch, !Drain and !ReceiveAck for code 4.
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -346,6 +347,56 @@ static void newer_state_releases_incomplete_block()
 }
 
 REGISTER_UNIT_TEST( newer_state_releases_incomplete_block );
+
+// RNChannelTypes!Dispatch (I12): a code-4 record stale for its ordered epoch
+// is acked by the transport and discarded, and its receive number is released.
+// Without the release each stale arrival keeps one descriptor live, and the
+// first number W above it collides with that slot, so the window refuses the
+// stream after about W numbers. Each epoch here is one fresh code-4 state,
+// the ordered record that closes the epoch, then a late code-4 state from the
+// closed epoch; more than W + 64 numbers pass through the window.
+static void stale_numbers_released_across_ordered_epochs()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    const uint32_t W = receiver.region->window;
+    check( W >= 64 );
+    const uint32_t epochs = ( W + 64 ) / 3 + W;
+    const uint8_t payload = 5;
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    uint32_t number = 0;
+    uint32_t sequencing = 0;
+    for ( uint32_t epoch = 0; epoch < epochs; epoch++ )
+    {
+        const int codes[3] = { ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                               ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED };
+        const int expected[3] = { ROCKETNET_CHANNEL_DISPATCH_DELIVERED, ROCKETNET_CHANNEL_DISPATCH_DELIVERED,
+                                  ROCKETNET_CHANNEL_DISPATCH_STALE };
+        for ( int i = 0; i < 3; i++ )
+        {
+            rocketnet_message_record_t record = rs_record( codes[i], number, epoch, codes[i] == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED ? 0 : sequencing++, &payload );
+            record.ring = ( number & ( W - 1 ) ) * 2;
+            uint32_t slot;
+            const int accepted = rn_window_receive_accept( &receiver.ordered.receive, &record, &slot );
+            if ( accepted != RN_WINDOW_RECEIVE_ACCEPT )
+                printf( "stale_numbers_released_across_ordered_epochs: number %u (epoch %u) refused by the window: accept=%d violation=%d\n",
+                        number, epoch, accepted, (int) receiver.ordered.receive.violation );
+            check( accepted == RN_WINDOW_RECEIVE_ACCEPT );
+            rn_delivery_t out;
+            check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == expected[i] );
+            number++;
+        }
+        rn_ordered_end_update( &receiver.ordered );
+        check( receiver.region->channel_receive[0].ordered_read == epoch + 1 );
+    }
+    check( number > W + 64 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + epochs );
+    for ( uint32_t i = 0; i < W; i++ )
+        check( receiver.region->receive_descriptors[i].live == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( stale_numbers_released_across_ordered_epochs );
 
 static void rnchannel_reliable_sequenced_witness_replays()
 {
