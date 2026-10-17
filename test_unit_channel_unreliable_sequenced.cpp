@@ -245,7 +245,7 @@ static void large_state_over_budget_drops_whole_payload()
     const uint64_t over_budget = object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET];
     sequenced_large_start_calls = 0;
     rn_message_object_send_packets( object );
-    rocketnet_unit_check( sequenced_large_start_calls == 0 );
+    rocketnet_unit_check( sequenced_large_start_calls == 1 );                     // the connection's CONFIG is offered first (CHANNELS.md 10.3)
     rocketnet_unit_check( connection->unreliable_count == 0 );
     rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == over_budget + 1 );
     rocketnet_unit_check( connection->budget.bytes_spent == 0 );
