@@ -187,6 +187,12 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
 
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots );
 
+// The client's delivered capacity from its configuration: the completion
+// bound above at the client's drain, ROCKETNET_NUM_CLIENT_PACKETS packets
+// per update for its one connection. Zero for invalid geometry.
+
+int rocketnet_client_reassembly_delivered_capacity( int num_slots );
+
 // The server's delivered arena bytes beside that count: the smaller of
 // capacity x the aligned maximum payload and the drain's fragment bytes
 // plus the payloads half-held in slots, padded to the packing stride.

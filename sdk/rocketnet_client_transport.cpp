@@ -212,7 +212,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
 
     plan.transport_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_transport_t) } );
-    plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
+    plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, rocketnet_client_reassembly_delivered_capacity( slots ) );
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
@@ -285,7 +285,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, ROCKETNET_NUM_CLIENT_PACKETS / 2))
+    if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
         return NULL;
 
 
@@ -365,14 +365,14 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     client_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
                                                                 ( client_transport->max_payload_bytes + 15 ) & ~15 );
-    // the delivered mirror sizes to the client's drain bound: one update
-    // drains at most ROCKETNET_NUM_CLIENT_PACKETS packets, and a payload
-    // takes at least two fragments, so half that is the most completions
-    // an update can produce -- about 8.4MB at the default maximum, spent
-    // so BATCH_FULL stays a true invariant under any legitimate burst
+    // the delivered mirror sizes to the completion bound: one update drains
+    // at most ROCKETNET_NUM_CLIENT_PACKETS packets, and its completions are
+    // half the drain plus the payloads begun in an earlier update (at most
+    // the slot count), so BATCH_FULL stays zero under any load the drain
+    // delivers -- about 8.4MB at the default maximum
 
     client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, num_reassembly_slots, client_transport->max_payload_bytes,
-                                                                    ROCKETNET_NUM_CLIENT_PACKETS / 2 );
+                                                                    rocketnet_client_reassembly_delivered_capacity( num_reassembly_slots ) );
     if ( !client_transport->send_arena || !client_transport->reassembly )
     {
         rocketnet_error( "client could not allocate fragmentation storage" );

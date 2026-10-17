@@ -140,6 +140,21 @@ int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slo
     return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
 }
 
+// the completion bound (rocketnet_fragment.h; the delivered bound of
+// tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2), at the
+// client's one connection and drain: of the N packets one update drains, a
+// payload begun earlier completes on one and a payload begun in the update
+// on two, and at most num_slots payloads are begun earlier
+
+int rocketnet_client_reassembly_delivered_capacity( int num_slots )
+{
+    if ( num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS )
+        return 0;
+    const int64_t drain = ROCKETNET_NUM_CLIENT_PACKETS;
+    const int64_t begun_earlier = num_slots;
+    return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
+}
+
 // the byte bound beside the count bound (rocketnet_fragment.h; finding D2
 // of tla/README-FragmentsAndAcks.md): a payload completed in an update is
 // made of fragments drained in that update -- one fragment per packet, at
