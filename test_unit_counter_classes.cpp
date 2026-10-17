@@ -287,6 +287,7 @@ static const char * const counters_appended_names[] =
     "MESSAGE_SEND_REFUSED",
     "MESSAGE_STALE_CONNECTION_ENTRY",
     "MESSAGE_NOT_RELEASED",
+    "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

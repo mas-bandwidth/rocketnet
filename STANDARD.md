@@ -326,8 +326,8 @@ response is to request a fresh connect token from the backend, which has better
 information about server health than any stale token does.
 
 *This is deliberate. Because both addresses belong to one server, they share one used-token
-history, and that history binds a token to the source address that first
-presented it. A client that failed over between families would present the same
+history, and that history binds a token to the source address whose response
+first opened under it. A client that failed over between families would present the same
 token from a different source address and be refused — locking itself out of
 both paths. Failover between families is therefore not a client behavior; it is
 the backend's job, exactly as failover between servers is.*
@@ -2727,8 +2727,12 @@ In this exact order, on a _connection request packet_:
   guarantee is carried by token expiry, which is why expiry SHOULD be short.
   The admitted-token set is separate from the used-token history and is
   specified with it below.
-* Record the token identifier with this source address and port in the used-token
-  history.
+* Do not record the token in the used-token history here. **A request proves
+  nothing about who holds the token's keys** — anyone who saw it on the wire can
+  replay it from an address of their own — so the binding is made only when a
+  response from this address opens under the handshake key (_Processing
+  Connection Response Packets_). Until then several addresses MAY each hold a
+  mapping for one token; at most one of them can be admitted.
 
 * **Generate a fresh random 64-bit session nonce for this mapping.** It is
   never reused, and because it is chosen here rather than at cookie time, no
@@ -2856,7 +2860,8 @@ police it.
 one of them can tolerate eviction.**
 
 **The used-token history** binds a token identifier to the first source address
-that presented it, so a captured request cannot be replayed from elsewhere. It
+whose connection response opened under it, so a captured request cannot be
+replayed from elsewhere. It
 is a fixed-size structure; an implementation MUST document its capacity and
 eviction policy, and SHOULD size it to at least eight entries per client slot
 with oldest-first eviction. Entries expire with the tokens they name. Eviction
@@ -2893,8 +2898,19 @@ only data already verified.
 * The packet has already opened under this mapping's handshake key, which is all
   the response has to prove: the address was validated in step 1 and the token was
   verified in step 2.
+* Record the token identifier with this source address and port in the used-token
+  history (a no-op when the token is already bound). **This is the binding, and it
+  is made here rather than at the request because only here has the address
+  proven it holds the token's keys:** the handshake key is derived from them, so
+  a replayed request from another address, which never opens a response, binds
+  nothing.
 * If a client from the source address and port is already connected, ignore it.
 * If a client with that client id is already connected, ignore it.
+* If this token's identifier is in the admitted-token set, ignore it and count
+  `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`. The request path checks the
+  same set, but before any address has proven the token, so two addresses can
+  each hold a mapping for one token; this check keeps **a token admits one
+  connection** true when the second of them responds.
 * If no slots are available, respond with a _connection denied packet_ under
   the handshake keys, carrying the mapping's session nonce, and stop. The
   mapping is left in place, so a retransmitted response is denied again. This
@@ -3555,17 +3571,21 @@ is a stronger trust anchor than a certificate authority, which can impersonate
 but cannot decrypt. It now costs 64 bytes across two handshake packets, two
 scalar multiplications per side, and **nothing at all per game packet**.
 
-**Connection-request replay is a denial of service against one client, not an
-authentication break.** An on-path observer can capture a connection request and
-replay it from its own address; it cannot complete the handshake, because the
-challenge returns sealed under a key it does not hold. If its replay arrives
-first, the used-token history binds that token to the attacker's address and the
-legitimate client must obtain a fresh token. It
-requires an on-path position, from which simply dropping the client's packets is
-a more effective attack — but it is not equivalent, because it is harder to
-attribute: dropped packets look like a broken network and get investigated as
-one, while this looks to the player like the game's own backend misbehaving. Mild
-in effect, quieter than the alternative.
+**Connection-request replay can no longer bind a token to the attacker's
+address.** An on-path observer can capture a connection request and replay it
+from its own address; it cannot complete the handshake, because the challenge
+returns sealed under a key it does not hold. The used-token history records a
+token only when a response opens under the handshake key, and the handshake key
+is derived from the token's sealed keys, so the replaying address never reaches
+the record: its mapping holds no slot and dies at the handshake deadline, while
+the legitimate client's own request, arriving before or after the replay, is
+answered and its response binds the token to the client's address. The
+replay costs the server one mapping for one handshake deadline, and an on-path
+attacker who wants the client kept out must drop the client's packets instead,
+which is no attack this layer can stop. *(An earlier revision recorded the token
+at the request, so a replay that arrived first bound the token to the attacker's
+address and the legitimate client had to obtain a fresh token: a denial of
+service that looked to the player like the game's own backend misbehaving.)*
 
 **No response may be larger than the packet that provoked it.** This is a
 normative invariant, not inherited advice, and **every packet type MUST be
@@ -3672,7 +3692,7 @@ is downstream of a judgment the backend was making anyway.
 work.** A protocol can push a problem upstream and leave the
 upstream party holding a lever connected to nothing. This one does not: **a
 connect token buys exactly one connection.** The used-token history binds a
-token to the first source address that presents it, the admitted-token set
+token to the first source address that opens a response under it, the admitted-token set
 refuses a token that has already admitted a connection for as long as that
 token lives, and a client id already connected is refused. An attacker who wants a thousand concurrent
 connections therefore needs a thousand genuinely issued tokens, and their cost
