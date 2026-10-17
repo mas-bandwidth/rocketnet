@@ -543,7 +543,8 @@ static inline void rocketnet_channel_seed_exit_hook( void )
 }
 
 // Create both ends over the simulator with a seed from ROCKETNET_CHANNEL_SEED.
-static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t * h )
+// A non-NULL message_config replaces the default message config.
+static inline int rocketnet_channel_harness_create_with_config( rocketnet_channel_harness_t * h, const struct rocketnet_message_config_t * message_config )
 {
     struct rn_message_link_t client_link, server_link;
     struct rocketnet_server_protocol_t * server;
@@ -641,6 +642,8 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     rocketnet_server_protocol_update( server, h->now );
 
     rocketnet_message_default_config( &h->message_config );
+    if ( message_config )
+        h->message_config = *message_config;
     if ( !rocketnet_channel_delivery_ring_init( &h->to_server, h->message_config.max_message_bytes ) ||
          !rocketnet_channel_delivery_ring_init( &h->to_client, h->message_config.max_message_bytes ) )
         goto failed;
@@ -662,6 +665,19 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
 failed:
     rocketnet_channel_harness_destroy( h );
     return 0;
+}
+
+static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t * h )
+{
+    return rocketnet_channel_harness_create_with_config( h, NULL );
+}
+
+static inline int rocketnet_channel_harness_create_with_unreliable_deliveries( rocketnet_channel_harness_t * h, int deliveries )
+{
+    struct rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.unreliable_deliveries = deliveries;
+    return rocketnet_channel_harness_create_with_config( h, &config );
 }
 
 // Set the link knobs the type cards use.
