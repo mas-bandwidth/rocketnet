@@ -5535,6 +5535,10 @@ extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
 extern void unreliable_dropped_while_reliable_waits_never_arrives();
 extern void unreliable_dropped_when_builder_out_of_budget_never_arrives();
+extern void control_disconnect_burst_each_end();
+extern void control_standalone_ack_each_end();
+extern void control_fragment_packets_each_end();
+extern void control_denied_when_server_full();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
@@ -5662,6 +5666,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link },
     { "unreliable_dropped_while_reliable_waits_never_arrives", unreliable_dropped_while_reliable_waits_never_arrives },
     { "unreliable_dropped_when_builder_out_of_budget_never_arrives", unreliable_dropped_when_builder_out_of_budget_never_arrives },
+    { "control_disconnect_burst_each_end", control_disconnect_burst_each_end },
+    { "control_standalone_ack_each_end", control_standalone_ack_each_end },
+    { "control_fragment_packets_each_end", control_fragment_packets_each_end },
+    { "control_denied_when_server_full", control_denied_when_server_full },
     { "unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted },
     { "reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full },
     { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },

@@ -739,7 +739,7 @@ static inline void rocketnet_channel_endpoint_disconnect( void * transport, int 
     const struct rocketnet_address_t * to = endpoint->is_server ? &h->client_addr : &h->server_addr;
     for ( int i = 0; i < packet_count; i++ )
     {
-        const uint8_t * packet = packets + (size_t) i * (size_t) packet_bytes;
+        const uint8_t * packet = packets + (size_t) i * (size_t) ROCKETNET_SEND_BUDGET;
         rocketnet_channel_capture_wire( h->now, from, to, packet, packet_bytes );
         rocketnet_network_simulator_send( h->sim, from, to, packet, packet_bytes, h->now );
     }
