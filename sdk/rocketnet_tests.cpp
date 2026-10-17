@@ -12574,7 +12574,7 @@ void rocketnet_test_server_transport_entries_carry_connection_id()
     struct rocketnet_address_t from;
     int bytes = 0;
 
-    double time = 101.0;
+    double time = 1000.0;     // the test clock starts at 1000.0
 
     // the server sends A three payloads with packet ids 7001..7003; A
     // receives them, so A's next packet acknowledges all three
