@@ -577,6 +577,10 @@ static const pcapng_pin_t pcapng_pins[] =
     { "unreliable_at_most_once_over_duplicating_link.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client PAYLOAD=80;read client ack block KEEP_ALIVE=1;read client ack block PAYLOAD=121;read client message payload=77;read server PAYLOAD=80;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=121;read server message payload=78;" },
     { "unreliable_dropped_when_builder_out_of_budget_never_arrives.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=52;read client ack block KEEP_ALIVE=52;read server KEEP_ALIVE=51;read server PAYLOAD=1;read server REQUEST token=2;read server RESPONSE=1;read server ack block KEEP_ALIVE=51;read server ack block PAYLOAD=1;read server message payload=1;" },
     { "unreliable_receipts_over_lossy_link.pcapng", "read client CHALLENGE=1;read client COOKIE=2;read client KEEP_ALIVE=4;read client PAYLOAD=48;read client ack block KEEP_ALIVE=2;read client ack block PAYLOAD=43;read client message payload=42;read server KEEP_ALIVE=2;read server PAYLOAD=48;read server REQUEST token=2;read server RESPONSE=2;read server ack block KEEP_ALIVE=1;read server ack block PAYLOAD=47;read server message payload=42;" },
+    { "control_denied_when_server_full.pcapng", "read client COOKIE=1;read client DENIED=1;read server REQUEST token=2;" },
+    { "control_disconnect_burst_each_end.pcapng", "PREFILTER_WRONG_VALUE=18;read client CHALLENGE=2;read client COOKIE=2;read client DISCONNECT=1;read client KEEP_ALIVE=2;read client ack block DISCONNECT=1;read client ack block KEEP_ALIVE=2;read server DISCONNECT=1;read server REQUEST token=4;read server RESPONSE=2;read server ack block DISCONNECT=1;" },
+    { "control_fragment_packets_each_end.pcapng", "read client CHALLENGE=1;read client COOKIE=1;read client FRAGMENT=3;read client KEEP_ALIVE=1;read client ack block FRAGMENT=3;read client ack block KEEP_ALIVE=1;read client fragment=2;read client fragment completing=1;read server FRAGMENT=3;read server REQUEST token=2;read server RESPONSE=1;read server ack block FRAGMENT=3;read server fragment=2;read server fragment completing=1;" },
+    { "control_standalone_ack_each_end.pcapng", "MESSAGE_PROTOCOL_VIOLATION MESSAGE_BAD_FORM=72;read client ACK=1;read client CHALLENGE=1;read client COOKIE=1;read client KEEP_ALIVE=1;read client ack block ACK=1;read client ack block KEEP_ALIVE=1;read server PAYLOAD=72;read server REQUEST token=2;read server RESPONSE=1;read server ack block PAYLOAD=72;" },
 };
 
 // replays every file of the corpus; returns the number of unnamed packets and
@@ -734,3 +738,55 @@ static void pcapng_corpus_witness_unread_packet_goes_red()
 }
 
 REGISTER_UNIT_TEST( pcapng_corpus_witness_unread_packet_goes_red );
+
+// The corpus covers each control packet type: every top-level file under
+// test/pcapng/ is read and its interface-0 frames counted by packet type
+// (the first byte of the UDP payload), and the corpus must hold at least
+// one frame of each of types 1 (denied), 6 (disconnect), 8 (ack) and 9
+// (fragment). File input only: no sockets, no threads, no real time.
+static void pcapng_corpus_covers_control_packet_types()
+{
+    static const int required_types[4] = {
+        ROCKETNET_CONNECTION_DENIED_PACKET,
+        ROCKETNET_CONNECTION_DISCONNECT_PACKET,
+        ROCKETNET_CONNECTION_ACK_PACKET,
+        ROCKETNET_CONNECTION_FRAGMENT_PACKET };
+
+    const std::string root = pcapng_directory();
+    std::vector<std::string> names;
+    rocketnet_pcapng_list( root, names );
+    check( !names.empty() );
+
+    long counts[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    for ( size_t i = 0; i < names.size(); i++ )
+    {
+        std::vector<uint8_t> image;
+        check( rocketnet_pcapng_read_file( root + "/" + names[i], image ) == ROCKETNET_PCAPNG_OK );
+        std::vector<rocketnet_pcapng_packet_t> packets;
+        check( rocketnet_pcapng_read_buffer( image.data(), image.size(), packets ) == ROCKETNET_PCAPNG_OK );
+        for ( size_t j = 0; j < packets.size(); j++ )
+        {
+            if ( packets[j].interface_id != ROCKETNET_PCAPNG_INTERFACE_WIRE )
+                continue;
+            const uint8_t * datagram;
+            int bytes;
+            uint32_t src_address, dst_address;
+            uint16_t src_port, dst_port;
+            if ( !rocketnet_pcapng_udp_payload( packets[j].data, &datagram, &bytes, &src_address, &src_port, &dst_address, &dst_port ) )
+                continue;
+            if ( bytes < 1 )
+                continue;
+            const int packet_type = datagram[0];
+            if ( packet_type < 0 || packet_type >= 10 )
+                continue;
+            counts[packet_type]++;
+        }
+    }
+
+    for ( int i = 0; i < 10; i++ )
+        printf( "pcapng coverage: type %d count %ld\n", i, counts[i] );
+    for ( int i = 0; i < 4; i++ )
+        check( counts[required_types[i]] >= 1 );
+}
+
+REGISTER_UNIT_TEST( pcapng_corpus_covers_control_packet_types );
