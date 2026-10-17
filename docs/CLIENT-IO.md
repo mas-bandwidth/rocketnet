@@ -93,26 +93,63 @@ joined (the phase contract it already has) and does three things: it records
 the ring's committed count, publishes the ring to the I/O thread with one
 release store of a ring state word (Filling to HandedOff), and wakes the I/O
 thread once. Then it switches the fill pointer to the other ring and returns.
-No driver call is made on the main thread.
+No driver call is made on the main thread. The same hand-off runs from
+`rocketnet_client_transport_send_packet`, which calls `send_packets` after
+every packet it writes (line 758 at `7ffb924`), and at the end of `update`
+(below), so a frame commonly makes two or more hand-offs.
 
-**Reuse only after sent.** The I/O thread sends every slot of a handed-off
-ring (state Sending), then stores Sent with release. The main thread reopens
-a ring (Sent to Filling, slot count to zero) only after an acquire load sees
-Sent. If `send_packets` finds the other ring not yet Sent, the frame is late:
-it counts a new counter, `CLIENT_SEND_LATE` in `sdk/rocketnet_counters.h`, and waits for Sent (a short
-spin, then the platform wait). It never reuses a ring the I/O thread still
-reads. At the measured cost (under 0.6 ms for 32 packets) a ring is Sent long
-before the next frame, so a late frame is an overload signal, not a path.
+**Reuse only after sent; a hand-off never waits.** The I/O thread sends
+every slot of a handed-off ring (state Sending), then stores Sent with
+release. A hand-off first loads the other ring's state (acquire):
+
+1. Sent: reopen it (Sent to Filling, slot count to zero), then hand off the
+   Filling ring as above.
+2. Filling (only before the first hand-off): hand off as above.
+3. HandedOff or Sending: the hand-off is deferred. The committed slots stay
+   in the Filling ring, the ring stays open to the game threads, and the
+   call counts `CLIENT_SEND_DEFERRED` (a new row
+   `X( CLIENT_SEND_DEFERRED, EXPECTED, NONE )` appended to
+   `sdk/rocketnet_counters.h`) and returns. Nothing is lost and nothing
+   waits: the slots leave with the next hand-off that finds the other ring
+   Sent, from the next `send_packet`, `send_packets` or `update`.
+
+The main thread never waits for the I/O thread on these paths, and never
+reuses a ring the I/O thread still reads. Deferral is the common case, not an
+overload signal: `send_packet` followed by the hand-off at the end of
+`update` in the same frame finds the first ring still HandedOff whenever the
+I/O thread has not been scheduled in between (the reversed witness
+`MCRNClientIoBrokenHandOffWaits.cfg` is the second draft of this card, which
+waited there, `HandOffNeverWaits`, seven steps). Because `update` ends with a
+hand-off every frame, deferred slots leave with the first hand-off after the
+I/O thread has sent the other ring, normally the next frame's update
+(`CommittedEventuallyHandedOff`). While deferred slots pile up the Filling
+ring can fill; `start_packet` then refuses as at BASE (`SEND_RING_FULL`).
+Only `destroy` waits. `disconnect` seals its burst into the Filling ring and
+hands it off like any packet (deferred when the other ring is busy, retried
+by the next `update`); `destroy` makes the last hand-off itself, waiting for
+the other ring to be Sent if it must (Stop and destroy order), so a
+disconnect burst is on the wire before the transport is freed whether or not
+an `update` ran in between.
 
 **The protocol packet and disconnect.** The packet `update` builds
 (`rocketnet_client_protocol_update`) and the disconnect burst of
 `rocketnet_client_transport_disconnect` are sealed into a slot of the Filling
 ring, like a payload, and handed off by the same step: `update` ends with a
-hand-off when it committed a packet, and `disconnect` ends with one. Both run
-on the main thread with fills joined.
+hand-off attempt every frame (it retries any deferred slots, and hands off
+its own packet when it committed one), and `disconnect` ends with one. Both
+run on the main thread with fills joined.
 
 **The wake.** The I/O thread waits on "socket readable or woken", with no
 timeout while running (a bounded timeout only as a guard, never a cadence).
+While its receive buffer is full (`ROCKETNET_NUM_CLIENT_PACKETS`
+datagrams) it waits on the wake alone: the driver's `wait` takes a
+`readable` argument, and the I/O thread passes false when its buffer has no
+room. A full buffer leaves datagrams in the socket, so a wait that also
+returned on readable would return at once, every time, and the I/O thread
+would spin until `update` returns a buffer (the reversed witness
+`MCRNClientIoBrokenFullWaitReadable.cfg`, `FullWaitsOnWake`). With a full
+buffer the I/O thread has always stored the owed flag first (step 3 below),
+so the return at the end of the next `update` wakes it.
 The wake is level-triggered: an eventfd on Linux, an `EVFILT_USER` kevent on
 macOS and iOS, a manual-reset event on Windows. A wake set while the I/O
 thread is not waiting makes the next wait return at once, so a check-then-wait
@@ -150,7 +187,10 @@ buffer:
    it is full.
 
 It never blocks in `wait` while step 2 is possible, and it blocks with
-unpublished datagrams only after step 3 has stored the owed flag.
+unpublished datagrams only after step 3 has stored the owed flag. It calls
+`wait( driver, readable, timeout )` with `readable` true while its buffer has
+room and false while it is full; a full buffer is the only case in which it
+blocks with datagrams still in the socket.
 
 `update`, every frame:
 
@@ -203,11 +243,19 @@ and a fake driver, on the test's thread, so the hand-off, reopen, publish,
 owed flag and stop order are tested deterministically with no thread and no
 socket.
 
-**Stop and destroy order.** `destroy` stores quit and wakes the I/O thread.
-The I/O thread finishes the ring in flight (so a disconnect burst handed off
-just before destroy is sent), sends nothing new, and exits. The main thread
-joins it, then closes the driver, then frees the transport. Nothing is freed
-while the I/O thread can touch it (`FreedOnlyAfterJoin`).
+**Stop and destroy order.** `destroy` first empties the Filling ring: if it
+holds committed slots (a deferred disconnect burst, say), it waits until the
+other ring loads Sent (acquire; `rocketnet_platform_sleep( 0.0001 )` between
+loads; destroy is off the frame path), reopens it and hands the Filling ring
+off. Then it stores quit and wakes the I/O thread. The I/O thread finishes
+every handed-off ring (so the disconnect burst is sent), sends nothing new,
+and exits. The main thread joins it, then closes the driver, then frees the
+transport. Nothing is freed while the I/O thread can touch it
+(`FreedOnlyAfterJoin`), and no committed slot is dropped by destroy
+(`CommittedEventuallyHandedOff`). In the step-driven unit mode there is no
+I/O thread: `destroy` calls `rocketnet_client_io_step( transport, false )`
+itself in place of the sleep and the join, so the order is tested with no
+real time.
 
 ## The interface
 
@@ -231,10 +279,11 @@ struct rocketnet_client_driver_operations_t
     // packet_bytes[i]; returns the count, zero when drained. Borrows the
     // storage for the call only.
     int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
-    // optional, with wake; I/O thread only. Blocks until the socket is
-    // readable, a wake is set, or timeout_seconds pass; consumes the wake.
-    // Returns true when readable or woken.
-    bool (*wait)( void * driver, double timeout_seconds );
+    // optional, with wake; I/O thread only. Blocks until a wake is set,
+    // the socket is readable (only when readable is true), or
+    // timeout_seconds pass; consumes the wake. With readable false the
+    // socket's readiness is ignored. Returns true when woken or readable.
+    bool (*wait)( void * driver, bool readable, double timeout_seconds );
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
     void (*wake)( void * driver );
@@ -285,18 +334,28 @@ same meter measures.
 `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_driver.h`,
 `sdk/rocketnet_driver.cpp` (the open-time check), `sdk/rocketnet.h` and
 `sdk/rocketnet_config.cpp` (the `time_callback` field),
-`sdk/rocketnet_counters.h` (`CLIENT_SEND_LATE`), a new
+`sdk/rocketnet_counters.h` (`CLIENT_SEND_DEFERRED`), a new
 `test_unit_client_io.cpp`, `tla/COVERAGE.tsv` (client-io to current) and the
 code comments citing `tla/RNClientIo.tla` actions. It adds the two rings, the
-hand-off, the reopen-after-Sent rule with the late counter, the receive
-handoff exactly as The receive path states it (the state word per buffer, the
-owed flag and its seq_cst pairing, the return at the end of every update), the
+hand-off that never waits (reopen after Sent, defer and count otherwise,
+the retry at the end of every update, and the wait in destroy only), the
+receive handoff exactly as The receive path states it (the state word per buffer, the
+owed flag and its seq_cst pairing, the return at the end of every update,
+`wait` with `readable` false while the buffer is full), the
 clock callback, `rocketnet_client_io_step`
 and the stop order, and the open-time check; no built-in driver gains `wait`
 yet, so every platform stays on the BASE path in production. Tests, all unit
 tier with a fake client driver and the step called directly, clock from 1000.0:
 `client_io_handoff_sends_ring_once`, `client_io_ring_not_reused_before_sent`
-(the late counter moves, the ring is not rewritten),
+(the ring is not rewritten while the I/O thread holds it),
+`client_io_handoff_never_waits` (`send_packet` then `update` with the I/O
+step not run in between: both return, `CLIENT_SEND_DEFERRED` is 1, and after
+one I/O step the next `update` hands the deferred packet off and the step
+after that sends it; the stall of `MCRNClientIoBrokenHandOffWaits.cfg`),
+`client_io_full_buffer_waits_on_wake_only` (the fake driver holds more than
+`ROCKETNET_NUM_CLIENT_PACKETS` datagrams, update holds the other buffer: the
+step calls `wait` with `readable` false, and the return at the end of
+update wakes it; the spin of `MCRNClientIoBrokenFullWaitReadable.cfg`),
 `client_io_exposed_buffer_stable_until_update`,
 `client_io_update_returns_buffer_every_update` (two buffers: a batch read
 while update holds the other is exposed by the next update, the stall of
@@ -305,7 +364,8 @@ while update holds the other is exposed by the next update, the stall of
 blocks; the return at the end of update calls the fake driver's `wake`
 exactly once),
 `client_io_receive_time_from_callback`,
-`client_io_destroy_sends_in_flight_disconnect`,
+`client_io_destroy_sends_in_flight_disconnect` (also with the burst
+deferred behind a ring still HandedOff),
 `client_io_backend_without_wait_uses_base_path`. Red at BASE:
 `./bin/test client_io_handoff_sends_ring_once` prints
 `unknown unit test client_io_handoff_sends_ring_once`, exit 2. Needs: this
@@ -314,7 +374,8 @@ card.
 **rocketnet-client-io-linux.** PATHS: `sdk/rocketnet_driver_builtin.cpp`,
 `sdk/rocketnet_platform.cpp` (Linux section), `sdk/rocketnet_platform.h`,
 `functional/rocketnet_functional_tests.cpp`, `bench/client_main_thread_cost.md`.
-The portable client on Linux gains `wait` (poll on the socket and an eventfd),
+The portable client on Linux gains `wait` (poll on an eventfd, plus the
+socket with `POLLIN` when `readable` is true),
 `wake` (eventfd write), `send_batch` (`sendmmsg`) and `receive_batch`
 (`recvmmsg`). Tests: a functional loopback case
 `client_io_linux_handoff_round_trip` (real socket, real thread) and the
@@ -333,7 +394,9 @@ section), `functional/rocketnet_functional_tests.cpp`. The msgx client gains
 (`rocketnet_platform_socket_send_packets` at line 1997 and
 `rocketnet_platform_socket_receive_packets` at line 2123, `sendmsg_x` and
 `recvmsg_x` with their per-packet fallback), and `wait`/`wake` through one
-kqueue holding the socket's `EVFILT_READ` and an `EVFILT_USER` trigger.
+kqueue holding the socket's `EVFILT_READ` and an `EVFILT_USER` trigger; when
+`readable` changes, the same `kevent` call carries `EV_DISABLE` or
+`EV_ENABLE` for the read filter, so a full buffer waits on the trigger alone.
 Tests: functional `client_io_apple_handoff_round_trip` (SKIPPED twin
 elsewhere), `./bin/test_driver`, the meter gate on a macOS member. Red at
 BASE: `./bin/functional --run client_io_apple_handoff_round_trip` prints
@@ -344,7 +407,8 @@ rocketnet-client-io-transport.
 `sdk/rocketnet_platform.cpp` (Windows section), `sdk/rocketnet_platform.h`,
 `functional/rocketnet_functional_tests.cpp`. The portable client on Windows
 gains `wait` (`WSAEventSelect` with `FD_READ` on the socket and
-`WaitForMultipleObjects` over that event and a manual-reset wake event) and
+`WaitForMultipleObjects` over that event and a manual-reset wake event, or
+`WaitForSingleObject` on the wake event alone when `readable` is false) and
 `wake` (`SetEvent`); `send_batch` loops `WSASendMsg` on the I/O thread.
 Tests: functional `client_io_windows_handoff_round_trip`, the native driver
 contract run, the meter gate on the Windows member. Red at BASE: the same
@@ -363,10 +427,11 @@ exit 2. Needs: rocketnet-client-io-transport.
 - **RIO on Windows and io_uring on Linux** for the client: not needed for
   the gate at the measured cost; a later card may measure them.
 - **The server transport** is unchanged.
-- **The model** abstracts slots, datagrams and buffers to counts and states;
-  a full receive buffer is the same owed path as a buffer with no Free one
-  to swap to (the model's buffers have no capacity bound); the late
-  counter's spin, the guard timeout, packet bytes and the clock are not
+- **The model** abstracts slots, datagrams and buffers to counts and states,
+  with a receive buffer of `BufferCap` datagrams (one in the committed run,
+  so the full buffer with datagrams left in the socket is reached in a few
+  steps); the deferred counter is a flag, destroy's wait for Sent is the
+  guard on `Stop`, and the guard timeout, packet bytes and the clock are not
   modelled. Each action is atomic, which is the seq_cst pairing of the
   handoff; a release and acquire implementation of the owed flag is outside
   what the model checks.
@@ -377,15 +442,22 @@ exit 2. Needs: rocketnet-client-io-transport.
 `tla/README-RNClientIo.md`) models this design: the two send rings, each
 slot's owner, the receive buffers' handshake, the wake, and the thread phase.
 Update's two steps are the actions `Expose` and `Return`; the owed flag is
-`IoOwe`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
-`ExposedStable`, `FreedOnlyAfterJoin` and `NoReceiveStall` (while the
+`IoOwe`; a deferred hand-off is `Defer`, and the wait's `readable` argument
+is `waitReadable`. `MCRNClientIo.cfg` checks `TypeOK`, `NoReuseBeforeSent`,
+`ExposedStable`, `FreedOnlyAfterJoin`, `HandOffNeverWaits` (the main thread
+never blocks on the I/O thread), `FullWaitsOnWake` (a blocked I/O thread with
+a full buffer waits on the wake alone) and `NoReceiveStall` (while the
 transport runs, datagrams in the I/O thread's buffer always have a next step
-toward update), and under weak fairness of the I/O thread, the join and
-update's two steps `HandedOffEventuallySent`, `StopEventuallyJoins`,
-`FilledEventuallyExposed` (a buffer of received datagrams is eventually
-exposed) and `ArrivedEventuallyDelivered` (every datagram that arrives
-reaches update). The three reversed witnesses,
+toward update), and under weak fairness of the I/O thread, the join, a game
+thread's finish of its packet, the reopen, the hand-off and update's two
+receive steps `HandedOffEventuallySent`, `CommittedEventuallyHandedOff` (a
+committed slot, deferred or not, is eventually handed to the I/O thread),
+`StopEventuallyJoins`, `FilledEventuallyExposed` (a buffer of received
+datagrams is eventually exposed) and `ArrivedEventuallyDelivered` (every
+datagram that arrives reaches update). The five reversed witnesses,
 `MCRNClientIoBrokenReuseBeforeSent.cfg`,
-`MCRNClientIoBrokenSwapWhileReading.cfg` and
-`MCRNClientIoBrokenReceiveStall.cfg`, each violate exactly their declared
+`MCRNClientIoBrokenSwapWhileReading.cfg`,
+`MCRNClientIoBrokenReceiveStall.cfg`,
+`MCRNClientIoBrokenHandOffWaits.cfg` and
+`MCRNClientIoBrokenFullWaitReadable.cfg`, each violate exactly their declared
 invariant.

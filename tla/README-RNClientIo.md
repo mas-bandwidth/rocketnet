@@ -5,38 +5,47 @@ The client transport with its socket I/O on one I/O thread, as
 `sdk/rocketnet_client_transport.cpp` at the base of the design: the payload
 ring filled by `rocketnet_client_transport_start_packet` (line 697), the
 per-packet send walk of `rocketnet_client_transport_send_packets` (line 987,
-the walk at lines 1001-1017), the receive thread (created at line 407, its
-loop at line 1275, the 1 ms sleep at line 1283), and the receive buffers
-swapped under a mutex by `rocketnet_client_update_swap_receive_buffers`
-(line 515) and filled by `rocketnet_client_receive_packets` (line 1234). No
-code implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
+the walk at lines 1001-1017), which `rocketnet_client_transport_send_packet`
+calls after every packet, the receive thread (created at line 407, its loop
+at line 1275, the 1 ms sleep at line 1283), and the receive buffers swapped
+under a mutex by `rocketnet_client_update_swap_receive_buffers` (line 515)
+and filled by `rocketnet_client_receive_packets` (line 1234). No code
+implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
 
 - **The two send rings.** Game threads write slots of the ring that is
-  Filling (`Write`, then `Commit`). `send_packets` (`HandOff`), with the fills
-  joined and at least one slot committed, hands the ring to the I/O thread,
-  sets the wake and switches to the other ring; if the other ring is not open
-  yet it waits (the action is not enabled). The I/O thread sends each slot
-  (`IoSend`, the ring Sending) and then releases the ring (`IoFinishRing`,
-  Sent). Only a Sent ring is reopened (`Reopen`).
+  Filling (`Write`, then `Commit`). A hand-off (`send_packets`, `send_packet`
+  through it, or the end of `update`), with the fills joined and at least
+  one slot committed, either hands the ring to the I/O thread, sets the wake
+  and switches to the other ring when that ring is open (`HandOff`), or,
+  when the other ring is still HandedOff or Sending, defers: the committed
+  slots stay in the Filling ring and `CLIENT_SEND_DEFERRED` moves (`Defer`,
+  the flag `deferred`). A hand-off never waits. The I/O thread sends each
+  slot (`IoSend`, the ring Sending) and then releases the ring
+  (`IoFinishRing`, Sent). Only a Sent ring is reopened (`Reopen`). `WaitDone`
+  and `mainWait` exist only for the defect `HandOffWaits`.
 - **The receive handoff.** The I/O thread reads a datagram into its Fill
-  buffer (`IoReceive`) and, when a Free buffer is there, publishes the Fill
-  buffer as Ready and takes the Free one to fill (`IoPublish`). With no Free
-  buffer it records the publish as owed (`IoOwe`) before it may block.
-  `update` is two steps: at its start it exposes the Ready buffer when there
-  is one (`Expose`), and at its end, every update, it returns the buffer it
-  holds as Free and wakes the I/O thread when the owed flag is set
-  (`Return`). Each action is one atomic step, which is the seq_cst
-  store-then-load pairing of `docs/CLIENT-IO.md`.
-- **The wake.** `IoWait` blocks only when nothing is visible to do, never
-  while a publish is possible, and with an unpublished batch only once it is
-  owed; `IoWake`
-  returns on the wake or a readable socket and consumes the wake;
+  buffer while it has room (`IoReceive`, at most `BufferCap`) and, when a
+  Free buffer is there, publishes the Fill buffer as Ready and takes the Free
+  one to fill (`IoPublish`). With no Free buffer it records the publish as
+  owed (`IoOwe`) before it may block. `update` is two steps: at its start it
+  exposes the Ready buffer when there is one (`Expose`), and at its end,
+  every update, it returns the buffer it holds as Free and wakes the I/O
+  thread when the owed flag is set (`Return`). Each action is one atomic
+  step, which is the seq_cst store-then-load pairing of `docs/CLIENT-IO.md`.
+- **The wake.** `IoWait` blocks only when nothing is visible to do: never
+  while a publish is possible, with an unpublished batch only once it is
+  owed, and with datagrams in the socket only when the buffer is full. It
+  records the wait's `readable` argument as `waitReadable`: true while the
+  buffer has room, false while it is full. `IoWake` returns on the wake, or
+  on a readable socket only when `waitReadable`, and consumes the wake;
   `IoClearWake` consumes a wake a running thread does not need. The wake is
   level-triggered, so the check and the wait are one step in the model and
   sound in code: a wake set between them makes the wait return at once.
-- **Stop.** `Stop` sets the phase Stopping and the wake; the I/O thread
-  finishes the ring in flight and exits (`IoExit`); the main thread joins
-  (`Join`) and frees (`Free`).
+- **Stop.** `Stop` is enabled only once the Filling ring holds no committed
+  slot (destroy makes the last hand-off itself, waiting for the other ring
+  to be Sent; that wait is the guard), then sets the phase Stopping and the
+  wake; the I/O thread finishes every handed-off ring and exits (`IoExit`);
+  the main thread joins (`Join`) and frees (`Free`).
 
 ## Invariants
 
@@ -46,19 +55,32 @@ code implements the design yet; `tla/COVERAGE.tsv` marks the machine owed.
   `update` exposed at the last `Expose`, until `Return`.
 - **`FreedOnlyAfterJoin`**: once freed, the I/O thread has exited and holds
   no ring.
+- **`HandOffNeverWaits`**: the main thread is never blocked on the I/O
+  thread (`mainWait` stays false).
+- **`FullWaitsOnWake`**: a blocked I/O thread whose buffer is full waits on
+  the wake alone (`waitReadable` is false).
 - **`NoReceiveStall`**: while the transport runs, datagrams in the I/O
   thread's Fill buffer always have a next step toward `update`: `IoPublish`,
   `Expose`, `Return` or `IoWake` is enabled.
 - **`TypeOK`**: every variable has its declared type.
 
+`HandOffNeverWaits` and `FullWaitsOnWake` state the two rules directly; what
+their witnesses show is that the defect each rule forbids is reached on the
+common path in seven and eight steps, not only under overload. A spin is not
+a liveness violation (the thread keeps returning, and `Return` eventually
+frees a buffer), which is why the full-buffer rule is an invariant.
+
 ## Liveness
 
 Checked under weak fairness of the I/O thread's `IoSend`, `IoFinishRing`,
-`IoReceive`, `IoPublish`, `IoOwe`, `IoWake` and `IoExit`, of `Join`, and of
-`update`'s `Expose` and `Return` (the game calls update every frame)
-(`SpecFair`):
+`IoReceive`, `IoPublish`, `IoOwe`, `IoWake` and `IoExit`, of `Join`, of a
+game thread's `Commit` of a packet it started, of `Reopen` and `HandOff`,
+and of `update`'s `Expose` and `Return` (the game calls update every frame,
+and update ends with a hand-off) (`SpecFair`):
 
 - **`HandedOffEventuallySent`**: a handed-off ring is eventually Sent.
+- **`CommittedEventuallyHandedOff`**: a committed slot, deferred or not, is
+  eventually handed to the I/O thread; destroy drops none.
 - **`StopEventuallyJoins`**: after `Stop` the thread is eventually joined.
 - **`FilledEventuallyExposed`**: a Fill buffer holding datagrams is
   eventually Exposed, unless the transport stops.
@@ -69,14 +91,13 @@ Checked under weak fairness of the I/O thread's `IoSend`, `IoFinishRing`,
 
 - Slots, datagrams and buffers are states and counts; packet bytes, the
   wire, the clock callback and the decrypt are not modelled.
-- The receive buffer's capacity is not bounded: a full buffer with no Free
-  one is the owed path the model checks (`IoOwe`, then `Return` wakes). The
-  late counter's spin is not modelled; the hand-off waiting is the disabled
-  `HandOff`.
+- The deferred counter is the flag `deferred`; destroy's wait for Sent is
+  the guard on `Stop`, not a modelled spin.
 - A release and acquire implementation of the owed flag (weaker than
   seq_cst) is outside the model: its atomic steps are the seq_cst pairing.
 - `update`'s protocol packet and the disconnect burst are slots committed and
-  handed off like payloads, so they are `Write`, `Commit` and `HandOff`.
+  handed off like payloads, so they are `Write`, `Commit` and `HandOff` or
+  `Defer`.
 
 ## How to run it
 
@@ -87,6 +108,8 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup 
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenReuseBeforeSent.cfg MCRNClientIo
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenSwapWhileReading.cfg MCRNClientIo
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenReceiveStall.cfg MCRNClientIo
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenHandOffWaits.cfg MCRNClientIo
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 1 -cleanup -config MCRNClientIoBrokenFullWaitReadable.cfg MCRNClientIo
 ```
 
 The records come from `tlacheck run` as `tla/README.md` describes (group
@@ -95,17 +118,32 @@ The records come from `tlacheck run` as `tla/README.md` describes (group
 | Constant | Value |
 |---|---|
 | `NumSlots` | 2 |
-| `MaxHandOffs` | 3 |
-| `MaxDatagrams` | 2 |
+| `BufferCap` | 1 (2 in `MCRNClientIoBrokenSwapWhileReading.cfg`) |
+| `MaxDatagrams` | 3 |
 | `ReopenBeforeSent` | `FALSE` (`TRUE` in `MCRNClientIoBrokenReuseBeforeSent.cfg`) |
 | `ReceiveIntoExposed` | `FALSE` (`TRUE` in `MCRNClientIoBrokenSwapWhileReading.cfg`) |
 | `SwapNeedsReady` | `FALSE` (`TRUE` in `MCRNClientIoBrokenReceiveStall.cfg`) |
+| `HandOffWaits` | `FALSE` (`TRUE` in `MCRNClientIoBrokenHandOffWaits.cfg`) |
+| `FullWaitReadable` | `FALSE` (`TRUE` in `MCRNClientIoBrokenFullWaitReadable.cfg`) |
 
-The committed run generates 203,864 states and finds 55,764 distinct states
-with no error: the five invariants hold, and `HandedOffEventuallySent`,
-`StopEventuallyJoins`, `FilledEventuallyExposed` and
-`ArrivedEventuallyDelivered` hold under the fairness above (10.4 s, two
-workers).
+A buffer of one datagram with three arrivals reaches the full buffer with a
+datagram left in the socket and no Free buffer in a few steps. The
+`SwapWhileReading` witness uses buffers of two because an exposed buffer
+always holds at least one datagram, so a buffer of one leaves no room for
+the defect's write.
+
+The committed run generates 337,029 states and finds 76,264 distinct states
+with no error: the seven invariants hold, and `HandedOffEventuallySent`,
+`CommittedEventuallyHandedOff`, `StopEventuallyJoins`,
+`FilledEventuallyExposed` and `ArrivedEventuallyDelivered` hold under the
+fairness above (35.5 s, two workers, on a loaded bench).
+
+Reachability, checked by scratch runs (not committed) of the committed
+constants under `Spec` with one negated invariant each: a deferred hand-off
+(`~deferred`, violated at depth 7), a blocked wait on the wake alone with a
+datagram in the socket (violated at depth 10), and such a wait with the wake
+set by `Return` (violated at depth 10). So the deferral and the full-buffer
+wait are paths the committed run explores, not dead branches.
 
 ## The reversed witnesses
 
@@ -113,11 +151,11 @@ workers).
 
 `ReopenBeforeSent = TRUE`: the main thread may reopen a ring that is still
 Sending. TLC exits 12: **`Invariant NoReuseBeforeSent is violated`**, at
-depth 10 (4,955 states generated, 1,934 distinct, one worker).
+depth 10 (3,697 states generated, 1,388 distinct).
 
 - **The trace:**
-  1. A game thread writes and commits slot 1 of ring A; `send_packets` hands
-     A off and switches to B.
+  1. A game thread writes and commits slot 1 of ring A; the hand-off gives A
+     to the I/O thread and switches to B.
   2. A game thread writes and commits slot 1 of B.
   3. The I/O thread sends slot 1 of A (A Sending, the I/O thread owns A).
   4. The main thread reopens A while it is Sending, hands B off and switches
@@ -126,7 +164,7 @@ depth 10 (4,955 states generated, 1,934 distinct, one worker).
   `docs/CLIENT-IO.md` the main thread reopens a ring only after an acquire
   load sees Sent, which the I/O thread stores after its last send of that
   ring; in the trace the reopen reads Sending. With the rule, step 4's
-  `Reopen` is disabled until `IoFinishRing`, `HandOff` of B waits, and no
+  `Reopen` is disabled until `IoFinishRing`, the hand-off of B defers, and no
   game thread writes A while the I/O thread reads it. In the code at the
   base this cannot happen yet, because the main thread sends the ring itself
   and resets it after the walk (line 1017); the hazard is the design's, and
@@ -134,9 +172,10 @@ depth 10 (4,955 states generated, 1,934 distinct, one worker).
 
 ### `MCRNClientIoBrokenSwapWhileReading.cfg`
 
-`ReceiveIntoExposed = TRUE`: the I/O thread writes a datagram into the buffer
-`update` has exposed. TLC exits 12: **`Invariant ExposedStable is violated`**,
-at depth 7 (1,140 states generated, 542 distinct).
+`ReceiveIntoExposed = TRUE`, `BufferCap = 2`: the I/O thread writes a
+datagram into the buffer `update` has exposed. TLC exits 12: **`Invariant
+ExposedStable is violated`**, at depth 7 (808 states generated, 385
+distinct).
 
 - **The trace:**
   1. A datagram arrives; the I/O thread reads it into its Fill buffer 0.
@@ -160,7 +199,7 @@ at depth 7 (1,140 states generated, 542 distinct).
 `SwapNeedsReady = TRUE`: the one-step swap of the first draft of the design,
 where `update` returns the buffer it exposed only in the step that exposes a
 Ready one, and `Return` does not exist. TLC exits 12: **`Invariant
-NoReceiveStall is violated`**, at depth 7 (1,142 states generated, 536
+NoReceiveStall is violated`**, at depth 7 (781 states generated, 362
 distinct).
 
 - **The trace:**
@@ -176,18 +215,69 @@ distinct).
   reaches `update`. In the design as written, `update` returns buffer 0 at
   its end whatever it exposed (`Return`), so the I/O thread publishes buffer
   1 at its next batch end, or, if it blocked first, after the return's wake
-  (it stored owed before blocking). The same switch under `SpecFair` (a
-  scratch run, not committed) violates the temporal properties (exit 13).
+  (it stored owed before blocking).
 
-A second scratch run, not committed, removes only the wake from `Return`
-(`wake' = wake`): TLC exits 13 with the temporal properties violated at
-depth 13, where the I/O thread stores owed, blocks with one datagram in
-buffer 1, and `update` returns buffer 0 without waking it; the datagram never
-reaches `update`. That is the lost wake the seq_cst pairing and the owed flag
-exist to prevent.
+A scratch run, not committed, removes only the wake from `Return`
+(`wake' = wake`) under the committed constants: TLC exits 12 with
+`NoReceiveStall` violated, where the I/O thread stores owed, blocks on the
+wake alone with a full buffer, and `update` returns buffer 0 without waking
+it. That is the lost wake the seq_cst pairing and the owed flag exist to
+prevent.
+
+### `MCRNClientIoBrokenHandOffWaits.cfg`
+
+`HandOffWaits = TRUE`: the hand-off of the second draft, which waits for the
+other ring to be Sent. TLC exits 12: **`Invariant HandOffNeverWaits is
+violated`**, at depth 7 (415 states generated, 216 distinct).
+
+- **The trace:**
+  1. A game thread writes and commits slot 1 of ring A; the hand-off (here
+     `send_packet`, which calls `send_packets` after its packet) gives A to
+     the I/O thread and switches to B.
+  2. A game thread writes and commits slot 1 of B (a second `send_packet`,
+     or the protocol packet `update` commits).
+  3. The next hand-off (the second `send_packet`, or the end of `update`)
+     finds A still HandedOff, because the I/O thread has not run yet, and
+     the main thread blocks on the I/O thread.
+- **Against the design, by hand:** nothing in the trace is overload: two
+  hand-offs in one frame before the I/O thread is scheduled. In the design as
+  written the third step is `Defer`: slot 1 of B stays in the Filling ring,
+  `CLIENT_SEND_DEFERRED` moves, the call returns, and the slot leaves with
+  the next hand-off that finds A Sent. `CommittedEventuallyHandedOff` holds
+  in the committed run because `update` retries every frame. Two scratch
+  runs, not committed, show the property is not vacuous: with no fairness on
+  `HandOff` TLC exits 13 (the committed slot is never handed off, the trace
+  stutters), and with `Stop` allowed while the Filling ring holds a
+  committed slot TLC exits 13 (destroy drops the slot: `Stop`, `IoExit`,
+  `Join`, then stuttering).
+
+### `MCRNClientIoBrokenFullWaitReadable.cfg`
+
+`FullWaitReadable = TRUE`: the wait of the second draft, which returns on
+socket readable or the wake whatever the buffer holds. TLC exits 12:
+**`Invariant FullWaitsOnWake is violated`**, at depth 8 (1,576 states
+generated, 672 distinct).
+
+- **The trace:**
+  1. A datagram arrives; the I/O thread reads it into buffer 0, which is now
+     full (`BufferCap = 1`), and publishes it as Ready, taking buffer 1.
+  2. A second datagram arrives; the I/O thread reads it into buffer 1, now
+     full.
+  3. No buffer is Free (buffer 0 is Ready, not yet exposed): the I/O thread
+     stores owed.
+  4. The I/O thread blocks in a wait that also returns on readable, with its
+     buffer full.
+- **Against the design, by hand:** the next datagram to arrive makes that
+  wait return at once; the thread cannot read it (no room), cannot publish
+  (no Free buffer), and waits again, which returns at once again: a spin
+  until `update` exposes buffer 0 and returns it, about a frame of a busy
+  core for any hitch of more than `ROCKETNET_NUM_CLIENT_PACKETS` replies. In
+  the design as written the fourth step is `wait( driver, false, timeout )`:
+  the full buffer waits on the wake alone, and the `Return` at the end of the
+  next `update` wakes it because owed is set.
 
 ## Runs
 
-The four rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The six rows are in `tla/RUNS.tsv` from `tlacheck run` on a Linux bench
 (TLC 2.19, the pinned JAR): the control passes with exit 0, and each witness
 exits 12 naming its declared invariant.

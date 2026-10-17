@@ -3,51 +3,63 @@
 (* The client transport with its socket I/O on one I/O thread, as         *)
 (* docs/CLIENT-IO.md designs it.  The code at the base of the design is   *)
 (* sdk/rocketnet_client_transport.cpp: the payload ring the game threads  *)
-(* fill (rocketnet_client_transport_start_packet, line 697), the flush    *)
-(* that sends it per packet on the main thread                            *)
-(* (rocketnet_client_transport_send_packets, line 987), the receive       *)
-(* thread (created at line 407, its loop at line 1275) and the receive    *)
-(* buffers update swaps under a mutex (line 515).                         *)
+(* fill (rocketnet_client_transport_start_packet), the flush that sends   *)
+(* it per packet on the main thread                                       *)
+(* (rocketnet_client_transport_send_packets, also called after every      *)
+(* packet by rocketnet_client_transport_send_packet), the receive thread  *)
+(* and its 1 ms poll, and the receive buffers update swaps under a mutex. *)
 (*                                                                         *)
 (* The design.  The payload ring becomes two rings, A and B.  Game        *)
-(* threads write slots of the ring that is Filling; send_packets hands    *)
-(* that ring to the I/O thread with one release store and one wake, and   *)
-(* the main thread moves to the other ring.  The I/O thread sends every   *)
-(* slot of the handed-off ring, then marks it Sent; only then does the    *)
-(* main thread reopen it.  Receive runs on the same thread into two       *)
-(* buffers exchanged by a publish and return handshake: the I/O thread    *)
-(* fills its buffer and publishes it Ready at a batch end when a Free     *)
-(* buffer is there to fill next.  update is two steps: at its start it    *)
-(* exposes the Ready buffer if there is one (Expose), and at its end,     *)
-(* every update, whether or not it exposed anything this time, it         *)
-(* returns the buffer it holds as Free (Return).  An I/O thread that has  *)
-(* an unpublished batch and no Free buffer records that a publish is      *)
-(* owed before it blocks; Return wakes it when the owed flag is set.  No  *)
-(* mutex is held by either thread.  The I/O thread waits on socket        *)
-(* readable or the wake; stop sets the wake, the I/O thread finishes the  *)
-(* ring in flight and exits, the main thread joins it and only then       *)
-(* frees the transport.                                                   *)
+(* threads write slots of the ring that is Filling.  A hand-off (from     *)
+(* send_packets, from send_packet, which calls it, or at the end of       *)
+(* update) gives that ring to the I/O thread with one release store and   *)
+(* one wake when the other ring is open, and the main thread moves to the *)
+(* other ring.  A hand-off never waits: when the other ring is still      *)
+(* HandedOff or Sending, the committed slots stay in the Filling ring,    *)
+(* the deferral is counted, and they leave with the next hand-off that    *)
+(* finds the other ring open.  The I/O thread sends every slot of the     *)
+(* handed-off ring, then marks it Sent; only then does the main thread    *)
+(* reopen it.  Receive runs on the same thread into two buffers of        *)
+(* BufferCap datagrams, exchanged by a publish and return handshake: the  *)
+(* I/O thread fills its buffer and publishes it Ready at a batch end      *)
+(* when a Free buffer is there to fill next.  update is two steps: at its *)
+(* start it exposes the Ready buffer if there is one (Expose), and at its *)
+(* end, every update, it returns the buffer it holds as Free (Return).    *)
+(* An I/O thread that has an unpublished batch and no Free buffer records *)
+(* that a publish is owed before it blocks; Return wakes it when the owed *)
+(* flag is set.  The I/O thread waits on socket readable or the wake, and *)
+(* on the wake only while its buffer is full, so datagrams left in the    *)
+(* socket do not end the wait at once.  stop sets the wake, the I/O       *)
+(* thread finishes the rings handed off and exits, the main thread joins  *)
+(* it and only then frees the transport; destroy makes the last hand-off  *)
+(* first, so no committed slot is dropped.                                *)
 (*                                                                         *)
-(* Three switches restore the defects the reversed witnesses must catch:  *)
+(* Five switches restore the defects the reversed witnesses must catch:   *)
 (* ReopenBeforeSent lets the main thread reopen a ring the I/O thread is  *)
 (* still sending; ReceiveIntoExposed lets the I/O thread write a          *)
 (* datagram into the buffer update has exposed; SwapNeedsReady restores   *)
 (* the one-step swap, where update returns its exposed buffer only in     *)
-(* the same step that exposes a Ready one, so with two buffers the        *)
-(* receive path stalls after the first exposed batch.                     *)
+(* the same step that exposes a Ready one; HandOffWaits restores the      *)
+(* hand-off that waits for the other ring to be Sent; FullWaitReadable    *)
+(* restores the wait on readable with a full buffer, which returns at     *)
+(* once while datagrams sit in the socket.                                *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS NumSlots,            \* slots per send ring
-          MaxHandOffs,         \* send_packets hand-offs in one behaviour
+          BufferCap,           \* datagrams one receive buffer holds
           MaxDatagrams,        \* datagrams that arrive in one behaviour
           ReopenBeforeSent,    \* defect: reopen a ring while it is Sending
           ReceiveIntoExposed,  \* defect: receive writes the exposed buffer
-          SwapNeedsReady       \* defect: update returns only when it exposes
+          SwapNeedsReady,      \* defect: update returns only when it exposes
+          HandOffWaits,        \* defect: a hand-off waits for the other ring
+          FullWaitReadable     \* defect: a full buffer waits on readable too
 
-ASSUME NumSlots \in Nat \ {0} /\ MaxHandOffs \in Nat /\ MaxDatagrams \in Nat
+ASSUME NumSlots \in Nat \ {0} /\ BufferCap \in Nat \ {0}
+ASSUME MaxDatagrams \in Nat
 ASSUME /\ ReopenBeforeSent \in BOOLEAN /\ ReceiveIntoExposed \in BOOLEAN
-       /\ SwapNeedsReady \in BOOLEAN
+       /\ SwapNeedsReady \in BOOLEAN /\ HandOffWaits \in BOOLEAN
+       /\ FullWaitReadable \in BOOLEAN
 
 Rings   == {"A", "B"}
 Slots   == 1..NumSlots
@@ -64,9 +76,11 @@ VARIABLES ring,      \* each send ring's state
           sent,      \* slots of a ring the I/O thread has sent
           fill,      \* the ring the game threads fill
           ioRing,    \* the ring the I/O thread is sending, or "none"
-          handoffs,  \* hand-offs so far
-          wake,      \* the level-triggered wake (eventfd, pipe or event)
+          deferred,  \* CLIENT_SEND_DEFERRED has moved (a hand-off deferred)
+          mainWait,  \* the main thread is blocked on the I/O thread
+          wake,      \* the level-triggered wake (eventfd, kevent or event)
           waiting,   \* the I/O thread is blocked in its wait
+          waitReadable, \* the blocked wait also returns on socket readable
           pending,   \* datagrams readable on the socket
           arrived,   \* datagrams that have arrived so far
           buf,       \* each receive buffer's state
@@ -77,11 +91,12 @@ VARIABLES ring,      \* each send ring's state
           phase,     \* the transport's life
           ioAlive    \* the I/O thread has not exited
 
-sendVars == <<ring, owner, sent, fill, ioRing, handoffs>>
+sendVars == <<ring, owner, sent, fill, ioRing, deferred, mainWait>>
 recvVars == <<pending, arrived, buf, count, snap, owed, delivered>>
 
-vars == <<ring, owner, sent, fill, ioRing, handoffs, wake, waiting, pending,
-          arrived, buf, count, snap, owed, delivered, phase, ioAlive>>
+vars == <<ring, owner, sent, fill, ioRing, deferred, mainWait, wake, waiting,
+          waitReadable, pending, arrived, buf, count, snap, owed, delivered,
+          phase, ioAlive>>
 
 TypeOK ==
     /\ ring \in [Rings -> RingStates]
@@ -89,12 +104,12 @@ TypeOK ==
     /\ sent \in [Rings -> SUBSET Slots]
     /\ fill \in Rings
     /\ ioRing \in Rings \cup {"none"}
-    /\ handoffs \in 0..MaxHandOffs
-    /\ wake \in BOOLEAN /\ waiting \in BOOLEAN
+    /\ deferred \in BOOLEAN /\ mainWait \in BOOLEAN
+    /\ wake \in BOOLEAN /\ waiting \in BOOLEAN /\ waitReadable \in BOOLEAN
     /\ pending \in 0..MaxDatagrams /\ arrived \in 0..MaxDatagrams
     /\ buf \in [Buffers -> BufferStates]
-    /\ count \in [Buffers -> 0..MaxDatagrams]
-    /\ snap \in 0..MaxDatagrams
+    /\ count \in [Buffers -> 0..BufferCap]
+    /\ snap \in 0..BufferCap
     /\ owed \in BOOLEAN
     /\ delivered \in 0..MaxDatagrams
     /\ phase \in Phases
@@ -106,8 +121,8 @@ Init ==
     /\ sent = [r \in Rings |-> {}]
     /\ fill = "A"
     /\ ioRing = "none"
-    /\ handoffs = 0
-    /\ wake = FALSE /\ waiting = FALSE
+    /\ deferred = FALSE /\ mainWait = FALSE
+    /\ wake = FALSE /\ waiting = FALSE /\ waitReadable = TRUE
     /\ pending = 0 /\ arrived = 0
     /\ buf = [b \in Buffers |-> IF b = 0 THEN "Fill" ELSE "Free"]
     /\ count = [b \in Buffers |-> 0]
@@ -123,6 +138,15 @@ ExposedBuffer == CHOOSE b \in Buffers : buf[b] = "Exposed"
 HasReady      == \E b \in Buffers : buf[b] = "Ready"
 HasFree       == \E b \in Buffers : buf[b] = "Free"
 
+\* the main thread is running its own code, not blocked on the I/O thread
+MainFree == phase = "Running" /\ ~mainWait
+
+\* a hand-off is due: fills joined (the phase contract) and slots committed
+HandOffDue ==
+    /\ ring[fill] = "Filling"
+    /\ \A s \in Slots : owner[fill][s] # "game"
+    /\ \E s \in Slots : owner[fill][s] = "main"
+
 (* ---- game threads and the main thread ---- *)
 
 \* start_packet: a game thread takes a free slot of the Filling ring
@@ -131,47 +155,71 @@ Write(s) ==
     /\ ring[fill] = "Filling"
     /\ owner[fill][s] = "free"
     /\ owner' = [owner EXCEPT ![fill][s] = "game"]
-    /\ UNCHANGED <<ring, sent, fill, ioRing, handoffs, wake, waiting, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* finish_packet: the slot is sealed and committed
 Commit(s) ==
     /\ owner[fill][s] = "game"
     /\ owner' = [owner EXCEPT ![fill][s] = "main"]
-    /\ UNCHANGED <<ring, sent, fill, ioRing, handoffs, wake, waiting, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<ring, sent, fill, ioRing, deferred, mainWait, wake,
+                   waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
-\* send_packets: fills are joined (the phase contract), the other ring is
-\* open, the committed ring goes to the I/O thread with one release store
-\* and one wake.  If the other ring is not open yet, send_packets waits.
+\* the hand-off (send_packets, send_packet through it, or the end of
+\* update) when the other ring is open: the committed ring goes to the I/O
+\* thread with one release store and one wake
 HandOff ==
-    /\ phase = "Running"
-    /\ handoffs < MaxHandOffs
-    /\ ring[fill] = "Filling"
-    /\ \A s \in Slots : owner[fill][s] # "game"
-    /\ \E s \in Slots : owner[fill][s] = "main"
+    /\ MainFree
+    /\ HandOffDue
     /\ ring[Other(fill)] = "Filling"
     /\ ring' = [ring EXCEPT ![fill] = "HandedOff"]
     /\ owner' = [owner EXCEPT ![fill] =
                     [s \in Slots |-> IF owner[fill][s] = "main" THEN "io"
                                      ELSE owner[fill][s]]]
     /\ fill' = Other(fill)
-    /\ handoffs' = handoffs + 1
     /\ wake' = TRUE
-    /\ UNCHANGED <<sent, ioRing, waiting, phase, ioAlive>>
+    /\ UNCHANGED <<sent, ioRing, deferred, mainWait, waiting, waitReadable,
+                   phase, ioAlive>>
     /\ UNCHANGED recvVars
 
-\* the next send_packets reopens a ring the I/O thread has finished
+\* the hand-off when the other ring is still HandedOff or Sending: the
+\* committed slots stay in the Filling ring and CLIENT_SEND_DEFERRED moves;
+\* they leave with the next hand-off.  Under HandOffWaits the main thread
+\* blocks on the I/O thread instead.
+Defer ==
+    /\ MainFree
+    /\ HandOffDue
+    /\ ring[Other(fill)] \in {"HandedOff", "Sending"}
+    /\ IF HandOffWaits THEN /\ mainWait' = TRUE
+                            /\ UNCHANGED deferred
+                       ELSE /\ deferred' = TRUE
+                            /\ UNCHANGED mainWait
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, wake, waiting,
+                   waitReadable, phase, ioAlive>>
+    /\ UNCHANGED recvVars
+
+\* the defect's blocked main thread resumes once the other ring is Sent
+WaitDone ==
+    /\ mainWait
+    /\ ring[Other(fill)] = "Sent"
+    /\ mainWait' = FALSE
+    /\ UNCHANGED <<ring, owner, sent, fill, ioRing, deferred, wake, waiting,
+                   waitReadable, phase, ioAlive>>
+    /\ UNCHANGED recvVars
+
+\* a hand-off reopens a ring the I/O thread has finished (acquire load)
 Reopen(r) ==
+    /\ ~mainWait
     /\ r # fill
     /\ IF ReopenBeforeSent THEN ring[r] \in {"Sending", "Sent"}
                            ELSE ring[r] = "Sent"
     /\ ring' = [ring EXCEPT ![r] = "Filling"]
     /\ owner' = [owner EXCEPT ![r] = [s \in Slots |-> "free"]]
     /\ sent' = [sent EXCEPT ![r] = {}]
-    /\ UNCHANGED <<fill, ioRing, handoffs, wake, waiting, phase, ioAlive>>
+    /\ UNCHANGED <<fill, ioRing, deferred, mainWait, wake, waiting,
+                   waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* update, first step: expose the Ready buffer (acquire) when there is
@@ -179,7 +227,7 @@ Reopen(r) ==
 \* returned it).  Under SwapNeedsReady this is the one-step swap of the
 \* defect: the held buffer is returned here, and only here.
 Expose ==
-    /\ phase = "Running"
+    /\ MainFree
     /\ HasReady
     /\ SwapNeedsReady \/ ~HasExposed
     /\ LET rb == CHOOSE b \in Buffers : buf[b] = "Ready" IN
@@ -190,29 +238,33 @@ Expose ==
          /\ snap' = count[rb]
          /\ delivered' = delivered + count[rb]
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, pending, arrived, count, owed, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, count,
+                   owed, phase, ioAlive>>
 
 \* update, last step, every update: the buffer it exposed is returned as
 \* Free (seq_cst store), then the owed flag is read (seq_cst load) and the
 \* I/O thread is woken when a publish is owed.
 Return ==
     /\ ~SwapNeedsReady
-    /\ phase = "Running"
+    /\ MainFree
     /\ HasExposed
     /\ buf' = [buf EXCEPT ![ExposedBuffer] = "Free"]
     /\ wake' = (wake \/ owed)
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<waiting, pending, arrived, count, snap, owed, delivered,
-                   phase, ioAlive>>
+    /\ UNCHANGED <<waiting, waitReadable, pending, arrived, count, snap, owed,
+                   delivered, phase, ioAlive>>
 
-\* destroy, first half: ask the I/O thread to stop and wake it
+\* destroy, first half: once the Filling ring holds no committed slot
+\* (destroy makes the last hand-off itself, waiting for the other ring to
+\* be Sent if it must; that wait is this guard), ask the I/O thread to
+\* stop and wake it
 Stop ==
-    /\ phase = "Running"
+    /\ MainFree
+    /\ \A s \in Slots : owner[fill][s] = "free"
     /\ phase' = "Stopping"
     /\ wake' = TRUE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<waiting, ioAlive>>
+    /\ UNCHANGED <<waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
 
 Join ==
@@ -220,14 +272,14 @@ Join ==
     /\ ~ioAlive
     /\ phase' = "Joined"
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
 
 Free ==
     /\ phase = "Joined"
     /\ phase' = "Freed"
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, ioAlive>>
     /\ UNCHANGED recvVars
 
 (* ---- the network ---- *)
@@ -237,8 +289,8 @@ Arrive ==
     /\ arrived' = arrived + 1
     /\ pending' = pending + 1
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, buf, count, snap, owed, delivered, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, buf, count, snap, owed,
+                   delivered, phase, ioAlive>>
 
 (* ---- the I/O thread ---- *)
 
@@ -255,7 +307,8 @@ IoSend(r, s) ==
     /\ ring' = [ring EXCEPT ![r] = IF ring[r] = "HandedOff" THEN "Sending"
                                     ELSE ring[r]]
     /\ sent' = [sent EXCEPT ![r] = sent[r] \cup {s}]
-    /\ UNCHANGED <<owner, fill, handoffs, wake, waiting, phase, ioAlive>>
+    /\ UNCHANGED <<owner, fill, deferred, mainWait, wake, waiting,
+                   waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* every slot sent: the ring is released to the main thread (release store)
@@ -265,20 +318,22 @@ IoFinishRing(r) ==
     /\ \A s \in Slots : owner[r][s] = "io" => s \in sent[r]
     /\ ring' = [ring EXCEPT ![r] = "Sent"]
     /\ ioRing' = "none"
-    /\ UNCHANGED <<owner, sent, fill, handoffs, wake, waiting, phase, ioAlive>>
+    /\ UNCHANGED <<owner, sent, fill, deferred, mainWait, wake, waiting,
+                   waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
-\* read one datagram into the I/O thread's buffer
+\* read one datagram into the I/O thread's buffer while it has room
 IoReceive ==
     /\ IoReady
     /\ pending > 0
     /\ LET target == IF ReceiveIntoExposed /\ HasExposed THEN ExposedBuffer
                      ELSE FillBuffer IN
-         count' = [count EXCEPT ![target] = count[target] + 1]
+         /\ count[target] < BufferCap
+         /\ count' = [count EXCEPT ![target] = count[target] + 1]
     /\ pending' = pending - 1
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, arrived, buf, snap, owed, delivered, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, arrived, buf, snap, owed,
+                   delivered, phase, ioAlive>>
 
 \* batch end: publish the filled buffer when a returned one is there to fill
 IoPublish ==
@@ -291,8 +346,8 @@ IoPublish ==
          /\ count' = [count EXCEPT ![nb] = 0]
     /\ owed' = FALSE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, pending, arrived, snap, delivered, phase,
-                   ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, snap,
+                   delivered, phase, ioAlive>>
 
 \* batch end with no Free buffer: record that a publish is owed (seq_cst
 \* store) before the wait; the wait re-checks for a Free buffer after it
@@ -303,33 +358,36 @@ IoOwe ==
     /\ ~owed
     /\ owed' = TRUE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, pending, arrived, buf, count, snap,
-                   delivered, phase, ioAlive>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, pending, arrived, buf, count,
+                   snap, delivered, phase, ioAlive>>
 
-\* nothing to do: block on socket readable or the wake.  The thread never
-\* blocks while it could publish, and blocks with an unpublished batch only
-\* after it has recorded the publish as owed.
+\* nothing to do: block.  The thread never blocks while it could publish,
+\* blocks with an unpublished batch only after it has recorded the publish
+\* as owed, and blocks with datagrams in the socket only when its buffer is
+\* full.  The wait returns on readable only while the buffer has room
+\* (wait's readable argument); a full buffer waits on the wake alone.
 IoWait ==
     /\ IoReady
     /\ phase = "Running"
     /\ ioRing = "none"
     /\ \A r \in Rings : ring[r] # "HandedOff"
-    /\ pending = 0
     /\ ~wake
     /\ ~(count[FillBuffer] > 0 /\ HasFree)
     /\ count[FillBuffer] > 0 => owed
+    /\ pending = 0 \/ count[FillBuffer] = BufferCap
     /\ waiting' = TRUE
+    /\ waitReadable' = (FullWaitReadable \/ count[FillBuffer] < BufferCap)
     /\ UNCHANGED sendVars
     /\ UNCHANGED <<wake, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 IoWake ==
     /\ ioAlive /\ waiting
-    /\ wake \/ pending > 0
+    /\ wake \/ (waitReadable /\ pending > 0)
     /\ waiting' = FALSE
     /\ wake' = FALSE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<phase, ioAlive>>
+    /\ UNCHANGED <<waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* a woken I/O thread consumes a wake it does not need to block on
@@ -338,7 +396,7 @@ IoClearWake ==
     /\ wake
     /\ wake' = FALSE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<waiting, phase, ioAlive>>
+    /\ UNCHANGED <<waiting, waitReadable, phase, ioAlive>>
     /\ UNCHANGED recvVars
 
 \* stop seen: the ring in flight is finished first, then the thread exits
@@ -349,7 +407,7 @@ IoExit ==
     /\ \A r \in Rings : ring[r] # "HandedOff"
     /\ ioAlive' = FALSE
     /\ UNCHANGED sendVars
-    /\ UNCHANGED <<wake, waiting, phase>>
+    /\ UNCHANGED <<wake, waiting, waitReadable, phase>>
     /\ UNCHANGED recvVars
 
 Done ==
@@ -358,7 +416,7 @@ Done ==
 
 MainNext ==
     \/ \E s \in Slots : Write(s) \/ Commit(s)
-    \/ HandOff
+    \/ HandOff \/ Defer \/ WaitDone
     \/ \E r \in Rings : Reopen(r)
     \/ Expose \/ Return \/ Stop \/ Join \/ Free
 
@@ -372,8 +430,13 @@ Next == MainNext \/ IoNext \/ Arrive \/ Done
 
 Spec == Init /\ [][Next]_vars
 
-\* Weak fairness of the I/O thread's actions, the join, and update's two
-\* steps (the game calls update every frame while the transport runs).
+\* Weak fairness of the I/O thread's actions, the join, a game thread's
+\* finish of a packet it started, the reopen, the hand-off and update's
+\* two receive steps: the game calls update every frame while the
+\* transport runs, and update ends with a hand-off, so a deferred hand-off
+\* is retried every frame.  A game thread mid-write disables the hand-off
+\* only until it commits, and a ring has NumSlots slots, so weak fairness
+\* is enough.
 SpecFair ==
     /\ Spec
     /\ WF_vars(\E r \in Rings, s \in Slots : IoSend(r, s))
@@ -384,6 +447,9 @@ SpecFair ==
     /\ WF_vars(IoWake)
     /\ WF_vars(IoExit)
     /\ WF_vars(Join)
+    /\ WF_vars(\E s \in Slots : Commit(s))
+    /\ WF_vars(\E r \in Rings : Reopen(r))
+    /\ WF_vars(HandOff)
     /\ WF_vars(Expose)
     /\ WF_vars(Return)
 
@@ -404,6 +470,15 @@ FreedOnlyAfterJoin ==
     phase = "Freed" => /\ ~ioAlive
                        /\ ioRing = "none"
 
+\* a hand-off never blocks the main thread on the I/O thread
+HandOffNeverWaits == ~mainWait
+
+\* a blocked I/O thread with a full buffer waits on the wake alone: a wait
+\* that also returns on readable returns at once while datagrams sit in the
+\* socket, and the thread spins until update returns a buffer
+FullWaitsOnWake ==
+    (waiting /\ count[FillBuffer] = BufferCap) => ~waitReadable
+
 \* while the transport runs, received datagrams in the I/O thread's buffer
 \* always have a next step toward update: a publish, an expose, a return,
 \* or a wake of the blocked I/O thread
@@ -413,6 +488,12 @@ NoReceiveStall ==
 
 HandedOffEventuallySent ==
     \A r \in Rings : ring[r] = "HandedOff" ~> ring[r] = "Sent"
+
+\* a committed slot, deferred or not, is eventually handed to the I/O
+\* thread, and destroy drops none
+CommittedEventuallyHandedOff ==
+    \A r \in Rings, s \in Slots :
+        owner[r][s] = "main" ~> owner[r][s] = "io"
 
 StopEventuallyJoins ==
     phase = "Stopping" ~> phase \in {"Joined", "Freed"}

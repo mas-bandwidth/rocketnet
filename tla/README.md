@@ -101,7 +101,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 | `rnuringdriver` | 3 | io_uring driver control (invariants and liveness) and two invariant witnesses |
-| `rnclientio` | 4 | Client I/O thread design control (invariants and liveness) and three invariant witnesses |
+| `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh
