@@ -7459,7 +7459,9 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_abi_field_offset",
     "rocketnet_abi_field_size",
     "rocketnet_init",
+    "rocketnet_init_ex",
     "rocketnet_term",
+    "rocketnet_term_ex",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
@@ -7473,6 +7475,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_debug",
     "rocketnet_spam",
     "rocketnet_allocator",
+    "rocketnet_allocator_ex",
     "rocketnet_api_misuse_count",
     "rocketnet_malloc",
     "rocketnet_free",
@@ -7490,6 +7493,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_copy_string",
     "rocketnet_client_transport_state_name",
     "rocketnet_client_transport_default_config",
+    "rocketnet_client_transport_required_memory",
     "rocketnet_client_transport_default_config_sized",
     "rocketnet_client_transport_create",
     "rocketnet_client_transport_create_sized",
@@ -7546,12 +7550,14 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
     "rocketnet_frame_sync_create",
+    "rocketnet_frame_sync_create_ex",
     "rocketnet_frame_sync_destroy",
     "rocketnet_frame_sync_wait",
     "rocketnet_frame_sync_stats",
     "rocketnet_message_default_config",
     "rocketnet_message_default_config_sized",
     "rocketnet_message_validate_config",
+    "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -7613,6 +7619,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_debug",
     "rocketnet_spam",
     "rocketnet_allocator",
+    "rocketnet_allocator_ex",
     "rocketnet_user_id_string",
     "rocketnet_random_bytes",
     "rocketnet_copy_string",
@@ -7715,7 +7722,9 @@ static const char * rocketnet_test_null_exempt_exports[] =
 {
     "rocketnet_abi_version",
     "rocketnet_init",
+    "rocketnet_init_ex",
     "rocketnet_term",
+    "rocketnet_term_ex",
     "rocketnet_assert_function",
     "rocketnet_quiet",
     "rocketnet_log_level",
@@ -7735,10 +7744,13 @@ static const char * rocketnet_test_null_exempt_exports[] =
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_client_transport_state_name",
+    "rocketnet_client_transport_required_memory",
     "rocketnet_server_transport_required_memory",
     "rocketnet_forbid_xdp_commit",
     "rocketnet_frame_sync_create",
+    "rocketnet_frame_sync_create_ex",
     "rocketnet_message_validate_config",
+    "rocketnet_message_validate_config_ex",
     "rocketnet_message_connection_bytes",
     "rocketnet_message_connection_sizing",
     "rocketnet_message_print_connection_sizing",
@@ -8000,6 +8012,12 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_required_memory( NULL, "portable" ) > 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+    rocketnet_check( rocketnet_client_transport_required_memory( NULL, NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_counter_value( NULL, 0 ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
@@ -8095,6 +8113,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     // rocketnet_allocator refuses a NULL callback in a partial or full set
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_allocator( NULL, NULL ) == false );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_allocator_ex( NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // rocketnet_free and rocketnet_clear_and_free already treat NULL p as a

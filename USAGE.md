@@ -509,6 +509,19 @@ the process and then consumed, loudly, so a deployed binary's one server gets it
 redirect while a multi-transport process is not wholesale redirected by one ambient
 variable. It is consumed only after a create that fully succeeds.
 
+**Operator memory budgets** (`ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` and
+`ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES`, the server and client tables'
+`memory_budget_bytes` field) cap a transport's pre-allocation memory plan. At
+create, each driver candidate's plan is compared to the budget before anything
+allocates: a candidate whose plan exceeds the budget is refused, logged with the
+plan and the budget, and the ladder falls to the next candidate exactly as a
+refusing driver does. A budget that no candidate fits refuses the create before
+the first allocation. Unset or `0` means no budget. The plan is the allocator
+footprint from the constructor memory plan functions (`required_memory`), not a
+host RAM limit; it excludes OS stacks, kernel queues, loader and application
+memory. This lets an operator bound one cross-field allocation class from the
+environment, without code or a rebuild.
+
 ## Driver selection
 
 Selection is **runtime**, not compile time (#106): one build carries every driver
