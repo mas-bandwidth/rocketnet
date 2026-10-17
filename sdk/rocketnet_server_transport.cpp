@@ -1961,6 +1961,12 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     if ( !rocketnet_api_null_guard( server_transport ) )
         return NULL;
     rocketnet_assert( server_transport );
+    if ( server_transport->io.operations && server_transport->io.operations->prefilter_counters )
+    {
+        uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
+        server_transport->io.operations->prefilter_counters( server_transport->io.instance, prefilter );
+        rocketnet_counters_apply_prefilter( &server_transport->counters, prefilter );
+    }
     return &server_transport->counters;
 }
 

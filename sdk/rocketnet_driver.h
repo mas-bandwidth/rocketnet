@@ -63,6 +63,11 @@ struct rocketnet_server_driver_operations_t
     // A driver that retains buffers must use the staged path instead.
     void (*send_batch)( void *, const rocketnet_platform_send_t *, int );
     int (*receive_batch)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
+    // optional; a driver with a kernel prefilter writes
+    // ROCKETNET_SERVER_XDP_NUM_COUNTERS values in
+    // ROCKETNET_SERVER_XDP_COUNTER_* order (sdk/rocketnet_wire.h), cumulative
+    // since its filter was loaded; called on the main thread only.
+    void (*prefilter_counters)( void * driver, uint64_t * values );
 };
 
 struct rocketnet_client_driver_config_t
