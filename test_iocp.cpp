@@ -174,6 +174,76 @@ static void test_completion_owns_frames()
     printf("test_iocp_completion_owns_frames\n");
 }
 
+static void test_uso_run_owns_frames()
+{
+    rocketnet_address_t bind = address("127.0.0.1:0");
+    rocketnet_server_iocp_t * driver = rocketnet_server_iocp_create(NULL, &bind, 1);
+    CHECK(driver);
+    if ( !(rocketnet_server_iocp_features(driver) & ROCKETNET_IOCP_FEATURE_USO) )
+    {
+        printf("test_iocp_uso_run_owns_frames [SKIPPED this host has no USO feature (UDP_SEND_MSG_SIZE refused)]\n");
+        wait_stopped(driver);
+        rocketnet_server_iocp_destroy(driver);
+        return;
+    }
+    rocketnet_address_t peer_address = address("127.0.0.1:0");
+    rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create(NULL, &peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 4 * 1024 * 1024, 4 * 1024 * 1024);
+    CHECK(peer);
+
+    // One run of equal-size frames to one peer is one segmented post. Hold
+    // retirement: no frame of the run may come back before that completion.
+    const int run = 16;
+    rocketnet_server_iocp_test_hold_completions(driver, true);
+    std::set<uint8_t*> pending;
+    uint64_t id;
+    for ( int i = 0; i < run; ++i )
+    {
+        uint8_t * frame = rocketnet_server_iocp_start_packet(driver, &peer_address, &id);
+        CHECK(frame && pending.insert(frame).second);
+        memset(frame + ROCKETNET_FRAME_WIRE_OFFSET, i, 200);
+        rocketnet_server_iocp_finish_packet(driver, id, frame, 200);
+    }
+    rocketnet_server_iocp_send_packets(driver);
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters(driver, counters);
+    CHECK(counters[ROCKETNET_IOCP_USO_SENDS] == 1);
+    CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
+    CHECK(counters[ROCKETNET_IOCP_SEND_COMPLETED] == 0);
+    for ( int i = 0; i < ROCKETNET_IOCP_SEND_QUEUE_SIZE - run; ++i )
+    {
+        uint8_t * frame = rocketnet_server_iocp_start_packet(driver, &peer_address, &id);
+        CHECK(frame && !pending.count(frame));
+        rocketnet_server_iocp_abort_packet(driver, id, frame);
+    }
+    CHECK(!rocketnet_server_iocp_start_packet(driver, &peer_address, &id));
+    rocketnet_server_iocp_test_hold_completions(driver, false);
+    const double deadline = rocketnet_platform_time() + 5.0;
+    do
+    {
+        rocketnet_server_iocp_counters(driver, counters);
+        if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] == (uint64_t) run ) break;
+        rocketnet_platform_sleep(0.001);
+    } while ( rocketnet_platform_time() < deadline );
+    CHECK(counters[ROCKETNET_IOCP_SEND_COMPLETED] == (uint64_t) run);
+    CHECK(counters[ROCKETNET_IOCP_SEND_FAILED] == 0);
+    rocketnet_server_iocp_test_hold_completions(driver, true);
+    rocketnet_server_iocp_test_hold_completions(driver, false);
+    // The one completion returned every frame of the run, and only those.
+    for ( int i = 0; i < run; ++i )
+    {
+        uint8_t * frame = rocketnet_server_iocp_start_packet(driver, &peer_address, &id);
+        CHECK(frame && pending.erase(frame) == 1);
+        rocketnet_server_iocp_abort_packet(driver, id, frame);
+    }
+    CHECK(pending.empty());
+    rocketnet_server_iocp_send_packets(driver);
+    wait_stopped(driver);
+    rocketnet_server_iocp_destroy(driver);
+    rocketnet_platform_socket_destroy(peer);
+    printf("test_iocp_uso_run_owns_frames\n");
+}
+
 static void test_datagrams_and_producers()
 {
     rocketnet_address_t bind = address("[::]:0");
@@ -328,6 +398,7 @@ int main()
     CHECK(rocketnet_init());
     test_create_cleanup();
     test_completion_owns_frames();
+    test_uso_run_owns_frames();
     test_datagrams_and_producers();
     test_receive_boundaries();
     rocketnet_term();

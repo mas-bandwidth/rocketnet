@@ -19,14 +19,34 @@
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
 #define ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE 1024
 
+// UDP segmentation offload (USO) on send and UDP receive offload (URO) on
+// receive, Windows 11 and Server 2022 or later. Each is a capability create
+// probes on the bound socket; a refusal leaves the per-datagram path. A USO
+// run is at most this many frames and this many bytes; a URO receive buffer
+// holds this many bytes, the coalesced maximum the socket is given.
+#define ROCKETNET_IOCP_USO_MAX_SEGMENTS 64
+#define ROCKETNET_IOCP_USO_MAX_SUPER_BYTES 65000
+#define ROCKETNET_IOCP_URO_BUFFER_BYTES 16384
+#define ROCKETNET_IOCP_URO_MAX_SEGMENTS ROCKETNET_IOCP_URO_BUFFER_BYTES
+
+// create flags: skip a probe, so the fallback path is testable on a host
+// that has the feature
+#define ROCKETNET_IOCP_DISABLE_USO 1
+#define ROCKETNET_IOCP_DISABLE_URO 2
+
+// rocketnet_server_iocp_features bits
+#define ROCKETNET_IOCP_FEATURE_USO 1
+#define ROCKETNET_IOCP_FEATURE_URO 2
+
 struct rocketnet_server_iocp_t;
 
 // bind_address is updated with the actual port. IPv6 sockets accept both
 // families and normalize mapped IPv4 sources. Zero workers selects the default.
 // fail_stage is a constructor test control: 1 after socket, 2 after port,
 // 3 after first worker, 4 after first posted receive. Production passes zero.
+// flags is ROCKETNET_IOCP_DISABLE_USO and ROCKETNET_IOCP_DISABLE_URO, or zero.
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
-    rocketnet_address_t * bind_address, int num_workers, int fail_stage = 0 );
+    rocketnet_address_t * bind_address, int num_workers, int fail_stage = 0, int flags = 0 );
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp );
 bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp );
@@ -49,11 +69,17 @@ enum rocketnet_server_iocp_counter_t
     ROCKETNET_IOCP_RECEIVE_DROPPED,
     ROCKETNET_IOCP_RECEIVE_REPOST_FAILED,
     ROCKETNET_IOCP_COMPLETION_BATCHES,
+    ROCKETNET_IOCP_USO_SENDS,               // posts that carried more than one frame
+    ROCKETNET_IOCP_URO_BATCHES,             // receive completions split into more than one segment
+    ROCKETNET_IOCP_USO_FALLBACKS,           // live USO sends refused and resent frame by frame
     ROCKETNET_IOCP_NUM_COUNTERS
 };
 
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters );
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
+// The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
+// segmented send is refused.
+int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 
 #if defined(ROCKETNET_IOCP_TESTS)
 // Hold/release must be paired on the same thread. Do not call stop there while
