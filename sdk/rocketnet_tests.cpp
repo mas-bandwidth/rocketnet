@@ -7496,6 +7496,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_client_transport_default_config",
     "rocketnet_client_transport_required_memory",
     "rocketnet_client_transport_create",
+    "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -7624,6 +7625,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_copy_string",
     "rocketnet_client_transport_default_config",
     "rocketnet_client_transport_create",
+    "rocketnet_client_transport_create_ex",
     "rocketnet_client_transport_destroy",
     "rocketnet_client_transport_update",
     "rocketnet_client_transport_send_packet",
@@ -8078,6 +8080,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_client_transport_create( NULL, NULL, NULL, 0.0 ) == NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_create_ex( NULL, NULL, NULL, 0.0, NULL ) == NULL );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();

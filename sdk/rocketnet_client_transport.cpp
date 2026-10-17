@@ -244,8 +244,20 @@ uint64_t rocketnet_client_transport_required_memory( const rocketnet_client_tran
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
+    return rocketnet_client_transport_create_ex( context, connect_token, config, time, NULL );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+{
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
+
     if ( !rocketnet_api_null_guard( connect_token ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         return NULL;
+    }
 
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
@@ -253,6 +265,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "rocketnet_client_transport_create: rocketnet_init must be called first" );
         rocketnet_api_misuse_record();
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         return NULL;
     }
 
@@ -274,10 +288,18 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
 
     if ( !rocketnet_config_validate( "client", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
+    }
 
     config = &effective_config;
 
@@ -286,7 +308,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
         return NULL;
+    }
 
 
     // the driver candidate list parses before anything allocates: a typo
@@ -297,7 +323,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     struct rocketnet_driver_ladder_t ladder;
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
         return NULL;
+    }
 
     // the operator memory budget (#155): each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
@@ -307,7 +337,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     // first allocation.
     uint64_t memory_budget = 0;
     if ( !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
     bool budget_refused[ROCKETNET_NUM_DRIVERS];
     memset( budget_refused, 0, sizeof(budget_refused) );
     int budget_refused_total = 0;
@@ -340,6 +374,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
             (unsigned long long) memory_budget );
+        if ( status )
+            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
         return NULL;
     }
 
@@ -347,6 +383,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     if ( !client_transport )
     {
         rocketnet_error( "could not allocate client" );
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
     }
 
@@ -377,6 +415,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client could not allocate fragmentation storage" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
     }
 
@@ -406,7 +446,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
     {
+        const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ?
+            ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = connect_failure;
         return NULL;
     }
 
@@ -500,6 +544,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
         return NULL;
     }
 
@@ -519,6 +565,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client could not create mutex" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
         return NULL;
     }
 
@@ -527,6 +575,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client could not create thread" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
         return NULL;
     }
 
