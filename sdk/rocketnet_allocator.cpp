@@ -215,6 +215,7 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
     }
 }
 
+    // tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
     rocketnet_assert( store );
@@ -254,6 +255,7 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     return ( (uint32_t) c << 30 ) | first;
 }
 
+    // tla/RNSendStore.tla Free
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
