@@ -4527,6 +4527,8 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 
 static int rocketnet_xdp_veth_capture_pid = 0;
 static bool rocketnet_xdp_veth_namespaces_created = false;
+static struct rocketnet_server_transport_t * rocketnet_xdp_veth_server = NULL;
+static int rocketnet_xdp_veth_server_netns = -1;
 
 static void rocketnet_xdp_veth_teardown()
 {
@@ -4534,6 +4536,16 @@ static void rocketnet_xdp_veth_teardown()
     {
         kill( rocketnet_xdp_veth_capture_pid, SIGTERM );
         rocketnet_xdp_veth_capture_pid = 0;
+    }
+    // a failed check exits with the server still up: destroy it from its own
+    // namespace, so its XDP program and its bpffs pin root go with it rather
+    // than outliving the run
+    if ( rocketnet_xdp_veth_server )
+    {
+        if ( rocketnet_xdp_veth_server_netns >= 0 && setns( rocketnet_xdp_veth_server_netns, CLONE_NEWNET ) != 0 )
+            printf( "teardown: could not enter the server namespace to destroy the server\n" );
+        rocketnet_server_transport_destroy( rocketnet_xdp_veth_server );
+        rocketnet_xdp_veth_server = NULL;
     }
     if ( rocketnet_xdp_veth_namespaces_created )
     {
@@ -4727,6 +4739,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     const int self_netns = open( "/proc/self/ns/net", O_RDONLY );
     rocketnet_check( self_netns >= 0 );
     const int server_netns = rocketnet_xdp_veth_open_netns( ROCKETNET_XDP_VETH_SERVER_NETNS );
+    rocketnet_xdp_veth_server_netns = server_netns;
     const int client_netns = rocketnet_xdp_veth_open_netns( ROCKETNET_XDP_VETH_CLIENT_NETNS );
 
     char server_address[128];
@@ -4774,6 +4787,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_address, &server_config );
     if ( !server || strcmp( rocketnet_server_transport_driver( server ), "xdp" ) != 0 )
         printf( "%s: the server did not start on the xdp driver (%s)\n", case_name, server ? rocketnet_server_transport_driver( server ) : "create refused" );
+    rocketnet_xdp_veth_server = server;
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "xdp" ) == 0 );
 
@@ -5017,9 +5031,11 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_server_transport_destroy( server );
+    rocketnet_xdp_veth_server = NULL;
 
     rocketnet_xdp_veth_enter( self_netns );
     close( self_netns );
+    rocketnet_xdp_veth_server_netns = -1;
     close( server_netns );
     close( client_netns );
 
