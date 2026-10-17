@@ -156,6 +156,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
+// tla/ServerConnection.tla ServerRecvRequest
 // tla/RNSecurityTables.tla Request
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                  const struct rocketnet_address_t * from,
@@ -670,6 +671,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 // mapping's handshake client-to-server key, which is all it has to prove.
 // the checks and the slot assignment follow the standard's order.
 
+// tla/ServerConnection.tla ServerRecvResponse
 // tla/RNSecurityTables.tla Response
 static int rocketnet_server_process_connection_response( struct rocketnet_server_protocol_t * server,
                                                          int mapping_index,
@@ -1284,6 +1286,7 @@ void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server
     rocketnet_debug( "server rotated connection cookie secret" );
 }
 
+// tla/ServerConnection.tla Tick
 // tla/RNSecurityTables.tla Tick
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                               double current_time )
@@ -1506,6 +1509,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
     return bytes;
 }
 
+// tla/ServerConnection.tla ServerKeepAlive
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                               int client_index,
                                               double current_time,
@@ -1890,6 +1894,7 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
     return fragment_count;
 }
 
+// tla/ServerConnection.tla ServerAppDisconnect
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
                                          int client_index,
                                          uint8_t * out_packets,
