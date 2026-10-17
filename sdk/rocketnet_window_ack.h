@@ -51,7 +51,7 @@ struct rn_window_ack_t
     double rto_max;                 // seconds (default 0.25)
     double reliable_timeout;        // seconds (default 10.0)
     double resend_interval;         // seconds (default 0.1): the cap on the resend delay
-    double rto_scale;               // rto_scale_percent / 100 (default 1.25)
+    double rto_scale;               // ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 (1.25)
 
     double srtt;                    // smoothed RTT (RFC 6298)
     double rttvar;                  // RTT variation (RFC 6298)

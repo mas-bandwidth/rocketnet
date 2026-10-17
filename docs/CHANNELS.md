@@ -589,16 +589,17 @@ corruption.
 - **RTO.** `srtt` and `rttvar` follow RFC 6298 over this layer's own samples,
   not the transport's rtt floor (`U:216-235` explains why that floor cannot
   drive a timeout).
-  `rto = clamp( srtt·rto_scale_percent/100 + 2·rttvar, rto_min, rto_max )`;
-  before the first sample it is `rto_initial`. At the defaults
-  (`rto_scale_percent` 125, `rto_initial` 100 ms, `rto_min` 10 ms, `rto_max`
-  250 ms) a lost record is resent within one to two RTTs. There is no
+  `rto = clamp( 1.25·srtt + 2·rttvar, rto_min, rto_max )`
+  (`ROCKETNET_MESSAGE_RTO_SCALE_PERCENT` 125, a constant beside the config,
+  not a field, so the public config keeps its ABI1 layout); before the first
+  sample it is `rto_initial`. At the defaults (`rto_initial` 100 ms, `rto_min`
+  10 ms, `rto_max` 250 ms) a lost record is resent within one to two RTTs. There is no
   back-off: every resend of a record waits the same delay, as in RakNet (study
   §9), so many attempts fit before `reliable_timeout` (`tla/RNResendTiming.tla`,
   `AttemptsBeforeTimeout`).
 - **Resend.** The resend delay of every record is
-  `delay = min( rto, resend_interval )`, with `resend_interval` 100 ms by
-  default: a small message is resent every 100 ms until it is acked, and
+  `delay = min( rto, resend_interval )`, with `resend_interval` the constant
+  `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms): a small message is resent every 100 ms until it is acked, and
   sooner on a short path. This is a real-time game's practice; the send budget
   (R6, retransmits first, nothing over budget sent) bounds the bandwidth that
   resends take. The resend FIFO is ordered by last send. In `write_packets`,
@@ -657,7 +658,7 @@ details explicit:
   on the first sample; `rttvar = 3/4·rttvar + 1/4·|srtt - R_sample|`,
   `srtt = 7/8·srtt + 1/8·R_sample` thereafter;
   `rto = clamp(srtt·rto_scale + 2·rttvar, rto_min, rto_max)`, `rto_scale =
-  rto_scale_percent / 100`), and walks the entry's references. For each reference whose slot `n % W` still names `n` and is
+  ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100`), and walks the entry's references. For each reference whose slot `n % W` still names `n` and is
   unacked, it unlinks `n` from the resend FIFO, frees that fragment's chunk via
   `rn_region_send_free_fragment` (releasing the send descriptor when the last
   unacked fragment of a block or single message is freed), and calls
@@ -1379,9 +1380,7 @@ the full plan.
     INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
     INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
     INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
-    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )                                         \
-    INT_FIELD( resend_interval_ms,        100,     10, 60000,                  0 )   /* resend delay cap, 6.4 */           \
-    INT_FIELD( rto_scale_percent,         125,    100, 400,                    0 )   /* rto = srtt x this / 100 + 2 rttvar */
+    INT_FIELD( reliable_timeout_ms,     10000,   1000, 600000,                 0 )
 
 struct rocketnet_message_config_t
 {
@@ -1841,7 +1840,7 @@ region follows.
     is, fewer than `ceil(max_message_bytes/F)` chunks (as built, the class
     holds `floor(third / 1156)` chunks with their links, section 4);
   - `rto_initial_ms` outside `rto_min_ms` to `rto_max_ms` (added by card C1);
-  - `reliable_timeout_ms < 4 × max( resend_interval_ms, rto_initial_ms )`,
+  - `reliable_timeout_ms < 4 × max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms )`,
     so at least `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS` (4) sends of a
     record fit before the timeout gives up on it (6.4,
     `tla/RNResendTiming.tla`).

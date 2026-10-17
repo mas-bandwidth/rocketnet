@@ -5,8 +5,9 @@
 
 // The resend delay of a reliable record (docs/CHANNELS.md 6.4 "RTO" and
 // "Resend"; tla/RNResendTiming.tla): every resend waits
-// min( rto, resend_interval ), with no back-off, and
-// rto = clamp( srtt x rto_scale_percent / 100 + 2 rttvar, rto_min, rto_max ),
+// min( rto, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS ), with no back-off, and
+// rto = clamp( srtt x ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100 + 2 rttvar,
+// rto_min, rto_max ),
 // rto_initial before the first sample. The validation refuses a config that
 // fits fewer than ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS sends before
 // reliable_timeout.
@@ -17,6 +18,7 @@
 // ordered writer and the message server read the delay from.
 
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +32,9 @@
 #include "sdk/rocketnet_window_ack.h"
 
 #define check rocketnet_unit_check
+
+// sizeof( rocketnet_message_config_t ) at BASE (ABI1): 15 int fields
+#define ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES 60
 
 static const double resend_timing_start = 1000.0;
 static const double resend_timing_tick = 1.0 / 60.0;
@@ -188,7 +193,8 @@ static void first_resend_before_any_sample_at_rto_initial()
 REGISTER_UNIT_TEST( first_resend_before_any_sample_at_rto_initial );
 
 // config_refuses_fewer_than_four_attempts: reliable_timeout_ms must fit four
-// sends of the longest first delay, max( resend_interval_ms, rto_initial_ms ).
+// sends of the longest first delay, max( the 100 ms resend interval,
+// rto_initial_ms ).
 // Validation refuses and never clamps.
 static void config_refuses_fewer_than_four_attempts()
 {
@@ -271,3 +277,15 @@ static void resend_timing_witness_replays()
 }
 
 REGISTER_UNIT_TEST( resend_timing_witness_replays );
+
+// message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
+// interval and RTT scale are constants, so the public message config keeps
+// the layout ABI1 callers allocate: 15 int fields, as at BASE. A field added
+// to ROCKETNET_MESSAGE_CONFIG_TABLE grows this and fails here first.
+static void message_config_abi_size_is_unchanged()
+{
+    check( sizeof( rocketnet_message_config_t ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES );
+    check( offsetof( rocketnet_message_config_t, reliable_timeout_ms ) == ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES - sizeof( int ) );
+}
+
+REGISTER_UNIT_TEST( message_config_abi_size_is_unchanged );

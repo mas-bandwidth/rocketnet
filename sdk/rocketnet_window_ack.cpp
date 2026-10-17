@@ -309,8 +309,8 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->rto_min = (double) config->rto_min_ms / 1000.0;
     ack->rto_max = (double) config->rto_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_timeout_ms / 1000.0;
-    ack->resend_interval = (double) config->resend_interval_ms / 1000.0;
-    ack->rto_scale = (double) config->rto_scale_percent / 100.0;
+    ack->resend_interval = (double) ROCKETNET_MESSAGE_RESEND_INTERVAL_MS / 1000.0;
+    ack->rto_scale = (double) ROCKETNET_MESSAGE_RTO_SCALE_PERCENT / 100.0;
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;

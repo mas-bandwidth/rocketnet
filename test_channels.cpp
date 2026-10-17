@@ -1113,10 +1113,6 @@ static void test_channels_allocator_validation()
         { "rto_min above rto_max",                  (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 3000 },
         { "rto_initial above rto_max",              (int) offsetof( rocketnet_message_config_t, rto_initial_ms ), 3000 },
         { "rto_initial below rto_min",              (int) offsetof( rocketnet_message_config_t, rto_min_ms ), 150 },
-        { "fewer than four resend intervals",       (int) offsetof( rocketnet_message_config_t, resend_interval_ms ), 3000 },
-        { "resend interval below its minimum",      (int) offsetof( rocketnet_message_config_t, resend_interval_ms ), 9 },
-        { "rto scale below one",                    (int) offsetof( rocketnet_message_config_t, rto_scale_percent ), 99 },
-        { "rto scale above four",                   (int) offsetof( rocketnet_message_config_t, rto_scale_percent ), 401 },
     };
 
     for ( size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++ )
@@ -3958,8 +3954,7 @@ static void test_channels_window_resend_delay_never_backs_off()
     // the same delay each pass; an ack moves rto, never a back-off factor
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.rto_initial_ms = 250;
-    config.resend_interval_ms = 250;
+    config.rto_initial_ms = 250;                                // above the 100 ms resend interval
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof(counters) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
@@ -3976,27 +3971,27 @@ static void test_channels_window_resend_delay_never_backs_off()
     uint64_t n0 = 0, p0 = 0;
     check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, RN_DESCRIPTOR_NONE, &n0, &p0 ) == RN_WINDOW_SEND_NUMBERED );
     rn_window_ack_commit_packet( &ack, 1, &n0, 1, t0 );
-    check( ack.rto == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.25 );
+    check( ack.rto == 0.25 && rn_window_ack_resend_delay( &ack ) == 0.1 );     // min( rto, the interval )
 
     uint64_t next_pkt = 2;
     uint64_t out[4];
 
-    // four passes, each due 0.25 after the last: the delay does not grow
+    // four passes, each due 0.1 after the last: the delay does not grow
     double last = t0;
     for ( int pass = 0; pass < 4; pass++ )
     {
-        check( rn_window_ack_resend( &ack, last + 0.249, &next_pkt, out, 4 ) == 0 );
-        check( rn_window_ack_resend( &ack, last + 0.25, &next_pkt, out, 4 ) == 1 );
+        check( rn_window_ack_resend( &ack, last + 0.0999, &next_pkt, out, 4 ) == 0 );
+        check( rn_window_ack_resend( &ack, last + 0.1001, &next_pkt, out, 4 ) == 1 );
         check( out[0] == n0 );
-        last += 0.25;
-        check( rn_window_ack_resend_delay( &ack ) == 0.25 );
+        last += 0.1001;
+        check( rn_window_ack_resend_delay( &ack ) == 0.1 );
     }
 
     // an ack of the latest send takes a sample: rto follows it, and the
     // resend interval still caps the delay
     check( rn_window_ack_on_ack( &ack, next_pkt - 1, last + 0.04 ) == 1 );
     check( ack.has_rtt == 1 );
-    check( rn_window_ack_resend_delay( &ack ) <= 0.25 );
+    check( rn_window_ack_resend_delay( &ack ) <= 0.1 );
 
     rn_arena_destroy( arena );
 }

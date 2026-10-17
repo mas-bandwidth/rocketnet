@@ -172,11 +172,11 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
     // at least ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS sends of the longest first
     // delay fit before the reliable timeout (6.4; tla/RNResendTiming.tla
     // ConfigAccepted and AttemptsBeforeTimeout)
-    const int first_delay_ms = config->resend_interval_ms > config->rto_initial_ms ? config->resend_interval_ms : config->rto_initial_ms;
+    const int first_delay_ms = ROCKETNET_MESSAGE_RESEND_INTERVAL_MS > config->rto_initial_ms ? ROCKETNET_MESSAGE_RESEND_INTERVAL_MS : config->rto_initial_ms;
     if ( (int64_t) config->reliable_timeout_ms < (int64_t) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * (int64_t) first_delay_ms )
     {
-        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of max( resend_interval_ms %d, rto_initial_ms %d )",
-                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->resend_interval_ms, config->rto_initial_ms );
+        rocketnet_error( "message config reliable_timeout_ms %d fits fewer than %d sends of max( the %d ms resend interval, rto_initial_ms %d )",
+                         config->reliable_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, config->rto_initial_ms );
         return 0;
     }
 

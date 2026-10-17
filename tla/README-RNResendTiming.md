@@ -19,18 +19,19 @@ records in `tla/RUNS.tsv`.
 
 ## The rule
 
-- **The RTO.** `rto = clamp( srtt·rto_scale_percent/100 + 2·rttvar, rto_min,
-  rto_max )` over this layer's own RTT samples; `rto_initial` before the
-  first sample. Defaults: `rto_scale_percent` 125, `rto_initial` 100 ms,
-  `rto_min` 10 ms, `rto_max` 250 ms.
+- **The RTO.** `rto = clamp( 1.25·srtt + 2·rttvar, rto_min, rto_max )` over
+  this layer's own RTT samples (`ROCKETNET_MESSAGE_RTO_SCALE_PERCENT` 125, a
+  constant); `rto_initial` before the first sample. Defaults: `rto_initial`
+  100 ms, `rto_min` 10 ms, `rto_max` 250 ms.
 - **The delay.** Every resend of every record waits
-  `min( rto, resend_interval )`, `resend_interval` 100 ms by default. There
+  `min( rto, resend_interval )`, `resend_interval` the constant
+  `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms). There
   is no back-off: the delay does not grow with the number of sends.
 - **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
   connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
 - **The validation.** A config is refused when
   `reliable_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS ×
-  max( resend_interval_ms, rto_initial_ms )`, with
+  max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, rto_initial_ms )`, with
   `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS = 4`.
 
 ## What the module covers
