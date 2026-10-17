@@ -149,6 +149,7 @@ typedef struct rocketnet_channel_harness_t
     uint64_t allocation_snapshot;
     uint64_t next_packet_id;
     int counting_allocator_installed;
+    uint64_t seed; // the simulator seed this run used
 } rocketnet_channel_harness_t;
 
 static inline uint64_t rocketnet_channel_hash( const uint8_t * data, int bytes )
@@ -506,7 +507,42 @@ static inline void rocketnet_channel_endpoint_link( struct rn_message_link_t * l
 
 static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_t * h );
 
-// Create both ends over the simulator with a deterministic seed.
+// The simulator seed. ROCKETNET_CHANNEL_SEED (decimal, or hex with 0x; strtoull
+// base 0) picks it, so a nightly sweep walks many links; unset or empty is the
+// pinned seed below, so a plain run is the same run every time. It is read once,
+// at create. A case that exits through its check without reaching destroy gets
+// one line from the exit hook, so every red run names the seed that replays it.
+static const uint64_t rocketnet_channel_pinned_seed = 0x5EED5EED5EED5EEDULL;
+
+struct rocketnet_channel_seed_state_t
+{
+    uint64_t seed;
+    int live;
+    int hook_installed;
+};
+
+inline struct rocketnet_channel_seed_state_t rocketnet_channel_seed_state = { 0x5EED5EED5EED5EEDULL, 0, 0 };
+
+static inline uint64_t rocketnet_channel_seed_from_environment( void )
+{
+    const char * value = getenv( "ROCKETNET_CHANNEL_SEED" );
+    if ( value && value[0] )
+        return (uint64_t) strtoull( value, NULL, 0 );
+    return rocketnet_channel_pinned_seed;
+}
+
+static inline void rocketnet_channel_seed_exit_hook( void )
+{
+    if ( rocketnet_channel_seed_state.live )
+    {
+        printf( "channel seed=0x%016llx (replay: ROCKETNET_CHANNEL_SEED=%llu)\n",
+                (unsigned long long) rocketnet_channel_seed_state.seed,
+                (unsigned long long) rocketnet_channel_seed_state.seed );
+        fflush( stdout );
+    }
+}
+
+// Create both ends over the simulator with a seed from ROCKETNET_CHANNEL_SEED.
 static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t * h )
 {
     struct rn_message_link_t client_link, server_link;
@@ -554,8 +590,17 @@ static inline int rocketnet_channel_harness_create( rocketnet_channel_harness_t 
     if ( !rocketnet_address_parse( &h->server_addr, "203.0.113.10:40000" ) )
         goto failed;
 
-    // the simulator: capacity 256, a fixed seed so a failing run replays
-    h->sim = rocketnet_network_simulator_create( NULL, 256, 0x5EED5EED5EED5EEDULL );
+    // the simulator: capacity 256, the seed from the environment (the pinned
+    // seed when unset) so a failing run replays
+    h->seed = rocketnet_channel_seed_from_environment();
+    rocketnet_channel_seed_state.seed = h->seed;
+    rocketnet_channel_seed_state.live = 1;
+    if ( !rocketnet_channel_seed_state.hook_installed )
+    {
+        rocketnet_channel_seed_state.hook_installed = 1;
+        atexit( rocketnet_channel_seed_exit_hook );
+    }
+    h->sim = rocketnet_network_simulator_create( NULL, 256, h->seed );
     if ( !h->sim )
         goto failed;
 
@@ -727,6 +772,7 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
         rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function );
         rocketnet_init();
     }
+    rocketnet_channel_seed_state.live = 0;
     memset( h, 0, sizeof(*h) );
 }
 

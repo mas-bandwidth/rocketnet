@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# channel-seed-sweep: run functional channel cases over a range of simulator
+# seeds and report every seed that fails.
+#
+#   scripts/channel-seed-sweep --cases a,b --seeds 1-1000 [--timeout 120] [--jobs N] [--bin ./bin/functional]
+#   scripts/channel-seed-sweep --all --seeds 1-2000
+#
+# Each run is one process: ROCKETNET_CHANNEL_SEED=<seed> <bin> --run <case>
+# (functional/channel_harness.h reads the variable once at create). Lanes run
+# in parallel, never more than the machine's cores. One line per failure:
+#
+#   FAIL seed=<n> case=<name> reason=<what>
+#
+# and a last line `sweep: <runs> runs, <failures> failures`. Exit 0 only with
+# zero failures. A failing seed replays with
+#   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run <case>
+# --all takes every case defined in functional/channel_*.cpp.
+
+set -u
+
+here=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+root=$( cd "$here/.." && pwd )
+
+cases=""
+all=0
+seeds=""
+timeout_seconds=120
+jobs=""
+bin="$root/bin/functional"
+
+usage()
+{
+    echo "usage: channel-seed-sweep (--cases a,b | --all) --seeds FIRST-LAST [--timeout SECONDS] [--jobs N] [--bin PATH]" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cases)   [ $# -ge 2 ] || usage; cases="$2"; shift 2 ;;
+        --all)     all=1; shift ;;
+        --seeds)   [ $# -ge 2 ] || usage; seeds="$2"; shift 2 ;;
+        --timeout) [ $# -ge 2 ] || usage; timeout_seconds="$2"; shift 2 ;;
+        --jobs)    [ $# -ge 2 ] || usage; jobs="$2"; shift 2 ;;
+        --bin)     [ $# -ge 2 ] || usage; bin="$2"; shift 2 ;;
+        *)         usage ;;
+    esac
+done
+
+if [ "$all" = 1 ]; then
+    cases=$( grep -h -o -E '^void [A-Za-z0-9_]+\(\)' "$root"/functional/channel_*.cpp | sed -e 's/^void //' -e 's/()$//' | paste -sd, - )
+fi
+[ -n "$cases" ] || usage
+[ -n "$seeds" ] || usage
+case "$seeds" in
+    *-*) first=${seeds%-*}; last=${seeds#*-} ;;
+    *)   first=$seeds; last=$seeds ;;
+esac
+case "$first$last$timeout_seconds" in *[!0-9]*|"") usage ;; esac
+[ "$first" -le "$last" ] || usage
+[ -x "$bin" ] || { echo "channel-seed-sweep: $bin is not built" >&2; exit 2; }
+
+cores=$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1 )
+if [ -z "$jobs" ] || [ "$jobs" -gt "$cores" ]; then jobs=$cores; fi
+case "$jobs" in *[!0-9]*|0) usage ;; esac
+
+export SWEEP_BIN="$bin" SWEEP_TIMEOUT="$timeout_seconds"
+
+# one run: prints "FAIL ..." on failure, "ok" never (the count is the runs)
+run_one()
+{
+    local case_name=$1 seed=$2 out status reason
+    out=$( ROCKETNET_CHANNEL_SEED=$seed timeout "$SWEEP_TIMEOUT" "$SWEEP_BIN" --run "$case_name" 2>&1 )
+    status=$?
+    [ $status -eq 0 ] && return 0
+    if [ $status -eq 124 ]; then
+        reason="timeout_${SWEEP_TIMEOUT}s"
+    else
+        # the measurement line names the shape (budget_multiple, incomplete, ...)
+        reason=$( printf '%s\n' "$out" | sed -n -E "s/^${case_name}: ([a-z_]+) .*/\1/p" | head -1 )
+        if [ -z "$reason" ]; then
+            reason=$( printf '%s\n' "$out" | sed -n -E 's/^check failed: \( (.*) \), function .*/\1/p' | head -1 )
+        fi
+        [ -n "$reason" ] || reason="exit_${status}"
+    fi
+    echo "FAIL seed=$seed case=$case_name reason=$reason"
+}
+export -f run_one
+
+report=$( mktemp )
+trap 'rm -f "$report"' EXIT
+
+runs=0
+{
+    IFS=, read -r -a case_list <<< "$cases"
+    for c in "${case_list[@]}"; do
+        seed=$first
+        while [ "$seed" -le "$last" ]; do
+            printf '%s %s\n' "$c" "$seed"
+            seed=$(( seed + 1 ))
+        done
+    done
+} | xargs -P "$jobs" -L 1 bash -c 'run_one "$@"' _ > "$report"
+
+IFS=, read -r -a case_list <<< "$cases"
+runs=$(( ${#case_list[@]} * ( last - first + 1 ) ))
+failures=$( grep -c '^FAIL ' "$report" )
+sort -k3,3 -k2.6,2n "$report"
+echo "sweep: $runs runs, $failures failures"
+[ "$failures" -eq 0 ]
