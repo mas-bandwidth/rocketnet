@@ -1277,7 +1277,7 @@ int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * serv
     if ( !rocketnet_api_null_guard( data ) )
         return 0;
 
-    // CHANNELS 12 Broadcast: a loop over the slots, each send the same copying
+    // CHANNELS 11.4 Broadcast: a loop over the slots, each send the same copying
     // convenience as rocketnet_message_server_send. The R3 copy is one per
     // connected connection, into that connection's region; there is no new
     // state and no allocation. A slot that refuses (free, kicked or exhausted)

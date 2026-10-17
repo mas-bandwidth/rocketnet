@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Broadcast on the message server (docs/CHANNELS.md section 12, "Broadcast"
+// Broadcast on the message server (docs/CHANNELS.md section 11.4, "Broadcast"
 // and the R3 copy rule). A broadcast is one copy per connection: each
 // connection's region holds its own copy, the R3 copy this API cannot avoid.
 // rocketnet_message_server_broadcast sends the bytes to every connected slot
@@ -460,7 +460,7 @@ static void mb_fill( uint8_t * data, int bytes, uint32_t id )
 }
 
 // ---------------------------------------------------------------------------
-// CHANNELS 12 Broadcast: three connected slots each receive the one broadcast
+// CHANNELS 11.4 Broadcast: three connected slots each receive the one broadcast
 // exactly once, on the channel with the reliability asked; the return value is
 // the queued slot count
 // ---------------------------------------------------------------------------
@@ -488,8 +488,7 @@ static void message_server_broadcast_reaches_every_connected()
         check( memcmp( got[i][0].bytes.data(), message, sizeof( message ) ) == 0 );
     }
 
-    // the reliability asked reaches the slot's queue: a RELIABLE send takes a
-    // receipt serial, so the broadcast queued three numbered messages
+    // all three slots are still connected after the broadcast
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
     check( rocketnet_message_server_client_connected( pair.server, 1 ) == 1 );
     check( rocketnet_message_server_client_connected( pair.server, 2 ) == 1 );
@@ -498,7 +497,7 @@ static void message_server_broadcast_reaches_every_connected()
 }
 
 // ---------------------------------------------------------------------------
-// CHANNELS 12 Broadcast: a free slot and an exhausted slot are skipped and
+// CHANNELS 11.4 Broadcast: a free slot and an exhausted slot are skipped and
 // counted; the return value names how many slots were queued
 // ---------------------------------------------------------------------------
 

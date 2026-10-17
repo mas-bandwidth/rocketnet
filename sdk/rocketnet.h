@@ -1612,7 +1612,7 @@ ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_m
 
 // Sends data to every connected slot exactly as rocketnet_message_server_send
 // would, one copy per connection: each connection's region holds its own copy,
-// the R3 copy this API cannot avoid (docs/CHANNELS.md section 12, Broadcast).
+// the R3 copy this API cannot avoid (docs/CHANNELS.md section 11.4, Broadcast).
 // Returns the number of slots it was queued for; a slot that refuses
 // (exhausted, not connected) is skipped. a NULL server or data is a counted
 // no-op that returns 0.
