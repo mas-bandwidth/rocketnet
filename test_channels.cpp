@@ -3926,9 +3926,14 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
             next_message++;
         }
 
-        // 3. the product's write: its resend FIFO walk and its new numbers. Every
-        //    23rd packet is a failed send (resent first next update, 6.4).
-        const int written = rn_ordered_write( sender, now, pointers, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+        // 3. the product's write: its resend FIFO walk and its new numbers, one
+        //    packet per tick, so the packets written in one RTT stay under P and
+        //    acks land on live sent-map entries (docs/CHANNELS.md 14, "Sizing
+        //    P"). With no back-off (6.4, RNResendTiming) a write of every due
+        //    number at P = 16 evicts each entry before its ack returns, and the
+        //    soak ends in RELIABLE_TIMEOUT. Every 23rd packet is a failed send
+        //    (resent first next update, 6.4).
+        const int written = rn_ordered_write( sender, now, pointers, 1 );
         check( sender->ack.error == ROCKETNET_MESSAGE_ERROR_NONE );
         for ( int p = 0; p < written; p++ )
         {
