@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_fragment.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_platform.h"
@@ -100,6 +101,21 @@ bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int
     return true;
 }
 
+// the completion bound (rocketnet_fragment.h; the delivered bound of
+// tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
+// packets one update drains, a payload begun earlier completes on one and
+// a payload begun in the update on two, and at most connections x slots
+// payloads are begun earlier
+
+int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots )
+{
+    if ( max_clients < 1 || max_clients > ROCKETNET_MAX_CLIENTS || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS )
+        return 0;
+    const int64_t drain = ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS;
+    const int64_t begun_earlier = (int64_t) max_clients * (int64_t) num_slots;
+    return (int) ( ( drain + ( begun_earlier < drain ? begun_earlier : drain ) ) / 2 );
+}
+
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity )
 {
     rocketnet_assert( num_connections > 0 );
@@ -130,10 +146,9 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
     // the standard's arena arithmetic: the per-update home of completed
     // payloads, which is what lets a reassembly slot clear and reuse
     // immediately while the delivered bytes stay valid. The capacity is
-    // the caller's drain bound -- a payload takes at least two fragments,
-    // so one update completes at most half the packets its receive path
-    // drains -- which is what makes BATCH_FULL a true must-stay-zero
-    // invariant rather than an operating condition. The reassembly budget
+    // the caller's completion bound per update (rocketnet_fragment.h); at
+    // that bound BATCH_FULL is a true must-stay-zero invariant rather than
+    // an operating condition. The reassembly budget
     // is approximately connections x slots x (max payload + staging) for
     // the arena plus delivered_capacity x max payload for this mirror;
     // slot records ride along.
