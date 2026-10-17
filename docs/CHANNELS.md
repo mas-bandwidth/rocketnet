@@ -401,48 +401,37 @@ taught the design four things, now in 13.2 and 13.3:
   length, so it checks the shortest block it could be part of, and a base
   below 0 is a span outside the ring.
 
-**As built.** `sdk/rocketnet_unreliable.{h,cpp}` is the UNRELIABLE send and
-receive path of the message layer over this codec and layer 1's region
-(5, 6.3, 6.4, 9.3, 11.2): a bounded FIFO of messages copied into the send
-store (a full store or queue is a counted drop and nothing grows — R1, and a
-message longer than the record's u16 length is dropped and counted at the
-send call, never enqueued), a
-fill that aggregates small messages as code-0 records into one RECORDS
-payload with this layer's writer until the next one does not fit, frees each
-chunk as soon as it is written (9.3 step 3) and plans a block (a message
-longer than one large store chunk, 1152 bytes) alone in its own large payload
-(L2.3), copying the whole chain so the record never reads across a chunk
-boundary, a zero-copy SINGLE helper
-that touches no module state (11.2), and a receive that delivers each code-0
-record as a pointer into the payload into the caller's Du entries, dropping
-and counting the rest when Du is full (6.3 step 4). As this layer it holds
-no window state: an unreliable record takes no number, no received bit, no
-receive descriptor and no ring span, and a packet that carried only
-unreliable records is never entered in the sent-packet map (5, 6.1, 6.4). A
-finish_packet failure drops and counts the packet's unreliable records
-(6.4, Failed send; `MESSAGE_UNRELIABLE_SEND_FAILED`). Two counters were
-appended: `MESSAGE_UNRELIABLE_DELIVERY_FULL` and
-`MESSAGE_UNRELIABLE_SEND_FAILED`. Its tests are in `test_channels.cpp` in
-`./bin/test`:
-`ChannelsUnreliableSmallMessagesShareOneFrame`,
-`ChannelsUnreliableRecordNeverSplitAcrossPackets`,
-`ChannelsUnreliableLargeMessageTravelsAlone`,
-`ChannelsUnreliableSingleZeroCopyAtPayloadRoot`,
-`ChannelsUnreliableStoreFullDropsAndCounts`,
-`ChannelsUnreliableDeliveryBudgetDropsAndCounts`,
-`ChannelsUnreliableFailedSendDropsAndCounts`,
-`ChannelsUnreliableChunkFreedWhenWritten`,
-`ChannelsUnreliableBlockNotCorruptedAcrossFragmentedStore`,
-`ChannelsUnreliableMessagePastU16LengthRefused`, and the lossy-wire walk
-`ChannelsUnreliableOverTheLossySimulator` (0, 10 and 50 percent loss with
-reordering; every delivered message is byte-identical to one sent, and at
-each loss level every send attempt is refused, still in the FIFO, delivered,
-dropped for a full delivery budget, or lost on the wire — R8, with attempted
-counted at the send calls, refused cross-checked against the store-full
-counter, delivered on the receive side, and wire loss measured as the gap
-between the code-0 records parsed into the frames the test sent and parsed
-out of the frames it received — while the whole walk runs under the
-no-live-allocation trap — R1).
+**As built.** The UNRELIABLE path (5, 6.3, 6.4, 9.3, 11.2) is the shipped
+path: sends enter through `rn_message_object_start`/`finish`
+(`sdk/rocketnet_message_server.cpp`), which copies the message into the send
+store and refuses and counts (`MESSAGE_UNRELIABLE_SEND_FAILED`) one past the
+one-packet limit at the send call, so nothing the queue can never send is
+queued; `rn_packet_builder` aggregates small messages as code-0 records into
+one RECORDS payload; each message's chunk returns to the store once its
+record is written (9.3 step 3); a finish_packet failure drops and counts the
+packet's unreliable records (6.4, Failed send); and the receive side is
+`rn_channels_dispatch` (`sdk/rocketnet_channel.cpp`), which delivers each
+code-0 record as a pointer into the payload and drops and counts the rest
+once the update's Du entries are full (`MESSAGE_UNRELIABLE_DELIVERY_FULL`,
+6.3 step 4). A full send store is not a drop: it exhausts the connection and
+kicks it (R5, `MESSAGE_SEND_STORE_FULL` once). An unreliable record takes no
+number, no received bit, no receive descriptor and no ring span, and a packet
+that carried only unreliable records is never entered in the sent-packet map
+(5, 6.1, 6.4). The standalone `rn_unreliable_*` module that once stood here
+was never called by the product and has been removed. Its behaviours that the
+product has are tested on the shipped path in `./bin/test`:
+`unreliable_store_full_exhausts_and_kicks`,
+`unreliable_past_limit_refused_counted_and_not_wedged`,
+`unreliable_failed_packet_drops_and_counts_each_record`,
+`unreliable_chunks_freed_when_written` and
+`unreliable_over_a_lossy_link_arrives_intact_at_most_once`
+(`test_unit_message_objects.cpp`), `unreliable_delivery_budget_drops_and_counts`
+(`test_unit_channel_dispatch.cpp`), `receive_without_room_exhausts_the_region`
+(`test_unit_connection_memory.cpp`) and
+`ChannelsSingleFormParsesAsOneCode0Record` (the codec's SINGLE form,
+`test_channels.cpp`); the send-budget drops and the duplicating link are
+functional cases (`functional/channel_unreliable_send_drops.cpp`,
+`functional/channel_unreliable_duplicates.cpp`).
 
 ## 6. Layer 3: the reliable window
 
@@ -638,7 +627,14 @@ details explicit:
   `rn_region_send_free_fragment` (releasing the send descriptor when the last
   unacked fragment of a block or single message is freed), and calls
   `rn_window_send_on_ack` to advance `U` and `U'`.
-- **Resend, failed send and reliable timeout.** `rn_window_ack_resend` checks
+- **Resend, failed send and reliable timeout.** The product's resend walk is
+  the one in `rn_ordered_write` (`sdk/rocketnet_channel.cpp`), which applies the
+  same due rule, order and counters described next; `rn_window_ack_resend` is
+  the layer 3 form of that walk and is called only by tests
+  (`test_channels.cpp`). `test_channels_window_lossy_soak` drives both: the
+  layer 3 walk, and two `rn_ordered_t` over the simulated wire, so the soak
+  goes red when the product's walk stops resending a sent number.
+  `rn_window_ack_resend` checks
   `rn_window_ack_check_timeout` first (if any unacked number has
   `now - first_send >= reliable_timeout`, `ack->error` becomes
   `ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT` and resending stops), then walks
@@ -1850,7 +1846,7 @@ exact variables the action updates):
 |---|---|---|---|
 | `RNWindow` | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp:74`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp:21`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp:290`) | `next = U = U' = R = first_number`, `ring_next = 0`, `stalled = 0`, `violation = NONE`, empty `sent_packets` / `sent_index` / `sent_refs` / `resend_fifo`, `rto = rto_initial`, `backoff = 1` |
 | `RNWindow` | `NumberRecord` | `rn_window_send_first_write` (`sdk/rocketnet_window_send.cpp:100`), `rn_window_send_first_write_block` (`:126`) via `rn_window_send_admit` (`:30`) and `rn_window_send_set_number` (`:51`) | Guard `next + count <= U' + W`; writes `send_numbers[n % W]` (`number`, `descriptor`, `fragment`, `ring_start`, `ring_units`, `acked = 0`), advances `next`; increments `MESSAGE_WINDOW_STALL` once per stall |
-| `RNWindow` | `WritePacket(S, pid)` / `WriteOldest` | `rocketnet_message_writer_add` (`sdk/rocketnet_message.cpp`), `rn_window_ack_commit_packet` (`sdk/rocketnet_window_ack.cpp:336`), `rn_window_ack_resend` (`:526`) | Records `{packet_id, send_time, ref_first, ref_count}` in `sent_packets`, inserts `packet_id` in `sent_index`, appends `numbers` to `sent_refs` (evicting oldest entries when `P` or `16P` is full, counting `MESSAGE_SENT_MAP_EVICTED`), links unacked slots at the tail of `resend_fifo`; `rn_window_ack_resend` walks `resend_fifo` from head while `now >= last_send + rto·backoff` (`O(due)`), re-commits under a new `packet_id`, and steps `backoff` (`1, 2, 4, 8`) |
+| `RNWindow` | `WritePacket(S, pid)` / `WriteOldest` | `rocketnet_message_writer_add` (`sdk/rocketnet_message.cpp`), `rn_window_ack_commit_packet` (`sdk/rocketnet_window_ack.cpp:336`), `rn_window_ack_resend` (`:526`) | Records `{packet_id, send_time, ref_first, ref_count}` in `sent_packets`, inserts `packet_id` in `sent_index`, appends `numbers` to `sent_refs` (evicting oldest entries when `P` or `16P` is full, counting `MESSAGE_SENT_MAP_EVICTED`), links unacked slots at the tail of `resend_fifo`; `rn_ordered_write` (`sdk/rocketnet_channel.cpp`) is the walk the product runs, and `rn_window_ack_resend` (tests only) walks `resend_fifo` from head while `now >= last_send + rto·backoff` (`O(due)`), re-commits under a new `packet_id`, and steps `backoff` (`1, 2, 4, 8`) |
 | `RNWindow` | `ReceiveAck(q)` | `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp:411`), `rn_window_ack_on_acks` (`:492`) -> `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp:156`) | Ignores unknown/evicted `packet_id` in `O(1)`; on match, samples RFC 6298 RTT (`srtt`, `rttvar`, `rto`), resets `backoff = 1`, unlinks each newly acked `n >= U` from `resend_fifo`, frees its store chunk (`rn_region_send_free_fragment`), sets `acked = 1`, advances `U` past contiguous acked numbers, and sets `U' = U - oldest->fragment` when `U < next` (`U' = next` when `U == next`) |
 | `RNWindow` | `OpenPacket(p)` (`Recon`, `Accept`, `Advance`) | `rocketnet_message_reader_begin` / `rocketnet_message_reader_next` (`sdk/rocketnet_message.cpp`), `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp:32`) | Signed 24-bit half-range `Recon` against `R` (`:40-44`); drops `delta < 0` or set bit as `RN_WINDOW_RECEIVE_DUPLICATE` (`MESSAGE_DUPLICATE`, `:48,60`); refuses `delta >= W` with `ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW` (`:50`); refuses live descriptor naming another number with `ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION` (`:64`); claims `receive_descriptors[n % W]` (`live = 1`), sets `received_bits[n % W]`, and runs `Advance` (`:89-98`), clearing consecutive set bits from `R` and incrementing `R` |
 | `RNWindow` | `FixBatch` / `SendAck` | transport update boundary (P2 and P6, section 2) | Transport fixes update *j*'s received batch before any packet built in update *j* leaves, and any reply to an ack from update *j* opens in update *j+1* or later |
