@@ -151,3 +151,6 @@ MCRNEndpoint.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointLive.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	required	-
 MCRNEndpointBrokenConfigUnreliable.cfg	MCRNEndpoint.tla	temporal	ConfigVerifiedDespiteFirstLoss	ignore-terminal	rnendpoint	required	-
 MCRNEndpointBrokenConfigNotCompared.cfg	MCRNEndpoint.tla	invariant	MismatchErrorsBothEnds	ignore-terminal	rnendpoint	required	-
+MCRNEndpointTwoWay.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	bench	endpoint-two-way-safety-over-budget
+MCRNEndpointPartial.cfg	MCRNEndpoint.tla	pass	-	ignore-terminal	rnendpoint	bench	endpoint-partial-write-safety-over-budget
+MCRNEndpointBrokenOrderIgnored.cfg	MCRNEndpoint.tla	invariant	OrderedInOrder	ignore-terminal	rnendpoint	required	-

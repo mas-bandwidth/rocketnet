@@ -54,7 +54,10 @@
 (*                           (ConfigVerifiedDespiteFirstLoss fails);       *)
 (*   ConfigCompared = FALSE  CONFIG is taken without the comparison: a     *)
 (*                           mismatched peer is accepted                   *)
-(*                           (MismatchErrorsBothEnds fails).               *)
+(*                           (MismatchErrorsBothEnds fails);               *)
+(*   OrderChecked = FALSE    an ordered message is released with no check  *)
+(*                           of its channel predecessors                   *)
+(*                           (OrderedInOrder fails).                       *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -66,10 +69,12 @@ CONSTANTS
     CfgPairs,       \* the configurations: a set of [a |-> num_channels, b |-> num_channels]
     ConfigReliable, \* BOOLEAN: CONFIG takes the first reliable number (10.3)
     ConfigCompared, \* BOOLEAN: the receiver compares CONFIG with its own (13.4)
+    OrderChecked,   \* BOOLEAN: an ordered message waits for its channel predecessors (7.2)
     TimeoutAnyTime, \* BOOLEAN: Tick may time out at any time, not only on a silent peer
     Silence,        \* BOOLEAN: ack history overflow may drop pending acks (P5)
     Failures,       \* BOOLEAN: a written packet may fail to send (PacketFailed, P5)
-    WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob)
+    WriteAll,       \* BOOLEAN: a packet carries every due record (a model-size knob;
+                    \* TRUE on an in-order link leaves ordering unexercised)
     RtoAboveRtt,    \* BOOLEAN: a record is resent only once its copy and its ack are gone
     ABPattern,      \* Link loss pattern, a to b
     BAPattern,      \* Link loss pattern, b to a
@@ -89,6 +94,7 @@ ASSUME /\ N \in Nat \ {0}
        /\ W \in Nat \ {0}
        /\ CfgPairs \subseteq [E -> Nat \ {0}] /\ CfgPairs # {}
        /\ ConfigReliable \in BOOLEAN /\ ConfigCompared \in BOOLEAN
+       /\ OrderChecked \in BOOLEAN
        /\ TimeoutAnyTime \in BOOLEAN /\ Silence \in BOOLEAN /\ Failures \in BOOLEAN
        /\ WriteAll \in BOOLEAN /\ RtoAboveRtt \in BOOLEAN
 
@@ -307,7 +313,9 @@ OnPayload(e, p) ==
              fresh   == (p.rel \ {CONFIG}) \ rcvd[e]
              rcvd1   == rcvd[e] \cup fresh
              cand    == held[e] \cup fresh
-             release == {k \in cand : Preds(k) \subseteq rcvd1}
+             release == IF OrderChecked
+                          THEN {k \in cand : Preds(k) \subseteq rcvd1}
+                          ELSE cand
              unrelNow == p.unrel \ {CONFIG}
          IN
          /\ pendAck' = [pendAck EXCEPT ![e] = @ \cup p.rel]

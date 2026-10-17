@@ -2,7 +2,8 @@
 (***************************************************************************)
 (* The small instance that checks RNEndpoint: N messages per side, the    *)
 (* first N - 1 reliable ordered on channel 0 and the last unreliable on    *)
-(* channel 1 (N = 3 for safety, 2 for liveness), W = 2,                   *)
+(* channel 1 (N = 3 for one-way safety, 2 for two-way safety and          *)
+(* liveness), W = 2,                                                       *)
 (* and two configurations, equal (num_channels 2 at both ends) and         *)
 (* differing in num_channels (2 and 1).  The two controls run Link         *)
 (* capacity 1; the witnesses run capacity 2.                               *)
@@ -10,12 +11,19 @@
 (*   MCRNEndpoint.cfg          safety, "arbitrary" in-order loss, failed   *)
 (*                             sends, ack silence, timeouts at any time,   *)
 (*                             under MCOneTimeout and MCOneWay             *)
+(*   MCRNEndpointTwoWay.cfg    safety with both ends sending, N = 2, under *)
+(*                             MCOneTimeout only (bench: over budget)      *)
+(*   MCRNEndpointPartial.cfg   the safety case with WriteAll = FALSE, so a *)
+(*                             later ordered message can arrive first      *)
+(*                             (bench: over budget)                        *)
 (*   MCRNEndpointLive.cfg      liveness under LiveSpec, each link losing   *)
 (*                             its first packet                            *)
 (*   MCRNEndpointBrokenConfigUnreliable.cfg  ConfigReliable = FALSE:       *)
 (*                             ConfigVerifiedDespiteFirstLoss fails        *)
 (*   MCRNEndpointBrokenConfigNotCompared.cfg ConfigCompared = FALSE:       *)
 (*                             MismatchErrorsBothEnds fails                *)
+(*   MCRNEndpointBrokenOrderIgnored.cfg      the Partial case with         *)
+(*                             OrderChecked = FALSE: OrderedInOrder fails  *)
 (* README-RNEndpoint.md has the traces and the action-to-section map.      *)
 (***************************************************************************)
 EXTENDS RNEndpoint
@@ -39,8 +47,10 @@ MCOneTimeout == Cardinality({e \in E : err[e] = "RELIABLE_TIMEOUT"}) <= 1
 \* data to b with the ends renamed; the differing pair puts the larger
 \* num_channels at a, so a's channel-1 message is the data record outside
 \* b's bounds (the VIOLATION path), and b's own refusal of that channel at
-\* Send is the guard Send states.  The product of two full endpoints is
-\* what keeps the two-way instance past the budget.
+\* Send is the guard Send states.  The renaming covers each direction on
+\* its own, not interference between them: a rule that confuses the
+\* records an end sent with the records it received passes under MCOneWay,
+\* so MCRNEndpointTwoWay.cfg checks both ends sending, at N = 2.
 MCOneWay == nextMsg["b"] = 1
 
 =============================================================================
