@@ -55,6 +55,10 @@
 (*                 received bits, placed bytes and staging                 *)
 (*   "nosizecheck" the reconstructed-size check is skipped                 *)
 (*   "nopin"       a later fragment may change the pinned count            *)
+(*   "walkskip"    the bitmap walk skips the lowest named sequence whose   *)
+(*                 unacknowledged bit is set                               *)
+(*   "staleheld"   the reconcile leaves a slot's held bit set after its    *)
+(*                 sequence falls below the retained window                *)
 (* StaleRule selects the stale test: "code" is the shipped unsigned        *)
 (* difference bounded by StaleAhead (ROCKETNET_MAX_FRAGMENTS), "serial" the *)
 (* standard's half-space comparison, "plain" a plain less-than.           *)
@@ -89,7 +93,8 @@ CONSTANTS
     Capacity, MaxDelay, Duplication, Reordering,    \* Link parameters
     BurstStart, BurstLen
 
-Witnesses == {"none", "firstfrag", "dropfull", "overclaim", "noclear", "nosizecheck", "nopin"}
+Witnesses == {"none", "firstfrag", "dropfull", "overclaim", "noclear", "nosizecheck", "nopin",
+              "walkskip", "staleheld"}
 
 ASSUME /\ MaxSeq \in Nat \ {0} /\ SentRing \in Nat \ {0} /\ AggRing \in Nat \ {0}
        /\ BatchCap \in Nat \ {0} /\ Window \in Nat \ {0} /\ MaxRanges \in Nat
@@ -151,6 +156,12 @@ VARIABLES
     numAggs,        \* num_aggregates
     batch,          \* acked_packet_ids: packet ids surfaced since the last update
     outbox,         \* packets sealed and staged, flushed one per step in order
+    \* the sender's sent-ring bitmaps (owed: sent_held, sent_unacked, sent_bits_checked)
+    held,           \* slots holding a written record, as a set of slot indexes
+    unacked,        \* slots written and not yet acknowledged
+    bitsChecked,    \* the highest sequence whose slot the reconcile has checked
+    lastExpect,     \* ghost: the named sequences the last block's walk should visit
+    lastVisited,    \* ghost: the named sequences the last block's walk did visit
     \* the receiver: the replay window, the drain, reassembly
     highestOpened,  \* replay highest_opened
     opened,         \* opened sequences in (highestOpened - Window, highestOpened]
@@ -181,7 +192,8 @@ receiverVars == <<highestOpened, opened, drained, slots, numDelivered, batchFull
 ghostVars    == <<burned, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
-vars         == <<senderVars, receiverVars, ghostVars, d2rVars, r2dVars>>
+bitVars      == <<held, unacked, bitsChecked, lastExpect, lastVisited>>
+vars         == <<senderVars, receiverVars, ghostVars, d2rVars, r2dVars, bitVars>>
 
 (***************************************************************************)
 (* Records.                                                                *)
@@ -218,6 +230,8 @@ Init ==
     /\ surfacedCount = [p \in Pids |-> 0]
     /\ deliveredCount = [g \in Gens |-> 0]
     /\ openedEver = {} /\ namedEver = {} /\ badStale = FALSE
+    /\ held = {} /\ unacked = {} /\ bitsChecked = 0
+    /\ lastExpect = {} /\ lastVisited = {}
     /\ D2R!Init /\ R2D!Init
 
 (***************************************************************************)
@@ -243,12 +257,15 @@ StartPayload ==
     /\ nextSeq <= MaxSeq
     /\ outbox = <<>>
     /\ sent' = RecordSent(sent, nextSeq, nextSeq, TRUE, 0)
+    /\ held' = held \cup {nextSeq % SentRing}
+    /\ unacked' = unacked \cup {nextSeq % SentRing}
     /\ highestSent' = nextSeq
     /\ fragsOf' = [fragsOf EXCEPT ![nextSeq] = {nextSeq}]
     /\ outbox' = <<[type |-> "payload", seq |-> nextSeq]>>
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED <<nextGen, aggs, numAggs, batch>>
     /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
 \* finish_packet on the arena route (rocketnet_client_transport_finish_arena_packet
 \* and the server's): the plan gives cnt, start_fragments reserves cnt - 1
@@ -269,6 +286,8 @@ StartFragmented(cnt) ==
        IN /\ aggs' = [aggs EXCEPT ![aggId % AggRing] = [id |-> aggId, pid |-> pid, remaining |-> cnt]]
           /\ numAggs' = aggId
           /\ sent' = RecordAll(sent, seqs, aggId, 0)
+          /\ held' = held \cup {s % SentRing : s \in seqs}
+          /\ unacked' = unacked \cup {s % SentRing : s \in seqs}
           /\ highestSent' = nextSeq + cnt - 1
           /\ fragsOf' = [fragsOf EXCEPT ![pid] = seqs]
           /\ outbox' = [i \in 1..cnt |-> Fragment(nextSeq + i - 1, nextGen, i - 1, cnt)]
@@ -276,6 +295,7 @@ StartFragmented(cnt) ==
           /\ nextGen' = nextGen + 1
     /\ UNCHANGED batch
     /\ UNCHANGED <<receiverVars, burned, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED <<bitsChecked, lastExpect, lastVisited>>
 
 \* A sequence spent and never sent: start_packet acquired a frame and the
 \* packet was aborted, or finish_packet returned zero on the wire route
@@ -287,6 +307,7 @@ BurnOne ==
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED <<nextGen, sent, highestSent, aggs, numAggs, batch, outbox>>
     /\ UNCHANGED <<receiverVars, fragsOf, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED bitVars
 
 \* A seal refusal inside the fragment loop: the whole reservation withdraws,
 \* the payload id and the aggregate are consumed (both are drawn before the
@@ -310,6 +331,7 @@ BurnFragmented(cnt) ==
           /\ nextGen' = nextGen + 1
     /\ UNCHANGED <<sent, highestSent, batch, outbox>>
     /\ UNCHANGED <<receiverVars, surfacedCount, deliveredCount, openedEver, namedEver, badStale, d2rVars, r2dVars>>
+    /\ UNCHANGED bitVars
 
 \* A defective sender: a sealed fragment whose header says anything.  It is
 \* the sender's own session (the seal rules out a third party), so it spends
@@ -322,7 +344,7 @@ DefectiveSend ==
          outbox' = <<[type |-> "fragment", seq |-> nextSeq, gen |-> 0, id |-> id, idx |-> i, cnt |-> cnt, bytes |-> b]>>
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED <<nextGen, sent, highestSent, aggs, numAggs, batch>>
-    /\ UNCHANGED <<receiverVars, ghostVars, d2rVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, ghostVars, d2rVars, r2dVars, bitVars>>
 
 \* send_packets: the staged packets go to the wire in fill order.
 Flush ==
@@ -330,7 +352,7 @@ Flush ==
     /\ D2R!Send(Head(outbox))
     /\ outbox' = Tail(outbox)
     /\ UNCHANGED <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, batch>>
-    /\ UNCHANGED <<receiverVars, ghostVars, r2dVars>>
+    /\ UNCHANGED <<receiverVars, ghostVars, r2dVars, bitVars>>
 
 (***************************************************************************)
 (* process_block / apply_run (sdk/rocketnet_ack.cpp).  The walk visits the *)
@@ -346,7 +368,7 @@ Flush ==
 (***************************************************************************)
 WindowLow == IF highestSent >= SentRing THEN highestSent - SentRing + 1 ELSE 1
 
-\* st = [sent, aggs, batch, sc]
+\* st = [sent, aggs, batch, sc, unacked, visited]
 ApplyOne(s, st) ==
     IF s > highestSent \/ s < WindowLow THEN st
     ELSE LET k == s % SentRing
@@ -354,10 +376,10 @@ ApplyOne(s, st) ==
          IN IF r.seq # s \/ r.acked THEN st
             ELSE IF (r.has \/ r.agg # 0) /\ Len(st.batch) >= BatchCap THEN
                     IF Witness = "dropfull"
-                        THEN [st EXCEPT !.sent[k].acked = TRUE]
+                        THEN [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k}]
                         ELSE st
             ELSE IF r.has THEN
-                    [st EXCEPT !.sent[k].acked = TRUE,
+                    [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k},
                                !.batch = Append(@, r.pid),
                                !.sc[r.pid] = Sat2(@)]
             ELSE IF r.agg # 0 THEN
@@ -366,31 +388,70 @@ ApplyOne(s, st) ==
                     IN IF a.id = r.agg /\ a.remaining > 0 THEN
                            LET rem == IF Witness = "firstfrag" THEN 0 ELSE a.remaining - 1
                            IN IF rem = 0
-                                THEN [st EXCEPT !.sent[k].acked = TRUE,
+                                THEN [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k},
                                                 !.aggs[j].remaining = 0,
                                                 !.batch = Append(@, a.pid),
                                                 !.sc[a.pid] = Sat2(@)]
-                                ELSE [st EXCEPT !.sent[k].acked = TRUE,
+                                ELSE [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k},
                                                 !.aggs[j].remaining = rem]
-                       ELSE [st EXCEPT !.sent[k].acked = TRUE]
-            ELSE [st EXCEPT !.sent[k].acked = TRUE]
+                       ELSE [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k}]
+            ELSE [st EXCEPT !.sent[k].acked = TRUE, !.unacked = @ \ {k}]
 
-RECURSIVE ApplyNamed(_, _)
-ApplyNamed(named, st) ==
+(***************************************************************************)
+(* The sent-ring bitmaps (owed: the design the pro card                    *)
+(* rocketnet-ack-walk-unacked-only implements in sdk/rocketnet_ack.cpp).   *)
+(* held and unacked are the bits as sets of slot indexes.  A record write  *)
+(* sets its slot in both; an ack clears its slot from unacked; a deferred  *)
+(* record keeps it.  At the top of process_block the reconcile checks      *)
+(* every sequence from bitsChecked + 1 to highestSent, clamped below to    *)
+(* WindowLow: a slot that does not hold its sequence (a burned or refused  *)
+(* sequence, or a record that fell below the window) loses both bits.      *)
+(* The walk then visits a named sequence s in the window only when slot    *)
+(* s % SentRing has its unacknowledged bit set and holds s.                *)
+(***************************************************************************)
+ReconcileSlots ==
+    {x % SentRing : x \in {y \in Max({bitsChecked + 1, WindowLow})..highestSent :
+                              sent[y % SentRing].seq # y}}
+
+\* the walk over the named sequences, highest first; skip is the sequence
+\* the "walkskip" witness passes over (0 for none)
+RECURSIVE ApplyNamed(_, _, _)
+ApplyNamed(named, st, skip) ==
     IF named = {} THEN st
-    ELSE LET s == Max(named) IN ApplyNamed(named \ {s}, ApplyOne(s, st))
+    ELSE LET s     == Max(named)
+             k     == s % SentRing
+             visit == /\ s <= highestSent /\ s >= WindowLow
+                      /\ k \in st.unacked /\ st.sent[k].seq = s
+                      /\ s # skip
+         IN ApplyNamed(named \ {s},
+                       IF visit THEN [ApplyOne(s, st) EXCEPT !.visited = @ \cup {s}] ELSE st,
+                       skip)
 
 \* The block at the head of the ack link arrives (only the head is ever
 \* deliverable, so the receive names it rather than searching AckPackets).
+InWindow(s) == s >= WindowLow /\ s <= highestSent
+
 RecvAck ==
     /\ r2dWire # <<>>
-    /\ LET b == Head(r2dWire).pkt IN
+    /\ LET b      == Head(r2dWire).pkt
+           h1     == IF Witness = "staleheld" THEN held ELSE held \ ReconcileSlots
+           u1     == unacked \ ReconcileSlots
+           expect == {s \in b : InWindow(s) /\ sent[s % SentRing].seq = s /\ ~sent[s % SentRing].acked}
+           cand   == {s \in b : InWindow(s) /\ s % SentRing \in u1 /\ sent[s % SentRing].seq = s}
+           skip   == IF Witness = "walkskip" /\ cand # {} THEN Min(cand) ELSE 0
+       IN
         /\ R2D!Deliver(b)
-        /\ LET st == ApplyNamed(b, [sent |-> sent, aggs |-> aggs, batch |-> batch, sc |-> surfacedCount])
+        /\ LET st == ApplyNamed(b, [sent |-> sent, aggs |-> aggs, batch |-> batch, sc |-> surfacedCount,
+                                    unacked |-> u1, visited |-> {}], skip)
            IN /\ sent' = st.sent
               /\ aggs' = st.aggs
               /\ batch' = st.batch
               /\ surfacedCount' = st.sc
+              /\ unacked' = st.unacked
+              /\ lastVisited' = st.visited
+        /\ held' = h1
+        /\ bitsChecked' = highestSent
+        /\ lastExpect' = expect
     /\ UNCHANGED <<nextSeq, nextGen, highestSent, numAggs, outbox>>
     /\ UNCHANGED <<receiverVars, burned, fragsOf, deliveredCount, openedEver, namedEver, badStale, d2rVars>>
 
@@ -430,7 +491,7 @@ Block ==
 SendAck ==
     /\ R2D!Send(Block)
     /\ namedEver' = namedEver \cup Block
-    /\ UNCHANGED <<senderVars, receiverVars, burned, fragsOf, surfacedCount, deliveredCount, openedEver, badStale, d2rVars>>
+    /\ UNCHANGED <<senderVars, receiverVars, burned, fragsOf, surfacedCount, deliveredCount, openedEver, badStale, d2rVars, bitVars>>
 
 (***************************************************************************)
 (* rocketnet_reassembly_process_fragment, the standard's checks in order.  *)
@@ -530,7 +591,7 @@ RecvData ==
                 /\ IF p.type = "payload"
                    THEN UNCHANGED <<slots, numDelivered, batchFull, lastDelivery, deliveredCount, badStale>>
                    ELSE RecvFragment(p)
-    /\ UNCHANGED <<senderVars, burned, fragsOf, surfacedCount, namedEver, r2dVars>>
+    /\ UNCHANGED <<senderVars, burned, fragsOf, surfacedCount, namedEver, r2dVars, bitVars>>
 
 (***************************************************************************)
 (* Time: one update on both ends.                                          *)
@@ -541,10 +602,10 @@ Tick ==
     /\ numDelivered' = 0
     /\ D2R!Age /\ R2D!Age
     /\ UNCHANGED <<nextSeq, nextGen, sent, highestSent, aggs, numAggs, outbox>>
-    /\ UNCHANGED <<highestOpened, opened, slots, batchFull, lastDelivery, ghostVars>>
+    /\ UNCHANGED <<highestOpened, opened, slots, batchFull, lastDelivery, ghostVars, bitVars>>
 
-D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars>>
-R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars>>
+D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars, bitVars>>
+R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
 
 Next ==
     \/ StartPayload
@@ -627,6 +688,9 @@ TypeOK ==
     /\ deliveredCount \in [Gens -> 0..2]
     /\ openedEver \subseteq Seqs /\ namedEver \subseteq Seqs
     /\ badStale \in BOOLEAN
+    /\ held \subseteq 0..SentRing-1 /\ unacked \subseteq 0..SentRing-1
+    /\ bitsChecked \in 0..MaxSeq
+    /\ lastExpect \subseteq Seqs /\ lastVisited \subseteq Seqs
     /\ D2R!TypeOK /\ R2D!TypeOK
 
 \* The acked batch names a packet id at most once, ever (USAGE.md:
@@ -704,6 +768,27 @@ BatchFullNeverFires == ~batchFull
 CountPinned ==
     [][\A k \in 0..Slots-1 :
          (slots[k].id # 0 /\ slots'[k].id = slots[k].id) => slots'[k].cnt = slots[k].cnt]_vars
+
+\* The bitmaps never miss a record: every slot whose record is in the
+\* window, written and not acknowledged has its unacknowledged bit set, and
+\* an unacknowledged bit is only ever set on a held slot.
+BitsCoverRing ==
+    /\ unacked \subseteq held
+    /\ \A k \in 0..SentRing-1 :
+         (sent[k].seq # 0 /\ InWindow(sent[k].seq) /\ ~sent[k].acked) => k \in unacked
+
+\* Once the reconcile has caught up with the highest sent sequence, the
+\* bits are exactly the ring: held is the slots whose record is in the
+\* window, unacked those of them not acknowledged (the pro card's
+\* ack_block_walk_bits_match_ring test checks the same).
+BitsMatchRing ==
+    bitsChecked = highestSent =>
+        /\ held = {k \in 0..SentRing-1 : sent[k].seq # 0 /\ sent[k].seq >= WindowLow}
+        /\ unacked = {k \in held : ~sent[k].acked}
+
+\* The bitmap walk visits exactly the named sequences in the window whose
+\* ring record holds them unacknowledged, read from the ring before the walk.
+WalkVisitsUnacked == lastVisited = lastExpect
 
 (***************************************************************************)
 (* Liveness.                                                               *)

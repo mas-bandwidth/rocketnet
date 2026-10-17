@@ -102,6 +102,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnwindow` | 7 | Existing committed safety/liveness controls and five invariant witnesses |
 | `rnuringdriver` | 3 | io_uring driver control (invariants and liveness) and two invariant witnesses |
 | `rnclientio` | 6 | Client I/O thread design control (invariants and liveness) and five invariant witnesses |
+| `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses |
 
 The 47-case plan covers every root configuration. Other experiments described
 in the model READMEs remain historical; this migration does not claim fresh

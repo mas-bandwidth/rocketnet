@@ -193,9 +193,9 @@ through the pinned `tlacheck` as `tla/README.md` describes, each case its own sh
 the 110 s budget:
 
 ```sh
-for i in $(seq 0 20); do
+for i in $(seq 0 23); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group fragmentsandacks --shards 21 --shard "$i" --timeout 110s \
+    --group fragmentsandacks --shards 24 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/fragmentsandacks-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
@@ -249,6 +249,9 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | wit-noclear | `MCFragmentsAndAcksWitNoclear.cfg` | safety, `Witness = "noclear"` | **fails** `DeliveredExact` | required |
 | wit-nosizecheck | `MCFragmentsAndAcksWitNosizecheck.cfg` | defect + safety, `Witness = "nosizecheck"` | **fails** `ArenaBounded` | required |
 | wit-nopin | `MCFragmentsAndAcksWitNopin.cfg` | defect, `Witness = "nopin"` | **fails** `CountPinned` | required |
+| bits | `MCFragmentsAndAcksBits.cfg` | bits: live-small with `SentRing = 2`, `MaxSeq = 4`, `SpecSafety` + `CountPinned`, ack link `"none"` | passes | required |
+| wit-walkskip | `MCFragmentsAndAcksWitWalkskip.cfg` | bits, `Witness = "walkskip"`, no `CountPinned` | **fails** `WalkVisitsUnacked` | required |
+| wit-staleheld | `MCFragmentsAndAcksWitStaleheld.cfg` | bits, `Witness = "staleheld"`, no `CountPinned` | **fails** `BitsMatchRing` | required |
 | link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
 Three instances were shrunk to fit the 110 s budget at two TLC workers: `live-small`
@@ -272,32 +275,38 @@ probe can be repeated by hand.
 
 The measured records are the `fragmentsandacks` rows of `tla/RUNS.tsv` (TLC 2.19, the
 pinned jar, two workers for a passing case and one for a counterexample, 110 s per
-case). Fifteen cases reach their declared result; six are `bench` debt and time out
-(exit 124), which is a failed measurement, not a proof.
+case), re-measured after the bitmaps were added. Seventeen cases reach their declared
+result; six are `bench` debt and time out (exit 124), which is a failed measurement, not
+a proof. `MCFragmentsAndAcksPatAlternate.cfg`, a required control, no longer fits the
+budget: the bitmap state below multiplies its state space (the bitmaps section has the
+measurement), so its row is a timeout and the finding stands until its gate is decided.
 
 | Case | Result | Generated | Distinct | Time |
 |---|---|---|---|---|
-| `MCFragmentsAndAcks.cfg` | timeout, bench debt | | | 110.8 s |
-| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt | | | 111.6 s |
-| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 9,423 | 3,051 | 33.7 s |
-| `MCFragmentsAndAcksLiveDup.cfg` | pass | 24,664 | 5,308 | 34.6 s |
-| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt | | | 111.2 s |
-| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt | | | 111.8 s |
-| `MCFragmentsAndAcksPatAlternate.cfg` | pass | 2,015,557 | 483,020 | 93.1 s |
-| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt | | | 110.4 s |
-| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 175,552 | 59,816 | 68.6 s |
-| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 53,587 | 19,394 | 35.7 s |
-| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt | | | 110.5 s |
-| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 275,360 | 75,678 | 43.2 s |
-| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 175,552 | 59,816 | 16.4 s |
-| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 545,802 | 196,942 | 32.4 s |
-| `MCFragmentsAndAcksDefect.cfg` | pass | 311,709 | 72,184 | 36.5 s |
-| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,480 | 650 | 13.3 s |
-| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 20,325 | 7,250 | 4.3 s |
-| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,753 | 776 | 5.1 s |
-| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 26,941 | 9,465 | 5.5 s |
-| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 2.3 s |
-| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,163 | 75,805 | 19.2 s |
+| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 111.0 s |
+| `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.4 s |
+| `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 19.2 s |
+| `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 15.9 s |
+| `MCFragmentsAndAcksPatNone.cfg` | timeout, bench debt |  |  | 110.6 s |
+| `MCFragmentsAndAcksPatFirst.cfg` | timeout, bench debt |  |  | 110.6 s |
+| `MCFragmentsAndAcksPatAlternate.cfg` | **timeout (exit 124): required, a finding** |  |  | 110.4 s |
+| `MCFragmentsAndAcksPatBurst.cfg` | timeout, bench debt |  |  | 110.4 s |
+| `MCFragmentsAndAcksFindStale.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 205,517 | 73,495 | 17.0 s |
+| `MCFragmentsAndAcksFindStaleSmall.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 62,405 | 23,863 | 8.0 s |
+| `MCFragmentsAndAcksFindStaleSerialSmall.cfg` | timeout, bench debt |  |  | 110.5 s |
+| `MCFragmentsAndAcksFindStaleAhead2.cfg` | `StaleOnlyIfOlder` violated (exit 12), D1 | 334,146 | 96,226 | 13.4 s |
+| `MCFragmentsAndAcksFindStalePlain.cfg` | `StaleOnlyIfOlder` violated (exit 12) | 205,517 | 73,495 | 8.6 s |
+| `MCFragmentsAndAcksFindBatchFull.cfg` | `BatchFullNeverFires` violated (exit 12), D2 | 1,179,685 | 459,388 | 54.4 s |
+| `MCFragmentsAndAcksDefect.cfg` | pass | 374,661 | 89,755 | 8.9 s |
+| `MCFragmentsAndAcksWitFirstfrag.cfg` | `SurfacedOnlyIfOpened` violated (exit 12) | 1,495 | 679 | 2.2 s |
+| `MCFragmentsAndAcksWitDropfull.cfg` | `AckedMeansSurfaced` violated (exit 12) | 23,327 | 8,765 | 4.2 s |
+| `MCFragmentsAndAcksWitOverclaim.cfg` | `BurnedNeverNamed` violated (exit 12) | 1,768 | 809 | 1.5 s |
+| `MCFragmentsAndAcksWitNoclear.cfg` | `DeliveredExact` violated (exit 12) | 30,943 | 11,465 | 3.1 s |
+| `MCFragmentsAndAcksWitNosizecheck.cfg` | `ArenaBounded` violated (exit 12) | 7,612 | 7,081 | 1.9 s |
+| `MCFragmentsAndAcksWitNopin.cfg` | `CountPinned` violated (exit 13) | 157,421 | 76,216 | 7.0 s |
+| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 17.3 s |
+| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 1.4 s |
+| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 1.4 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
@@ -316,6 +325,111 @@ are not current records; they are the evidence for the bench rows above.
 Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
 a three-id defect instance (272 million distinct states in 50 minutes) and the serial
 rule at `MaxSeq = 6` with jitter (106 million).
+
+## The sent-ring bitmaps
+
+The design the pro card `rocketnet-ack-walk-unacked-only` implements in
+`sdk/rocketnet_ack.cpp` (owed: the fields `sent_held`, `sent_unacked` and
+`sent_bits_checked` are not in the code yet). Beside the sent ring the endpoint keeps two
+bitmaps, one bit per slot: held (the slot holds a written record) and unacked (written and
+not yet acknowledged), and the highest sequence whose slot has been reconciled.
+
+| Variable | Code (owed) | Meaning |
+|---|---|---|
+| `held` | `sent_held` | the slots holding a written record, as a set of slot indexes |
+| `unacked` | `sent_unacked` | the slots written and not yet acknowledged |
+| `bitsChecked` | `sent_bits_checked` | the highest sequence whose slot the reconcile has checked |
+| `lastExpect` | ghost | the named sequences the last block's walk should visit, read from the ring before the walk: in the window, the slot holding the sequence, not acknowledged |
+| `lastVisited` | ghost | the named sequences the last block's walk did visit |
+
+**Writes and acks.** `StartPayload` and `StartFragmented(cnt)` set every slot they write in
+both bitmaps (`rocketnet_ack_endpoint_record_sent_classified`); a refused write sets
+nothing, and with sequences spent in order the model never refuses one. A burn writes no
+record and leaves the bits. `ApplyOne` clears its slot from `unacked` wherever it sets
+`acked` (`rocketnet_ack_apply_run`); a deferred record (batch full) keeps its bit.
+
+**The reconcile and the walk** (`RecvAck`, the top of
+`rocketnet_ack_endpoint_process_block`). For each sequence x from `bitsChecked + 1` to
+`highestSent`, clamped below to `WindowLow`, a slot that does not hold x (`sent[x %
+SentRing].seq # x`: a burned or refused x, or a record that fell below the window) loses
+both bits; then `bitsChecked = highestSent`. The walk then visits a named sequence s in the
+window only when slot `s % SentRing` has its unacked bit set and holds s.
+
+**Invariants**, listed after the existing ones in the three bitmap cfgs:
+
+| Property | The rule |
+|---|---|
+| `BitsCoverRing` | always: every slot whose record is in the window, written and not acknowledged is in `unacked`, and `unacked` is inside `held`; the walk never misses a record |
+| `BitsMatchRing` | when `bitsChecked = highestSent`: `held` is exactly the slots whose record is written and at or above `WindowLow`, `unacked` exactly those of them not acknowledged; the check the pro card's `ack_block_walk_bits_match_ring` test runs |
+| `WalkVisitsUnacked` | `lastVisited = lastExpect`: the bitmap walk visits exactly the sequences the ring says it should |
+
+**Abstracted.** The bits are sets of slot indexes, not words; the walk's word scan (find the
+next set bit) is a set filter. The unknown-sequence counter, which the design keeps as a
+popcount of `held` against the named span, is not modelled (counters are not state here,
+as above). The reconcile runs on every block received, including an empty one.
+
+**The instance.** Every older cfg has `SentRing = MaxSeq`, so no slot is ever lapped and the
+reconcile never has a held slot to clear. `MCFragmentsAndAcksBits.cfg` is live-small with
+`SentRing = 2` and `MaxSeq = 4` (burns on), so a burn laps a held slot: with sequence 1
+in slot 1, burning 3 and sending 4 leaves slot 1 holding a sequence below the window. At
+`MaxSeq = 3` no burn can lap a held slot (the lapping sequence must be followed by a
+higher send), so 4 is the smallest instance that exercises the clear. Under `Spec` with
+`OpenedSurfacesOrLaps` it did not finish inside 110 s (54,886 states generated in a
+minute), and under `SpecSafety` with both links `"arbitrary"` it passed in 87 s (591,212
+distinct states), too close to the budget on a loaded bench; with the ack link `"none"`
+(lossless, data link still `"arbitrary"`) it is the row below. The two witnesses use the
+same instance under `SpecSafety`.
+
+```sh
+java -XX:+UseParallelGC -cp /opt/tla/tla2tools.jar tlc2.TLC -workers 2 \
+  -config MCFragmentsAndAcksBits.cfg MCFragmentsAndAcks.tla
+java -XX:+UseParallelGC -cp /opt/tla/tla2tools.jar tlc2.TLC -workers 1 \
+  -config MCFragmentsAndAcksWitWalkskip.cfg MCFragmentsAndAcks.tla
+java -XX:+UseParallelGC -cp /opt/tla/tla2tools.jar tlc2.TLC -workers 1 \
+  -config MCFragmentsAndAcksWitStaleheld.cfg MCFragmentsAndAcks.tla
+```
+
+(The recorded runs go through `tlacheck`, as above.)
+
+| Run | Result | Generated | Distinct | Time |
+|---|---|---|---|---|
+| `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 17.3 s |
+| `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 1.4 s |
+| `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 1.4 s |
+
+**wit-walkskip** (`Witness = "walkskip"`: the walk skips the lowest named sequence whose
+unacked bit is set). Six states: `StartPayload` records sequence 1 in slot 1 (`held =
+unacked = {1}`), `Flush`, `RecvData` opens 1, `SendAck` sends the block `{1}`, `RecvAck`:
+the reconcile finds slot 1 holding 1, `lastExpect = {1}`, and the walk skips 1, so
+`lastVisited = {}` and the record stays unacknowledged with its bit set. `BitsCoverRing`
+and `BitsMatchRing` hold (the bits still match the ring); `WalkVisitsUnacked` fails. Hand
+check: the design's walk visits every named sequence in the window whose unacked bit is set
+and whose slot holds it; slot 1 holds 1 with the bit set, so the design visits it, and a
+walk that skips it leaves a received packet unacknowledged until a later block names it.
+
+**wit-staleheld** (`Witness = "staleheld"`: the reconcile clears a mismatched slot's unacked
+bit but keeps its held bit). Seven states: `StartPayload` records 1 in slot 1,
+`BurnFragmented(2)` burns 2 and 3, `Flush`, `StartPayload` records 4 in slot 0 (`held =
+unacked = {0, 1}`, `highestSent = 4`, `WindowLow = 3`), `SendAck` sends the empty block,
+`RecvAck`: the reconcile checks 3 and 4 (`bitsChecked + 1 = 1` clamped to 3); slot 1 holds
+1, not 3, so it is cleared from `unacked` but stays in `held`; `bitsChecked = 4`. Now
+`held = {0, 1}` while the ring's slots in the window are `{0}`: `BitsMatchRing` fails, and
+`BitsCoverRing` holds (`unacked = {0}` inside `held`). Hand check: the design's reconcile
+clears both bits of a slot that does not hold its sequence; sequence 1 is below the window
+(`highestSent - SentRing + 1 = 3`), so its slot is no longer held, and a held bit left set
+would let the next block's walk, or the unknown-sequence count, treat slot 1 as live.
+
+**What the bitmaps cost the other rows.** The new state is not derivable from the ring:
+`bitsChecked` records when the last block arrived relative to the sends, and the two ghosts
+record what the last block named. Re-measured, every older case keeps its declared outcome
+except `MCFragmentsAndAcksPatAlternate.cfg`, a required control that now times out. Run
+outside the budget (TLC 2.19, two workers, the same bench): 1,422,444 distinct states in
+168.8 s, against 483,020 in 93.1 s before the bitmaps. With the two ghosts held constant
+in a scratch copy it is 1,027,312 distinct states in 138.2 s; with `bitsChecked` collapsed
+to a caught-up flag (the reconcile starting at `WindowLow` every time, which is
+equivalent because the reconcile is idempotent) and the ghosts kept it is 1,147,728 in
+117.8 s. No encoding of the bitmap state keeps that instance inside 110 s, so its gate is
+the decision this change leaves open.
 
 ## What TLC found
 
