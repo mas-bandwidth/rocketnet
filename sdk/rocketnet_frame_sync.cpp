@@ -273,17 +273,29 @@ int rocketnet_frame_sync_advance( uint64_t * deadline_ns, uint64_t period_ns, ui
 
 struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, double frame_rate )
 {
+    return rocketnet_frame_sync_create_ex( context, frame_rate, NULL );
+}
+
+struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, double frame_rate, int * status )
+{
     // the lifecycle state is read once here, before any allocation; a create
     // before rocketnet_init is refused, logged and counted
     if ( !rocketnet_library_initialized() )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         rocketnet_error( "rocketnet_frame_sync_create: rocketnet_init must be called first" );
         rocketnet_api_misuse_record();
         return NULL;
     }
 
+    // docs/ERRORS-AND-LOGGING.md 1.4 and 2.1: F1 invalid frame rate is
+    // INVALID_ARGUMENT, F2 the malloc refusal is OUT_OF_MEMORY, and F3 the
+    // Windows timer refusal is TIMER_CREATE_FAILED.
     if ( !( frame_rate > 0.0 ) || frame_rate > ROCKETNET_FRAME_SYNC_MAX_FRAME_RATE )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         rocketnet_error( "frame sync: invalid frame rate %.1f", frame_rate );
         return NULL;
     }
@@ -294,7 +306,12 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
     struct rocketnet_frame_sync_t * frame_sync = (struct rocketnet_frame_sync_t*) rocketnet_malloc( context, sizeof( struct rocketnet_frame_sync_t ) );
     if ( !frame_sync )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+        rocketnet_error( "frame sync: could not allocate frame sync" );
         return NULL;
+    }
 
     memset( frame_sync, 0, sizeof( struct rocketnet_frame_sync_t ) );
 
@@ -317,6 +334,8 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
     }
     if ( !frame_sync->waitable_timer )
     {
+        if ( status )
+            *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
         rocketnet_error( "frame sync: could not create waitable timer (%lu)", (unsigned long) GetLastError() );
         rocketnet_free( context, frame_sync );
         return NULL;
@@ -325,6 +344,8 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create( void * context, dou
 
     rocketnet_info( "frame sync: %.1f hz", frame_rate );
 
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
     return frame_sync;
 }
 
