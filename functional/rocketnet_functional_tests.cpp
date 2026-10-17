@@ -3792,16 +3792,50 @@ void rocketnet_test_server_gso_send_overflow()
 
 #include "rocketnet_server_uring.h"
 
+// when the driver is unavailable, create must refuse with a log line naming
+// why (built without liburing, or a kernel that refuses the ring); the case
+// prints that reason in its SKIPPED line
+
+static bool rocketnet_test_server_uring_skipped( const char * test_name )
+{
+    if ( rocketnet_server_uring_available() )
+        return false;
+
+    rocketnet_address_t refused_address;
+    rocketnet_check( rocketnet_address_parse( &refused_address, "127.0.0.1" ) );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const int saved_level = rocketnet_get_log_level();
+    rocketnet_log_function( rocketnet_test_capture_log );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    struct rocketnet_server_uring_t * refused = rocketnet_server_uring_create( NULL, &refused_address, 2 );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function );
+
+    rocketnet_check( refused == NULL );
+
+    char reason[256];
+    reason[0] = '\0';
+    const char * line = strstr( rocketnet_test_captured_log, "io_uring driver refused" );
+    rocketnet_check( line != NULL );
+    if ( line )
+    {
+        snprintf( reason, sizeof(reason), "%s", line );
+        char * newline = strchr( reason, '\n' );
+        if ( newline )
+            *newline = '\0';
+    }
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s [SKIPPED %s]", test_name, reason );
+    return true;
+}
+
 void rocketnet_test_server_uring_probe()
 {
-    if ( !rocketnet_server_uring_available() )
-    {
-        rocketnet_address_t refused_address;
-        rocketnet_check( rocketnet_address_parse( &refused_address, "127.0.0.1" ) );
-        rocketnet_check( rocketnet_server_uring_create( NULL, &refused_address, 2 ) == NULL );
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_uring_probe [SKIPPED io_uring driver unavailable: built without liburing, or this kernel refuses the ring]" );
+    if ( rocketnet_test_server_uring_skipped( "test_server_uring_probe" ) )
         return;
-    }
 
     // create discovers an ephemeral port and reports it back; the queue
     // count is a fact and every counter starts at zero
@@ -3854,11 +3888,8 @@ void rocketnet_test_server_uring_probe()
 
 void rocketnet_test_server_uring_wire_ipv4()
 {
-    if ( !rocketnet_server_uring_available() )
-    {
-        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_uring_wire_ipv4 [SKIPPED io_uring driver unavailable: built without liburing, or this kernel refuses the ring]" );
+    if ( rocketnet_test_server_uring_skipped( "test_server_uring_wire_ipv4" ) )
         return;
-    }
 
     rocketnet_address_t bind_address;
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
