@@ -181,13 +181,18 @@ static void log_callback_and_legacy_function_last_wins()
     check( g_pf_count == 1 );
 
     rocketnet_set_log_callback( NULL, NULL );
+    // the default sink writes to stdout, and a passing suite prints only names
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default sink" );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_legacy_count == 2 );
     check( g_pf_count == 1 );
 
     rocketnet_log_function( legacy_callback );
     rocketnet_log_function( NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default again" );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
     check( g_legacy_count == 2 );
     check( g_pf_count == 1 );
 

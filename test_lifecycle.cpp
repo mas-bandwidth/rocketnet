@@ -1,5 +1,7 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #include "rocketnet.h"
+#include "rocketnet_connect_token.h"
+#include "rocketnet_test_vectors.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_ack.h"
@@ -517,6 +519,101 @@ static void check_component_create_sweeps( allocator_state & state )
     check( state.live == baseline );
 }
 
+// The operator memory budgets (#155): the server and client tables' memory
+// budget field is overlaid by ROCKETNET_SERVER_/CLIENT_MEMORY_BUDGET_BYTES.
+// A budget below a candidate's default plan refuses the create before any
+// allocation (the counting allocator's call count is unchanged); a budget
+// above the plan lets the create succeed. The env shim is the platform's
+// real environment, read through rocketnet_platform_getenv.
+
+// a valid connect token with future timestamps, minted with the production
+// test backend secret (the library's non-development build has no dev minting)
+static void make_valid_token( uint8_t * token )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &private_fields, 0, sizeof(private_fields) );
+    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.protocol_id = 1;
+    const uint64_t now = (uint64_t) time( NULL );
+    signed_fields.create_timestamp = now - 100;
+    signed_fields.expire_timestamp = now + 100000;
+    signed_fields.timeout_seconds = 60;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127;
+    signed_fields.ipv4_address[1] = 0;
+    signed_fields.ipv4_address[2] = 0;
+    signed_fields.ipv4_address[3] = 1;
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+    private_fields.client_id = 1;
+    private_fields.protocol_id = 1;
+    private_fields.expire_timestamp = signed_fields.expire_timestamp;
+    memset( private_fields.client_to_server_key, 0x11, 32 );
+    memset( private_fields.server_to_client_key, 0x22, 32 );
+    check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token ) );
+}
+
+static void check_server_memory_budget( allocator_state & state )
+{
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    // non-development keys: the create path only refuses the published
+    // development keys in a release build, so any other non-zero keys pass
+    memset( config.server_public_key, 0xAB, 32 );
+    memset( config.server_secret_key, 0xCD, 32 );
+    memset( config.backend_public_key, 0xEF, 32 );
+    config.protocol_id = 1;
+    strcpy( config.driver, "portable" );
+    const uint64_t plan = rocketnet_server_transport_required_memory( &config, "portable" );
+    check( plan > 0 );
+
+    char budget[64];
+    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan - 1 ) );
+    setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
+    const int calls_before = state.calls;
+    const int live_before = state.live;
+    check( rocketnet_server_transport_create( &state, "127.0.0.1:0", &config ) == NULL );
+    check( state.calls == calls_before );       // refused before any allocation
+    check( state.live == live_before );
+    unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+
+    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan + 1 ) );
+    setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create( &state, "127.0.0.1:0", &config );
+    check( server != NULL );
+    rocketnet_server_transport_destroy( server );
+    unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+}
+
+static void check_client_memory_budget( allocator_state & state )
+{
+    rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    const uint64_t plan = rocketnet_client_transport_required_memory( &config, "portable" );
+    check( plan > 0 );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    make_valid_token( token );
+
+    char budget[64];
+    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan - 1 ) );
+    setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
+    const int calls_before = state.calls;
+    const int live_before = state.live;
+    check( rocketnet_client_transport_create( &state, token, &config, 0.0 ) == NULL );
+    check( state.calls == calls_before );       // refused before any allocation
+    check( state.live == live_before );
+    unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+
+    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan + 1 ) );
+    setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
+    check( client != NULL );
+    rocketnet_client_transport_destroy( client );
+    unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+}
+
 int main()
 {
     allocator_state state;
@@ -590,6 +687,8 @@ int main()
     check_send_handoff();
     check_memory_geometry(state);
     check_component_create_sweeps( state );
+    check_server_memory_budget( state );
+    check_client_memory_budget( state );
     check( state.live == baseline );
 
     for ( int failure = 1; failure <= 2; ++failure )

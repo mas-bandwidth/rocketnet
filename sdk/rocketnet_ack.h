@@ -116,6 +116,14 @@ struct rocketnet_received_packet_record_t
     uint32_t pad;
 };
 
+// The sent ring's shadow bitmaps: one bit per slot, held (written) and
+// unacknowledged. The walk reads them instead of visiting every sequence in
+// the named run, so acknowledged and never-written sequences cost nothing.
+
+#define ROCKETNET_SENT_BITMAP_WORDS ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 64 )
+static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
+               "the sent ring must be a multiple of 64 for the bitmaps" );
+
 struct rocketnet_ack_endpoint_t
 {
     uint64_t sent_lock;                         // guards sent-record reservation and publication
@@ -156,6 +164,10 @@ struct rocketnet_ack_endpoint_t
     uint8_t keep_alive_acked;
 
     volatile uint64_t num_aggregates;           // monotonic; the next aggregate's id is this plus one
+
+    uint64_t sent_held[ROCKETNET_SENT_BITMAP_WORDS];     // bit (slot) set: the record at slot was written; fill under sent_lock
+    uint64_t sent_unacked[ROCKETNET_SENT_BITMAP_WORDS];  // bit (slot) set: written and not yet acknowledged
+    uint64_t sent_bits_checked;                          // update thread only: highest sequence whose slot's bits were reconciled
 
     struct rocketnet_sent_packet_record_t sent[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     struct rocketnet_received_packet_record_t received[ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE];

@@ -65,6 +65,14 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
 
 bool rocketnet_config_parse_int_value( const char * value, int * out );
 
+// strictly apply one per-endpoint uint64 env overlay -- the operator memory
+// budget reads ROCKETNET_<TRANSPORT>_<FIELD> with the table parser, so an
+// unset or empty variable leaves *out unchanged, a non-number refuses loudly
+// exactly as the table overlays refuse, and a parseable number assigns.
+// returns false on a value that does not parse.
+
+bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out );
+
 // overlay the environment onto a config struct, field by field from the
 // descriptors: unset vars leave the struct value; set vars parse under the
 // field's kind, log the override loudly with the displaced value (secret

@@ -7,6 +7,7 @@
 */
 
 #include "rocketnet.h"
+#include "rocketnet_client_io.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
@@ -24,6 +25,10 @@
 #include <time.h>
 #include <math.h>
 #include <atomic>
+
+// counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
+// functional test
+unsigned long long g_client_ack_stats_count = 0;
 
 // The one clamp both transports share. A NaN or infinite time makes every
 // timeout comparison false and freezes a transport; a backwards step rewinds
@@ -49,19 +54,6 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 
     return time;
 }
-
-// the receive thread fills one buffer while update processes the other --
-// the IO, carried over whole
-
-struct rocketnet_client_receive_buffer_t
-{
-    int num_packets;
-    rocketnet_address_t from[ROCKETNET_NUM_CLIENT_PACKETS];
-    double receive_time[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t * packet_data[ROCKETNET_NUM_CLIENT_PACKETS];
-    size_t packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
-};
 
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
@@ -208,7 +200,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         slots < 1 || slots > ROCKETNET_MAX_FRAGMENTS ) return false;
 
     plan.transport_bytes = rocketnet_memory_allocations( { sizeof(rocketnet_client_transport_t) } );
-    plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
+    plan.reassembly_bytes = rocketnet_reassembly_memory_required( 1, slots, payload, rocketnet_client_reassembly_delivered_capacity( slots ) );
     if ( !plan.reassembly_bytes || !rocketnet_memory_add( plan.reassembly_bytes, 4, rocketnet_allocation_overhead() ) ) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
 
@@ -240,8 +232,20 @@ uint64_t rocketnet_client_transport_required_memory( const rocketnet_client_tran
 
 rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time )
 {
+    return rocketnet_client_transport_create_ex( context, connect_token, config, time, NULL );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status )
+{
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
+
     if ( !rocketnet_api_null_guard( connect_token ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
         return NULL;
+    }
 
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
@@ -249,6 +253,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "rocketnet_client_transport_create: rocketnet_init must be called first" );
         rocketnet_api_misuse_record();
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
         return NULL;
     }
 
@@ -270,10 +276,18 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     const struct rocketnet_config_field_t * config_fields = rocketnet_client_transport_config_fields( &num_config_fields );
 
     if ( !rocketnet_config_apply_env( "client", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
+    }
 
     if ( !rocketnet_config_validate( "client", &effective_config, config_fields, num_config_fields ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
         return NULL;
+    }
 
     config = &effective_config;
 
@@ -281,8 +295,12 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     // are acquired. Independent field maxima do not define a usable budget.
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
-    if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, ROCKETNET_NUM_CLIENT_PACKETS / 2))
+    if (!rocketnet_reassembly_memory_allowed(1, requested_slots, requested_payload, rocketnet_client_reassembly_delivered_capacity( requested_slots )))
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
         return NULL;
+    }
 
 
     // the driver candidate list parses before anything allocates: a typo
@@ -293,23 +311,68 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     struct rocketnet_driver_ladder_t ladder;
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
         return NULL;
+    }
+
+    // the operator memory budget (#155): each candidate's pre-allocation plan
+    // is compared to the budget before any allocation, and a candidate whose
+    // plan exceeds it is refused exactly as a refusing driver is -- logged with
+    // the plan and the budget, and skipped so the ladder falls to the next
+    // candidate. a budget that no candidate fits refuses the create before the
+    // first allocation.
+    uint64_t memory_budget = 0;
+    if ( !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
+        return NULL;
+    }
+    bool budget_refused[ROCKETNET_NUM_DRIVERS];
+    memset( budget_refused, 0, sizeof(budget_refused) );
+    int budget_refused_total = 0;
+    int budget_allowed = 0;
 
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
-        const char * name = rocketnet_driver_name( ladder.candidates[i] );
+        const int candidate = ladder.candidates[i];
+        const char * name = rocketnet_driver_name( candidate );
         rocketnet_client_memory_plan_t plan;
         if ( rocketnet_client_transport_memory_plan( config, name, plan ) )
+        {
             rocketnet_info( "client memory plan [%s]: %llu allocator bytes, %d sockets; excludes OS stacks, kernel queues, loader and application memory",
                 name, (unsigned long long) plan.total_bytes, plan.sockets );
+            if ( memory_budget > 0 && plan.total_bytes > memory_budget )
+            {
+                rocketnet_warn( "client driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                    name, (unsigned long long) plan.total_bytes, (unsigned long long) memory_budget );
+                budget_refused[candidate] = true;
+                budget_refused_total++;
+            }
+            else
+                budget_allowed++;
+        }
         else
             rocketnet_info( "client memory plan [%s]: unavailable; consult this driver's resource policy", name );
+    }
+
+    if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
+    {
+        rocketnet_error( "client driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+            (unsigned long long) memory_budget );
+        if ( status )
+            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
+        return NULL;
     }
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t*) rocketnet_malloc( context, sizeof(rocketnet_client_transport_t) );
     if ( !client_transport )
     {
         rocketnet_error( "could not allocate client" );
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
     }
 
@@ -328,18 +391,20 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     client_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
                                                                 ( client_transport->max_payload_bytes + 15 ) & ~15 );
-    // the delivered mirror sizes to the client's drain bound: one update
-    // drains at most ROCKETNET_NUM_CLIENT_PACKETS packets, and a payload
-    // takes at least two fragments, so half that is the most completions
-    // an update can produce -- about 8.4MB at the default maximum, spent
-    // so BATCH_FULL stays a true invariant under any legitimate burst
+    // the delivered mirror sizes to the completion bound: one update drains
+    // at most ROCKETNET_NUM_CLIENT_PACKETS packets, and its completions are
+    // half the drain plus the payloads begun in an earlier update (at most
+    // the slot count), so BATCH_FULL stays zero under any load the drain
+    // delivers -- about 8.4MB at the default maximum
 
     client_transport->reassembly = rocketnet_reassembly_set_create( context, 1, num_reassembly_slots, client_transport->max_payload_bytes,
-                                                                    ROCKETNET_NUM_CLIENT_PACKETS / 2 );
+                                                                    rocketnet_client_reassembly_delivered_capacity( num_reassembly_slots ) );
     if ( !client_transport->send_arena || !client_transport->reassembly )
     {
         rocketnet_error( "client could not allocate fragmentation storage" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         return NULL;
     }
 
@@ -369,7 +434,11 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
 
     if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, (uint64_t) ::time( NULL ) ) )
     {
+        const int connect_failure = client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED ?
+            ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED : ROCKETNET_STATUS_INVALID_CONNECT_TOKEN;
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = connect_failure;
         return NULL;
     }
 
@@ -424,6 +493,16 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         const int candidate = ladder.candidates[i];
 
+        // a candidate whose memory plan the operator budget refused was logged
+        // and refused in the plan loop above; record it for the exhausted
+        // summary and fall to the next candidate, never opening it
+        if ( budget_refused[candidate] )
+        {
+            const size_t used = strlen( refused_names );
+            snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
+            continue;
+        }
+
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( candidate );
         const rocketnet_client_driver_config_t driver_config = { rocketnet_driver_name(candidate), config };
         if ( rocketnet_client_driver_open( definition && definition->backend ? definition->backend->client : NULL,
@@ -453,6 +532,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
         return NULL;
     }
 
@@ -472,6 +553,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client could not create mutex" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
         return NULL;
     }
 
@@ -480,6 +563,8 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     {
         rocketnet_error( "client could not create thread" );
         rocketnet_client_transport_destroy( client_transport );
+        if ( status )
+            *status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
         return NULL;
     }
 
@@ -656,11 +741,6 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
         client_transport->stats_frames[stats_index].packets_lost += (uint64_t) lost_packets;
     }
 
-    // the delivery bookkeeping's recompute: one connection, so it runs
-    // every update at constant shape -- the server amortizes the same
-    // recompute round-robin across its slots
-
-    rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 }
 
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
@@ -1286,6 +1366,10 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
 
     memset( stats, 0, sizeof(struct rocketnet_client_transport_stats_t) );
 
+    g_client_ack_stats_count++;
+    // the client's only reader of the ack statistics is this getter, so they are computed here (docs/CLIENT-IO-DECRYPT.md, The ack statistics)
+    rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
+
     // rtt seeds from the handshake's round trips and the acks refresh it
     // continuously from there: once positive first-ack samples exist they
     // are the estimate
@@ -1306,21 +1390,27 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 {
     rocketnet_assert( client_transport );
 
-    rocketnet_platform_mutex_acquire( &client_transport->mutex );
+    // the mutex covers the append only, never a socket call (docs/CLIENT-IO.md, Measured)
 
-    const int off_index = client_transport->receive_buffer_index ? 0 : 1;
-
-    rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
+    uint8_t scratch[ROCKETNET_MAX_PACKET_BYTES];
 
     while ( 1 )
     {
-        if ( receive_buffer->num_packets >= ROCKETNET_NUM_CLIENT_PACKETS )
+        // a short hold: is there room in the buffer update is not reading?
+
+        rocketnet_platform_mutex_acquire( &client_transport->mutex );
+
+        int off_index = client_transport->receive_buffer_index ? 0 : 1;
+
+        const bool full = client_transport->receive_buffer[off_index].num_packets >= ROCKETNET_NUM_CLIENT_PACKETS;
+
+        rocketnet_platform_mutex_release( &client_transport->mutex );
+
+        if ( full )
             break;
 
-        uint8_t * packet_data = receive_buffer->data + receive_buffer->num_packets * ROCKETNET_FRAME_SIZE;
-
         struct rocketnet_address_t from;
-        int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, packet_data, ROCKETNET_MAX_PACKET_BYTES );
+        const int packet_bytes = client_transport->io.operations->receive( client_transport->io.instance, &from, scratch, ROCKETNET_MAX_PACKET_BYTES );
         if ( packet_bytes == 0 )
             break;
 
@@ -1330,17 +1420,32 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
         if ( packet_bytes < ROCKETNET_PREFILTER_BYTES || packet_bytes > ROCKETNET_RECEIVE_CEILING )
             continue;
 
-        const int index = receive_buffer->num_packets;
+        const double receive_time = rocketnet_platform_time();
 
-        receive_buffer->from[index] = from;
-        receive_buffer->receive_time[index] = rocketnet_platform_time();
-        receive_buffer->packet_data[index] = packet_data;
-        receive_buffer->packet_bytes[index] = packet_bytes;
+        rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
-        receive_buffer->num_packets++;
+        // update may have swapped while the socket call ran
+
+        off_index = client_transport->receive_buffer_index ? 0 : 1;
+
+        rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[off_index];
+
+        if ( receive_buffer->num_packets < ROCKETNET_NUM_CLIENT_PACKETS )
+        {
+            const int index = receive_buffer->num_packets;
+
+            memcpy( receive_buffer->data + index * ROCKETNET_FRAME_SIZE, scratch, packet_bytes );
+
+            receive_buffer->from[index] = from;
+            receive_buffer->receive_time[index] = receive_time;
+            receive_buffer->packet_data[index] = receive_buffer->data + index * ROCKETNET_FRAME_SIZE;
+            receive_buffer->packet_bytes[index] = packet_bytes;
+
+            receive_buffer->num_packets++;
+        }
+
+        rocketnet_platform_mutex_release( &client_transport->mutex );
     }
-
-    rocketnet_platform_mutex_release( &client_transport->mutex );
 }
 
 static void rocketnet_client_thread_function( void * data )

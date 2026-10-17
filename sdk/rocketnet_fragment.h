@@ -71,6 +71,21 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // stride when the first non-final fragment fixes it, and placed then.
 // Storage is allocated once, at create, and never grown.
 
+// The stale rule's two bounds, per STANDARD.md _Fragmentation_ and
+// tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
+// slot's occupant an id refuses as superseded -- the window of the stale
+// test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one
+// bad fragment can cost: it refuses only the ids of its slot's series that
+// trail it by at most BEHIND, at most BEHIND / num_slots payloads (32 at the
+// default eight slots), the same limit as before. REACH: how far from the
+// connection's newest completed payload id, in either direction, an id may
+// be -- a quarter of the id space, which no honest loss run or late fragment
+// reaches, and well short of the half-space point where a hostile id would
+// read as newer than every honest one.
+
+#define ROCKETNET_REASSEMBLY_BEHIND             ( (uint32_t) ROCKETNET_MAX_FRAGMENTS )
+#define ROCKETNET_REASSEMBLY_REACH              ( 0x40000000u )
+
 struct rocketnet_reassembly_slot_t
 {
     uint32_t payload_id;                            // 0 = empty
@@ -111,10 +126,22 @@ struct rocketnet_reassembly_counters_t
 // destination of the one copy fragmentation inherently costs -- a completed
 // payload is copied out of its slot at the moment of completion, so the slot
 // is immediately reusable while the delivered bytes stay valid until the
-// next update. delivered_capacity is the caller's statement of its receive
-// drain's completion bound -- a payload takes at least two fragments, so
-// one update completes at most half the packets it drains -- and at that
-// bound BATCH_FULL is a true invariant: zero under any legitimate load.
+// next update. delivered_capacity is the caller's statement of how many
+// payloads one update can complete. Because the slot clears at completion,
+// one connection completes more payloads in an update than it has slots;
+// a payload begun in the update takes at least two of its drained packets,
+// and one begun earlier -- at most one per slot, connections x slots in
+// all -- completes on one. So an update that drains N packets completes at
+// most ( N + min( N, connections x slots ) ) / 2 payloads, and at that
+// capacity BATCH_FULL is zero under any load the drain delivers. The
+// server sizes its set there from its configuration and its drain
+// (rocketnet_server_reassembly_delivered_capacity); a set sized below the
+// bound counts BATCH_FULL for each completion past it.
+// The delivered arena packs completions by bytes at a 16-byte stride, so
+// its size is a byte bound beside the count bound, not capacity x max
+// payload: the bytes one update completes are the fragments it drains plus
+// what slots already held (rocketnet_server_reassembly_delivered_bytes). A
+// completion that does not fit the bytes also counts BATCH_FULL.
 // completed_payload and completed_bytes report the last process call's
 // completion, so a caller delivers in arrival position.
 
@@ -126,20 +153,52 @@ struct rocketnet_reassembly_set_t
     int max_payload_bytes;
     size_t slot_arena_bytes;                        // max payload + the staging buffer
     struct rocketnet_reassembly_slot_t * slots;     // num_connections * num_slots
+    uint32_t * newest_completed;                    // per connection: the stale rule's reference, 0 = the id before the sender's first
     uint8_t * arena;                                // num_connections * num_slots * slot_arena_bytes
     int delivered_capacity;                         // completed payloads deliverable per update
     int num_delivered;
-    uint8_t * delivered;                            // delivered_capacity * max_payload_bytes
+    size_t delivered_bytes;                         // the delivered arena's size: the caller's byte bound
+    size_t delivered_used;                          // bytes packed this update
+    uint8_t * delivered;                            // delivered_bytes, completions packed at a 16-byte stride
     uint8_t * completed_payload;                    // the last process call's completion, into delivered
     int completed_bytes;
 };
 
+#define ROCKETNET_REASSEMBLY_DELIVERED_ALIGN        16
+#define ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( n ) ( ( (size_t) (n) + ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) & ~(size_t) ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) )
+
 // Requested component bytes, excluding allocator overhead. Zero means invalid
 // geometry or integer overflow; estimation never allocates or touches storage.
+// The plain forms size the delivered arena at capacity x the aligned maximum
+// payload; the _delivered forms take the caller's byte bound, at least one
+// maximum payload.
 uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
 bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
+uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
+bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
 
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
+
+// The server's delivered capacity from its configuration: the completion
+// bound above at the server's drain, ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+// packets per update -- one global array, not a per-client share, and the
+// larger of the server's two receive paths. Zero for invalid geometry.
+
+int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots );
+
+// The client's delivered capacity from its configuration: the completion
+// bound above at the client's drain, ROCKETNET_NUM_CLIENT_PACKETS packets
+// per update for its one connection. Zero for invalid geometry.
+
+int rocketnet_client_reassembly_delivered_capacity( int num_slots );
+
+// The server's delivered arena bytes beside that count: the smaller of
+// capacity x the aligned maximum payload and the drain's fragment bytes
+// plus the payloads half-held in slots, padded to the packing stride.
+// Zero for invalid geometry.
+
+uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_slots, int max_payload_bytes );
 
 void rocketnet_reassembly_set_destroy( struct rocketnet_reassembly_set_t * set );
 

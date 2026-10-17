@@ -215,6 +215,7 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
     }
 }
 
+    // tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
     rocketnet_assert( store );
@@ -254,6 +255,7 @@ uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
     return ( (uint32_t) c << 30 ) | first;
 }
 
+    // tla/RNSendStore.tla Free
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
@@ -718,6 +720,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     return d;
 }
 
+// tla/RNRing.tla PlaceSingle
 const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uint32_t fragment, uint32_t * out_bytes )
 {
     rocketnet_assert( region );
@@ -867,6 +870,7 @@ bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t by
     return (uint64_t) ( address - base ) <= region->bytes - bytes;
 }
 
+// tla/RNRing.tla SpanInsideRing
 bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes )
 {
     // placement is the sender's; the receiver only checks bounds (4.3, 6.3), so

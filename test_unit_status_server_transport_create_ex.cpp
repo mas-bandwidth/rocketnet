@@ -1,0 +1,243 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The structured server transport create surface
+// (docs/ERRORS-AND-LOGGING.md 1.3, 2.1 and 2.3, Layer 4): every failure exit
+// that is reachable without a socket or real time writes its exact status code,
+// and the allocation-failure exits (S10, S14) are reached by a fault-injecting
+// allocator failing at each allocation in turn.
+//
+// Not reachable in the unit tier:
+//   * S13 DRIVER_LADDER_EXHAUSTED (a non-port-zero driver open refusal), which
+//     needs a driver open to refuse -- a socket -- and no unit-tier driver
+//     refuses without opening one; the port-zero refusal (S12) is reachable
+//     because the ladder refuses the XDP rung before opening anything.
+
+#include "test_unit_registry.h"
+
+#include "rocketnet.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define check rocketnet_unit_check
+
+struct allocator_state
+{
+    int live;
+    int calls;
+    int fail_at;
+};
+
+static void * allocate( void * context, size_t bytes )
+{
+    allocator_state * state = (allocator_state*) context;
+    const int call = ++state->calls;
+    if ( state->fail_at == call )
+        return NULL;
+    void * base = malloc( bytes + 128 );
+    if ( !base )
+        return NULL;
+    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
+    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
+    memset( (void*) address, 0xA5, bytes );
+    ++state->live;
+    return (void*) address;
+}
+
+static void release( void * context, void * pointer )
+{
+    allocator_state * state = (allocator_state*) context;
+    void * base = NULL;
+    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    --state->live;
+    free( base );
+}
+
+// production-like keys: non-zero and different from the published development
+// keys, so the dev-keys refusal (S11) does not fire and S7/S12/S14 are reached
+static void production_config( struct rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_default_config( config );
+    memset( config->backend_public_key, 0x42, 32 );
+    memset( config->server_public_key, 0x43, 32 );
+    memset( config->server_secret_key, 0x44, 32 );
+    config->protocol_id = 1;
+}
+
+static void server_transport_create_ex_reports_every_status()
+{
+    allocator_state state = { 0, 0, 0 };
+    int status = -1;
+
+    // the worker starts the process initialized; return to the pre-init state
+    // so the lifecycle refusals below are reachable
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+
+    // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
+    // before init (the public NULL guard runs first)
+    status = -1;
+    check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    // not initialized: a non-NULL create before rocketnet_init is refused
+    status = -1;
+    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_NOT_INITIALIZED );
+
+    // init with the fault-injecting allocator in context
+    status = -1;
+    check( rocketnet_init_ex( &state, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+
+    // S2: an invalid environment value refuses apply_env
+    check( setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number", 1 ) == 0 );
+    status = -1;
+    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    check( unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+
+    // S3: the surviving deprecated alias refuses on a bad value
+    check( setenv( "ROCKETNET_SERVER_NUM_QUEUES", "not-a-number", 1 ) == 0 );
+    status = -1;
+    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    check( unsetenv( "ROCKETNET_SERVER_NUM_QUEUES" ) == 0 );
+
+    // S4: an out-of-range config value refuses validation
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        config.max_clients = 50000;
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    }
+
+    // S5: the reassembly cross-field allocation exceeds the operator memory budget
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        config.max_clients = ROCKETNET_MAX_CLIENTS;
+        config.num_reassembly_slots = 256;    // ROCKETNET_MAX_FRAGMENTS
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED );
+    }
+
+    // the env memory_budget parse refusal (the operator budget env's own check)
+    check( setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "not-a-number", 1 ) == 0 );
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        strcpy( config.driver, "loopback" );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+    }
+    check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
+
+    // the operator budget refusal: every candidate's memory plan exceeds it
+    check( setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 ) == 0 );
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        strcpy( config.driver, "portable" );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED );
+    }
+    check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
+
+    // S6: a keyless config (the default shape) is refused
+    status = -1;
+    check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_MISSING_KEYS );
+
+    // S7: protocol_id 0 with production keys is refused
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        config.protocol_id = 0;
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
+    }
+
+    // S8: a driver-list typo refuses at parse
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        strcpy( config.driver, "bogus" );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_INVALID_DRIVER_LIST );
+    }
+
+    // S9: an unparsable public address is refused
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "not-an-address", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+    }
+
+    // S11: development keys in a release build are refused
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_dev_config( &config );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE );
+    }
+
+    // S12: a port-zero address refused by a non-discovering driver (XDP) is
+    // DRIVER_PORT_ZERO_UNSUPPORTED
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        strcpy( config.driver, "xdp" );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED );
+    }
+
+    // S10 and S14: a fault-injecting allocator failing at each allocation in
+    // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
+    // completes with ROCKETNET_STATUS_OK
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        strcpy( config.driver, "loopback" );
+
+        int reached_success = 0;
+        for ( int k = 1; k <= 20 && !reached_success; k++ )
+        {
+            state.fail_at = state.calls + k;
+            status = -1;
+            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex(
+                &state, "127.0.0.1:12345", &config, 1000.0, &status );
+            if ( server )
+            {
+                check( status == ROCKETNET_STATUS_OK );
+                rocketnet_server_transport_destroy( server );
+                check( state.live == 0 );
+                reached_success = 1;
+            }
+            else
+            {
+                check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+                check( state.live == 0 );
+            }
+        }
+        check( reached_success );
+        state.fail_at = 0;
+    }
+}
+
+REGISTER_UNIT_TEST( server_transport_create_ex_reports_every_status );

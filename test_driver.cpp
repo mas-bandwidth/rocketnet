@@ -88,7 +88,8 @@ static void test_driver_registry()
         }
     CHECK(found_queues); // The BPF map must cover every admitted queue index.
     CHECK(ROCKETNET_DRIVER_PORTABLE == 0 && ROCKETNET_DRIVER_GSO == 1 &&
-          ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4);
+          ROCKETNET_DRIVER_XDP == 2 && ROCKETNET_DRIVER_MSGX == 3 && ROCKETNET_DRIVER_IOCP == 4 &&
+          ROCKETNET_DRIVER_LOOPBACK == 5);
     for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; ++i )
     {
         const rocketnet_driver_definition_t * definition = rocketnet_driver_definition(i);
@@ -108,22 +109,62 @@ static void test_driver_registry()
         if (i) CHECK(rocketnet_driver_definition(servers[i-1])->server_preference <= definition->server_preference);
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO && servers[2] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 4 && servers[0] == ROCKETNET_DRIVER_XDP && servers[1] == ROCKETNET_DRIVER_GSO && servers[2] == ROCKETNET_DRIVER_PORTABLE && servers[3] == ROCKETNET_DRIVER_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_MSGX && servers[1] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_MSGX && servers[1] == ROCKETNET_DRIVER_PORTABLE && servers[2] == ROCKETNET_DRIVER_LOOPBACK);
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_PORTABLE && servers[1] == ROCKETNET_DRIVER_IOCP);
+    CHECK(count == 3 && servers[0] == ROCKETNET_DRIVER_PORTABLE && servers[1] == ROCKETNET_DRIVER_IOCP && servers[2] == ROCKETNET_DRIVER_LOOPBACK);
 #else
-    CHECK(count == 1 && servers[0] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 2 && servers[0] == ROCKETNET_DRIVER_PORTABLE && servers[1] == ROCKETNET_DRIVER_LOOPBACK);
 #endif
     const int * clients = rocketnet_client_driver_availability(&count);
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    CHECK(count == 2 && clients[0] == ROCKETNET_DRIVER_MSGX && clients[1] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 3 && clients[0] == ROCKETNET_DRIVER_MSGX && clients[1] == ROCKETNET_DRIVER_PORTABLE && clients[2] == ROCKETNET_DRIVER_LOOPBACK);
 #else
-    CHECK(count == 1 && clients[0] == ROCKETNET_DRIVER_PORTABLE);
+    CHECK(count == 2 && clients[0] == ROCKETNET_DRIVER_PORTABLE && clients[1] == ROCKETNET_DRIVER_LOOPBACK);
 #endif
     for ( int i = 0; i < count; ++i ) CHECK(rocketnet_driver_definition(clients[i])->backend->client);
     printf("test_driver_registry\n");
+}
+
+static void test_driver_pin_only()
+{
+    CHECK(rocketnet_driver_pin_only(ROCKETNET_DRIVER_LOOPBACK));
+    for ( int i = 0; i < ROCKETNET_NUM_DRIVERS; ++i )
+        if ( i != ROCKETNET_DRIVER_LOOPBACK ) CHECK(!rocketnet_driver_pin_only(i));
+
+    int num;
+    const int * servers = rocketnet_server_driver_availability(&num);
+    struct rocketnet_driver_ladder_t ladder;
+    int auto_count = 0;
+    for ( int i = 0; i < num; ++i )
+        if ( !rocketnet_driver_pin_only(servers[i]) ) ++auto_count;
+
+    CHECK(rocketnet_driver_ladder_parse("auto", servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_driver_pin_only(ladder.candidates[i]));
+    int ai = 0;
+    for ( int i = 0; i < num; ++i )
+        if ( !rocketnet_driver_pin_only(servers[i]) )
+            CHECK(ladder.candidates[ai++] == servers[i]);
+
+    CHECK(rocketnet_driver_ladder_parse(NULL, servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+
+    CHECK(rocketnet_driver_ladder_parse("loopback", servers, num, &ladder));
+    CHECK(ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_DRIVER_LOOPBACK);
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    CHECK(rocketnet_driver_ladder_parse("gso,loopback", servers, num, &ladder));
+    CHECK(ladder.num_candidates == 2 && ladder.candidates[0] == ROCKETNET_DRIVER_GSO && ladder.candidates[1] == ROCKETNET_DRIVER_LOOPBACK);
+    CHECK(rocketnet_driver_ladder_parse("iocp", servers, num, &ladder));
+    CHECK(ladder.num_candidates == auto_count);
+#endif
+
+    const int * clients = rocketnet_client_driver_availability(&num);
+    CHECK(rocketnet_driver_ladder_parse("auto", clients, num, &ladder));
+    for ( int i = 0; i < ladder.num_candidates; ++i ) CHECK(!rocketnet_driver_pin_only(ladder.candidates[i]));
+    printf("test_driver_pin_only\n");
 }
 
 static void test_buffered_driver()
@@ -188,6 +229,7 @@ int main()
     test_route_netlink();
 #endif
     test_driver_registry();
+    test_driver_pin_only();
     test_driver_lifecycle();
     test_buffered_driver();
     rocketnet_term();

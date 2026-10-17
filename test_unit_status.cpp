@@ -13,6 +13,7 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet.h"
+#include "rocketnet_config.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -86,3 +87,62 @@ static void status_string_out_of_range_is_null()
 }
 
 REGISTER_UNIT_TEST( status_string_out_of_range_is_null );
+
+// An env override is parsed as a 32-bit integer, refused past INT32 range
+// or on ERANGE, leaving the output untouched on refusal
+// (sdk/rocketnet_config.cpp, rocketnet_config_parse_int_value).
+static void config_int_parse_refuses_out_of_range()
+{
+    int out = 77;
+
+    check( rocketnet_config_parse_int_value( "2147483647", &out ) );
+    check( out == 2147483647 );
+
+    check( rocketnet_config_parse_int_value( "-2147483648", &out ) );
+    check( out == -2147483648 );
+
+    out = 77;
+    check( !rocketnet_config_parse_int_value( "2147483648", &out ) );
+    check( out == 77 );
+
+    out = 77;
+    check( !rocketnet_config_parse_int_value( "-2147483649", &out ) );
+    check( out == 77 );
+
+    out = 77;
+    check( !rocketnet_config_parse_int_value( "99999999999999999999", &out ) );
+    check( out == 77 );
+
+    out = 77;
+    check( !rocketnet_config_parse_int_value( "", &out ) );
+    check( out == 77 );
+
+    out = 77;
+    check( !rocketnet_config_parse_int_value( "12x", &out ) );
+    check( out == 77 );
+}
+
+REGISTER_UNIT_TEST( config_int_parse_refuses_out_of_range );
+
+// An env var name is built into a caller buffer, refused when it does not
+// fit, the terminator counted (sdk/rocketnet_config.cpp,
+// rocketnet_config_env_var_name and rocketnet_config_env_var_name_for).
+static void config_env_var_names_refuse_short_buffers()
+{
+    char buffer[128];
+
+    check( !rocketnet_config_env_var_name( "max_clients", buffer, (int) strlen( "ROCKETNET_MAX_CLIENTS" ) ) );
+
+    check( rocketnet_config_env_var_name( "max_clients", buffer, (int) strlen( "ROCKETNET_MAX_CLIENTS" ) + 1 ) );
+    check( strcmp( buffer, "ROCKETNET_MAX_CLIENTS" ) == 0 );
+
+    check( !rocketnet_config_env_var_name_for( "server", "max_clients", buffer, (int) strlen( "ROCKETNET_SERVER_MAX_CLIENTS" ) ) );
+
+    check( rocketnet_config_env_var_name_for( "server", "max_clients", buffer, (int) strlen( "ROCKETNET_SERVER_MAX_CLIENTS" ) + 1 ) );
+    check( strcmp( buffer, "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+
+    const char long_transport[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    check( !rocketnet_config_env_var_name_for( long_transport, "max_clients", buffer, (int) sizeof( buffer ) ) );
+}
+
+REGISTER_UNIT_TEST( config_env_var_names_refuse_short_buffers );
