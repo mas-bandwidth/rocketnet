@@ -424,7 +424,9 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
     {
         if (!bytes || !rocketnet_memory_add(plan.protocol_bytes, 1, bytes)) return false;
     }
-    plan.reassembly_bytes = rocketnet_reassembly_memory_required(clients, slots, payload, clients * slots);
+    plan.reassembly_bytes = rocketnet_reassembly_memory_required_delivered(clients, slots, payload,
+        rocketnet_server_reassembly_delivered_capacity(clients, slots),
+        rocketnet_server_reassembly_delivered_bytes(clients, slots, payload));
     if (!plan.reassembly_bytes || !rocketnet_memory_add(plan.reassembly_bytes, 4, rocketnet_allocation_overhead())) return false;
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes(ROCKETNET_SEND_ARENA_SLOTS, (payload + 15) & ~15);
     if (!rocketnet_builtin_server_memory_plan(config, driver, plan)) return false;
@@ -510,7 +512,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     const int requested_payload = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->num_reassembly_slots > 0 ? config->num_reassembly_slots : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_MAX_CLIENTS;
-    if (!rocketnet_reassembly_memory_allowed(requested_clients, requested_slots, requested_payload, requested_clients * requested_slots))
+    if (!rocketnet_reassembly_memory_allowed_delivered(requested_clients, requested_slots, requested_payload,
+            rocketnet_server_reassembly_delivered_capacity(requested_clients, requested_slots),
+            rocketnet_server_reassembly_delivered_bytes(requested_clients, requested_slots, requested_payload)))
         return NULL;
 
 
@@ -885,17 +889,25 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * 
     protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
-    // the delivered mirror sizes to the server's drain bound: the receive
     // one reassembly set per connection slot, created here at create and
-    // reached only from a connected slot (STANDARD.md _Fragmentation_):
-    // the path drains at most RECEIVE_PACKETS_PER_CLIENT packets per client
-    // slot per update (the process arrays' sizing), and a payload takes at
-    // least two fragments, so completions cap at eight per client at the
-    // defaults -- exactly the default slot count. connections x slots IS
-    // the server's drain bound, which is why it is also its sizing.
+    // reached only from a connected slot (STANDARD.md _Fragmentation_).
+    // the delivered mirror sizes to the server's completion bound: the
+    // receive path drains one global array of up to
+    // ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS packets per update with no
+    // per-client share, and a slot clears at completion, so one client
+    // completes more payloads in an update than it has slots. half the
+    // drain plus the payloads begun in an earlier update (at most
+    // connections x slots) bounds the completions, and at that capacity
+    // BATCH_FULL stays zero under any load the drain delivers
+    // (rocketnet_server_reassembly_delivered_capacity; finding D2 of
+    // tla/README-FragmentsAndAcks.md). its bytes are what one update can
+    // complete -- the drained fragments plus the payloads half-held in
+    // slots -- not capacity x max payload
+    // (rocketnet_server_reassembly_delivered_bytes).
 
-    protocol->reassembly = rocketnet_reassembly_set_create( context, max_clients, num_reassembly_slots, server_transport->max_payload_bytes,
-                                                            max_clients * num_reassembly_slots );
+    protocol->reassembly = rocketnet_reassembly_set_create_delivered( context, max_clients, num_reassembly_slots, server_transport->max_payload_bytes,
+                                                                      rocketnet_server_reassembly_delivered_capacity( max_clients, num_reassembly_slots ),
+                                                                      rocketnet_server_reassembly_delivered_bytes( max_clients, num_reassembly_slots, server_transport->max_payload_bytes ) );
     protocol->counters = &server_transport->counters;
 
     // the arena's slot stride stays 16-aligned so every root handed to a
