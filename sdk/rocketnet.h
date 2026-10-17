@@ -128,7 +128,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 // test time. rocketnet_init is declared once for C and once for C++ and counts
 // once; the development-only rocketnet_write_dev_connect_token is not in this
 // count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 133
+#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 135
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -1406,6 +1406,56 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_connection_sizing( const struct rock
 
 // The same lines, logged at info level. Returns the region bytes, or 0 refused.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
+
+// -----------------------------------------
+
+// Stable status codes (docs/ERRORS-AND-LOGGING.md 2.1): OK is the sole success
+// value, every failure is a positive code, and the numbering is append-only.
+// A published value and meaning never change; a new code appends immediately
+// before ROCKETNET_NUM_STATUS_CODES.
+enum rocketnet_status_t
+{
+    ROCKETNET_STATUS_OK                                 = 0,
+
+    // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
+
+    // caller arguments and configuration (client, server, frame_sync, message)
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
+    ROCKETNET_STATUS_MISSING_KEYS                       = 10,
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
+    ROCKETNET_STATUS_INVALID_DRIVER_LIST                = 14,
+
+    // client connect token pre-send checks (rocketnet_client_protocol_connect)
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
+
+    // driver ladder and OS resources
+    ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED       = 17,
+    ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED            = 18,
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
+
+    ROCKETNET_NUM_STATUS_CODES                          = 23
+};
+
+// The count includes OK. Allocation-free; callable before init.
+ROCKETNET_EXPORT_FUNC int rocketnet_num_status_codes( void );
+
+// The identifier without the ROCKETNET_STATUS_ prefix for 0 .. count - 1, and
+// NULL (without asserting) for an out-of-range value. Allocation-free.
+ROCKETNET_EXPORT_FUNC const char * rocketnet_status_string( int status );
 
 // -----------------------------------------
 
