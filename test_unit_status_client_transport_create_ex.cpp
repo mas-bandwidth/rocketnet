@@ -92,13 +92,33 @@ static void check_create_status( int expected, const uint8_t * token, const stru
     check( state->live == 0 );
 }
 
+#if ROCKETNET_ASSERTS
+// the NULL argument below is the documented counted no-op, which fires
+// rocketnet_assert in a build with asserts on: count it instead of breaking
+static int client_create_ex_expected_null_asserts = 0;
+
+static void client_create_ex_expected_null_assert( const char *, const char *, const char *, int )
+{
+    client_create_ex_expected_null_asserts++;
+}
+#endif
+
 static void client_transport_create_ex_reports_every_status()
 {
     allocator_state state = { 0, 0, 0 };
     int status = -1;
 
     // C1: a NULL connect_token even INVALID_ARGUMENT, counted
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    client_create_ex_expected_null_asserts = 0;
+    rocketnet_assert_function( client_create_ex_expected_null_assert );
+#endif
     check( rocketnet_client_transport_create_ex( &state, NULL, NULL, 1000.0, &status ) == NULL );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( client_create_ex_expected_null_asserts == 1 );
+#endif
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
