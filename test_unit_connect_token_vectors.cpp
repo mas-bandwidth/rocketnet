@@ -622,7 +622,55 @@ static void tampered_vector_refused()
     }
 }
 
+// The dev connect token writes its connection timeout from the named
+// constant, and its lifetime from the expiry constant. The published
+// development keys are byte-identical to the test vectors (rocketnet_tests.cpp
+// pins that), so mint the dev token with the same fields and keys the
+// development writer uses -- dev protocol id, the expiry constant, the timeout
+// constant, sealed to the development server key and signed with the
+// development backend key -- and read its signed fields back with the
+// development public key, pinning both values.
+static void dev_connect_token_timeout_is_the_named_constant()
+{
+    const uint64_t now = 1000;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof(signed_fields) );
+    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = now;
+    signed_fields.expire_timestamp = now + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
+    signed_fields.timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    static const uint8_t dev_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    memcpy( signed_fields.ipv4_address, dev_address, 6 );
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof(private_fields) );
+    private_fields.client_id = 1;
+    private_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    private_fields.expire_timestamp = signed_fields.expire_timestamp;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+
+    rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields,
+                                                        rocketnet_test_backend_secret_key, token ) == 1 );
+
+    struct rocketnet_connect_token_t read_token;
+    rocketnet_read_connect_token( &read_token, token );
+    rocketnet_unit_check( rocketnet_verify_signed_connect_data( read_token.signed_connect_data, read_token.signature,
+                                                                rocketnet_test_backend_public_key ) );
+
+    struct rocketnet_signed_connect_data_t parsed;
+    rocketnet_read_signed_connect_data( &parsed, read_token.signed_connect_data );
+    rocketnet_unit_check( parsed.timeout_seconds == ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS );
+    rocketnet_unit_check( parsed.expire_timestamp - parsed.create_timestamp == ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS );
+}
+
 REGISTER_UNIT_TEST( vectors_regenerate_byte_identical );
+REGISTER_UNIT_TEST( dev_connect_token_timeout_is_the_named_constant );
 REGISTER_UNIT_TEST( each_vector_verifies_and_opens );
 REGISTER_UNIT_TEST( deterministic_seal_matches_libsodium_open );
 REGISTER_UNIT_TEST( tampered_vector_refused );
