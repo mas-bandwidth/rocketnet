@@ -29,42 +29,36 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: fuzz-nightly-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   fuzz:
-    name: nightly fuzz (${{ matrix.target }})
+    name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         # each row is a harness source under fuzz/ and the seed-corpus and
         # persisted-corpus directories that feed it. the stateless sweep keeps
         # its historic name (rocketnet_fuzz) and its historic seed dir
         # (fuzz/corpus); the two stateful targets carry their own.
-        include:
-          - target: rocketnet_fuzz
-            source: fuzz/rocketnet_fuzz.cpp
-            seeds: fuzz/corpus
-          - target: rocketnet_fuzz_connect_token
-            source: fuzz/rocketnet_fuzz_connect_token.cpp
-            seeds: fuzz/corpus_connect_token
-          - target: rocketnet_fuzz_receive_structured
-            source: fuzz/rocketnet_fuzz_receive_structured.cpp
-            seeds: fuzz/corpus_receive_structured
-          - target: rocketnet_fuzz_message
-            source: fuzz/rocketnet_fuzz_message.cpp
-            seeds: fuzz/corpus_message
+        leg:
+          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured"}'
+          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message"}'
+    concurrency:
+      group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      cancel-in-progress: true
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install dependencies
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev liburing-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
 
       # persist the discovered corpus across runs: restore the newest prior
       # cache for this target, save a fresh entry keyed by run id. cache
@@ -73,10 +67,10 @@ jobs:
       - name: Restore corpus
         uses: actions/cache@v4
         with:
-          path: corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          key: fuzz-corpus-${{ fromJSON(matrix.leg).target }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-${{ matrix.target }}-
+            fuzz-corpus-${{ fromJSON(matrix.leg).target }}-
 
       - name: Configure the instrumented library
         run: >
@@ -90,7 +84,7 @@ jobs:
       - name: Build the instrumented library
         run: cmake --build build-fuzz --target rocketnet_dev --parallel
 
-      - name: Build ${{ matrix.target }}
+      - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
           set -euo pipefail
           mkdir -p bin
@@ -98,21 +92,21 @@ jobs:
             -ffp-contract=off \
             -DROCKETNET_DEVELOPMENT=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itest "${{ matrix.source }}" build-fuzz/librocketnet_dev.a \
-            -lbpf -lxdp -luring -lpthread \
-            -o "bin/${{ matrix.target }}"
+            -Isodium -Isdk -Itest "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -lbpf -lxdp -lpthread \
+            -o "bin/${{ fromJSON(matrix.leg).target }}"
 
-      - name: Fuzz ${{ matrix.target }}
+      - name: Fuzz ${{ fromJSON(matrix.leg).target }}
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           set -euo pipefail
-          mkdir -p "corpus/${{ matrix.target }}"
+          mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
           T="${{ github.event.inputs.max_total_time || '900' }}"
-          echo "fuzzing ${{ matrix.target }} for ${T}s with the wire dictionary"
-          ./"bin/${{ matrix.target }}" \
-            "corpus/${{ matrix.target }}" "${{ matrix.seeds }}" \
+          echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with the wire dictionary"
+          ./"bin/${{ fromJSON(matrix.leg).target }}" \
+            "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict=fuzz/rocketnet.dict \
             -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
 
@@ -121,7 +115,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: crashes-${{ matrix.target }}
+          name: crashes-${{ fromJSON(matrix.leg).target }}-${{ replace(matrix.ref, '/', '-') }}
           path: |
             crash-*
             oom-*
