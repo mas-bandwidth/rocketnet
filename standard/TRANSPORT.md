@@ -1417,18 +1417,146 @@ fd 00 00 00 be a9 a8 b8 00 4e 00 22 20 3f b1 00
 <a id="t19"></a>
 ## t19. Security considerations
 
-Status: pending
+An implementation MUST provide the defences the table below names, each by the
+mechanism its row names. A change to any mechanism MUST be re-checked against
+the property the row it carries.
 
-Scope: what RN-1 defends against and what it does not; the provisioning
-trust anchor; amplification; disclosure of the prefilter magic.
+| Property | Mechanism |
+|---|---|
+| Only backend-authorized clients connect | Ed25519 signature, verified before the sealed block is opened |
+| Session keys confidential in transit | sealed to the server's public key |
+| Client identity hidden from observers | client id inside the sealed block |
+| Token fields unmodifiable | signature over the whole signed buffer |
+| No asymmetric work for a spoofed source | MAC cookie before any signature verification |
+| No slot for a client that is not there | challenge answered from the claimed address before any slot |
+| Packet type and salt unmodifiable | AEAD associated data |
+| Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
+| Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
+| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| A compromised server mints nothing | servers hold no signing key |
+
+<a id="t19.1"></a>
+### t19.1. Amplification
+
+A server MUST NOT send a response larger than the packet that provoked it. Each
+row of the table below names a provoking packet and the response it can elicit,
+at most; a change to any packet size MUST be re-checked against every row.
+
+| Provoking packet | Response |
+|---|---|
+| connection request | connection cookie |
+| connection request | connection challenge, fresh or resent |
+| connection request | connection denied |
+| connection challenge | connection response |
+| connection response | connection keep-alive, minimum |
+| connection response | connection denied |
+| connection cookie | nothing |
+
+The sizes that keep every row true are the pinned rows below. The keep-alive row
+uses its minimum fresh-block size; a keep-alive grows only when the peer's own
+session packets added ranges for it to report, so a larger keep-alive is always
+answered traffic, never an amplifier.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| connection request wire size | `710` | bytes | the whole connection request packet |
+| connection cookie wire size | `38` | bytes | the only answer to a rejected request |
+| connection challenge wire size | `66` | bytes | a fresh or resent connection challenge |
+| connection response wire size | `50` | bytes | the whole connection response packet |
+| connection keep-alive minimum wire size | `41` | bytes | a first keep-alive with a fresh block |
+| connection denied wire size | `34` | bytes | the whole connection denied packet |
+
+Two rules keep the table true rather than merely accurate. Padding used to
+satisfy a row MUST be checked on read, for length and content. A server MUST NOT
+answer a request it has rejected; the connection cookie is the single exception
+and is smaller than the request.
+
+```vector t19.amplification
+input: each row's packet type (u8) and wire size (u16), in the rows' order
+00 c6 02 07 26 00 02 42 00 03 32 00 04 29 00 01
+22 00
+```
+
+<a id="t19.2"></a>
+### t19.2. Development keys
+
+The published development keys are a fixed backend signing key, a fixed server
+public key and its secret half, and a fixed development protocol id. They are
+public: anyone who holds them can forge a token a server accepts and open every
+session. They exist so a first wiring works without a backend, and they MUST NOT
+be load-bearing in production.
+
+1. A development key MUST NOT be used unless a deployment configured it
+   explicitly. An endpoint whose configuration supplies no key MUST NOT inherit
+   a development credential.
+2. An implementation MUST refuse to create an endpoint that would use a
+   development key when it is compiled without the development flag, and MUST
+   NOT allow configuration alone to override that refusal.
+3. Every start that uses a development key MUST log a warning, at warn level or
+   louder, saying the keys are public and not for production. A server logs it
+   from its own keys; a client logs it when its token's server key is a
+   development key.
+4. An implementation MUST NOT accept the development backend public key when a
+   deployment supplies its own backend public key.
+5. Nothing else is relaxed. A development connection runs the same handshake,
+   cookie exchange, address validation, sealing, key derivation, replay
+   protection and erasure as a production connection.
+
+<a id="t19.3"></a>
+### t19.3. What this section does not defend
+
+RN-1 does not defend against a volumetric flood large enough to fill a link:
+once the link is saturated, nothing a server does with a packet matters, and
+that is answered by capacity and by upstream scrubbing. Nor does RN-1 defend
+against an attacker holding many genuinely issued connect tokens; such an
+attacker is past every bar this protocol has by definition. Both are the
+backend's to answer, and a deployment's denial-of-service posture lives in how
+its backend issues tokens, not in how its servers parse packets.
 
 <a id="t20"></a>
 ## t20. Conformance
 
-Status: pending
+An implementation conforms to RN-1 when it produces and accepts the exact binary
+formats the sections specify, performs the processing steps in the order given,
+and holds the key inventory of [t2 Architecture and key inventory](#t2); in
+particular, no secret shared between a backend and a server beyond the keyed
+prefilter magic of [t5 Prefilter header](#t5), and signature verification before
+the sealed block is trusted.
 
-Scope: what an implementation claims, the conformance classes (client,
-server, backend), and the vectors each class reproduces.
+<a id="t20.1"></a>
+### t20.1. Conformance classes
+
+Conformance is claimed per role: client, server, or backend. A claim names the
+role and the revision of RN-1 it meets.
+
+* A client implementation MUST reproduce the client handshake, the sealed
+  packets, replay protection, acknowledgement and fragmentation, and the
+  client's receive checks.
+* A server implementation MUST reproduce the server handshake, cookie issue and
+  validation, slot assignment, session teardown, and the server's receive
+  checks.
+* A backend implementation MUST mint connect tokens whose bytes match
+  [t6 Connect token](#t6), signed so that signature verification precedes trust
+  in the sealed block.
+
+<a id="t20.2"></a>
+### t20.2. Demonstrating conformance
+
+A conforming implementation MUST publish, and check itself against, fixed
+known-answer vectors covering: a connect token built from fixed keys, the four
+derived per-connection keys, one sealed packet of each type with its exact
+associated data bytes, and one cookie MAC. Self-consistency proves an
+implementation agrees with itself; only known-answer vectors prove that two
+implementations agree with each other.
+
+A negative test of a receive check MUST assert two counters: the reason counter,
+and the packet type's received counter. The reason alone does not show that a
+packet reached the check. A positive test MUST assert the success counter and
+independently observe the result: the bytes on the wire, the state transition, or
+the slot assigned. A counter with no test that names it is an untested branch;
+the counter list and the test list MUST be the same list.
 
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
@@ -1465,6 +1593,7 @@ It is generated; the bytes are in the sections.
 | [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 | [t17 Timing and defaults](#t17) | `t17.timing-defaults` |
 | [t18 Error handling and counters](#t18) | `t18.counter-registry` |
+| [t19 Security considerations](#t19) | `t19.amplification` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
