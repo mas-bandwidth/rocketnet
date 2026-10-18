@@ -1610,7 +1610,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
     INT_FIELD( max_packets_per_update,      4,      1, 256,                    0 )                                         \
     INT_FIELD( unreliable_deliveries,     256,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_holds,            16,      0, 4096,                   0 )                                         \
-    INT_FIELD( receipt_ring /**< @brief Bound pending receipts per connection (16 to 65536 entries). */, 256,     16, 1 << 16,                0 ) \
+    /** @brief Bound pending receipts per connection (default 256; 16 to 65536 entries). */ \
+    INT_FIELD( receipt_ring,              256,     16, 1 << 16,                0 )                                         \
     INT_FIELD( rto_initial_ms,            100,     10, 60000,                  0 )                                         \
     INT_FIELD( rto_min_ms,                 10,      1, 60000,                  0 )                                         \
     INT_FIELD( rto_max_ms,                250,     10, 60000,                  0 )                                         \
