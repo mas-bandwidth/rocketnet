@@ -171,10 +171,9 @@ sequenced delivery; the receive ring.
 
 A message that fits one record of its reliability MUST be sent as that
 record, not as a block. A message that exceeds the capacity of a single
-record of its reliability MAY be sent as a block ([m2 Payload forms and
-sender size rules](#m2)). A block is a reliable message carried as
-consecutive fragments that share one sequence of message numbers and one ring
-span, reassembled on the receiver and delivered whole.
+record of its reliability MAY be sent as a block ([m2 Payload forms and sender size rules](#m2)). A block is a reliable message carried as consecutive
+fragments that share one sequence of message numbers and one ring span,
+reassembled on the receiver and delivered whole.
 
 **The stride.** The block stride F is the constant `1152` bytes (the table
 below). Every fragment except the last carries exactly F bytes; the last
@@ -205,14 +204,15 @@ carrying exactly the stride; the second is a final fragment shorter than the
 stride.
 
 ```vector m8.split-nonfinal
-a non-final fragment (index 1 of 3) of a reliable ordered block, carrying
-exactly the stride F = 1152 bytes: number 9, ring 72, ordering 7, channel 3,
-fragment 1 of 3, data 0, 1, ..., 15 repeated
-13 80 04 09 00 00 48 00 07 00 00 03 01 00 02 00
-00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+stride: 1152
+number: 9
+ring: 72
+ordering: 7
+channel: 3
+fragment: 1
+fragments: 3
+data: 0, 1, ..., 15 repeated
+0b 80 04 09 00 00 48 00 07 00 00 03 01 00 02 00
 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
@@ -289,10 +289,15 @@ fragment 1 of 3, data 0, 1, ..., 15 repeated
 ```
 
 ```vector m8.final-short
-the final fragment (index 3 of 4) of a reliable ordered block, carrying 100
-bytes, shorter than the stride: number 10, ring 72, ordering 8, channel 3,
-fragment 3 of 4, data 0, 1, ..., 99
-13 64 00 0a 00 00 48 00 08 00 00 03 03 00 03 00
+stride: 1152
+number: 10
+ring: 72
+ordering: 8
+channel: 3
+fragment: 3
+fragments: 4
+data: 0, 1, ..., 99
+0b 64 00 0a 00 00 48 00 08 00 00 03 03 00 03 00
 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
 20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f
@@ -301,7 +306,6 @@ fragment 3 of 4, data 0, 1, ..., 99
 50 51 52 53 54 55 56 57 58 59 5a 5b 5c 5d 5e 5f
 60 61 62 63 01
 ```
-
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
@@ -356,5 +360,8 @@ This appendix indexes every vector of RN-2 by the section that defines it.
 It is generated; the bytes are in the sections.
 
 <!-- vector-index:begin -->
-No vectors yet.
+| Section | Vector |
+|---|---|
+| [m8 Blocks](#m8) | `m8.final-short` |
+| [m8 Blocks](#m8) | `m8.split-nonfinal` |
 <!-- vector-index:end -->
