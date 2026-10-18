@@ -11,8 +11,8 @@ reconstruction, `rocketnet_replay_already_received` on `replay_session`, the
 open with `rocketnet_open_sealed_packet`, `rocketnet_replay_advance` right
 after it), `rocketnet_client_integrity_failure` (the limit, the state change
 and the zeroing of `client->keys`) and `rocketnet_client_process_challenge`
-(where the session keys are derived). No code implements the design yet;
-`tla/COVERAGE.tsv` marks the machine owed to rocketnet-client-io-decrypt.
+(where the session keys are derived). rocketnet-client-io-decrypt implements
+the design, and `tla/COVERAGE.tsv` marks the client-io-decrypt row current.
 
 ## What is modelled
 
