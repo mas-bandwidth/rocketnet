@@ -367,10 +367,12 @@ if(ROCKETNET_BUILD_TESTS)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
-    # test_dev_token_minting_absent_in_release probes the shared release
-    # library, so the test target must build it: CI legs build `test` alone,
-    # and without this the shared library is missing and the probe goes red.
-    add_dependencies(test rocketnet_shared)
+    # Two probes load a shared library at run time, so the test target must
+    # build both: CI legs build `test` alone, and without this the library is
+    # missing and the probe goes red. test_dev_token_minting_absent_in_release
+    # probes the release library; the connect-token vectors load the dev
+    # library's token writer through dev_connect_token_timeout_is_the_named_constant.
+    add_dependencies(test rocketnet_shared rocketnet_shared_dev)
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)

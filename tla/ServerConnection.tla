@@ -40,11 +40,10 @@
 (* Tokens.  A token is a number; its client id is IdOf(t).  A client       *)
 (* presents its own token (TokenChoice = "own") or any token the           *)
 (* environment holds ("any", so two clients may share one).  The used-token *)
-(* history binds a token to the first address that presented it (bound);  *)
-(* History = "none" is the flush the standard documents (an entry evicted  *)
-(* before the second presentation), so both tables' worth is checked.  The *)
-(* admitted set never forgets (tokens do not expire inside a run); the     *)
-(* ghost admits[t] counts how many connections t admitted.                 *)
+(* history binds a token to the first address whose response opens under    *)
+(* its keys (bound); it is checked at later requests. Tokens are unexpired  *)
+(* throughout a run unless listed in ExpiredTokens, an abstraction of the   *)
+(* early expiry gate before cryptographic work.                             *)
 (*                                                                         *)
 (* Time.  Tick is one send interval on every clock; every timer is a       *)
 (* saturating counter.  HandshakeDeadline = 0 and Timeout = 0 are off      *)
@@ -58,15 +57,13 @@
 (* re-sent on its own clock until acknowledged; FALSE: sent once at the    *)
 (* response, the hang class the request named); SweepRemovesMapping        *)
 (* (TRUE: a timed-out slot takes its mapping with it; FALSE: the slot is   *)
-(* released and the mapping leaks); AdmittedHeld (TRUE: the admitted set   *)
-(* keeps an entry until the token expires; FALSE: the entry leaves with    *)
-(* the connection); ClientIdCheck (TRUE: a connected client id refuses the *)
-(* request and the response; FALSE: skipped); AddressIsIdentity (TRUE: a   *)
-(* sealed packet is looked up by its source address; FALSE: by whichever   *)
-(* live mapping its keys open, migration without validation).  One knob    *)
-(* runs the other way: RefuseAdmittedAtResponse (FALSE is the code; TRUE   *)
-(* is the fix for the finding, a response whose token the admitted set     *)
-(* already holds is refused).                                              *)
+(* released and the mapping leaks); HoldUntilExpire (TRUE: the reversed    *)
+(* lifetime-hold rule, using the history as its finite ghost; FALSE: code); *)
+(* ClientIdCheckAtRequest and ClientIdCheckAtResponse (TRUE: an already    *)
+(* connected client id refuses at that rung; FALSE: skipped);              *)
+(* AddressIsIdentity (TRUE: a sealed packet is looked up by its source     *)
+(* address; FALSE: by whichever live mapping its keys open, migration       *)
+(* without validation).                                                    *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -76,28 +73,29 @@ CONSTANTS
     NumTokens,         \* tokens they may present
     MaxSlots,          \* the server's client slots (max_clients)
     MapCap,            \* the encryption map's capacity (2 x max_clients in the code)
-    AdmittedCap,       \* the admitted-token set's capacity (2 x max_clients in the code)
+    HeldCapacity,      \* only used by the reversed lifetime-hold witness
     MaxAttempts,       \* connects per client
     MaxNonces,         \* the pool of session nonces
     MaxMoves,          \* address changes per client
     SendInterval,      \* ticks between scheduled sends, both ends; >= 1
-    Timeout,           \* the established mapping's idle timeout in ticks; 0 = off
-    HandshakeDeadline, \* the half-open mapping's deadline in ticks; 0 = off
+    Timeout,           \* the idle timeout in ticks, either state; 0 = off
+    HandshakeDeadline, \* the half-open mapping's fixed deadline in ticks; 0 = off
     Disconnects,       \* BOOLEAN: may either application disconnect, may a client vanish
     DisconnectCopies,  \* the redundant disconnect burst (10 in the code)
     SameId,            \* BOOLEAN: every token carries one client id
     TokenChoice,       \* "own": client c presents token c; "any": any token, so clients may share one
     History,           \* "kept" (the history binds) or "none" (flushed)
     KindLoss,          \* "none" or "firstkind"
-    RepeatKeepAlive, SweepRemovesMapping, AdmittedHeld, ClientIdCheck, AddressIsIdentity,
-    RefuseAdmittedAtResponse,  \* the fix: a response whose token is already admitted is refused; the code is FALSE
+    RepeatKeepAlive, SweepRemovesMapping, HoldUntilExpire,
+    ClientIdCheckAtRequest, ClientIdCheckAtResponse, AddressIsIdentity,
+    ExpiredTokens,
     C2SPattern, S2CPattern,                         \* Link patterns
     Capacity, MaxDelay, Duplication, Reordering,    \* Link parameters
     BurstStart, BurstLen
 
 ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
        /\ NumTokens \in Nat \ {0} /\ MaxSlots \in Nat \ {0}
-       /\ MapCap \in Nat \ {0} /\ AdmittedCap \in Nat \ {0}
+       /\ MapCap \in Nat \ {0} /\ HeldCapacity \in Nat \ {0}
        /\ MaxAttempts \in Nat \ {0} /\ MaxNonces \in Nat \ {0} /\ MaxMoves \in Nat
        /\ SendInterval \in Nat \ {0} /\ Timeout \in Nat /\ HandshakeDeadline \in Nat
        /\ Disconnects \in BOOLEAN /\ DisconnectCopies \in Nat \ {0}
@@ -105,8 +103,9 @@ ASSUME /\ NumClients \in Nat \ {0} /\ NumAddrs \in Nat /\ NumAddrs >= NumClients
        /\ TokenChoice \in {"own", "any"} /\ (TokenChoice = "own" => NumTokens >= NumClients)
        /\ KindLoss \in {"none", "firstkind"}
        /\ RepeatKeepAlive \in BOOLEAN /\ SweepRemovesMapping \in BOOLEAN
-       /\ AdmittedHeld \in BOOLEAN /\ ClientIdCheck \in BOOLEAN
-       /\ AddressIsIdentity \in BOOLEAN /\ RefuseAdmittedAtResponse \in BOOLEAN
+       /\ HoldUntilExpire \in BOOLEAN
+       /\ ClientIdCheckAtRequest \in BOOLEAN /\ ClientIdCheckAtResponse \in BOOLEAN
+       /\ AddressIsIdentity \in BOOLEAN /\ ExpiredTokens \subseteq 1..NumTokens
 
 Clients == 1..NumClients
 Addrs   == 1..NumAddrs
@@ -164,8 +163,7 @@ VARIABLES
     smap,          \* [Addrs -> Mapping]: the encryption map
     slot,          \* [Slots -> SlotRec]: the client slots
     bound,         \* [Tokens -> Addrs \cup {0}]: the used-token history
-    admitted,      \* SUBSET Tokens: the admitted-token set
-    admits,        \* [Tokens -> 0..2]: ghost, connections admitted per token, saturating
+    churnDenied,   \* ghost: a fresh, valid token was refused while a slot was free
     sDiscPending,  \* disconnect copies still to send after a server disconnect
     sDiscPkt,
     sLostKinds,
@@ -175,7 +173,7 @@ VARIABLES
 
 clientVars == <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cSinceSend,
                 cDiscPending, cDiscPkt, cLostKinds>>
-serverVars == <<smap, slot, bound, admitted, admits, sDiscPending, sDiscPkt, sLostKinds>>
+serverVars == <<smap, slot, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
 c2sVars    == <<c2sWire, c2sSent, c2sPulse>>
 s2cVars    == <<s2cWire, s2cSent, s2cPulse>>
 vars       == <<clientVars, serverVars, c2sVars, s2cVars>>
@@ -215,7 +213,13 @@ NumMappings == Cardinality(LiveAddrs)
 LowestFree == CHOOSE i \in Slots \ UsedSlots : \A j \in Slots \ UsedSlots : i <= j
 
 \* a client with this id holds a slot (rocketnet_client_slots_find)
-IdConnected(t) == ClientIdCheck /\ \E i \in UsedSlots : IdOf(slot[i].tok) = IdOf(t)
+ClientIdConnectedAtRequest(t) ==
+    ClientIdCheckAtRequest /\ \E i \in UsedSlots : IdOf(slot[i].tok) = IdOf(t)
+ClientIdConnectedAtResponse(t) ==
+    ClientIdCheckAtResponse /\ \E i \in UsedSlots : IdOf(slot[i].tok) = IdOf(t)
+Fresh(t) ==
+    t \notin ExpiredTokens /\ bound[t] = 0
+    /\ ~\E i \in UsedSlots : IdOf(slot[i].tok) = IdOf(t)
 
 \* the mapping a sealed packet is looked up under: its source address
 \* (rocketnet_encryption_map_find on from), or, for the witness, whichever
@@ -264,7 +268,7 @@ Init ==
     /\ cDiscPending = [c \in Clients |-> 0] /\ cDiscPkt = [c \in Clients |-> NoPkt]
     /\ cLostKinds = [c \in Clients |-> {}]
     /\ smap = [a \in Addrs |-> NoMap] /\ slot = [i \in Slots |-> FreeSlot]
-    /\ bound = [t \in Tokens |-> 0] /\ admitted = {} /\ admits = [t \in Tokens |-> 0]
+    /\ bound = [t \in Tokens |-> 0] /\ churnDenied = FALSE
     /\ sDiscPending = 0 /\ sDiscPkt = NoPkt /\ sLostKinds = {}
     /\ C2S!Init /\ S2C!Init
 
@@ -392,85 +396,93 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 \* standard's order as far as this model sees it: a connected address is
 \* silent; a half-open mapping resends its stored challenge to the same
 \* salt and is silent to another; no cookie (or a cookie issued to another
-\* address) -> a cookie; the token bound elsewhere in the history, a
-\* connected client id, or an admitted token -> silent; then the history
-\* records the binding; no slot -> a denied under fresh keys (no mapping);
-\* the map full -> silent; else a mapping at a fresh nonce and its challenge
+\* address) -> a cookie; an expired token is refused before cookie/decrypt;
+\* a token bound elsewhere or a connected client id is silent; history
+\* binds only when a response opens; no slot is denied; else map+challenge
 ServerRecvRequest(p) ==
     /\ p.type = "request"
     /\ C2S!Deliver(p)
     /\ LET m == smap[p.from]
            boundElsewhere == History = "kept" /\ bound[p.tok] \notin {0, p.from}
+           heldFull == HoldUntilExpire /\ bound[p.tok] = 0
+                       /\ Cardinality({t \in Tokens : bound[t] # 0}) >= HeldCapacity
+           fresh == Fresh(p.tok)
        IN CASE m.live /\ m.slot # 0 ->
-                 ServerSilent /\ UNCHANGED <<smap, bound>>
+                 ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] m.live ->
                  /\ IF p.salt = m.salt
-                      THEN ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                      ELSE ServerSilent
-                 /\ UNCHANGED <<smap, bound>>
-            [] ~p.cookie ->
-                 ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt]) /\ UNCHANGED <<smap, bound>>
-            [] boundElsewhere \/ IdConnected(p.tok) \/ p.tok \in admitted ->
-                 ServerSilent /\ UNCHANGED <<smap, bound>>
-            [] OTHER ->
-                 /\ bound' = [bound EXCEPT ![p.tok] = IF @ = 0 THEN p.from ELSE @]
-                 /\ CASE FreeSlots = 0 ->
-                           ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])
+                      THEN /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
+                           /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
+                      ELSE /\ ServerSilent
                            /\ UNCHANGED smap
+                 /\ UNCHANGED <<bound, churnDenied>>
+            [] p.tok \in ExpiredTokens ->
+                 ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
+            [] ~p.cookie ->
+                 ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt])
+                 /\ UNCHANGED <<smap, bound, churnDenied>>
+            [] (boundElsewhere \/ ClientIdConnectedAtRequest(p.tok)
+                 \/ (HoldUntilExpire /\ bound[p.tok] # 0) \/ heldFull) ->
+                 ServerSilent /\ UNCHANGED <<smap, bound>>
+                 /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
+            [] OTHER ->
+                 /\ UNCHANGED bound
+                 /\ CASE FreeSlots = 0 ->
+                           /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> p.salt, nonce |-> 0])
+                           /\ UNCHANGED smap
+                           /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
                       [] NumMappings = MapCap ->
-                           ServerSilent /\ UNCHANGED smap
+                           ServerSilent /\ UNCHANGED <<smap, churnDenied>>
                       [] OTHER ->
-                           \E n \in FreshNonce :
-                             /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
-                                                                                 !.nonce = n, !.tok = p.tok]]
-                             /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
-    /\ UNCHANGED <<slot, admitted, admits>>
-    /\ UNCHANGED serverRecvUnchanged
+                           /\ \E n \in FreshNonce :
+                                /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
+                                                                                  !.nonce = n, !.tok = p.tok]]
+                                /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
+                           /\ UNCHANGED churnDenied
+    /\ UNCHANGED <<slot, serverRecvUnchanged>>
 
 \* a response that opens under the mapping's handshake keys refreshes the
-\* idle clock (before the ladder, as the code does); already connected ->
-\* ignored; the client id connected elsewhere -> ignored; the token already
-\* admitted -> ignored under the fix (RefuseAdmittedAtResponse; the code
-\* has no such rung, and its add() returns success for a present token, so
-\* the response is seated: README-ServerConnection.md item 8); no slot, or
-\* the admitted set full of other tokens -> denied, mapping kept; else the
-\* token is admitted, the lowest free slot assigned, and the first
-\* keep-alive goes out (rocketnet_server_process_connection_response)
+\* idle clock. It binds the token to this address in the used-token history,
+\* then an already-connected address or client id is ignored; no slot is
+\* denied; otherwise the lowest free slot is assigned and a keep-alive goes
+\* out (rocketnet_server_process_connection_response).
 ServerRecvResponse(p) ==
     /\ p.type = "response"
     /\ C2S!Deliver(p)
     /\ LET a  == MapAddr(p)
            m  == smap[a]
            m1 == [m EXCEPT !.sinceRecv = 0]
-           setFull == m.tok \notin admitted /\ Cardinality(admitted) = AdmittedCap
+           bound1 == IF History = "kept" /\ m.tok \notin ExpiredTokens
+                        THEN [bound EXCEPT ![m.tok] = IF @ = 0 THEN a ELSE @]
+                        ELSE bound
        IN IF m.live /\ KeysOf(p) = KeysOf(m)
-            THEN CASE m.slot # 0 \/ IdConnected(m.tok)
-                      \/ (RefuseAdmittedAtResponse /\ m.tok \in admitted) ->
+            THEN CASE m.slot # 0 \/ ClientIdConnectedAtResponse(m.tok) ->
                         /\ smap' = [smap EXCEPT ![a] = m1]
-                        /\ ServerSilent /\ UNCHANGED <<slot, admitted, admits>>
-                   [] FreeSlots = 0 \/ setFull ->
+                        /\ bound' = bound1
+                        /\ ServerSilent /\ UNCHANGED <<slot, churnDenied>>
+                   [] FreeSlots = 0 ->
                         /\ smap' = [smap EXCEPT ![a] = m1]
+                        /\ bound' = bound1
                         /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                        /\ UNCHANGED <<slot, admitted, admits>>
+                        /\ churnDenied' = (churnDenied \/ (Fresh(m.tok) /\ (FreeSlots > 0)))
+                        /\ UNCHANGED slot
                    [] OTHER ->
                         LET i == LowestFree IN
                         /\ slot' = [slot EXCEPT ![i] = [used |-> TRUE, addr |-> a, tok |-> m.tok, confirmed |-> FALSE]]
                         /\ smap' = [smap EXCEPT ![a] = [m EXCEPT !.est = TRUE, !.slot = i, !.age = 0,
                                                                   !.sinceRecv = 0, !.sinceKA = 0, !.acked = FALSE]]
-                        /\ admitted' = admitted \cup {m.tok}
-                        /\ admits' = [admits EXCEPT ![m.tok] = IF @ < 2 THEN @ + 1 ELSE 2]
+                        /\ bound' = bound1
                         /\ ServerSendPacket([type |-> "keepalive", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-            ELSE ServerSilent /\ UNCHANGED <<smap, slot, admitted, admits>>
-    /\ UNCHANGED bound
+                        /\ UNCHANGED churnDenied
+            ELSE ServerSilent /\ UNCHANGED <<smap, slot, bound, churnDenied>>
     /\ UNCHANGED serverRecvUnchanged
 
-\* the slot and the mapping go together: rocketnet_client_slots_release
-\* then rocketnet_encryption_map_remove; the admitted set keeps the token
-\* (AdmittedHeld = FALSE is the witness that forgets it)
+\* The slot and mapping are released together. A same-address reconnect
+\* remains permitted while the history is live.
 Release(a) ==
     /\ smap' = [smap EXCEPT ![a] = NoMap]
     /\ slot' = [slot EXCEPT ![smap[a].slot] = FreeSlot]
-    /\ admitted' = IF AdmittedHeld THEN admitted ELSE admitted \ {smap[a].tok}
+    /\ UNCHANGED churnDenied
 
 \* a sealed session packet that opens for a mapping with a slot: a
 \* keep-alive refreshes the idle clock, confirms the slot and its block
@@ -486,11 +498,11 @@ ServerRecvSession(p) ==
             THEN IF p.type = "keepalive"
                    THEN /\ smap' = [smap EXCEPT ![a] = [m EXCEPT !.sinceRecv = 0, !.acked = TRUE]]
                         /\ slot' = [slot EXCEPT ![m.slot].confirmed = TRUE]
-                        /\ UNCHANGED admitted
+                        /\ UNCHANGED churnDenied
                    ELSE Release(a)
-            ELSE UNCHANGED <<smap, slot, admitted>>
+            ELSE UNCHANGED <<smap, slot, churnDenied>>
     /\ ServerSilent
-    /\ UNCHANGED <<bound, admits>>
+    /\ UNCHANGED bound
     /\ UNCHANGED serverRecvUnchanged
 
 ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSession(p)
@@ -498,7 +510,7 @@ ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSess
 (***************************************************************************)
 (* The server's own sends.                                                 *)
 (***************************************************************************)
-serverSendUnchanged == <<clientVars, bound, admits, c2sVars>>
+serverSendUnchanged == <<clientVars, bound, churnDenied, c2sVars>>
 
 \* rocketnet_server_protocol_write_keep_alive_if_due: paced off the
 \* keep-alive's own clock, to a client that has not acknowledged one
@@ -512,7 +524,7 @@ ServerKeepAlive(i) ==
           /\ m.sinceKA = SendInterval
           /\ ServerSendPacket([type |-> "keepalive", to |-> a, salt |-> m.salt, nonce |-> m.nonce])
           /\ smap' = [smap EXCEPT ![a] = [m EXCEPT !.sinceKA = 0]]
-    /\ UNCHANGED <<slot, admitted, sDiscPending, sDiscPkt>>
+    /\ UNCHANGED <<slot, churnDenied, sDiscPending, sDiscPkt>>
     /\ UNCHANGED serverSendUnchanged
 
 \* rocketnet_server_protocol_disconnect_client: the burst, then the slot
@@ -533,18 +545,20 @@ ServerDiscCopy ==
     /\ ServerSendPacket(sDiscPkt)
     /\ sDiscPending' = sDiscPending - 1
     /\ sDiscPkt' = IF sDiscPending = 1 THEN NoPkt ELSE sDiscPkt
-    /\ UNCHANGED <<smap, slot, admitted>>
+    /\ UNCHANGED <<smap, slot, churnDenied>>
     /\ UNCHANGED serverSendUnchanged
 
 (***************************************************************************)
 (* Time passes on both ends and on both wires.  Clients: the send clocks.  *)
 (* Server, rocketnet_server_protocol_update (the sweep): a half-open        *)
-(* mapping is removed at its handshake deadline; an established one idle   *)
-(* for the timeout releases its slot and is removed with it (the witness   *)
-(* SweepRemovesMapping = FALSE releases the slot and leaves the mapping).   *)
+(* mapping is removed at whichever of its idle and handshake deadlines     *)
+(* comes first; an established one idle for the timeout releases its slot  *)
+(* and is removed with it (the witness SweepRemovesMapping = FALSE          *)
+(* releases the slot and leaves the mapping).                              *)
 (***************************************************************************)
-Expired(m)  == m.live /\ ~m.est /\ HandshakeDeadline > 0 /\ Sat(m.age, HandshakeDeadline) = HandshakeDeadline
-TimedOut(m) == m.live /\ m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
+Expired(m)   == m.live /\ ~m.est /\ HandshakeDeadline > 0 /\ Sat(m.age, HandshakeDeadline) = HandshakeDeadline
+IdleExpired(m) == m.live /\ ~m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
+TimedOut(m)  == m.live /\ m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
 
 Tick ==
     /\ C2S!Age /\ S2C!Age
@@ -553,15 +567,15 @@ Tick ==
                   LET m == smap[a] IN
                   CASE ~m.live -> m
                     [] Expired(m) -> NoMap
-                    [] ~m.est -> [m EXCEPT !.age = Sat(m.age, HandshakeDeadline)]
+                    [] IdleExpired(m) -> NoMap
+                    [] ~m.est -> [m EXCEPT !.age = Sat(m.age, HandshakeDeadline),
+                                          !.sinceRecv = Sat(m.sinceRecv, Timeout)]
                     [] TimedOut(m) /\ SweepRemovesMapping -> NoMap
                     [] OTHER -> [m EXCEPT !.sinceRecv = Sat(m.sinceRecv, Timeout),
                                           !.sinceKA = Sat(m.sinceKA, SendInterval)]]
     /\ slot' = [i \in Slots |-> IF slot[i].used /\ TimedOut(smap[slot[i].addr]) THEN FreeSlot ELSE slot[i]]
-    /\ admitted' = IF AdmittedHeld THEN admitted
-                   ELSE admitted \ {smap[a].tok : a \in {b \in Addrs : TimedOut(smap[b])}}
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
-                   cLostKinds, bound, admits, sDiscPending, sDiscPkt, sLostKinds>>
+                   cLostKinds, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
@@ -632,8 +646,7 @@ TypeOK ==
     /\ cDiscPending \in [Clients -> 0..DisconnectCopies]
     /\ cDiscPkt \in [Clients -> ClientSealed \cup {NoPkt}]
     /\ smap \in [Addrs -> Mapping] /\ slot \in [Slots -> SlotRec]
-    /\ bound \in [Tokens -> Addrs \cup {0}] /\ admitted \subseteq Tokens
-    /\ admits \in [Tokens -> 0..2]
+    /\ bound \in [Tokens -> Addrs \cup {0}] /\ churnDenied \in BOOLEAN
     /\ sDiscPending \in 0..DisconnectCopies /\ sDiscPkt \in ServerPackets \cup {NoPkt}
     /\ C2S!TypeOK /\ S2C!TypeOK
 
@@ -665,8 +678,19 @@ SlotMappingBijection ==
 NoSlotBeforeResponse == \A a \in Addrs : smap[a].slot # 0 => smap[a].est
 MappingsBounded      == NumMappings <= MapCap
 
-\* the same token never admits two clients (S:2648, S:2788-2791)
-OneConnectionPerToken == \A t \in Tokens : admits[t] <= 1
+\* One token may hold one live connection, but may connect again after release.
+OneTokenOneLiveConnection ==
+    \A t \in Tokens : Cardinality({i \in UsedSlots : slot[i].tok = t}) <= 1
+
+\* Compatibility name used by the existing MCServerConnection wrapper.
+OneConnectionPerToken == OneTokenOneLiveConnection
+
+\* A fresh, valid token whose identity is free is not refused while a slot is free.
+ChurnNeverDenied == ~churnDenied
+
+\* Expiry is checked before a token can create a mapping.
+ExpiredTokenNeverMapped ==
+    \A a \in LiveAddrs : smap[a].tok \notin ExpiredTokens
 
 \* no two live mappings share keys: the nonce is fresh per mapping
 NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
@@ -675,6 +699,8 @@ NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout
 DeadlineHonoured == \A a \in Addrs : (smap[a].live /\ ~smap[a].est /\ HandshakeDeadline > 0)
                                        => smap[a].age < HandshakeDeadline
+HalfOpenIdleHonoured == \A a \in Addrs : (smap[a].live /\ ~smap[a].est /\ Timeout > 0)
+                                           => smap[a].sinceRecv < Timeout
 
 \* a client's packets never reach another client's slot: a client packet
 \* that touches a used slot (its record, or the mapping behind it) came
