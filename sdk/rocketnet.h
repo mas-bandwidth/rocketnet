@@ -1506,22 +1506,30 @@ struct rocketnet_message_receipt_t
 // tla/RNConnectionMemory.tla). A server disconnects that client's slot with
 // this reason and resets the slot's region; a client disconnects itself.
 
+/** @brief No message-connection error has occurred. */
 #define ROCKETNET_MESSAGE_ERROR_NONE                0
+/** @brief The peer message configuration does not match. */
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH     1
+/** @brief The peer did not complete message configuration before timeout. */
 #define ROCKETNET_MESSAGE_ERROR_CONFIG_TIMEOUT      2
+/** @brief The peer sent message data that violates the protocol. */
 #define ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION  3
+/** @brief A reliable message did not complete before its configured timeout. */
 #define ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT    4
+/** @brief The message region cannot retain a required operation, so the connection ends. */
 #define ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED 5
 
 // the largest message start_message writes into a real wire frame, zero copy:
 // the payload capacity less the one form byte
 
+/** @brief Maximum byte count for a message written into a single wire payload. */
 #define ROCKETNET_MESSAGE_SINGLE_BYTES          ( ROCKETNET_MAX_PAYLOAD_BYTES - 1 )      // 1415
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 
 // the block stride, a wire constant
 
+/** @brief Byte stride used by message fragmentation on the wire. */
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152
 
 // The reliable resend schedule (docs/CHANNELS.md 6.4; tla/RNResendTiming.tla).
@@ -1535,8 +1543,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // must fit before reliable_timeout gives up on a record
 // (RNResendTiming AttemptsBeforeTimeout).
 
+/** @brief Maximum interval in milliseconds between reliable-message resend attempts. */
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                         100
+/** @brief Percent multiplier applied to the smoothed round-trip time in the resend timeout estimate. */
 #define ROCKETNET_MESSAGE_RTO_SCALE_PERCENT                          125
+/** @brief Minimum reliable-message resend attempts required by timeout validation. */
 #define ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS                        4
 
 // The message config table, one declaration deriving struct, defaults and
@@ -1571,7 +1582,9 @@ struct rocketnet_message_config_t
 ROCKETNET_EXPORT_FUNC void rocketnet_message_default_config( struct rocketnet_message_config_t * config );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+/** @brief Known byte size of message-config revision 1. */
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, reliable_timeout_ms ) + sizeof( int ), sizeof( int ) )
+/** @brief Largest message-config byte size supported by this header. */
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1
 
 // the defaults for a caller whose struct is config_bytes long, one of the
@@ -1758,10 +1771,23 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
 #endif
 
+/** @brief Successful message-object update status. */
 #define ROCKETNET_MESSAGE_OK                                0
 #define ROCKETNET_ERROR_MESSAGE_NOT_RELEASED                -1
 
+/**
+ * @brief One client-side message object, bound to one client transport connection.
+ * One client-side message object, bound to one client transport connection.
+ * @return Opaque handle; create it with the matching create function and destroy it with the matching destroy function.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 struct rocketnet_message_client_t;
+/**
+ * @brief One server-side message object with a message region for each client slot.
+ * One server-side message object with a message region for each client slot.
+ * @return Opaque handle; create it with the matching create function and destroy it with the matching destroy function.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 struct rocketnet_message_server_t;
 
 // ---- client ----
@@ -1771,6 +1797,19 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_client_required_memory( const s
 
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update.
+/**
+ * @brief Create a client message object and begin its connect attempt on the first update.
+ * Create a client message object and begin its connect attempt on the first update.
+ * @param context Allocator context forwarded to the transport and message allocation.
+ * @param connect_token Valid connect token bytes; NULL is refused.
+ * @param transport_config Transport settings; NULL selects transport defaults.
+ * @param message_config Message settings; NULL selects message defaults.
+ * @param memory Optional caller-owned block; NULL requests library allocation.
+ * @param memory_bytes Size of memory in bytes; ignored when memory is NULL.
+ * @param send_kbps Wire budget in kilobits per second; 0 selects the documented default.
+ * @return A new object, or NULL when arguments, config, memory, transport creation, or allocation is refused.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
                                                                                          const struct rocketnet_client_transport_config_t * transport_config,
                                                                                          const struct rocketnet_message_config_t * message_config,
@@ -1786,34 +1825,109 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_client_t * rocketnet_message_clie
                                                                                                void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
 // a NULL client is a counted no-op.
+/**
+ * @brief Destroy a client message object and its owned transport.
+ * Destroy a client message object and its owned transport.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @return No value; NULL is accepted as a counted no-op.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
 
 // the client's transport, for its stats and state; never its batches. a NULL client is a counted no-op that returns NULL.
+/**
+ * @brief Return the client transport owned by this message object.
+ * Return the client transport owned by this message object.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @return The borrowed transport pointer, or NULL for a NULL object.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct rocketnet_message_client_t * client );
 
 // ROCKETNET_CLIENT_TRANSPORT_STATE_*. a NULL client is a counted no-op that returns DISCONNECTED.
+/**
+ * @brief Return the underlying client transport state.
+ * Return the underlying client transport state.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @return The transport state; a NULL client reports DISCONNECTED.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_state( struct rocketnet_message_client_t * client );
 
 // ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_MESSAGE_OK.
+/**
+ * @brief Advance the transport and message layers at the supplied monotonic time.
+ * Advance the transport and message layers at the supplied monotonic time.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param time Current monotonic time in seconds; each update must not precede the previous one.
+ * @return ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED if a received view remains held; a NULL object returns OK.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time );
 
 // a NULL client is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_send_packets( struct rocketnet_message_client_t * client );
 
 // a NULL client is a counted no-op that returns NULL.
+/**
+ * @brief Reserve message-region space for an in-place client send.
+ * Reserve message-region space for an in-place client send.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param channel Channel index in [0, num_channels).
+ * @param reliability One enabled ROCKETNET_* reliability mode.
+ * @param bytes Message size in bytes; must fit configured message and buffering limits.
+ * @return A writable region pointer, or NULL when the request is refused or another send is pending.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_client_start( struct rocketnet_message_client_t * client, int channel, int reliability, int bytes );
 
 // the receipt serial, nonzero; 0 when no start is pending or bytes_written is outside 1 to the bytes started. a NULL client is a counted no-op that returns 0.
+/**
+ * @brief Queue the bytes written to the pending client message.
+ * Queue the bytes written to the pending client message.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param bytes_written Number of bytes written, from 1 through the size reserved by start.
+ * @return A nonzero receipt serial when queued; 0 when there is no pending send or the written size is invalid.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_finish( struct rocketnet_message_client_t * client, int bytes_written );
 
 // a NULL client is a counted no-op.
+/**
+ * @brief Cancel the pending client message and return its reserved space.
+ * Cancel the pending client message and return its reserved space.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @return No value; NULL is accepted as a counted no-op.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_abort( struct rocketnet_message_client_t * client );
 
 // The convenience over start and finish. It copies data into the region
 // record: start, write in place and finish do not. a NULL client or data is a counted no-op that returns 0.
+/**
+ * @brief Copy and queue one client message.
+ * Copy and queue one client message.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param channel Channel index in [0, num_channels).
+ * @param reliability One enabled ROCKETNET_* reliability mode.
+ * @param data Message bytes or output view; must be non-NULL.
+ * @param bytes Message size in bytes; must fit configured message and buffering limits.
+ * @return A nonzero receipt serial when queued; 0 when refused or an input pointer is NULL.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_client_send( struct rocketnet_message_client_t * client, int channel, int reliability, const uint8_t * data, int bytes );
 
 // 1 with the next message on channel, 0 when there is none. a NULL client, data or bytes is a counted no-op that returns 0.
+/**
+ * @brief Take the next delivered client message on a channel.
+ * Take the next delivered client message on a channel.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param channel Channel index in [0, num_channels).
+ * @param data Output pointer that receives a borrowed view, or NULL when no message is available; must be non-NULL.
+ * @param bytes Output pointer that receives the view length in bytes; must be non-NULL.
+ * @return 1 when a message is returned, otherwise 0, including when an input pointer is NULL.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receive( struct rocketnet_message_client_t * client, int channel, const uint8_t ** data, int * bytes );
 
 // Copies this update's receipt list into out, up to capacity entries; returns
@@ -1821,12 +1935,35 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receive( struct rocketnet_mes
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_receipts( struct rocketnet_message_client_t * client, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL client or data is a counted no-op; a pointer that is not a held view is a counted misuse.
+/**
+ * @brief Release a client message view obtained from receive.
+ * Release a client message view obtained from receive.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param data Held message view returned by the matching receive function; NULL is a counted no-op.
+ * @return No value; invalid or NULL pointers are counted as misuse/no-op.
+ * Thread and lifetime: serialize calls on one thread and follow update, receive/release, send, then send_packets order. Release each returned view before the next update; it expires at that update.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
 
 // 1 when the budget took the new rate, from now on. a NULL client is a counted no-op that returns 0.
+/**
+ * @brief Set the client connection wire send budget for subsequent sends.
+ * Set the client connection wire send budget for subsequent sends.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @param kbps Input or output specified by this parameter name; NULL is refused when it is a required pointer.
+ * @return 1 when the rate is accepted, otherwise 0.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
+/**
+ * @brief Return the reason for the client connection ending.
+ * Return the reason for the client connection ending.
+ * @param client Message object returned by client_create; NULL is a counted no-op.
+ * @return The ROCKETNET_MESSAGE_ERROR_* value, or NONE before disconnect; a NULL object returns NONE.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client );
 
 // the message counters (rocketnet_counters.h). a NULL client is a counted no-op that returns NULL.
@@ -1838,6 +1975,19 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_clie
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server_transport_config_t * transport_config, const struct rocketnet_message_config_t * message_config );
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults.
+/**
+ * @brief Create a server message object and its message regions for client slots.
+ * Create a server message object and its message regions for client slots.
+ * @param context Allocator context forwarded to the transport and message allocation.
+ * @param address Server bind address accepted by the transport; NULL is refused.
+ * @param transport_config Transport settings; NULL selects transport defaults.
+ * @param message_config Message settings; NULL selects message defaults.
+ * @param memory Optional caller-owned block; NULL requests library allocation.
+ * @param memory_bytes Size of memory in bytes; ignored when memory is NULL.
+ * @param per_client_send_kbps Input or output specified by this parameter name; NULL is refused when it is a required pointer.
+ * @return A new object, or NULL when arguments, config, memory, transport creation, or allocation is refused.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
                                                                                          const struct rocketnet_server_transport_config_t * transport_config,
                                                                                          const struct rocketnet_message_config_t * message_config,
@@ -1853,27 +2003,89 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_message_server_t * rocketnet_message_serv
                                                                                                void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
 // a NULL server is a counted no-op.
+/**
+ * @brief Destroy a server message object and its owned transport.
+ * Destroy a server message object and its owned transport.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @return No value; NULL is accepted as a counted no-op.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );
 
 // the server's transport, for its port, stats and stop; never its batches. a NULL server is a counted no-op that returns NULL.
+/**
+ * @brief Return the server transport owned by this message object.
+ * Return the server transport owned by this message object.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @return The borrowed transport pointer, or NULL for a NULL object.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct rocketnet_message_server_t * server );
 
 // ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_MESSAGE_OK.
+/**
+ * @brief Advance the transport and message layers at the supplied monotonic time.
+ * Advance the transport and message layers at the supplied monotonic time.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param time Current monotonic time in seconds; each update must not precede the previous one.
+ * @return ROCKETNET_MESSAGE_OK, or ROCKETNET_ERROR_MESSAGE_NOT_RELEASED if a received view remains held; a NULL object returns OK.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
 
 // a NULL server is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server );
 
 // a NULL server is a counted no-op that returns NULL.
+/**
+ * @brief Reserve message-region space for an in-place send to one client slot.
+ * Reserve message-region space for an in-place send to one client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param channel Channel index in [0, num_channels).
+ * @param reliability One enabled ROCKETNET_* reliability mode.
+ * @param bytes Message size in bytes; must fit configured message and buffering limits.
+ * @return A writable region pointer, or NULL when the request is refused or another send is pending.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, int bytes );
 
 // a NULL server is a counted no-op that returns 0.
+/**
+ * @brief Queue the bytes written to a pending message for one client slot.
+ * Queue the bytes written to a pending message for one client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param bytes_written Number of bytes written, from 1 through the size reserved by start.
+ * @return A nonzero receipt serial when queued; 0 when there is no pending send or the written size is invalid.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op.
+/**
+ * @brief Cancel a pending message for one client slot.
+ * Cancel a pending message for one client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @return No value; NULL is accepted as a counted no-op.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index );
 
 // The convenience over start and finish; it copies data into the region record. a NULL server or data is a counted no-op that returns 0.
+/**
+ * @brief Copy and queue one message for a client slot.
+ * Copy and queue one message for a client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param channel Channel index in [0, num_channels).
+ * @param reliability One enabled ROCKETNET_* reliability mode.
+ * @param data Message bytes or output view; must be non-NULL.
+ * @param bytes Message size in bytes; must fit configured message and buffering limits.
+ * @return A nonzero receipt serial when queued; 0 when refused or an input pointer is NULL.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
 
 // Sends data to every connected slot exactly as rocketnet_message_server_send
@@ -1882,24 +2094,80 @@ ROCKETNET_EXPORT_FUNC uint32_t rocketnet_message_server_send( struct rocketnet_m
 // Returns the number of slots it was queued for; a slot that refuses
 // (exhausted, not connected) is skipped. a NULL server or data is a counted
 // no-op that returns 0.
+/**
+ * @brief Copy and queue one message for every connected client slot.
+ * Copy and queue one message for every connected client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param channel Channel index in [0, num_channels).
+ * @param reliability One enabled ROCKETNET_* reliability mode.
+ * @param data Message bytes or output view; must be non-NULL.
+ * @param bytes Message size in bytes; must fit configured message and buffering limits.
+ * @return The number of connected slots that accept the message; 0 when none accept it or an input pointer is NULL.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
 // a NULL server, data or bytes is a counted no-op that returns 0.
+/**
+ * @brief Take the next delivered message for one client slot on a channel.
+ * Take the next delivered message for one client slot on a channel.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param channel Channel index in [0, num_channels).
+ * @param data Output pointer that receives a borrowed view, or NULL when no message is available; must be non-NULL.
+ * @param bytes Output pointer that receives the view length in bytes; must be non-NULL.
+ * @return 1 when a message is returned, otherwise 0, including when an input pointer is NULL.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int client_index, int channel, const uint8_t ** data, int * bytes );
 
 // As above for one connected client slot. Invalid inputs return zero.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_receipts( struct rocketnet_message_server_t * server, int client_index, struct rocketnet_message_receipt_t * out, int capacity );
 
 // a NULL server or data is a counted no-op; a pointer that is not a held view is a counted misuse.
+/**
+ * @brief Release a server message view obtained from receive.
+ * Release a server message view obtained from receive.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param data Held message view returned by the matching receive function; NULL is a counted no-op.
+ * @return No value; invalid or NULL pointers are counted as misuse/no-op.
+ * Thread and lifetime: serialize calls on one thread and follow update, receive/release, send, then send_packets order. Release each returned view before the next update; it expires at that update.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );
 
 // a NULL server is a counted no-op that returns 0.
+/**
+ * @brief Set the wire send budget for one client slot.
+ * Set the wire send budget for one client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @param kbps Input or output specified by this parameter name; NULL is refused when it is a required pointer.
+ * @return 1 when the rate is accepted, otherwise 0.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
+/**
+ * @brief Return the last disconnect reason recorded for a client slot.
+ * Return the last disconnect reason recorded for a client slot.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @return The ROCKETNET_MESSAGE_ERROR_* value, or NONE before disconnect; a NULL object returns NONE.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index );
 
 // a NULL server is a counted no-op that returns 0.
+/**
+ * @brief Report whether a client slot is connected.
+ * Report whether a client slot is connected.
+ * @param server Message object returned by server_create; NULL is a counted no-op.
+ * @param client_index Server slot index in [0, max_clients).
+ * @return 1 when the slot is connected, otherwise 0.
+ * Threading: serialize calls on one thread; do not call this object concurrently. Follow update, receive/release, send, then send_packets order.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_client_connected( struct rocketnet_message_server_t * server, int client_index );
 
 // a NULL server is a counted no-op that returns NULL.
