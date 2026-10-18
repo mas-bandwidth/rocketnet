@@ -351,9 +351,9 @@ static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_s
     if ( packet_type == ROCKETNET_CONNECTION_COOKIE_PACKET && bytes != ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES )
         return pcapng_refused( ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE );
     if ( packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET && bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
-        return pcapng_refused( ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE );
+        return pcapng_refused( ROCKETNET_COUNTER_CLIENT_CHALLENGE_DID_NOT_OPEN );
     if ( packet_type == ROCKETNET_CONNECTION_DENIED_PACKET && bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
-        return pcapng_refused( ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE );
+        return pcapng_refused( ROCKETNET_COUNTER_CLIENT_DENIED_DID_NOT_OPEN );
     if ( session && bytes < session->min_wire_bytes )
         return pcapng_refused( session->client_wrong_size );
     return pcapng_read_as( read.c_str() );
