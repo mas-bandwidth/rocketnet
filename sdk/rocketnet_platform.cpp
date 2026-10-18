@@ -1275,6 +1275,8 @@ static int get_connection_type()
 #include <CoreFoundation/CoreFoundation.h>
 #include <TargetConditionals.h>
 #include <dlfcn.h>
+#include <sys/event.h>
+#include <time.h>
 
 extern void * rocketnet_malloc( void * context, size_t bytes );
 
@@ -2444,6 +2446,126 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
     }
 }
 
+
+// ---------------------------------------------------
+
+// The client I/O wake on macOS and iOS: one kqueue holding the socket's
+// EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake" and
+// its macOS and iOS card). The trigger is EV_CLEAR, so it is
+// level-triggered until a wait returns it: a set made while no wait runs
+// makes the next wait return at once, and that wait consumes it.
+
+#define ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT 1
+
+struct rocketnet_platform_wake_t
+{
+    void * context;
+    int kq;
+    int socket_fd;
+    bool read_enabled;
+};
+
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla Init: no wake set, the
+// read filter enabled.
+
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return NULL;
+    rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
+    if ( !wake )
+        return NULL;
+    wake->context = context;
+    wake->socket_fd = socket->handle;
+    wake->read_enabled = true;
+    wake->kq = kqueue();
+    if ( wake->kq < 0 )
+    {
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    struct kevent changes[2];
+    EV_SET( &changes[0], socket->handle, EVFILT_READ, EV_ADD, 0, 0, NULL );
+    EV_SET( &changes[1], ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL );
+    if ( kevent( wake->kq, changes, 2, NULL, 0, NULL ) < 0 )
+    {
+        close( wake->kq );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    return wake;
+}
+
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoExit and Free: the
+// kqueue, and with it both filters, goes with the I/O thread.
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    if ( wake->kq >= 0 )
+        close( wake->kq );
+    rocketnet_free( wake->context, wake );
+}
+
+// tla/RNClientIo.tla IoWait and IoWake: the wait returns on the trigger, or on
+// a readable socket only while readable is true (waitReadable). When readable
+// changes, the same kevent call carries EV_ENABLE or EV_DISABLE for the read
+// filter, so a full buffer waits on the trigger alone (docs/CLIENT-IO.md "The
+// wake"). A returned EV_CLEAR trigger is consumed (IoWake's wake' = FALSE).
+
+bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+    struct kevent change;
+    int num_changes = 0;
+    if ( readable != wake->read_enabled )
+    {
+        EV_SET( &change, wake->socket_fd, EVFILT_READ, readable ? EV_ENABLE : EV_DISABLE, 0, 0, NULL );
+        num_changes = 1;
+        wake->read_enabled = readable;
+    }
+    struct timespec timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 0;
+    if ( timeout_seconds > 0.0 )
+    {
+        timeout.tv_sec = (time_t) timeout_seconds;
+        timeout.tv_nsec = (long) ( ( timeout_seconds - (double) timeout.tv_sec ) * 1000000000.0 );
+        if ( timeout.tv_nsec >= 1000000000L )
+            timeout.tv_nsec = 999999999L;
+    }
+    struct kevent events[2];
+    const int result = kevent( wake->kq, num_changes ? &change : NULL, num_changes, events, 2, &timeout );
+    if ( result <= 0 )
+        return false;
+    bool woken = false;
+    for ( int i = 0; i < result; i++ )
+    {
+        if ( events[i].flags & EV_ERROR )
+        {
+            // the read filter change was refused: keep the old state so the
+            // next wait carries the change again
+            if ( events[i].filter == EVFILT_READ && events[i].data != 0 )
+                wake->read_enabled = !readable;
+            continue;
+        }
+        woken = true;
+    }
+    return woken;
+}
+
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla HandOff, Return and Stop
+// (the actions that set wake'): any thread triggers the EVFILT_USER event; it
+// stays set until a wait returns it.
+
+void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    struct kevent change;
+    EV_SET( &change, ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL );
+    kevent( wake->kq, &change, 1, NULL, 0, NULL );
+}
+
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // windows
@@ -3359,11 +3481,12 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 // ----------------------------------------------------------------
 
 // the client I/O wake's portable fallback: a platform that does not define
-// ROCKETNET_PLATFORM_HAS_WAKE and has no wake of its own (Windows has one,
-// above, before the client turns it on) has no wake. create returns NULL,
-// destroy asserts its argument is NULL, wait returns false and set does nothing.
+// ROCKETNET_PLATFORM_HAS_WAKE and has no platform wake of its own (macOS and
+// iOS build the kqueue wake above, Windows the event wake above, before the
+// client turns it on) has no wake. create returns NULL, destroy asserts its
+// argument is NULL, wait returns false and set does nothing.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -3390,7 +3513,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
     (void) wake;
 }
 
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // ----------------------------------------------------------------
 
