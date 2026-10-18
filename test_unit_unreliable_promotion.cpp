@@ -195,15 +195,21 @@ static void unreliable_promotion_every_mode()
             const int header=3+3+3+(channel>=256?2:1);
             const int edge=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ?
                 ROCKETNET_MAX_PAYLOAD_BYTES-header-1 : (int)pair.client->object.unreliable_limit;
-            const int sizes[6]={edge-1,edge,edge+1,edge*2,edge*4,16384};
+            int sizes[9]={1404,1405,1406,edge-1,edge,edge+1,edge*2,edge*4,16384};
+            int size_count=9;
+            for(int a=0;a<size_count;++a) for(int b=a+1;b<size_count;++b) if(sizes[b]==sizes[a]) {
+                for(int k=b;k+1<size_count;++k) sizes[k]=sizes[k+1];
+                --size_count; --b;
+            }
             int expected_promotions=0;
             static const int promotion_counters[3]={ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE,
                 ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT};
             const rocketnet_counters_t * cc=rocketnet_message_client_counters(pair.client);
-            for(int i=0;i<6;++i) {
+            const int expected_channel=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ? channel : 0;
+            for(int i=0;i<size_count;++i) {
                 const int bytes=sizes[i];
                 const bool promote=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ?
-                    bytes+header+1>=ROCKETNET_MAX_PAYLOAD_BYTES : bytes>edge;
+                    bytes+header+1>ROCKETNET_MAX_PAYLOAD_BYTES : bytes>edge;
                 std::vector<uint8_t> message=boundary_data((uint32_t)(100+m*64+c*8+i),bytes);
                 const uint32_t before=rocketnet_counter_value(cc,promotion_counters[m]);
                 check(rocketnet_message_client_send(pair.client,channel,reliability,message.data(),bytes)!=0);
@@ -211,9 +217,7 @@ static void unreliable_promotion_every_mode()
                 if(promote) expected_promotions++;
                 std::vector<uint8_t> follow=boundary_data((uint32_t)(200+m*64+c*8+i),16);
                 check(rocketnet_message_client_send(pair.client,channel,ROCKETNET_UNRELIABLE,follow.data(),16)!=0);
-                // flush anything left from the previous send, then wait for
-                // this pair by identity, not by count
-                for(int flush=0;flush<8;++flush) boundary_step(&pair,&got);
+                // wait for this pair by identity, not by count
                 got.clear();
                 int found_message=0,found_follow=0;
                 for(int step=0;step<256 && (found_message==0 || found_follow==0);++step) {
@@ -226,7 +230,8 @@ static void unreliable_promotion_every_mode()
                 }
                 check(found_message==1 && found_follow==1);
                 for(size_t k=0;k<got.size();++k) {
-                    check(got[k].channel==channel);
+                    // the follow is a plain code-0 send, which has no channel on the wire
+                    check(got[k].channel==(got[k].data==message?expected_channel:0));
                     check(got[k].data==message || got[k].data==follow);
                 }
             }

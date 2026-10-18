@@ -158,7 +158,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         const bool over_max = (uint32_t) bytes > endpoint->config->max_message_bytes ||
             ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED && bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES );
         const bool promote = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
-            bytes + header + 1 >= record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
+            bytes + header + 1 > record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
         if ( over_max && reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
         {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );

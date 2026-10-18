@@ -1711,7 +1711,7 @@ static void unreliable_store_full_exhausts_and_kicks()
 static void unreliable_past_limit_promotes_counted_and_not_wedged()
 {
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1 );
+    mo_pair_setup( &pair, 1, NULL, 100000, 100000 );
     mo_step( &pair );
 
     rocketnet_message_client_t * client = pair.clients[0];
@@ -1744,7 +1744,7 @@ static void unreliable_past_limit_promotes_counted_and_not_wedged()
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 2 );
 
     std::vector<mo_received_t> got;
-    for ( int i = 0; i < 128 && got.size() < 4; i++ )
+    for ( int i = 0; i < 512 && got.size() < 4; i++ )
         mo_step( &pair, &got );
     check( got.size() == 4 );
     const int expected_bytes[4] = { limit, limit + 1, 16384, 50 };

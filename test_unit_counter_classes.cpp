@@ -298,6 +298,9 @@ static const char * const counters_appended_names[] =
     "CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED",
     "CLIENT_SEND_DEFERRED",
     "XDP_KERNEL_DROPPED_REPLAYED",
+    "MESSAGE_PROMOTED_UNRELIABLE",
+    "MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED",
+    "MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT",
 };
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )

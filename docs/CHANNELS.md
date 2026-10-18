@@ -332,9 +332,9 @@ which is the transport's 16-aligned root, and nothing comes before it.
 - **SINGLE** (`0x00`): bytes `[0, L-1)` are exactly one UNRELIABLE message.
   The cost is one byte. This is the zero-copy form. The application writes
   directly into the transport frame, and `finish_message` writes the form byte
-  after the message and calls `finish_packet`. It is also the form for a large
-  unreliable message sent zero-copy: the transport's arena route fragments it
-  (P1, P3).
+  after the message and calls `finish_packet`. It fills one packet: an
+  unreliable message that does not fit one packet's record is promoted to its
+  reliable twin (L2.3), never fragmented.
 - **RECORDS** (`0x01`): bytes `[0, L-1)` are one or more records back to back,
   each a header then data. This is the aggregation form. Many small unreliable
   messages, reliable records, resends and the CONFIG record share one packet.
@@ -362,14 +362,16 @@ Rules of this layer:
 - **L2.2** Every packet that carries a reliable record is a RECORDS packet of
   at most 1416 bytes, so the transport sends it as an unfragmented type 5
   (P2). A reliable message longer than one record can hold is a block.
-- **L2.3** An unreliable message (code 0 or 1) that is longer than one packet
-  can hold travels alone, in a payload above 1416 bytes that the transport
-  fragments. With `send_message` that payload is a RECORDS packet holding one
-  record, so the u16 length caps it at 65,535 bytes. With `start_message` it
-  is a SINGLE packet, capped by the transport's `max_payload_bytes`. Losing one
-  fragment loses the message, which is what unreliable means. RakNet upgrades
-  such a message to reliable (study §5.2 step 4). This layer does not, except
-  for the receipt type (section 7.4).
+- **L2.3** An unreliable message too big for one packet's record is promoted
+  to its reliable twin, as RakNet's ReliabilityLayer does (study §5.2 step 4),
+  and counted once per send in the source mode's promotion counter. Code 0
+  (and code 5's single-packet wire form) promotes above 1411 bytes to code 2;
+  code 1 promotes above 1405 bytes (1404 on a WIDE channel) to code 4; code 5
+  above 1411 bytes takes the code-2 block path and keeps its ACKED-only
+  receipt. The receiver sees the twin's code. A send above `max_message_bytes`,
+  or above the u16 record length for code 1, is still refused. No unreliable
+  record rides a fragmented payload. There is no
+  UNRELIABLE_SEQUENCED_WITH_ACK_RECEIPT mode.
 - **L2.4** No reliable record and no CONTROL record ever rides a fragmented
   payload (P3).
 
@@ -404,9 +406,12 @@ taught the design four things, now in 13.2 and 13.3:
 **As built.** The UNRELIABLE path (5, 6.3, 6.4, 9.3, 11.2) is the shipped
 path: sends enter through `rn_message_object_start`/`finish`
 (`sdk/rocketnet_message_server.cpp`), which copies the message into the send
-store and refuses and counts (`MESSAGE_UNRELIABLE_SEND_FAILED`) one past the
-one-packet limit at the send call, so nothing the queue can never send is
-queued; `rn_packet_builder` aggregates small messages as code-0 records into
+store and, one past the one-packet limit, promotes it to its reliable twin and
+counts the promotion (`MESSAGE_PROMOTED_UNRELIABLE`,
+`MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or
+`MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`); a send above
+`max_message_bytes` is still refused and counted
+(`MESSAGE_UNRELIABLE_SEND_FAILED`); `rn_packet_builder` aggregates small messages as code-0 records into
 one RECORDS payload; each message's chunk returns to the store once its
 record is written (9.3 step 3); a finish_packet failure drops and counts the
 packet's unreliable records (6.4, Failed send); and the receive side is
@@ -421,7 +426,9 @@ that carried only unreliable records is never entered in the sent-packet map
 was never called by the product and has been removed. Its behaviours that the
 product has are tested on the shipped path in `./bin/test`:
 `unreliable_store_full_exhausts_and_kicks`,
-`unreliable_past_limit_refused_counted_and_not_wedged`,
+`unreliable_past_limit_promotes_counted_and_not_wedged`,
+`unreliable_promotion_every_mode` (its own `test_unit_unreliable_promotion.cpp`
+case),
 `unreliable_failed_packet_drops_and_counts_each_record`,
 `unreliable_chunks_freed_when_written` and
 `unreliable_over_a_lossy_link_arrives_intact_at_most_once`
@@ -925,7 +932,7 @@ base types only by a flag on that descriptor:
 |---|---|---|
 | 6, 7 | every number the message took is acked. A block waits for all of its fragments, not for the last index as RakNet does (study §7.3, item 5). | never. The connection dies instead (study §7.3). |
 | 5, single packet | the `packet_id` of the RECORDS packet that carried it is acked | its sent-map entry is evicted, or reaches `send_time + rto` without an ack. A sweep cursor walks the sent ring in send order, fires LOSS for each expired entry's unreliable receipts and clears them. It costs O(expired). The entry itself stays, so its reliable references still match a late ack. |
-| 5, larger than a packet | sent as a block of type 6, as RakNet does (`RL.cpp:1615-1616`), so ACKED only | never |
+| 5, larger than a packet | promoted to a reliable code-2 block, as RakNet sends type 5 as 6, so ACKED only | never |
 
 Receipts go into the connection's receipt ring of `Rq` entries and then into
 the object's per-update receipt list. When the ring is full, the oldest
@@ -1071,8 +1078,9 @@ block mixed with another after numbers wrap is not checked by any module yet
 `rn_packet_builder_write` (`sdk/rocketnet_packet_builder.cpp`) runs per
 connection, at most `max_packets_per_update` packets:
 
-1. **Plan:** if the next item is an unreliable message longer than one packet,
-   it gets its own large payload (L2.3).
+1. **Plan:** an unreliable message too big for one packet's record was already
+   promoted to its reliable twin at the send call (L2.3), so no fragmented
+   unreliable payload is planned.
 2. **Fill** a RECORDS packet through layer 2's writer, in the send budget's
    class order (`sdk/rocketnet_send_budget.h`): retransmits and ordered
    progress, then new reliable items, then unreliable ones. This order
@@ -1265,7 +1273,8 @@ void      rocketnet_server_abort_message( server, &ctx );
 
 - `start_message` calls `start_packet( request_bytes + 1 )`. When
   `request_bytes <= 1415` that is a real wire frame, with no copy at all.
-  Larger requests go through the transport's arena (L2.3).
+  Larger requests are promoted to the reliable twin at the send call (L2.3),
+  not fragmented.
 - The message is always UNRELIABLE and is always SINGLE form. Endpoint state
   is not touched; only atomic counters are. So any number of threads may call
   it for any clients during the fill phase, exactly like `start_packet`.
@@ -2153,7 +2162,7 @@ visible effect, and it is the intended one.
 | I8 | The sent map from `packet_id` to a list of numbers, mixed-reliability packets from day one (6.4). |
 | I9 | `send_message` returns a serial for every type, and the descriptor stores it (7.4). |
 | I10 | Receipts for type 5 live in the sent-map entry in the region. LOSS comes from the deadline sweep (7.4). |
-| I11 | Large reliable messages are split by this layer at a fixed stride and resent per fragment, never through the transport's fragments (P3). They take consecutive numbers, one ordering slot, and are placed by index. Large unreliable messages use the transport's fragments (L2.3). Both choices are explicit. |
+| I11 | Large reliable messages are split by this layer at a fixed stride and resent per fragment, never through the transport's fragments (P3). They take consecutive numbers, one ordering slot, and are placed by index. Large unreliable messages are promoted to their reliable twin (L2.3), so they never ride the transport's fragments. Both choices are explicit. |
 | I12 | The sender clears resend state on the transport ack, whatever the receiver did with the record. ACKED means "opened", nothing more (7.4). |
 | I13 | Unreliable records are never subject to the window bounds (6.2, 9.3). |
 | I14 | One RTT estimator and one RTO per connection. Dead-connection detection is the transport's, plus `RELIABLE_TIMEOUT` (6.4). |

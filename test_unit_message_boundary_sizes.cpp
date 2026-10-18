@@ -241,11 +241,9 @@ static void message_boundary_sizes_every_mode_every_channel() {
         // (RakNet ReliabilityLayer): no type-9 fragments in any mode.
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==0);
-        // Code 1 promotes 1405 and 1406 on a narrow channel and all three
-        // sizes on a wide one; the other modes stay under their own edge.
+        // Code 1 promotes 1406, the first size past one packet's record.
         const uint32_t promoted = (uint32_t)rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED);
-        if(reliability==ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED) check(promoted==(channel==0?2u:3u));
-        else check(promoted==0);
+        check(promoted==(reliability==ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED?1u:0u));
         check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE)==0);
         check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT)==0);
         boundary_teardown(&pair);

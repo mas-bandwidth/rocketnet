@@ -31,8 +31,12 @@ layer implementation exists.
   reaches its first-send deadline, even if other traffic progresses.
 - `EmitAck` emits a reliable receipt only when every number of the message
   is acked. Type 7 has the same receipt rule as type 6; receiver ordering
-  is a channel responsibility. A two-fragment type-5 send promotes to
-  effective type 6 and therefore never emits LOSS.
+  is a channel responsibility. An unreliable send too big for one packet is
+  promoted to its reliable twin: type 0 to effective type 2, type 1 to
+  effective type 4, and type 5 to effective type 6. A promoted send therefore
+  never emits LOSS. `EffectiveKind` maps all three source modes; the fixed
+  workload exercises the type-5 promotion, and `PromotionTable` checks the
+  twin mapping for every source mode.
 - `outcomes` is a ghost history of generated events, separate from `ring`.
   A full ring drops its oldest event and increments `ringDropped`, as
   CHANNELS specifies. Draining or overflowing the ring does not allow a
@@ -79,11 +83,15 @@ that prunes transitions or hides violations.
 - `ExactlyOneOutcomePerReceiptSerial`: at most one generated outcome, only
   for an issued receipt serial. `ReceiptProgress` supplies the eventual half.
 - `LossOnlyForUnreliableReceipt`: only effective type 5 emits LOSS; large
-  type 5 is reliable and excluded.
+  type 5, and the promoted type 0 and type 1 twins, are reliable and excluded.
+- `PromotedIsTwin` and `PromotedNeverLoses`: each promoted source maps to
+  its declared twin (0 to 2, 1 to 4, 5 to 6) and never emits LOSS.
+- `PromotionTable`: the twin mapping covers every unreliable source mode.
 - `AckedMeansPacketOpened`: acknowledged numbers were transport-opened, and
   an unreliable ACKED receipt has a matched transport packet ACK.
-- `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation waits
-  for all fragment numbers, independently of their index/arrival order.
+- `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation, including
+  a promoted unreliable send, waits for all fragment numbers, independently of
+  their index/arrival order.
 - `ReceiptRingBounded`: receipt queue length never exceeds its capacity.
 - `UnreliableNeverResent`: effective type 5 is written at most once.
 - `ReceiptProgress`: every issued receipt send eventually generates an
