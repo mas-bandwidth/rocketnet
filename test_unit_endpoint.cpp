@@ -280,7 +280,7 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
         for ( int i = 0; i < count; i++ )
             ep_deliver( side, peer, &out[i], stats );
     }
-    rn_endpoint_config_tick( endpoint, now );                  // the stand-in transport is connected throughout
+    rn_endpoint_config_tick( endpoint, 1, now );                  // the stand-in transport is connected throughout
     check( rn_endpoint_error( endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
 
     // the application sends a few
@@ -438,12 +438,14 @@ static void endpoint_back_to_back_over_lossy_array()
         const double start = 1000.0 + steps * EP_STEP;
         const double timeout = (double) config.reliable_timeout_ms / 1000.0;
         rn_endpoint_reset( &b->endpoint, start );
-        rn_endpoint_config_tick( &b->endpoint, start );
+        rn_endpoint_config_tick( &b->endpoint, 0, start - 1.0 );   // the wait starts only once the transport is connected
+        check( b->endpoint.config_wait_start < 0.0 );
+        rn_endpoint_config_tick( &b->endpoint, 1, start );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
         check( rn_endpoint_deadline( &b->endpoint ) == start + timeout );
-        rn_endpoint_config_tick( &b->endpoint, start + timeout * 0.5 );
+        rn_endpoint_config_tick( &b->endpoint, 1, start + timeout * 0.5 );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
-        rn_endpoint_config_tick( &b->endpoint, start + timeout );
+        rn_endpoint_config_tick( &b->endpoint, 0, start + timeout );   // started, the wait times out whatever the transport says
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
         rn_endpoint_reset( &b->endpoint, start + timeout );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );

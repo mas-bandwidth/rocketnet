@@ -287,7 +287,9 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
 
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
 {
-    // a start that will not be finished: its room returns to the region
+    // tla/RNEndpoint.tla Send, undone before its second half (RNChannel
+    // Enqueue's first half returned): a start that will not be finished, its
+    // room returned to the region
     if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
          ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
         rn_channels_cancel( &endpoint->ordered.channels );
@@ -363,19 +365,20 @@ void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
     rn_window_ack_receipt_end_update( &endpoint->ordered.ack );
 }
 
-void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, double now )
+void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now )
 {
     // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): an endpoint still
     // waiting for the peer's CONFIG reliable_timeout after its connection
     // began ends it as RELIABLE_TIMEOUT. The wait starts at the first update
     // the connection is connected at: the server's from its Observe reset,
     // the client's from the first update its transport reports CONNECTED
-    // (11.3); the caller calls this only while that holds.
+    // (11.3), which transport_connected says.
     if ( endpoint->ordered.config_received )
         return;
     if ( endpoint->config_wait_start < 0.0 )
     {
-        endpoint->config_wait_start = now;
+        if ( transport_connected )
+            endpoint->config_wait_start = now;
         return;
     }
     const double reliable_timeout = (double) endpoint->config->reliable_timeout_ms / 1000.0;

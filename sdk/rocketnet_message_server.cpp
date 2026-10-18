@@ -454,8 +454,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // starts at the first update the connection is connected at (the
         // server's from its Observe reset, the client's from the first update
         // its transport reports CONNECTED, 11.3)
-        if ( object->is_server || object->link.connection( object->link.transport, i ) != 0 )
-            rn_endpoint_config_tick( connection, time );   // RNEndpoint Tick, the CONFIG half
+        const int transport_connected = object->is_server || object->link.connection( object->link.transport, i ) != 0;
+        rn_endpoint_config_tick( connection, transport_connected, time );   // RNEndpoint Tick, the CONFIG half
         const int reason = rn_endpoint_error( connection );
         if ( reason != ROCKETNET_MESSAGE_ERROR_NONE )
         {

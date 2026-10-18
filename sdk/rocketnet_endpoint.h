@@ -138,14 +138,14 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
 // The receipts' LOSS sweep and the end of the update's receipt list.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
-// tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update
-// while the connection's transport is connected, after the update's payloads.
-// The first call starts the wait for the peer's CONFIG; a later call at
+// tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,
+// after the update's payloads. The first call with transport_connected set
+// starts the wait for the peer's CONFIG; from then on, a call at
 // reliable_timeout or more after it, with the peer's CONFIG still not taken,
 // sets RELIABLE_TIMEOUT, which rn_endpoint_error reports. Whether the
-// transport is connected is the caller's to say (the endpoint never calls the
-// transport).
-void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, double now );
+// transport is connected is the caller's to say (a seam: the endpoint never
+// calls the transport).
+void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_connected, double now );
 
 // The start of an update on the receive side: the last update's deliveries
 // expire and their room returns to the region. Returns how many there were.
