@@ -78,8 +78,8 @@ int main(int argc, char ** argv)
     uint64_t received = 0;
     uint8_t scratch[ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES];
 
-    // Warm-up is discarded. The payload writes, server update, server reply
-    // and client drain run outside the timed windows.
+    // Warm-up is discarded. The payload writes, the lockstep server loop
+    // (update, reply) and the client drain run outside the timed windows.
     for (int frame = -200; frame < frames; ++frame)
     {
         for (int i = 0; i < packets_per_frame; ++i)
@@ -112,23 +112,36 @@ int main(int argc, char ** argv)
             total_us.push_back((send_ns + update_ns) / 1000.0);
         }
 
-        rocketnet_server_transport_update(server, rocketnet_time());
-        CHECK(rocketnet_server_transport_is_client_connected(server, client_index));
-
-        const int * reply_client_index;
-        uint8_t * const * received_data;
-        const int * received_bytes;
-        const int num_payloads = rocketnet_server_transport_payloads(server, &reply_client_index, &received_data, &received_bytes);
-        for (int i = 0; i < num_payloads; ++i)
+        // Lockstep pacing, outside both timed windows. The I/O thread sends
+        // asynchronously, so send_packets is a hand-off, and an unpaced loop
+        // refills the Filling ring faster than one ring can be sent. The
+        // server side loops until this frame's payloads have arrived, or a
+        // 0.5 s deadline passes, replying to each payload as it comes.
+        int frame_payloads = 0;
+        const double pace_deadline = rocketnet_time() + 0.5;
+        while (true)
         {
-            CHECK(received_bytes[i] == payload_bytes);
-            rocketnet_packet_context_t context;
-            uint8_t * payload = rocketnet_server_transport_start_packet(server, reply_client_index[i], payload_bytes, &context);
-            CHECK(payload);
-            memset(payload + context.payload_index, 'r', payload_bytes);
-            CHECK(rocketnet_server_transport_finish_packet(server, &context, payload_bytes) > payload_bytes);
+            rocketnet_server_transport_update(server, rocketnet_time());
+            CHECK(rocketnet_server_transport_is_client_connected(server, client_index));
+
+            const int * reply_client_index;
+            uint8_t * const * received_data;
+            const int * received_bytes;
+            const int num_payloads = rocketnet_server_transport_payloads(server, &reply_client_index, &received_data, &received_bytes);
+            for (int i = 0; i < num_payloads; ++i)
+            {
+                CHECK(received_bytes[i] == payload_bytes);
+                rocketnet_packet_context_t context;
+                uint8_t * payload = rocketnet_server_transport_start_packet(server, reply_client_index[i], payload_bytes, &context);
+                CHECK(payload);
+                memset(payload + context.payload_index, 'r', payload_bytes);
+                CHECK(rocketnet_server_transport_finish_packet(server, &context, payload_bytes) > payload_bytes);
+            }
+            rocketnet_server_transport_send_packets(server);
+            frame_payloads += num_payloads;
+            if (frame_payloads >= packets_per_frame || rocketnet_time() >= pace_deadline) break;
+            rocketnet_sleep(0.0001);
         }
-        rocketnet_server_transport_send_packets(server);
 
         int bytes;
         while ((bytes = rocketnet_client_transport_receive_packet(client, scratch, (int)sizeof(scratch))) > 0)
