@@ -1,0 +1,46 @@
+# Reference documentation build gate.
+#
+# Runs MrDocs 2026.9.29 against the standalone compilation database in
+# docs/mrdocs, verifies that the HTML reference pages build cleanly under
+# build/docs/html, and uploads build/docs/html as a workflow artifact.
+
+name: docs
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: docs (MrDocs HTML reference build)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache MrDocs 2026.9.29
+        uses: actions/cache@v4
+        with:
+          path: build/mrdocs-2026.9.29
+          key: mrdocs-2026.9.29-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Test undocumented symbol parser
+        run: sh tools/docs/test_undocumented.sh
+
+      - name: Build HTML reference documentation
+        run: make docs
+
+      - name: Upload HTML reference documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocketnet-docs-html
+          path: build/docs/html

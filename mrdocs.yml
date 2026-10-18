@@ -1,0 +1,46 @@
+# MrDocs configuration for the RocketNet public C and C++ SDK headers.
+source-root: .
+compilation-database: docs/mrdocs/CMakeLists.txt
+cmake-build-dir: build/docs/cmake
+input:
+  - sdk
+file-patterns:
+  - rocketnet.h
+  - rocketnet.hpp
+  - rocketnet_address.h
+  - rocketnet_connect_token.h
+  - rocketnet_platform.h
+  - rocketnet_counters.h
+  - rocketnet_route.h
+extract-all-macros: true
+include-macros:
+  - ROCKETNET_*
+exclude-macros:
+  - "*_H"
+  - ROCKETNET_HPP
+  - ROCKETNET_ADDRESS_ALREADY_DEFINED
+  - ROCKETNET_PLATFORM*
+  - ROCKETNET_BIG_ENDIAN
+  - ROCKETNET_LITTLE_ENDIAN
+  - ROCKETNET_XDP
+  - ROCKETNET_DEVELOPMENT
+  - ROCKETNET_UNREAL_ENGINE
+  - ROCKETNET_SPIKE_TRACKING
+  - ROCKETNET_ENABLE_MEMORY_CHECKS
+  - ROCKETNET_ASSERTS
+  - ROCKETNET_STATIC_ASSERT*
+  - ROCKETNET_EXPORT_*
+  - ROCKETNET_SYMBOL
+  - ROCKETNET_CONFIG_STRUCT_*
+  - ROCKETNET_CONFIG_REVISION_BYTES
+  - ROCKETNET_COUNTER_ENUM_ROW
+generator: html
+multipage: true
+output: build/docs/html
+warnings: true
+warn-if-undocumented: true
+warn-if-undoc-enum-val: true
+warn-no-paramdoc: true
+warn-no-brief: true
+warn-unknown-config-keys: true
+warn-as-error: false

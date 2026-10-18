@@ -45,6 +45,7 @@
 #include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
+#include "rocketnet_xdp_socket_config.h"
 
 #include <memory.h>
 #include <stdlib.h>
@@ -123,6 +124,7 @@ struct rocketnet_server_xdp_socket_t
     struct xsk_ring_cons complete_queue;
     struct xsk_ring_prod fill_queue;
     struct xsk_socket * xsk;
+    bool zero_copy;
 
     uint8_t padding_2[4096];
 
@@ -1526,39 +1528,63 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        // create umem with explicit config
-        struct xsk_umem_config umem_config;
-        memset( &umem_config, 0, sizeof(umem_config) );
-        umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-        umem_config.frame_headroom = 0;
+        // create umem and xdp socket: zero copy first, copy if the driver refuses the zero-copy bind.
+        // A refused bind leaves the umem's rings set, so the fallback starts from a fresh umem.
 
-        int result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
-        if ( result ) 
+        int result = 0;
+
+        for ( int attempt = 0; attempt < 2; attempt++ )
         {
-            rocketnet_error( "server could not create umem" );
+            const bool zero_copy = attempt == 0;
+
+            struct xsk_umem_config umem_config;
+            memset( &umem_config, 0, sizeof(umem_config) );
+            umem_config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
+            umem_config.frame_headroom = 0;
+
+            result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
+            if ( result )
+            {
+                rocketnet_error( "server could not create umem" );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+
+            struct xsk_socket_config xsk_config;
+            rocketnet_xdp_socket_config( &xsk_config, ROCKETNET_XDP_RECV_QUEUE_SIZE, ROCKETNET_XDP_SEND_QUEUE_SIZE, zero_copy );
+
+            result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
+            if ( result == 0 )
+                break;
+
+            socket->xsk = NULL;
+
+            if ( !zero_copy )
+            {
+                rocketnet_error( "server could not create xsk socket for queue %d", queue );
+                rocketnet_server_socket_destroy( server_socket );
+                return NULL;
+            }
+
+            rocketnet_info( "server xdp queue %d refused the zero copy bind (%s), binding in copy mode", queue, strerror( -result ) );
+
+            xsk_umem__delete( socket->umem );
+            socket->umem = NULL;
+        }
+
+        // record the mode the kernel bound
+
+        struct xdp_options xdp_options;
+        memset( &xdp_options, 0, sizeof(xdp_options) );
+        socklen_t xdp_options_length = sizeof(xdp_options);
+        if ( getsockopt( xsk_socket__fd( socket->xsk ), SOL_XDP, XDP_OPTIONS, &xdp_options, &xdp_options_length ) != 0 )
+        {
+            rocketnet_error( "server could not read the xdp options for queue %d", queue );
             rocketnet_server_socket_destroy( server_socket );
             return NULL;
         }
 
-        // create xdp socket
-
-        struct xsk_socket_config xsk_config;
-
-        memset( &xsk_config, 0, sizeof(xsk_config) );
-
-        xsk_config.rx_size = ROCKETNET_XDP_RECV_QUEUE_SIZE;
-        xsk_config.tx_size = ROCKETNET_XDP_SEND_QUEUE_SIZE;
-        xsk_config.xdp_flags = XDP_ZEROCOPY;     
-        xsk_config.bind_flags = XDP_USE_NEED_WAKEUP;
-        xsk_config.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
-
-        result = xsk_socket__create( &socket->xsk, interface_name, queue, socket->umem, &socket->receive_queue, &socket->send_queue, &xsk_config );
-        if ( result )
-        {
-            rocketnet_error( "server could not create xsk socket for queue %d", queue );
-            rocketnet_server_socket_destroy( server_socket );
-            return NULL;
-        }
+        socket->zero_copy = ( xdp_options.flags & XDP_OPTIONS_ZEROCOPY ) != 0;
 
         // configure the xdp socket to receive packets from the xdp program
 
@@ -1669,6 +1695,22 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
     }
+
+    // the bound mode, once per server: zero copy or copy (each queue's mode is on its socket)
+
+    int zero_copy_queues = 0;
+    for ( int queue = 0; queue < num_queues; queue++ )
+    {
+        if ( server_socket->socket[queue].zero_copy )
+            zero_copy_queues++;
+    }
+
+    if ( zero_copy_queues == num_queues )
+        rocketnet_info( "server xdp sockets bound in zero copy mode on %s", interface_name );
+    else if ( zero_copy_queues == 0 )
+        rocketnet_info( "server xdp sockets bound in copy mode on %s", interface_name );
+    else
+        rocketnet_info( "server xdp sockets bound in zero copy mode on %d of %d queues and copy mode on the rest on %s", zero_copy_queues, num_queues, interface_name );
 
     // the server has started successfully
 

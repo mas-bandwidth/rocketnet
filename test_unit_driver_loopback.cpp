@@ -10,6 +10,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -203,6 +204,7 @@ static void driver_loopback_destroy_frees_the_port()
     rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
     printf( "driver_loopback_destroy_frees_the_port\n" );
 }
+
 
 REGISTER_UNIT_TEST( driver_loopback_binds_and_discovers_a_port );
 REGISTER_UNIT_TEST( driver_loopback_exchanges_both_ways );

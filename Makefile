@@ -10,6 +10,14 @@ build:
 # at create -- the functional suite against each rung is the matrix proving the
 # abstraction, e.g. ROCKETNET_DRIVER=portable ./bin/functional
 
+.PHONY: docs docs-undocumented
+docs:
+	@sh tools/docs/mrdocs.sh
+
+docs-undocumented:
+	@if [ ! -f build/docs/mrdocs.log ]; then sh tools/docs/mrdocs.sh >/dev/null; fi
+	@sh tools/docs/undocumented.sh build/docs/mrdocs.log
+
 .PHONY: clean
 clean:
 	rm -rf build

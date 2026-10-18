@@ -141,3 +141,16 @@ xdp-free-list: proof_xdp_free_list.c
 
 clean:
 	rm -f *.goto *.output
+
+# Nightly proofs. Each reader directory holds a proof.mk that appends its
+# target to NIGHTLY, so a CBMC card adds a reader without editing a shared
+# file. The `all` target above is the per-commit set and is unchanged; the
+# nightly target runs the longer proofs that are not part of CI.
+
+NIGHTLY :=
+
+-include $(wildcard */proof.mk)
+
+.PHONY: nightly
+
+nightly: $(NIGHTLY)
