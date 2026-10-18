@@ -2772,20 +2772,20 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 // Sleep() rounds up to the system timer tick (15.6 ms by default) and a
 // millisecond cast truncates a sub-millisecond request to Sleep(0), so the
-// sleep waits on a per-thread high-resolution waitable timer instead (Windows
-// 10 1803 and later), which keeps the system-wide timer resolution untouched.
-// That timer wakes up to about a millisecond late on some machines, so it is
-// set to the request less ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS and the sleep
-// spins on the performance counter for whatever remains of the request; a
-// request no longer than that margin only spins. Where the timer cannot be
-// created, the fallback raises the timer to 1 ms only for the duration of a
-// rounded-up Sleep.
+// sleep blocks on a per-thread high-resolution waitable timer instead (Windows
+// 10 1803 and later), set for the whole request, which keeps the system-wide
+// timer resolution untouched. If the timer wakes before the request is up,
+// the sleep yields with SwitchToThread for at most
+// ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS more; it never busy-waits. Where the
+// timer cannot be created, SetWaitableTimer fails, or the wait does not
+// return WAIT_OBJECT_0, the fallback raises the timer to 1 ms only for the
+// duration of a rounded-up Sleep.
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif // #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 
-#define ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS 0.0005
+#define ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS 0.00005
 
 #include <timeapi.h>
 
@@ -2824,30 +2824,28 @@ void rocketnet_platform_sleep( double time )
         LARGE_INTEGER start;
         QueryPerformanceFrequency( &frequency );
         QueryPerformanceCounter( &start );
-        const double wait = time - ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS;
-        bool waited = true;
-        if ( wait > 0.0 )
-        {
-            // relative due time in 100 ns units, rounded up so a positive wait never becomes zero
-            double ticks = ceil( wait * 10000000.0 );
-            if ( ticks > 9.0e18 )
-                ticks = 9.0e18;
-            LARGE_INTEGER due;
-            due.QuadPart = -(LONGLONG) ticks;
-            waited = SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) != 0;
-            if ( waited )
-                WaitForSingleObject( rocketnet_platform_sleep_timer.handle, INFINITE );
-        }
-        if ( waited )
+
+        // relative due time in 100 ns units, rounded up so a positive request never becomes zero
+        double ticks = ceil( time * 10000000.0 );
+        if ( ticks > 9.0e18 )
+            ticks = 9.0e18;
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG) ticks;
+        if ( SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) &&
+             WaitForSingleObject( rocketnet_platform_sleep_timer.handle, INFINITE ) == WAIT_OBJECT_0 )
         {
             const double counts = ceil( time * (double) frequency.QuadPart );
+            const double spin_counts = ROCKETNET_PLATFORM_SLEEP_SPIN_SECONDS * (double) frequency.QuadPart;
             const LONGLONG end = start.QuadPart + ( counts > 9.0e18 ? (LONGLONG) 9.0e18 : (LONGLONG) counts );
             LARGE_INTEGER now;
             QueryPerformanceCounter( &now );
-            while ( now.QuadPart < end )
+            if ( now.QuadPart < end && (double) ( end - now.QuadPart ) <= spin_counts )
             {
-                YieldProcessor();
-                QueryPerformanceCounter( &now );
+                while ( now.QuadPart < end )
+                {
+                    SwitchToThread();
+                    QueryPerformanceCounter( &now );
+                }
             }
             return;
         }
