@@ -91,11 +91,11 @@
     (:feature "Flows: server-side subscription groups (later)" :cells (n) :note "REQUIREMENTS.md step 3")))
 
   (:id "drivers" :title "Drivers"
-   :text "The server socket drivers below the transport, selected at runtime by ROCKETNET_DRIVER or the config's driver field."
-   :columns ("portable" "gso" "msgx" "iocp" "xdp" "io_uring" "loopback (later)")
+   :text "The server socket drivers below the transport, selected at runtime by the per-endpoint ROCKETNET_SERVER_DRIVER and ROCKETNET_CLIENT_DRIVER; the process-wide ROCKETNET_DRIVER is refused aloud (sdk/rocketnet_config.cpp). Loopback is pin-only."
+   :columns ("portable" "gso" "msgx" "iocp" "xdp" "io_uring" "loopback")
    :rows
-   ((:feature "Server driver" :cells (y y y y y n n) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928" :note "io_uring is the open rung after XDP")
-    (:feature "Selectable by pin at runtime" :cells (y y y y y n n) :evidence "10308e4; rocketnet_test_server_driver_pin_portable, _gso, _msgx, _iocp, _xdp")))
+    ((:feature "Server driver" :cells (y y y y y y y) :evidence "portable: rocketnet_server_socket_linux.cpp; gso 0801c9a; msgx 8d54e30; iocp 45da97d; xdp c0b0928; io_uring f7cfe0f and 7be058d (test_server_uring_probe, test_server_uring_wire_ipv4, test_server_uring_wire_ipv6, test_server_uring_wire_dual_stack, test_server_uring_send_overflow, test_server_uring_receive_rearms_after_no_buffers); loopback bfcb888 (driver_loopback_binds_and_discovers_a_port, driver_loopback_exchanges_both_ways, driver_loopback_full_queue_drops_and_counts, driver_loopback_destroy_frees_the_port)")
+     (:feature "Selectable by pin at runtime" :cells (y y y y y y y) :evidence "10308e4; rocketnet_test_server_driver_pin_portable, _gso, _msgx, _iocp, _xdp; io_uring 2d2c057 (test_server_driver_pin_io_uring); loopback 5d059d8 and 1c6f91a (test_driver_pin_only, test_server_driver_pin_loopback, test_driver_env_pins_loopback)")))
 
   (:id "planned-drivers" :title "Planned drivers and clients"
    :text "The driver and client work carded today, and the later milestones behind it."
