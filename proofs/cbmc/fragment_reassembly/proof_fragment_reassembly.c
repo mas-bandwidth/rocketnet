@@ -75,6 +75,7 @@
 
 static const uint8_t * proof_arena = NULL;
 static size_t proof_payload_region = 0;
+static size_t proof_staging_region = 0;
 
 static int proof_span_in_region( const uint8_t * p, size_t bytes )
 {
@@ -82,7 +83,7 @@ static int proof_span_in_region( const uint8_t * p, size_t bytes )
         return 1;
     const size_t offset = (size_t) ( p - proof_arena );
     if ( offset == proof_payload_region )
-        return bytes <= ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
+        return bytes <= proof_staging_region;
     return offset < proof_payload_region && bytes <= proof_payload_region - offset;
 }
 
@@ -313,6 +314,7 @@ void harness_process_fragment( void )
 #ifdef __CPROVER__
     proof_arena = arena;
     proof_payload_region = (size_t) max_payload;
+    proof_staging_region = ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
 #endif
 
     /* the delivered arena: at least one maximum payload, the caller's byte
