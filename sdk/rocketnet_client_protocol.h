@@ -29,6 +29,31 @@
 
 struct rocketnet_reassembly_set_t;
 
+// The verdict a client I/O thread records for each datagram it worked
+// (tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):
+// raw (not opened: a handshake packet, or anything while its copy of the open
+// key is not live), opened, or the rung that refused it before or at the AEAD.
+
+enum
+{
+    ROCKETNET_CLIENT_IO_VERDICT_RAW = 0,
+    ROCKETNET_CLIENT_IO_VERDICT_OPENED = 1,
+    ROCKETNET_CLIENT_IO_VERDICT_ALREADY_RECEIVED = 2,
+    ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN = 3,
+    ROCKETNET_CLIENT_IO_VERDICT_ZERO_SEQUENCE = 4,
+    ROCKETNET_CLIENT_IO_VERDICT_WRONG_SIZE = 5,
+};
+
+struct rocketnet_client_protocol_t;
+
+// The open block hooks of a transport whose I/O thread opens session packets
+// (tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys): publish runs where
+// the challenge commits the session keys, retire on every terminal state
+// before the keys are zeroed. NULL on every other path.
+
+typedef void ( * rocketnet_client_publish_keys_t )( void * context, const struct rocketnet_client_protocol_t * client );
+typedef void ( * rocketnet_client_retire_keys_t )( void * context );
+
 struct rocketnet_client_protocol_t
 {
     // configuration, set before connect
@@ -109,6 +134,16 @@ struct rocketnet_client_protocol_t
     // completed it.
 
     struct rocketnet_reassembly_set_t * reassembly;
+
+    // The open block hooks, set by the transport after connect, and the
+    // record rocketnet_client_protocol_process_record is consuming (raw
+    // outside that call). update is the only writer of all of them.
+
+    rocketnet_client_publish_keys_t publish_keys;
+    rocketnet_client_retire_keys_t retire_keys;
+    void * keys_context;
+    uint8_t record_verdict;
+    uint64_t record_sequence;
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
@@ -156,6 +191,26 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                      uint8_t * out_payload,
                                      int out_payload_capacity,
                                      int * out_payload_bytes );
+
+// tla/RNClientIoDecrypt.tla UpdateConsume: processes one record of a receive
+// buffer a client I/O thread filled, in arrival order. A raw record is
+// rocketnet_client_protocol_process_packet unchanged. An opened record carries
+// the plaintext behind its wire header and the I/O thread's sequence: the
+// state check, update's own reconstruction (a disagreement is counted as did
+// not open, with no integrity failure), update's own replay check and advance,
+// then the rest of the session path as today, with no AEAD. A refused record
+// is counted with today's counter for its rung in its arrival position; a
+// did-not-open record also runs the integrity failure there.
+
+int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
+                                              const uint8_t * packet_data,
+                                              int packet_bytes,
+                                              uint8_t verdict,
+                                              uint64_t sequence,
+                                              double current_time,
+                                              uint8_t * out_payload,
+                                              int out_payload_capacity,
+                                              int * out_payload_bytes );
 
 // Builds a payload packet for the server, and stamps the send -- ordinary
 // traffic suppresses the client's own keep-alive. NOT "as on the server":

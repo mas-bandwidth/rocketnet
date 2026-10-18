@@ -24,6 +24,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Windows has no setenv or unsetenv: the same shim as functional/harness.inc
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static int setenv( const char * name, const char * value, int overwrite )
+{
+    if ( !overwrite && getenv( name ) != NULL )
+        return 0;
+    return _putenv_s( name, value );
+}
+
+static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+#endif
+
+
 #define check rocketnet_unit_check
 
 struct allocator_state
@@ -69,6 +82,17 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     config->protocol_id = 1;
 }
 
+#if ROCKETNET_ASSERTS
+// the NULL argument below is the documented counted no-op, which fires
+// rocketnet_assert in a build with asserts on: count it instead of breaking
+static int server_create_ex_expected_null_asserts = 0;
+
+static void server_create_ex_expected_null_assert( const char *, const char *, const char *, int )
+{
+    server_create_ex_expected_null_asserts++;
+}
+#endif
+
 static void server_transport_create_ex_reports_every_status()
 {
     allocator_state state = { 0, 0, 0 };
@@ -81,7 +105,16 @@ static void server_transport_create_ex_reports_every_status()
     // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
     // before init (the public NULL guard runs first)
     status = -1;
+#if ROCKETNET_ASSERTS
+    void (*saved_assert)( const char *, const char *, const char *, int ) = rocketnet_assert_function_pointer;
+    server_create_ex_expected_null_asserts = 0;
+    rocketnet_assert_function( server_create_ex_expected_null_assert );
+#endif
     check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( server_create_ex_expected_null_asserts == 1 );
+#endif
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // not initialized: a non-NULL create before rocketnet_init is refused
@@ -197,14 +230,21 @@ static void server_transport_create_ex_reports_every_status()
     }
 
     // S12: a port-zero address refused by a non-discovering driver (XDP) is
-    // DRIVER_PORT_ZERO_UNSUPPORTED
+    // DRIVER_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
+    // elsewhere the ladder skips "xdp" for the platform and falls to the
+    // auto order (sdk/rocketnet_tests.cpp checks that fall), whose drivers
+    // open a real socket, so off Linux the case is a named skip
     {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         strcpy( config.driver, "xdp" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED );
+#else
+        printf( "server_transport_create_ex_reports_every_status S12 [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
+#endif
     }
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
