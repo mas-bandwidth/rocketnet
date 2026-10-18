@@ -1065,8 +1065,8 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
 {
     if ( !onlink_inside_vm() )
     {
-        printf( "  FAIL this case attaches XDP to a veth pair and runs only inside a virtme-ng guest\n" );
-        return false;
+        printf( "  skipped: this case attaches XDP to a veth pair and runs only inside a virtme-ng guest\n" );
+        return true;
     }
 
     char exe[4096];
@@ -1216,10 +1216,16 @@ static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
     environment.server = -1;
 
     const bool server_was_xdp = onlink_log_has( environment.server_log, "server transport started on " ONLINK_SERVER_ADDRESS " [xdp]" );
+    const bool server_had_no_gateway = onlink_log_has( environment.server_log, "server found no gateway on " ONLINK_NEAR );
     const bool client_connected = onlink_log_has( environment.client_log, "client state: connected" );
     const bool exchanged = onlink_log_has( environment.client_log, "client sent " );
 
     bool ok = true;
+    if ( !server_had_no_gateway )
+    {
+        printf( "  FAIL the server did not run without a gateway on " ONLINK_NEAR "\n" );
+        ok = false;
+    }
     if ( !server_was_xdp )
     {
         printf( "  FAIL the server did not start with the xdp driver on " ONLINK_NEAR "\n" );

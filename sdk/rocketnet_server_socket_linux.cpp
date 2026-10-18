@@ -248,8 +248,9 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     return true;
 }
 
-// false refuses create (a malformed override). true with *found false: no
-// gateway on this interface (no default route, or no neighbour entry for it).
+// false refuses create (a malformed, zero or multicast MAC, or a discovery
+// that could not complete). true with *found false: this interface has no
+// default route, the one case the server starts without a gateway.
 
 static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_address, bool * found )
 {
@@ -298,7 +299,7 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
         FILE * file = popen( "netstat -rn", "r" );
         if ( !file )
-            return true;
+            return false;
         char netstat_buffer[1024];
         while ( fgets( netstat_buffer, sizeof(netstat_buffer), file ) != NULL )
         {
@@ -328,7 +329,7 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
         rocketnet_address_t address;
         if ( !rocketnet_address_parse( &address, gateway_ip_string ) || address.type != ROCKETNET_ADDRESS_IPV4 )
         {
-            return true;
+            return false;
         }
 
         // now find the ethernet address corresponding to the gateway IP address and interface name
@@ -337,7 +338,7 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
         file = popen( "ip neigh show", "r" );
         if ( !file )
-            return true;
+            return false;
         char ip_buffer[1024];
         while ( fgets( ip_buffer, sizeof(ip_buffer), file ) != NULL )
         {
@@ -358,7 +359,7 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
 
         if ( !found_mac_address )
         {
-            return true;
+            return false;
         }
     }
 
@@ -375,6 +376,13 @@ static bool get_gateway_mac_address( const char * interface_name, uint8_t * mac_
     mac_address[3] = (uint8_t) strtol( mac_address_string + 9, NULL, 16 );
     mac_address[4] = (uint8_t) strtol( mac_address_string + 12, NULL, 16 );
     mac_address[5] = (uint8_t) strtol( mac_address_string + 15, NULL, 16 );
+
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    if ( ( mac_address[0] & 1 ) || memcmp( mac_address, zero_mac, 6 ) == 0 )
+    {
+        rocketnet_error( "gateway mac address %s is zero or multicast", mac_address_string );
+        return false;
+    }
 
     *found = true;
     return true;
@@ -689,6 +697,24 @@ uint64_t rocketnet_server_socket_memory_required(int num_queues)
     return bytes;
 }
 
+static bool rocketnet_server_socket_interface_is_veth( const char * interface_name )
+{
+    // the driver name the kernel reports for the interface (ETHTOOL_GDRVINFO)
+    const int probe_fd = socket( AF_INET, SOCK_DGRAM, 0 );
+    if ( probe_fd < 0 )
+        return false;
+    struct ethtool_drvinfo info;
+    memset( &info, 0, sizeof(info) );
+    info.cmd = ETHTOOL_GDRVINFO;
+    struct ifreq ifr;
+    memset( &ifr, 0, sizeof(ifr) );
+    strncpy( ifr.ifr_name, interface_name, sizeof(ifr.ifr_name) - 1 );
+    ifr.ifr_data = (char*) &info;
+    const bool veth = ioctl( probe_fd, SIOCETHTOOL, &ifr ) == 0 && strcmp( info.driver, "veth" ) == 0;
+    close( probe_fd );
+    return veth;
+}
+
 bool rocketnet_server_socket_preflight( const char * public_address_string, int num_queues )
 {
     rocketnet_assert( public_address_string );
@@ -994,10 +1020,12 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
                 rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, strerror( errno ) );
                 provisioned = false;
             }
-            else if ( channels.combined_count == 0 && (int) channels.rx_count == num_queues && (int) channels.tx_count == num_queues )
+            else if ( channels.combined_count == 0 && (int) channels.rx_count == num_queues && (int) channels.tx_count == num_queues &&
+                      rocketnet_server_socket_interface_is_veth( interface_name ) )
             {
-                // a driver with separate rx and tx channels and no combined
-                // ones (veth) carries the queue count in both
+                // veth reports separate rx and tx channels and never combined
+                // ones, so the queue count is carried in both: the kernel
+                // tier's on-link case binds the server on a veth pair
 
                 rocketnet_info( "xdp pre-flight: %s has %u rx and %u tx channels and no combined ones (R7 passes: the queue count is %d)", interface_name, channels.rx_count, channels.tx_count, num_queues );
             }
