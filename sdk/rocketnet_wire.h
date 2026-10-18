@@ -192,7 +192,10 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the five drop reasons. PASSED_IPV6_EXTENSION
+// received == redirected + the six drop reasons. DROPPED_REPLAYED counts
+// the session packets dropped because their sequence is
+// ROCKETNET_XDP_REPLAY_WINDOW or more behind the replay map's high-water for
+// their source address and port. PASSED_IPV6_EXTENSION
 // counts the IPv6 frames the program hands to the kernel stack because their
 // next header is an extension header (hop-by-hop, routing, fragment,
 // destination options, AH, ESP): the program never walks that chain, so it
@@ -206,7 +209,8 @@ _Static_assert( sizeof(struct rocketnet_server_xdp_replay_value_t) == 8, "the XD
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE       4
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH        5
 #define ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION      6
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       7
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED           7
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       8
 
 struct rocketnet_server_xdp_stats_t
 {
