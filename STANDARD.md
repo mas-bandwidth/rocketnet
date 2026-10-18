@@ -2309,6 +2309,7 @@ application update.
 |---|---|---|
 | Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once one has been acknowledged — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
+| Half-open idle deadline | 10 s | server: half-open mapping with no request from its address since the last one (refreshed by traffic) |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
 | Cookie lifetime | 3 s | server: how long an issued cookie is accepted |
