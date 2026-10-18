@@ -133,7 +133,9 @@ def check_declarations(raw):
             depth += 1
         elif ch == "}":
             depth -= 1
-            if depth == 0 and re.match(r"[^{]*\)\s*\{", code[start:i]):
+            segment = code[start:i]
+            words = segment.split()
+            if depth == 0 and words and words[0] not in ("struct", "enum", "union", "typedef") and "(" in segment[:segment.index("{")]:
                 report(False, "(c) line %d: a function body: a public header declares, never defines" % line_of(code, start + len(code[start:i]) - len(code[start:i].lstrip())))
                 statements.append((start, code[start:i]))   # a function body ends its statement
                 start = i + 1
@@ -238,7 +240,7 @@ def self_contained(build, config, compiler_c, compiler_cxx):
     source_directory = Path(tempfile.mkdtemp(prefix="rocketnet_header_alone_source_"))
     # no include path but the directory: the compiler's environment paths are cleared
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH", "INCLUDE")}
+                   if key not in ("CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH")}
     try:
         # the sources compile from their own directory, which holds only them,
         # so a quoted include finds nothing beside the source

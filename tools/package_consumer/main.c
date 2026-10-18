@@ -51,6 +51,8 @@ int main(void)
         CHECK(rocketnet_counter_name(counter) != NULL);
         CHECK(rocketnet_counter_class(counter) >= 0 && rocketnet_counter_class(counter) < ROCKETNET_NUM_COUNTER_CLASSES);
     }
+    CHECK(rocketnet_counter_class(rocketnet_num_counters()) == -1);
+    CHECK(rocketnet_counter_class(-1) == -1);
     CHECK(rocketnet_init(NULL));
     rocketnet_forbid_xdp_commit();
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_ERROR);
