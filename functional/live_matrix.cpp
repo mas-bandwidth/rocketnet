@@ -852,6 +852,142 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
 }
 
 // ---------------------------------------------------------------
+//                     the edge probes (sections 4 and 5)
+// ---------------------------------------------------------------
+
+#define LIVE_MATRIX_PROBE_BASE              ( 1u << 20 )    // probe sequences, far past any matrix sequence
+
+// a sequence of stream (mode, channel) whose length is length, in the
+// boundary slots past LIVE_MATRIX_PROBE_BASE; 0 when there is none
+static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, int channel, uint32_t length, uint32_t after )
+{
+    for ( uint32_t q = after; q < after + 32u * 2u * ROCKETNET_LIVE_MAX_BOUNDARIES; q++ )
+    {
+        if ( ( q + (uint32_t) channel ) % 32u == 0 && rocketnet_live_length( &m->live, mode, channel, q ) == length )
+            return q;
+    }
+    return 0;
+}
+
+// One message, alone on the connection, must arrive verified on the channel
+// section 5 names. Returns 1 when it did.
+static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int mode, int channel, uint32_t sequence, uint32_t length )
+{
+    const uint32_t serial = live_matrix_start_finish( m, direction, mode, channel, sequence, length );
+    if ( serial == 0 )
+    {
+        live_matrix_fail( m, "edge", direction, mode, channel, sequence, "refused", (int) length );
+        return 0;
+    }
+    if ( live_matrix_has_receipt( mode ) )
+    {
+        struct live_matrix_direction_t * d = &live_matrix_directions[direction];
+        struct live_matrix_receipt_entry_t * e = live_matrix_receipt_slot( d, serial, 1 );
+        live_matrix_check( e && e->serial == 0 );
+        e->serial = serial;
+        e->mode = (uint8_t) mode;
+        e->length = length;
+        e->receipted = 0;
+        d->receipts_expected++;
+    }
+    const int want_channel = live_matrix_carries_channel( mode ) ? channel : 0;
+    const double start = rocketnet_platform_time();
+    int arrived = 0;
+    while ( !arrived && rocketnet_platform_time() - start < 0.25 )
+    {
+        live_matrix_flush( m );
+        live_matrix_pump( m );
+        live_matrix_check( live_matrix_up( m ) );
+        for ( int c = 0; c < LIVE_MATRIX_CHANNELS; c++ )
+        {
+            const uint8_t * data = NULL;
+            int bytes = 0;
+            while ( direction == 0 ? rocketnet_message_server_receive( m->server, 0, c, &data, &bytes ) : rocketnet_message_client_receive( m->client, c, &data, &bytes ) )
+            {
+                const int result = rocketnet_live_check( &m->live, data, bytes, direction, mode, channel, m->cycle, -1, NULL );
+                if ( result != ROCKETNET_LIVE_OK || rocketnet_live_sequence( data, bytes ) != sequence )
+                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, result != ROCKETNET_LIVE_OK ? rocketnet_live_result_name( result ) : "wrong-sequence", bytes );
+                else if ( c != want_channel )
+                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
+                else
+                    arrived = 1;
+                if ( direction == 0 ) rocketnet_message_server_release( m->server, 0, data ); else rocketnet_message_client_release( m->client, data );
+            }
+        }
+        live_matrix_take_receipts( m, 0 );
+        live_matrix_take_receipts( m, 1 );
+    }
+    return arrived;
+}
+
+// Section 4's single-record edges E - 1, E and E + 1 of every mode, and code
+// 1's transport payload edges 1,404 to 1,406, one message at a time in both
+// directions, each arriving on the channel section 5 names (codes 1, 3, 4
+// and 7 on the channel sent, the others on channel 0). An unreliable probe
+// gets three tries, so one loss is not a finding; a probe that never arrives
+// is named by its length.
+static void live_matrix_edge_probes( struct live_matrix_t * m )
+{
+    const int channel = 1;
+    for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+    {
+        for ( int mode = 0; mode < LIVE_MATRIX_MODES && m->failures == 0; mode++ )
+        {
+            uint32_t lengths[8];
+            int n = 0;
+            const uint32_t e = rocketnet_live_edge( &m->live, mode );
+            const uint32_t max_m = rocketnet_live_mode_max( &m->live, mode );
+            const uint32_t candidates[6] = { e - 1, e, e + 1, 1404, 1405, 1406 };
+            for ( int i = 0; i < ( mode == 1 ? 6 : 3 ); i++ )
+            {
+                const uint32_t l = candidates[i] > max_m ? max_m : candidates[i];
+                int seen = 0;
+                for ( int j = 0; j < n; j++ )
+                    seen |= lengths[j] == l;
+                if ( !seen )
+                    lengths[n++] = l;
+            }
+            for ( int i = 0; i < n && m->failures == 0; i++ )
+            {
+                const int tries = live_matrix_complete( mode, lengths[i] ) ? 1 : 3;
+                uint32_t sequence = LIVE_MATRIX_PROBE_BASE;
+                int arrived = 0;
+                for ( int t = 0; t < tries && !arrived && m->failures == 0; t++ )
+                {
+                    sequence = live_matrix_probe_sequence( m, mode, channel, lengths[i], sequence + 1 );
+                    live_matrix_check( sequence != 0 );
+                    arrived = live_matrix_probe_one( m, direction, mode, channel, sequence, lengths[i] );
+                }
+                if ( !arrived && m->failures == 0 )
+                    live_matrix_fail( m, "edge", direction, mode, channel, sequence, "never-arrived", (int) lengths[i] );
+                else if ( arrived )
+                    printf( "edge %d %d %u arrived on channel %d\n", direction, mode, lengths[i], live_matrix_carries_channel( mode ) ? channel : 0 );
+            }
+        }
+    }
+
+    // every probe's receipt is in before the matrix starts its own ledger
+    const double start = rocketnet_platform_time();
+    while ( m->failures == 0 && rocketnet_platform_time() - start < 2.0 &&
+            ( live_matrix_directions[0].receipts_seen < live_matrix_directions[0].receipts_expected ||
+              live_matrix_directions[1].receipts_seen < live_matrix_directions[1].receipts_expected ) )
+    {
+        live_matrix_flush( m );
+        live_matrix_pump( m );
+        live_matrix_check( live_matrix_up( m ) );
+        live_matrix_take_receipts( m, 0 );
+        live_matrix_take_receipts( m, 1 );
+    }
+    for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
+    {
+        const struct live_matrix_direction_t * d = &live_matrix_directions[direction];
+        if ( m->failures == 0 && d->receipts_seen != d->receipts_expected )
+            live_matrix_fail( m, "edge", direction, -1, -1, -1, "missing-receipts", (int) ( d->receipts_expected - d->receipts_seen ) );
+    }
+    fflush( stdout );
+}
+
+// ---------------------------------------------------------------
 //                     one window
 // ---------------------------------------------------------------
 
@@ -1080,6 +1216,9 @@ void live_message_matrix_loopback()
     // window 0, ending in a clean disconnect the server sees
     m->cycle = 0;
     live_matrix_connect( m );
+    memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
+    live_matrix_edge_probes( m );
+    live_matrix_check( m->failures == 0 );
     live_matrix_window( m, deadline );
     live_matrix_check( m->failures == 0 );
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
