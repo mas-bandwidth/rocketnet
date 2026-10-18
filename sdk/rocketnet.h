@@ -391,9 +391,15 @@ ROCKETNET_EXPORT_FUNC bool rocketnet_allocator( void * (*malloc_function)( void 
 // LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line.
 ROCKETNET_EXPORT_FUNC int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
-// Counts every refused API misuse since the process started: a create before
-// rocketnet_init, a late or partial rocketnet_allocator, and any other call the
-// SDK refuses. A relaxed read; a diagnostic, not a synchronization point.
+/**
+ * @brief Read the process-wide count of refused API calls.
+ *
+ * The count starts at zero and increases when the SDK refuses a call, including
+ * a call before initialization or an invalid allocator replacement. It is a
+ * relaxed atomic diagnostic and does not synchronize other state. It is safe
+ * to call from any thread and before initialization.
+ * @return The number of refused API calls since process start.
+ */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_api_misuse_count();
 
 // Internal to the SDK. rocketnet_library_initialized reads the lifecycle state
@@ -813,37 +819,68 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_client_index( struct rocket
 // a NULL client_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_disconnect( struct rocketnet_client_transport_t * client_transport );
 
-// a NULL client_transport is a counted no-op that returns NULL.
+/**
+ * @brief Get the client's cumulative protocol counters.
+ *
+ * The returned pointer refers to storage owned by the transport and remains
+ * valid until that transport is destroyed. Read it on the thread that owns the
+ * transport, after an update returns and outside any fill phase; do not read it
+ * concurrently with transport operations.
+ * @param client_transport The created client transport; NULL is a counted no-op.
+ * @return The transport-owned counter block, or NULL when client_transport is NULL.
+ */
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct rocketnet_client_transport_t * client_transport );
 
-// The client's connection quality: rtt and jitter in milliseconds, packet
-// loss as a percentage, and the last second's packet rates and bandwidth
-// both ways. The rates come from elapsed-time buckets (about 4 ms boundary
-// resolution), filled by existing send/receive walks over the trailing second,
-// so the cost per update is flat and no walk is added for them. rtt seeds
-// from the handshake's round trips and is continuously refreshed by the
-// acks -- the first block acknowledging each sent sequence yields a
-// sample; jitter is inter-arrival jitter over the session sequence; packet
-// loss is receive-side, from gaps in the session sequence. These numbers
-// feed time synchronization. The cumulative totals count every wire datagram
-// and byte over the client's current connection, handshake included.
+/**
+ * @brief Snapshot the client's connection quality and wire totals.
+ *
+ * Rates cover the trailing second. RTT starts with handshake round trips and
+ * is refreshed by acknowledgements; jitter measures inter-arrival variation;
+ * packet loss is the percentage of missing session-sequence packets. Wire
+ * totals include the handshake and cover the current connection. The caller
+ * owns the output struct. Read on the transport's owning thread, outside update
+ * and fill operations.
+ * @param client_transport The created client transport; NULL is a counted no-op.
+ * @param stats Receives the snapshot; NULL is a counted no-op.
+ * @return None. When both pointers are non-NULL, every field is written.
+ */
 
 struct rocketnet_client_transport_stats_t
 {
+    /** @brief Estimated round-trip time in milliseconds. */
     float rtt;                                      // round trip time (milliseconds)
+    /** @brief Inter-arrival jitter in milliseconds. */
     float jitter;                                   // inter-arrival jitter (milliseconds)
+    /** @brief Receive-side session-sequence loss as a percentage from 0 to 100. */
     float packet_loss;                              // percent
+    /** @brief Wire packets sent per second over the trailing second. */
     int packets_sent_per_second;
+    /** @brief Wire packets received per second over the trailing second. */
     int packets_received_per_second;
+    /** @brief Sent wire bandwidth in kilobits per second over the trailing second. */
     int bandwidth_sent_kbps;
+    /** @brief Received wire bandwidth in kilobits per second over the trailing second. */
     int bandwidth_received_kbps;
+    /** @brief Wire datagrams sent on the current connection, including its handshake. */
     uint64_t packets_sent;                          // wire datagrams sent on this connection
+    /** @brief Wire datagrams received on the current connection, including its handshake. */
     uint64_t packets_received;                      // wire datagrams received on this connection
+    /** @brief Wire bytes sent on the current connection, including its handshake. */
     uint64_t bytes_sent;                            // wire bytes sent on this connection
+    /** @brief Wire bytes received on the current connection, including its handshake. */
     uint64_t bytes_received;                        // wire bytes received on this connection
 };
 
-// a NULL client_transport or stats is a counted no-op.
+/**
+ * @brief Copy the current client transport statistics into a caller-owned struct.
+ *
+ * Call after creating the transport and on its owning thread, outside update
+ * and fill operations. A NULL argument is a counted no-op; no fields are
+ * written unless both arguments are non-NULL.
+ * @param client_transport The transport to sample.
+ * @param stats Receives all statistics; the caller owns this struct.
+ * @return None.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_stats( struct rocketnet_client_transport_t * client_transport, struct rocketnet_client_transport_stats_t * stats );
 
 // The client's delivery notification batch: the packet ids newly
@@ -1249,7 +1286,16 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rock
 // a NULL server_transport is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-// a NULL server_transport is a counted no-op that returns NULL.
+/**
+ * @brief Get the server's cumulative protocol counters.
+ *
+ * The returned pointer refers to storage owned by the transport and remains
+ * valid until that transport is destroyed. Read on the main thread after an
+ * update returns and outside a fill phase. When the driver exposes kernel
+ * prefilter totals, this call refreshes their values before returning.
+ * @param server_transport The created server transport; NULL is a counted no-op.
+ * @return The transport-owned counter block, or NULL when server_transport is NULL.
+ */
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
 // the configured maximum payload this transport sends and reassembles --
@@ -1259,55 +1305,93 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_trans
 // a NULL server_transport is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transport_t * server_transport );
 
-// The server's whole-socket rates: packets and bandwidth per second, both
-// directions, over the trailing second. Accumulation rides the walks the
-// transport already makes -- the receive drain and the send flush -- into a
-// ring of time-based buckets, and the published numbers sum only buckets
-// younger than one second (about 4 ms boundary resolution), at bounded cost:
-// no per-client sweep, no extra pass over any buffer. At 1000 clients the
-// update pays the same fixed bucket sum it pays at one. These numbers feed
-// time synchronization. The cumulative totals count every wire datagram and
-// byte over the server transport's lifetime.
+/**
+ * @brief Snapshot whole-server wire rates and lifetime totals.
+ *
+ * Rates cover the trailing second. Bandwidth is measured in kilobits per
+ * second. Lifetime totals count wire datagrams and bytes since transport
+ * creation. The caller owns the output struct. Read on the main thread after
+ * update returns and outside a fill phase.
+ */
 
 struct rocketnet_server_transport_stats_t
 {
+    /** @brief Wire packets sent per second over the trailing second. */
     uint64_t packets_sent_per_second;
+    /** @brief Wire packets received per second over the trailing second. */
     uint64_t packets_received_per_second;
+    /** @brief Sent wire bandwidth in kilobits per second over the trailing second. */
     float bandwidth_sent_kbps;
+    /** @brief Received wire bandwidth in kilobits per second over the trailing second. */
     float bandwidth_received_kbps;
+    /** @brief Wire datagrams sent since the transport was created. */
     uint64_t packets_sent;                          // wire datagrams sent over the server's lifetime
+    /** @brief Wire datagrams received since the transport was created. */
     uint64_t packets_received;                      // wire datagrams received over the server's lifetime
+    /** @brief Wire bytes sent since the transport was created. */
     uint64_t bytes_sent;                            // wire bytes sent over the server's lifetime
+    /** @brief Wire bytes received since the transport was created. */
     uint64_t bytes_received;                        // wire bytes received over the server's lifetime
 };
 
-// a NULL server_transport or stats is a counted no-op.
+/**
+ * @brief Copy the current whole-server statistics into a caller-owned struct.
+ *
+ * Call on the main thread after an update returns and outside a fill phase. A
+ * NULL argument is a counted no-op; no fields are written unless both
+ * arguments are non-NULL.
+ * @param server_transport The transport to sample.
+ * @param stats Receives all statistics; the caller owns this struct.
+ * @return None.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stats( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_transport_stats_t * stats );
 
-// Per-client connection quality, per slot: rtt and jitter in milliseconds,
-// packet loss as the percentage of this end's sent packets never
-// acknowledged, and the trailing bandwidth sent, received and acknowledged.
-// Fed by the ack blocks every session packet carries; recomputed round-robin,
-// a sixth of the slots per update, every slot covered, so the per-update
-// cost is flat at any client count. The cumulative totals count every wire
-// datagram and byte over the slot's current connection, zeroed when a new
-// connection takes the slot.
+/**
+ * @brief Snapshot connection quality and wire totals for one server slot.
+ *
+ * Quality estimates are refreshed from acknowledgement blocks; bandwidth is
+ * in kilobits per second. The totals cover the current connection and reset
+ * when a new connection takes the slot. An empty or out-of-range slot produces
+ * an all-zero struct. The caller owns the output struct. Read on the main
+ * thread after update returns and outside a fill phase.
+ */
 
 struct rocketnet_server_transport_client_stats_t
 {
+    /** @brief Estimated round-trip time in milliseconds. */
     float rtt;                                      // round trip time (milliseconds)
+    /** @brief RTT variation above the minimum sample, in milliseconds. */
     float jitter;                                   // deviation of rtt samples above the minimum (milliseconds)
+    /** @brief Sent-packet loss as a percentage from 0 to 100. */
     float packet_loss;                              // percent of sent packets never acknowledged
+    /** @brief Sent wire bandwidth in kilobits per second. */
     float bandwidth_sent_kbps;
+    /** @brief Received wire bandwidth in kilobits per second. */
     float bandwidth_received_kbps;
+    /** @brief Acknowledged wire bandwidth in kilobits per second. */
     float bandwidth_acked_kbps;
+    /** @brief Wire datagrams sent on the slot's current connection. */
     uint64_t packets_sent;                          // wire datagrams sent on the slot's current connection
+    /** @brief Wire datagrams received on the slot's current connection. */
     uint64_t packets_received;                      // wire datagrams received on the slot's current connection
+    /** @brief Wire bytes sent on the slot's current connection. */
     uint64_t bytes_sent;                            // wire bytes sent on the slot's current connection
+    /** @brief Wire bytes received on the slot's current connection. */
     uint64_t bytes_received;                        // wire bytes received on the slot's current connection
 };
 
-// a NULL server_transport or stats is a counted no-op.
+/**
+ * @brief Copy one connected slot's statistics into a caller-owned struct.
+ *
+ * `client_index` is a zero-based slot index. An out-of-range or disconnected
+ * slot yields an all-zero struct. Call on the main thread after an update
+ * returns and outside a fill phase. A NULL transport or output is a counted
+ * no-op, and no fields are written unless both are non-NULL.
+ * @param server_transport The transport to sample.
+ * @param client_index A slot in the configured range from zero to max_clients minus one.
+ * @param stats Receives all statistics; the caller owns this struct.
+ * @return None.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_server_transport_client_stats_t * stats );
 
 // The delivery notification primitive: the batch of packet ids newly
@@ -1360,17 +1444,39 @@ ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_destroy( struct rocketnet_frame_
 // a NULL frame_sync is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync );
 
+/**
+ * @brief Statistics for the most recent frame-sync wait and the accumulated frame count.
+ *
+ * The caller owns this output value. Read it on the thread that calls
+ * `rocketnet_frame_sync_wait`, after that call returns; do not race wait or
+ * destroy with this read.
+ */
 struct rocketnet_frame_sync_stats_t
 {
+    /** @brief Number of completed waits. */
     uint64_t frame;                                 // frames completed
+    /** @brief Total frames skipped while resynchronizing after overruns. */
     uint64_t dropped_frames;                        // frames lost to overruns, total
+    /** @brief Nonzero when the waiting thread obtained the requested priority. */
     int priority_held;                              // platform thread priority obtained
+    /** @brief Nonzero when the adaptive final spin is active. */
     int spinning;                                   // spin guard active (requires priority)
+    /** @brief Current adaptive spin guard duration in seconds. */
     double guard_seconds;                           // the current adaptive guard
+    /** @brief Lateness of the latest wake after its deadline, in seconds. */
     double wakeup_error_seconds;                    // the last wake's lateness past its deadline
 };
 
-// a NULL frame_sync or stats is a counted no-op.
+/**
+ * @brief Copy frame-sync status into a caller-owned struct.
+ *
+ * Call on the thread that uses `rocketnet_frame_sync_wait`, after wait returns.
+ * A NULL argument is a counted no-op; no fields are written unless both
+ * arguments are non-NULL.
+ * @param frame_sync The created frame-sync object.
+ * @param stats Receives all fields; the caller owns this struct.
+ * @return None.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
 
 // -----------------------------------------
@@ -1657,12 +1763,34 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_status_string( int status );
 
 struct rocketnet_counters_t;
 
-// Runtime introspection avoids assuming a counters-struct length across FFI.
-// Read on the main thread outside update/fill, as for the counters view.
+/**
+ * @brief Get the number of public counter indices.
+ *
+ * This compile-time count is allocation-free and is available before
+ * initialization. Use it to size an FFI view of `rocketnet_counters_t`.
+ * @return The number of entries in the counter list.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_num_counters();
-// a NULL counters is a counted no-op that returns 0.
+/**
+ * @brief Read one cumulative counter value.
+ *
+ * Read on the thread that owns the counter block, after an update returns and
+ * outside update/fill operations. A NULL block is a counted no-op; an invalid
+ * index returns zero without changing the misuse count.
+ * @param counters The counter block to read; NULL returns zero and counts a misuse.
+ * @param counter An index from zero through `rocketnet_num_counters() - 1`.
+ * @return The selected total, or zero for a NULL block or out-of-range index.
+ */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_counter_value( const struct rocketnet_counters_t * counters, int counter );
 
+/**
+ * @brief Get the stable name of a counter index.
+ *
+ * The returned string is static storage and remains valid for the process
+ * lifetime. This lookup is allocation-free and may be called before init.
+ * @param counter An index from zero through `rocketnet_num_counters() - 1`.
+ * @return The counter name, or `"???"` for an invalid index (after the SDK assertion).
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       // the full counter enum is in rocketnet_counters.h
 
 // What a clean run shows of a counter. Every counter has exactly one class.
@@ -1672,29 +1800,53 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_name( int counter );       
 //              and side counters)
 //   path_loss  moves only when the path loses or reorders packets
 //   arrival    a RECEIVED counter: a packet of the type arrived
+/** @brief Classification of a counter's value on a clean run. */
 enum
 {
+    /** @brief A refused operation; zero is expected on a clean path. */
     ROCKETNET_COUNTER_CLASS_REFUSAL = 0,
+    /** @brief A success, lifecycle, or side event that can occur on a clean path. */
     ROCKETNET_COUNTER_CLASS_EXPECTED,
+    /** @brief A resend, loss, or reorder event caused by the packet path. */
     ROCKETNET_COUNTER_CLASS_PATH_LOSS,
+    /** @brief A packet arrival counted before its outcome is classified. */
     ROCKETNET_COUNTER_CLASS_ARRIVAL,
+    /** @brief Number of counter classes. */
     ROCKETNET_NUM_COUNTER_CLASSES
 };
 
-// The class of a counter, one of the ROCKETNET_COUNTER_CLASS_ values, or -1 for
-// an index outside the counter list. Allocation-free; callable before init.
+/**
+ * @brief Get the clean-run class assigned to a counter.
+ *
+ * This lookup is allocation-free and may be called before initialization.
+ * @param counter A counter index from zero through `rocketnet_num_counters() - 1`.
+ * @return A `ROCKETNET_COUNTER_CLASS_*` value, or -1 when the index is invalid.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_counter_class( int counter );
 
-// "refusal", "expected", "path_loss" or "arrival"; NULL for a value that is not a class.
+/**
+ * @brief Get the stable lowercase name of a counter class.
+ *
+ * The returned string is static storage and remains valid for the process
+ * lifetime. This lookup is allocation-free and may be called before init.
+ * @param counter_class One of the `ROCKETNET_COUNTER_CLASS_*` values.
+ * @return `"refusal"`, `"expected"`, `"path_loss"` or `"arrival"`, or NULL for an invalid value.
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_counter_class_name( int counter_class );
 
-// 1 when every counter family balances: for each RECEIVED counter, its value
-// equals the sum of the outcomes that name it as their family. Otherwise 0,
-// with the first unbalanced family (in counter order) written to report as
-// "<RECEIVED name> received=<n> outcomes=<m>"; report may be NULL. Read the
-// block at a quiescent point, on the thread that owns it: after an update
-// returns, when every packet counted as arrived has taken its outcome. A NULL
-// counters is a counted no-op that returns 0.
+/**
+ * @brief Check that every received-packet counter equals the sum of its outcomes.
+ *
+ * Read on the thread that owns the block after an update returns, when packet
+ * processing is quiescent. A NULL report disables text output. When
+ * `report_bytes` is positive, a supplied report buffer receives an empty
+ * string on success or the first mismatch as
+ * `"<name> received=<n> outcomes=<m>"`; the buffer is NUL-terminated.
+ * @param counters Counter block to check; NULL is a counted no-op that returns zero.
+ * @param report Optional caller-owned output buffer; NULL skips the message.
+ * @param report_bytes Buffer capacity in bytes; values at or below zero skip writing.
+ * @return 1 if all families balance, 0 otherwise or when counters is NULL.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_counters_t * counters, char * report, int report_bytes );
 
 // -----------------------------------------
@@ -1829,7 +1981,15 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_client_set_send_kbps( struct rocketn
 // ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client );
 
-// the message counters (rocketnet_counters.h). a NULL client is a counted no-op that returns NULL.
+/**
+ * @brief Get the message client's cumulative protocol counters.
+ *
+ * The returned pointer refers to storage owned by the client object and remains
+ * valid until it is destroyed. Read on the object's owning thread after update
+ * returns and outside fill operations.
+ * @param client The created message client; NULL is a counted no-op.
+ * @return The client-owned counter block, or NULL when client is NULL.
+ */
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_client_counters( struct rocketnet_message_client_t * client );
 
 // ---- server ----
@@ -1902,7 +2062,15 @@ ROCKETNET_EXPORT_FUNC int rocketnet_message_server_disconnect_reason( struct roc
 // a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_message_server_client_connected( struct rocketnet_message_server_t * server, int client_index );
 
-// a NULL server is a counted no-op that returns NULL.
+/**
+ * @brief Get the message server's cumulative protocol counters.
+ *
+ * The returned pointer refers to storage owned by the server object and remains
+ * valid until it is destroyed. Read on the object's owning thread after update
+ * returns and outside fill operations.
+ * @param server The created message server; NULL is a counted no-op.
+ * @return The server-owned counter block, or NULL when server is NULL.
+ */
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_message_server_counters( struct rocketnet_message_server_t * server );
 
 // -----------------------------------------
