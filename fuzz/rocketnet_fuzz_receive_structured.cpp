@@ -134,7 +134,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 64 );
     server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     server.reassembly = rocketnet_reassembly_set_create( NULL, 4, 8, 16384, 4 * 8 );
     server.counters = &server_counters;
@@ -336,7 +335,6 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_reassembly_set_destroy( server.reassembly );
     rocketnet_network_simulator_destroy( simulator );

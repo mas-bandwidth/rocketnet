@@ -128,6 +128,67 @@ request, so nothing secret may go there.
   number and is resolved in 2.6.
 - Nothing about replay runs in the kernel.
 
+### 1.6 Token reuse
+
+The design (owner's ruling, 2026-10-18): **a connect token is meant to be used
+once, and the server keeps one token to one live connection.** Slot
+accounting and reuse are separate jobs, and reuse needs no structure of its
+own.
+
+- **Slot accounting.** A slot is freed when its connection closes, and
+  nothing outlives it. A fresh, valid token at a server with a free slot
+  always connects, however many players have come and gone before it
+  (`tla/RNSecurityTables.tla`, `ChurnNeverDenied`). The one exception is a
+  token whose client id still holds a slot: a player rejoining before the
+  old connection times out is refused by the client-id check until it does,
+  as before.
+- **One live connection.** Three existing rungs carry it
+  (`OneTokenOneLiveConnection` in the model). The used-token history refuses
+  a bound token from any other address before the signature verify, at the
+  cost of a hash and a lookup (`CONNECTION_REQUEST_TOKEN_ALREADY_USED`). A
+  connected address provokes nothing from the request path
+  (`CONNECTION_REQUEST_ALREADY_CONNECTED`). A token carries one client id, so
+  the client-id check refuses a second connection while the first lives,
+  after the open at the request and at the response
+  (`CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED`,
+  `CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED`), which is what holds when
+  the history has dropped the token's entry. The rule adds no lookup of its
+  own: each rung was already on the path.
+- **Expiry is the bound.** Development tokens expire 30 seconds after they
+  are created (`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, formerly 300). A
+  production backend sets its own expiry in the signed fields; STANDARD.md
+  recommends 30 seconds. The server enforces a maximum lifetime only when
+  `max_token_lifetime_seconds` is set (its default,
+  `ROCKETNET_DEFAULT_MAX_TOKEN_LIFETIME_SECONDS`, is 0: no limit), so the
+  bound below is the backend's to keep. The expire timestamp is signed and
+  sits at a fixed offset in the clear, so an expired token is refused before
+  the cookie gate, before any MAC, verify or open.
+
+**Accepted residual risk.** A token whose connection has closed may connect
+again until it expires: from the address it is bound to; from a second address
+that held a mapping for it before the first response bound it (pinned by
+`test_request_path_state_refusals`); or from any address once the history has
+dropped its entry. Its holder can reconnect with it
+inside its lifetime; it can never hold two live connections with it. The
+owner accepts this as the cost of not denying ordinary churn. The unit test
+`server_admits_a_token_again_after_its_connection_closes` pins it.
+
+**What it replaced.** The admitted-token set held every token that admitted a
+connection until that token expired, never evicting, at 2 x max_clients
+entries. With max_clients 1 and 300-second development tokens, the server
+admitted two clean connect/disconnect cycles and denied the third fresh token
+with the slot free. The denial was counted as
+`CONNECTION_RESPONSE_ADMITTED_SET_FULL` and sent as the same denied packet a
+full server sends. The set is removed. Its counters
+(`CONNECTION_RESPONSE_ADMITTED_SET_FULL`,
+`CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED` and
+`CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`) keep their indices, because
+indices are the contract, and always read zero. The reversed witness
+`MCRNSecurityTablesHoldUntilExpire.cfg` reproduces the denial in the model.
+`server_admits_sequential_fresh_tokens_past_twice_max_clients` reproduced it
+in the code before the fix, failing at the third cycle with
+`CONNECTION_RESPONSE_ADMITTED_SET_FULL` at 1.
+
 ---
 
 ## 2. THE LAYERS

@@ -15,7 +15,6 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 
 #define ROCKETNET_ENCRYPTION_MAP_RATIO                 2
 #define ROCKETNET_USED_TOKEN_HISTORY_RATIO             8
-#define ROCKETNET_ADMITTED_TOKEN_SET_RATIO             2
 
 #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
@@ -435,7 +434,7 @@ bool rocketnet_server_transport_memory_plan(const rocketnet_server_transport_con
 
     plan.transport_bytes = rocketnet_memory_allocations({sizeof(rocketnet_server_transport_t)});
     for (uint64_t bytes : {rocketnet_encryption_map_allocation_bytes(clients * ROCKETNET_ENCRYPTION_MAP_RATIO),
-        rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO), rocketnet_token_table_allocation_bytes(clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO),
+        rocketnet_token_table_allocation_bytes(clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO),
         rocketnet_client_slots_allocation_bytes(clients), rocketnet_server_acks_allocation_bytes(clients),
         rocketnet_memory_allocations({(uint64_t)clients*sizeof(uint64_t), (uint64_t)clients*ROCKETNET_SENT_PACKET_BUFFER_SIZE*sizeof(uint64_t)})})
     {
@@ -1073,7 +1072,6 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
-    protocol->admitted_token_set = rocketnet_admitted_token_set_create( context, max_clients * ROCKETNET_ADMITTED_TOKEN_SET_RATIO );
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
 
@@ -1113,7 +1111,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     if ( server_transport->io.operations->replay_mark )
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
@@ -1145,8 +1143,6 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_encryption_map_destroy( server_transport->protocol.encryption_map );
     if ( server_transport->protocol.used_token_history )
         rocketnet_used_token_history_destroy( server_transport->protocol.used_token_history );
-    if ( server_transport->protocol.admitted_token_set )
-        rocketnet_admitted_token_set_destroy( server_transport->protocol.admitted_token_set );
     if ( server_transport->protocol.client_slots )
         rocketnet_client_slots_destroy( server_transport->protocol.client_slots );
     if ( server_transport->protocol.acks )

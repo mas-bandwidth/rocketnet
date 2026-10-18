@@ -309,7 +309,6 @@ section, and this table exists so an implementer never hunts for a number.
 | Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
 | Kernel replay prefilter | optional; read-only high-water, drops 16 or more behind | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
-| Admitted-token set | >= 2x slot count, no unexpired eviction | _Processing Connection Requests_ |
 
 ## Addresses and dual stack
 
@@ -2726,7 +2725,9 @@ In this exact order, on a _connection request packet_:
   used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
   so nothing below may run for an address that has not answered.
 * If the token identifier already appears in the used-token history bound to a
-  different source address and port, ignore it. **The token identifier is the
+  different source address and port, ignore it. This is also the cheap
+  refusal of a token a connected client holds, before any signature verify or
+  open. **The token identifier is the
   output of `crypto_generichash` invoked with a 16-byte output length and no
   key, over the 576-byte signed connect data** — a content-determined value.
   BLAKE2b binds its output length into the hash, so a 16-byte invocation is not
@@ -2745,12 +2746,7 @@ In this exact order, on a _connection request packet_:
   field (`crypto_box_seal_open`). If it fails, ignore the packet.
 * If the protocol id or expire timestamp inside the sealed block does not equal
   the signed one, ignore the packet.
-* If a client with this client id is already connected, ignore it. If this
-  token's identifier is in the admitted-token set, ignore it — **a token
-  admits one connection.** The set is per process; across a server restart the
-  guarantee is carried by token expiry, which is why expiry SHOULD be short.
-  The admitted-token set is separate from the used-token history and is
-  specified with it below.
+* If a client with this client id is already connected, ignore it.
 * Do not record the token in the used-token history here. **A request proves
   nothing about who holds the token's keys** — anyone who saw it on the wire can
   replay it from an address of their own — so the binding is made only when a
@@ -2880,8 +2876,7 @@ drop it belongs to the game, which knows what a player ought to be doing. This
 layer's obligation is to make it *visible* — see the counters below — not to
 police it.
 
-**Two token structures, because they carry two different guarantees and only
-one of them can tolerate eviction.**
+**One token structure, and one rule that needs no structure.**
 
 **The used-token history** binds a token identifier to the first source address
 whose connection response opened under it, so a captured request cannot be
@@ -2894,20 +2889,36 @@ can flush a victim's entry and then replay the victim's captured request from a
 different address, so capacity should exceed the plausible rate of legitimate
 connections within a token lifetime.
 
-**The admitted-token set** holds the identifier and expire timestamp of every
-token that has admitted a connection, and is what makes "a token admits one
-connection" true rather than probabilistic. Entries leave the set only by
-expiring — **an unexpired entry MUST NOT be evicted** — which is sound because
-an expired entry protects nothing: a token whose entry has expired is a token
-that can no longer pass the expire check at the top of the request path. The
-set is naturally bounded: only admitted connections insert, at most one entry
-per successful connection, so it needs capacity for the connections admitted
-within one token lifetime — the slot count plus reconnect churn; 2x the slot
-count is a reasonable floor, and an implementation MUST document its choice.
-If the set is full, the server refuses new connections (a denied packet) and
-counts `ADMITTED_SET_FULL`: filling it requires genuinely issued tokens, so it
-fails closed against a backend that over-issues rather than open against an
-attacker.
+**One token, one live connection, and no structure of its own.** A connect
+token is meant to be used once, soon after it is minted. Three existing rungs
+keep a token to one live connection: the used-token history refuses it from
+any address but the one it is bound to, before any asymmetric work; a
+connected address provokes nothing from the request path; and a token carries
+one client id, so the client-id check refuses a second connection while the
+first lives, at the request after the open and at the response, where two
+addresses may each hold a mapping for one token. A slot is freed when its
+connection closes, and nothing outlives it: a fresh token at a server with a
+free slot always connects, however many players have come and gone before it,
+unless its client id still holds a slot (a player rejoining before the old
+connection times out is refused by the client-id check until it does).
+**A token whose connection has closed MAY connect again until it expires**:
+from the address it is bound to; from a second address that held a mapping
+for it before the first response bound it; or from any address once the
+history has dropped its entry. That is the accepted residual risk of this design, and the
+token's expiry bounds it: a deployment SHOULD mint tokens that expire 30
+seconds after they are created, as a netcode.io token does by default, or
+hold a server maximum token lifetime that enforces it. The expire timestamp is
+signed and sits at a fixed offset in the clear, so an expired token is the
+cheapest refusal on the request path, before the cookie gate.
+
+An earlier revision of this standard kept an admitted-token set: every token
+that admitted a connection, held until it expired, never evicted, and sized at
+twice the slot count. It denied ordinary churn. With one slot and 300-second
+tokens, the third of three sequential clean connect/disconnect cycles was
+denied with the slot free, and the denial looked exactly like a full server.
+The set is gone, and so are its counters' only causes: `ADMITTED_SET_FULL`
+and both `TOKEN_ALREADY_CONNECTED` counters keep their indices and always read
+zero.
 
 **Rate limiting.** A deployment SHOULD rate limit connection requests per source
 address, and MUST NOT treat that as sufficient: connection requests are
@@ -2929,23 +2940,17 @@ only data already verified.
   a replayed request from another address, which never opens a response, binds
   nothing.
 * If a client from the source address and port is already connected, ignore it.
-* If a client with that client id is already connected, ignore it.
-* If this token's identifier is in the admitted-token set, ignore it and count
-  `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`. The request path checks the
-  same set, but before any address has proven the token, so two addresses can
-  each hold a mapping for one token; this check keeps **a token admits one
-  connection** true when the second of them responds.
+* If a client with that client id is already connected, ignore it. Before
+  any address has proven the token, two addresses can each hold a mapping for
+  one token, and a token carries one client id, so this check keeps **one
+  token, one live connection** true when the second of them responds while
+  the first is connected.
 * If no slots are available, respond with a _connection denied packet_ under
   the handshake keys, carrying the mapping's session nonce, and stop. The
-  mapping is left in place, so a retransmitted response is denied again. This
-  check runs before the admitted-token set takes its entry: a client denied
-  for a full server has not connected, and its token MUST stay usable for the
-  retry.
-* **Add the token identifier to the admitted-token set.** This is the moment
-  the token admits its connection, and the only place entries enter the set.
-  If the set is full of unexpired entries, respond with a _connection denied
-  packet_ exactly as above and count `ADMITTED_SET_FULL` — the set never
-  evicts unexpired entries, so it fails closed.
+  mapping is left in place, so a retransmitted response is denied again. A
+  client denied for a full server has not connected, and
+  its token MUST stay usable for the retry. A full server is the only reason a
+  response is denied.
 * Assign a slot, copy the user data from the encryption mapping into it, mark
   the client unconfirmed, and respond with a _connection keep-alive packet_. If
   this keep-alive is lost, the ones generated at the send rate repeat the
@@ -3373,8 +3378,8 @@ order:
 | `..._COULD_NOT_OPEN_SEALED_BLOCK` | seal open failed |
 | `..._SEALED_MISMATCH` | inner protocol id or expire disagrees with signed |
 | `..._CLIENT_ID_ALREADY_CONNECTED` | that client id already holds a slot |
-| `..._TOKEN_ALREADY_CONNECTED` | token already admitted its one connection |
-| `..._ADMITTED_SET_FULL` | admitted-token set full; denied sent |
+| `..._TOKEN_ALREADY_CONNECTED` | retired with the admitted-token set; always zero |
+| `..._ADMITTED_SET_FULL` | retired with the admitted-token set; always zero |
 | `..._SMALL_ORDER_KEY` | `crypto_scalarmult` refused the peer key |
 | `..._NO_SLOTS` | slot table full; a denied packet was sent |
 | `..._COULD_NOT_ADD_MAPPING` | mapping table full |
@@ -3715,10 +3720,9 @@ is downstream of a judgment the backend was making anyway.
 **And it is delegation, not abdication, because the delegated control is made to
 work.** A protocol can push a problem upstream and leave the
 upstream party holding a lever connected to nothing. This one does not: **a
-connect token buys exactly one connection.** The used-token history binds a
-token to the first source address that opens a response under it, the admitted-token set
-refuses a token that has already admitted a connection for as long as that
-token lives, and a client id already connected is refused. An attacker who wants a thousand concurrent
+connect token buys one live connection, for its short lifetime.** The used-token
+history binds a token to the first source address that opens a response under
+it, and a client id already connected is refused. An attacker who wants a thousand concurrent
 connections therefore needs a thousand genuinely issued tokens, and their cost
 scales linearly with the number of times they can authenticate to the backend.
 That is what makes issuance limiting an effective control rather than a hopeful
@@ -3758,7 +3762,9 @@ removed the only limit that works against a determined attacker.** Token
 issuance policy is outside this standard and inside its security argument.
 
 **Bound the token lifetime.** A deployment SHOULD keep `expire - create` short —
-minutes, for a matchmaker that assigns a server at request time. Token lifetime
+30 seconds by default, for a matchmaker that assigns a server at request time.
+It bounds reuse: a token whose connection has closed can connect again only
+until it expires. Token lifetime
 is the revocation latency of this design: if a server's X25519 secret key leaks,
 tokens already sealed to it stay openable until they expire, and nothing can
 recall them. It also bounds how large a used-token history must be to be useful.

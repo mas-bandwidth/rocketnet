@@ -12,19 +12,19 @@
 #include "rocketnet_address.h"
 #include "rocketnet_connect_token.h"
 
-// The two token structures from the standard, separate because they carry
-// two different guarantees and only one of them can tolerate eviction.
+// The used-token history from the standard. The one-live-connection rule
+// needs no table of its own: the history refuses a bound token from any other
+// address before the signature verify, a connected address is refused at the
+// top of the request path, and the client-id check refuses a second live
+// connection for a token's client id (sdk/rocketnet_server_protocol.cpp). The
+// admitted-token set that held every token until it expired is gone, because
+// it denied ordinary churn (docs/SESSION.md 1.6).
 //
 // The used-token history binds a token identifier to the first source address
 // that presented it. Fixed capacity, oldest-first eviction, entries expire
 // with their tokens. Lookup is constant time in the number of clients: an
 // open-addressed table over a per-run SipHash of the identifier, so an
 // attacker cannot craft identifiers that collide.
-//
-// The admitted-token set holds every token that has admitted a connection.
-// An unexpired entry is NEVER evicted -- which is sound because an expired
-// entry protects nothing the expire check does not -- and when full the
-// server refuses new connections, failing closed.
 
 struct rocketnet_used_token_history_t;
 
@@ -50,27 +50,5 @@ void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t 
                                           const struct rocketnet_address_t * address,
                                           uint64_t expire_timestamp,
                                           uint64_t current_timestamp );
-
-struct rocketnet_admitted_token_set_t;
-
-struct rocketnet_admitted_token_set_t * rocketnet_admitted_token_set_create( void * context, int capacity );
-
-void rocketnet_admitted_token_set_destroy( struct rocketnet_admitted_token_set_t * set );
-
-// returns 1 when this token has already admitted a connection and is not yet
-// expired
-
-int rocketnet_admitted_token_set_contains( const struct rocketnet_admitted_token_set_t * set,
-                                           const uint8_t * token_identifier,
-                                           uint64_t current_timestamp );
-
-// returns 1 on success. returns 0 only when the set is full of unexpired
-// entries: unexpired entries are never evicted, so a full set refuses --
-// the caller denies the connection and counts ADMITTED_SET_FULL.
-
-int rocketnet_admitted_token_set_add( struct rocketnet_admitted_token_set_t * set,
-                                      const uint8_t * token_identifier,
-                                      uint64_t expire_timestamp,
-                                      uint64_t current_timestamp );
 
 #endif // #ifndef ROCKETNET_TOKEN_TABLES_H

@@ -894,12 +894,11 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     server->allow_negative_timeout = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
-    server->admitted_token_set = rocketnet_admitted_token_set_create( NULL, 16 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
     server->reassembly = rocketnet_reassembly_set_create( NULL, 4, 4, 16384, 4 * 4 );
     server->counters = &h->server_counters;
-    if ( !server->encryption_map || !server->used_token_history || !server->admitted_token_set ||
+    if ( !server->encryption_map || !server->used_token_history ||
          !server->client_slots || !server->acks || !server->reassembly )
         goto failed;
     rocketnet_reassembly_set_begin_update( server->reassembly );
@@ -1072,7 +1071,6 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     if ( h->message_server ) rocketnet_message_server_destroy( h->message_server );
     if ( h->server.encryption_map ) rocketnet_encryption_map_destroy( h->server.encryption_map );
     if ( h->server.used_token_history ) rocketnet_used_token_history_destroy( h->server.used_token_history );
-    if ( h->server.admitted_token_set ) rocketnet_admitted_token_set_destroy( h->server.admitted_token_set );
     if ( h->server.client_slots ) rocketnet_client_slots_destroy( h->server.client_slots );
     if ( h->server.acks ) rocketnet_server_acks_destroy( h->server.acks );
     if ( h->server.reassembly ) rocketnet_reassembly_set_destroy( h->server.reassembly );

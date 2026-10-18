@@ -22,7 +22,7 @@
     (:feature "Cookie key rotates on its period" :cells (y) :evidence "6b60b32, 5e534d4; test_cookie_rotation_draws_a_fresh_key")
     (:feature "Per-connection keys with forward secrecy, secrets wiped on every exit" :cells (y) :evidence "rocketnet_test_connection_keys, rocketnet_test_client_terminal_states_wipe_secrets")
     (:feature "Sealed packets with every refusal proven" :cells (y) :evidence "rocketnet_test_sealed_packets, rocketnet_test_sealed_packet_refusals")
-    (:feature "Used-token history and admitted-token set" :cells (y) :evidence "rocketnet_test_used_token_history, rocketnet_test_admitted_token_set")
+    (:feature "Used-token history and one token, one live connection" :cells (y) :evidence "rocketnet_test_used_token_history, server_admits_sequential_fresh_tokens_past_twice_max_clients, server_refuses_a_token_connected_now")
     (:feature "Admission hook drops a packet before any verify" :cells (y) :evidence "9eb49a9; rocketnet_test_admission_hook_drops_before_verify")
     (:feature "Cheap refusals before crypto: a full server refuses before keypair work" :cells (y) :evidence "PR #248, 4901aba; rocketnet_test_full_server_refuses_before_keypair, rocketnet_test_request_path_cheap_refusals_spend_no_crypto")
     (:feature "Bounded handshake work per update" :cells (y) :evidence "1745d64")

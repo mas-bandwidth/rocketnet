@@ -17,7 +17,7 @@ The secure connect from STANDARD.md: netcode 1.02 rebuilt on public keys, with e
 | Cookie key rotates on its period | ✅ |
 | Per-connection keys with forward secrecy, secrets wiped on every exit | ✅ |
 | Sealed packets with every refusal proven | ✅ |
-| Used-token history and admitted-token set | ✅ |
+| Used-token history and one token, one live connection | ✅ |
 | Admission hook drops a packet before any verify | ✅ |
 | Cheap refusals before crypto: a full server refuses before keypair work | ✅ |
 | Bounded handshake work per update | ✅ |

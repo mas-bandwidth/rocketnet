@@ -2,8 +2,8 @@
 (***************************************************************************)
 (* rocketnet: the security tables, with an attacker in the model.          *)
 (*                                                                         *)
-(* The used-token history and the admitted-token set                       *)
-(* (sdk/rocketnet_token_tables.cpp), the cookie gate and its key           *)
+(* The used-token history (sdk/rocketnet_token_tables.cpp), the          *)
+(* one-live-connection rung, the cookie gate and its key                   *)
 (* rotation (sdk/rocketnet_server_protocol.cpp, the cookie gate,           *)
 (* rocketnet_server_protocol_rotate_cookie_key_if_due,                     *)
 (* rocketnet_server_process_opened_request and                             *)
@@ -19,7 +19,14 @@
 (* Switches name the code and the fixed code.  RefuseAdmittedAtResponse,   *)
 (* AdmitExpiredAtResponse, EvictLiveHistory, DeniedConsumesToken and       *)
 (* CapVerifyBudget in their code position reproduce a finding each; in     *)
-(* their fixed position the invariants hold.  Rotation, AcceptPrevious     *)
+(* their fixed position the invariants hold.  HoldUntilExpire TRUE is    *)
+(* the code before 2026-10-18: an admitted-token set of AdmittedCap       *)
+(* entries, each held until its token expires, which denies ordinary      *)
+(* churn (ChurnNeverDenied); FALSE is the code now: no set, and a token   *)
+(* is refused only while a connection holds it: by the history from      *)
+(* another address and by the client id it carries at the response       *)
+(* (OneTokenOneLiveConnection).  CheckCidAtResponse FALSE drops the       *)
+(* client-id rung, the witness for that invariant.  Rotation, AcceptPrevious *)
 (* and PreviousOutlivesWindow state the cookie-key rotation window and     *)
 (* its stall bound.  BindAtRequest TRUE is the code before 2026-10-17:    *)
 (* the request records the history entry, so a replay from an address     *)
@@ -36,7 +43,8 @@ CONSTANTS
     Rotation, AcceptPrevious,
     RefuseAdmittedAtResponse, AdmitExpiredAtResponse,
     EvictLiveHistory, DeniedConsumesToken, CapVerifyBudget,
-    PreviousOutlivesWindow, BindAtRequest, Holds
+    PreviousOutlivesWindow, BindAtRequest, Holds,
+    HoldUntilExpire, CheckCidAtResponse
 
 ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in Nat \ {0}
        /\ MaxClients \in Nat \ {0} /\ HistoryCap \in Nat \ {0} /\ AdmittedCap \in Nat \ {0}
@@ -46,15 +54,16 @@ ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in
        /\ EvictLiveHistory \in BOOLEAN /\ DeniedConsumesToken \in BOOLEAN
        /\ CapVerifyBudget \in BOOLEAN /\ PreviousOutlivesWindow \in BOOLEAN
        /\ BindAtRequest \in BOOLEAN /\ Holds \in [Tokens -> SUBSET Addrs]
+       /\ HoldUntilExpire \in BOOLEAN /\ CheckCidAtResponse \in BOOLEAN
        /\ Expire \in [Tokens -> Nat] /\ Cid \in [Tokens -> Nat]
 
 Gens == 1..3
 ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive
+          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied
 vars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
-          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+          gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 PrevGen == IF gen = 1 THEN 3 ELSE gen - 1
 NextRotate == gen * RotatePeriod
@@ -69,6 +78,14 @@ AdmLive(tk) == admitted[tk] # 0 /\ admitted[tk] > clock
 HistCount == Cardinality({tk \in Tokens : history[tk] # None})
 AdmCount == Cardinality({tk \in Tokens : admitted[tk] # 0})
 NumFree == MaxClients - Cardinality(slots) - others
+\* The admitted-token set's rule, with HoldUntilExpire only: a token in
+\* the set until it expires is refused.  The code now has no such rung:
+\* one live connection per token rests on the history (another address),
+\* the connected-address check and the client-id check.
+Used(tk) == HoldUntilExpire /\ AdmLive(tk)
+\* A fresh, unexpired, never-admitted token whose client id holds no slot,
+\* at a server with a free slot: ordinary churn, never to be denied.
+Fresh(tk) == ~TokExpired(tk) /\ NumFree > 0 /\ admits[tk] = 0 /\ ~(\E s \in slots : s.cid = Cid[tk])
 Live(a) == map[a] # None
 
 Init ==
@@ -77,7 +94,7 @@ Init ==
     /\ map = [a \in Addrs |-> None] /\ mapGen = [a \in Addrs |-> 0] /\ mapBorn = [a \in Addrs |-> 0]
     /\ slots = {} /\ others = 0
     /\ deniedPulse = FALSE /\ admits = [t \in Tokens |-> 0]
-    /\ lateAdmit = FALSE /\ evictedLive = FALSE
+    /\ lateAdmit = FALSE /\ evictedLive = FALSE /\ churnDenied = FALSE
 
 IsExpired(u) == IF history[u] = None THEN FALSE ELSE history[u].exp <= clock
 
@@ -122,22 +139,27 @@ Bind(tk, a, op) ==
 \* is the only thing that has run before it.
 Request(a, tok, g) ==
     /\ ~Live(a)
+    \* a connected address provokes nothing from the request path
+    \* (CONNECTION_REQUEST_ALREADY_CONNECTED)
+    /\ ~(\E s \in slots : s.addr = a)
     /\ IF g \notin LiveGens \/ TokExpired(tok) THEN FALSE
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
-       ELSE IF AdmLive(tok) THEN FALSE
+       ELSE IF Used(tok) THEN FALSE
        ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
        ELSE TRUE
     /\ verifies' = verifies + 1
     /\ IF BindAtRequest THEN Bind(tok, a, FALSE)
        ELSE UNCHANGED <<history, insertOrder, evictedLive>>
     /\ map' = [map EXCEPT ![a] = tok] /\ mapGen' = [mapGen EXCEPT ![a] = g] /\ mapBorn' = [mapBorn EXCEPT ![a] = clock]
-    /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit>>
+    /\ UNCHANGED <<clock, admitted, slots, others, gen, hasPrev, prevUntil, deniedPulse, admits, lateAdmit, churnDenied>>
 
 \* The response rung: the packet opened under the mapping, so only an
 \* address in Holds[tok] takes this step.  The record runs first (unless
 \* BindAtRequest, where the request made it).  The code then checks the
-\* client id, the admitted set (RefuseAdmittedAtResponse), then the
-\* slots, then adds, the add succeeding when the token is already present.
+\* admitted set (RefuseAdmittedAtResponse, with HoldUntilExpire only) and
+\* the client id (CheckCidAtResponse), both silent refusals, then the
+\* expiry, then the slots, then, with HoldUntilExpire, the add, which
+\* succeeds when the token is present.
 AdmittedAddOk(tk) == AdmLive(tk) \/ AdmCount < AdmittedCap \/ admitted[tk] # 0
                     \/ \E u \in Tokens : admitted[u] # 0 /\ admitted[u] <= clock
 AdmittedAfterAdd(tk) ==
@@ -152,36 +174,42 @@ Response(a) ==
        /\ a \in Holds[tok]
        /\ IF BindAtRequest THEN UNCHANGED <<history, insertOrder, evictedLive>>
           ELSE Bind(tok, a, TRUE)
-       /\ IF \E s \in slots : s.cid = Cid[tok] THEN
-               UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
-                           prevUntil, verifies, deniedPulse, admits, lateAdmit>>
-          ELSE IF (TokExpired(tok) /\ ~AdmitExpiredAtResponse) \/ (AdmLive(tok) /\ RefuseAdmittedAtResponse) THEN
-               UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
-                           prevUntil, verifies, deniedPulse, admits, lateAdmit>>
-          ELSE IF NumFree <= 0 \/ ~AdmittedAddOk(tok) THEN
+       /\ IF (Used(tok) /\ RefuseAdmittedAtResponse) \/ ((\E s \in slots : s.cid = Cid[tok]) /\ CheckCidAtResponse) THEN
+               /\ churnDenied' = (churnDenied \/ Fresh(tok))
+               /\ UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
+                              prevUntil, verifies, deniedPulse, admits, lateAdmit>>
+          ELSE IF TokExpired(tok) /\ ~AdmitExpiredAtResponse THEN
+               /\ churnDenied' = (churnDenied \/ Fresh(tok))
+               /\ UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
+                              prevUntil, verifies, deniedPulse, admits, lateAdmit>>
+          ELSE IF NumFree <= 0 \/ (HoldUntilExpire /\ ~AdmittedAddOk(tok)) THEN
                /\ deniedPulse' = ~deniedPulse
-               /\ admitted' = IF DeniedConsumesToken THEN AdmittedAfterAdd(tok) ELSE admitted
+               /\ churnDenied' = (churnDenied \/ Fresh(tok))
+               /\ admitted' = IF DeniedConsumesToken /\ HoldUntilExpire THEN AdmittedAfterAdd(tok) ELSE admitted
                /\ UNCHANGED <<clock, map, mapGen, mapBorn, slots, others,
                               gen, hasPrev, prevUntil, verifies, admits, lateAdmit>>
           ELSE
-               /\ admitted' = AdmittedAfterAdd(tok)
+               /\ admitted' = IF HoldUntilExpire THEN AdmittedAfterAdd(tok) ELSE admitted
                /\ slots' = slots \cup {[cid |-> Cid[tok], tok |-> tok, addr |-> a]}
                /\ map' = [map EXCEPT ![a] = None]
-               /\ admits' = [admits EXCEPT ![tok] = @ + 1]
+               \* the ghost saturates at 1 (ever admitted): a token may
+               \* connect again after its connection closes, and the state
+               \* stays finite
+               /\ admits' = [admits EXCEPT ![tok] = 1]
                /\ lateAdmit' = (lateAdmit \/ TokExpired(tok))
                /\ UNCHANGED <<clock, mapGen, mapBorn, others, gen, hasPrev,
-                              prevUntil, verifies, deniedPulse>>
+                              prevUntil, verifies, deniedPulse, churnDenied>>
 
 OtherJoins == /\ others < MaxClients /\ NumFree > 0 /\ others' = others + 1
               /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
-                             gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+                             gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 OtherLeaves == /\ others > 0 /\ others' = others - 1
                /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots,
-                              gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+                              gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 Disconnect(a) == /\ \E s \in slots : s.addr = a
                  /\ slots' = {s \in slots : s.addr # a}
                  /\ UNCHANGED <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, others,
-                                gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive>>
+                                gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 Tick ==
     /\ \/ clock' = IF clock < MaxClock THEN clock + 1 ELSE clock
@@ -198,7 +226,7 @@ Tick ==
          ELSE UNCHANGED <<gen, hasPrev, prevUntil>>
     /\ map' = [a \in Addrs |-> IF Live(a) /\ clock' >= mapBorn[a] + HandshakeDeadline THEN None ELSE map[a]]
     /\ UNCHANGED <<history, admitted, insertOrder, mapGen, mapBorn, slots, others,
-                   deniedPulse, admits, lateAdmit, evictedLive>>
+                   deniedPulse, admits, lateAdmit, evictedLive, churnDenied>>
 
 Next == (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g))
         \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
@@ -209,10 +237,17 @@ SpecFair == Spec
 TypeOK ==
     /\ clock \in 0..MaxClock /\ gen \in Gens /\ verifies \in 0..VerifyBudget + 1
     /\ hasPrev \in BOOLEAN /\ prevUntil \in 0..(MaxClock + RotatePeriod)
-    /\ \A t \in Tokens : admitted[t] \in Nat /\ admits[t] \in Nat
+    /\ \A t \in Tokens : admitted[t] \in Nat /\ admits[t] \in 0..1
     /\ \A a \in Addrs : map[a] = None \/ map[a] \in Tokens
 
-OneConnectionPerToken == \A t \in Tokens : admits[t] <= 1
+\* TokenUsedOnce, the headline rule, as the server enforces it: one token,
+\* one live connection.  No two client slots hold one token at once.  A
+\* token whose connection has closed may connect again inside its short
+\* expiry: the accepted residual risk (docs/SESSION.md, Token reuse).
+OneTokenOneLiveConnection == \A t \in Tokens : Cardinality({s \in slots : s.tok = t}) <= 1
+\* Ordinary churn is never denied: a fresh token at a server with a free
+\* slot is never refused or denied at the response.
+ChurnNeverDenied == ~churnDenied
 \* A token is bound in the history only by a response that opened under
 \* it, from the address it binds, so a replay from an address that holds
 \* no keys binds nothing (STANDARD.md, Processing Connection Response
@@ -234,9 +269,9 @@ VerifyBudgetRespected == CapVerifyBudget => verifies <= VerifyBudget
 TablesBounded == HistCount <= HistoryCap /\ AdmCount <= AdmittedCap
                  /\ Cardinality(slots) + others <= MaxClients
 CookieRaceResolves == \A a \in Addrs, t \in Tokens :
-    (Live(a) /\ map[a] = t) ~> (admits[t] = 1 \/ ~Live(a))
+    (Live(a) /\ map[a] = t) ~> (admits[t] >= 1 \/ ~Live(a))
 
-SafetyInvariants == TypeOK /\ OneConnectionPerToken /\ BoundOnlyToOpener /\ NoBindToNonHolder
+SafetyInvariants == TypeOK /\ OneTokenOneLiveConnection /\ ChurnNeverDenied /\ BoundOnlyToOpener /\ NoBindToNonHolder
                     /\ NoLiveHistoryEviction
                     /\ ExpiredNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded
 =============================================================================

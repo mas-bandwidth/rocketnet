@@ -82,7 +82,7 @@ has 14 failure exits that all return `NULL` without consuming the one-shot
 | S11 | `sdk/rocketnet_server_transport.cpp:635-646` | `development_keys` in a `!ROCKETNET_DEVELOPMENT` release build | `rocketnet_error("development keys detected in release build; refusing to start")` (`:642`) | Calls `rocketnet_free(context, server_transport)` (`:643`). |
 | S12 | `sdk/rocketnet_server_transport.cpp:697-723,775-787` | `public_address.port == 0` and all candidates refused because `!rocketnet_driver_discovers_bound_port(candidate)` | Per-rung `rocketnet_warn` (`:721`), ladder-exhausted `rocketnet_error` (`:764`), plus port-zero `rocketnet_error` (`:781`) | Destroys `server_transport` (`:785`). |
 | S13 | `sdk/rocketnet_server_transport.cpp:754-787` | `granted_driver < 0` after trying `ladder.candidates` (non-port-zero driver refusals) | Per-rung `rocketnet_warn` (`:735`) plus `rocketnet_error("server driver ladder exhausted...")` (`:764`) | Destroys `server_transport` (`:785`). |
-| S14 | `sdk/rocketnet_server_transport.cpp:839-865` | Any of `encryption_map`, `used_token_history`, `admitted_token_set`, `client_slots`, `acks`, `reassembly`, or `send_arena` is `NULL` | **None at outer branch** | Destroys `server_transport` (`:863`). |
+| S14 | `sdk/rocketnet_server_transport.cpp:839-865` | Any of `encryption_map`, `used_token_history`, `client_slots`, `acks`, `reassembly`, or `send_arena` is `NULL` | **None at outer branch** | Destroys `server_transport` (`:863`). |
 
 ### 1.4 Every Failure Exit Inside `rocketnet_frame_sync_create`
 

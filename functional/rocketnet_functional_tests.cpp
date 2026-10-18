@@ -174,6 +174,65 @@ void rocketnet_test_transport_disconnect_delivery()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+void rocketnet_test_transport_reconnect_churn()
+{
+    // player churn over real loopback: with one slot, five clients in turn
+    // each connect with a fresh token and leave cleanly. every one connects;
+    // a closed connection frees its slot at once, and nothing about the
+    // tokens that came before denies the next one (tla/RNSecurityTables.tla,
+    // ChurnNeverDenied; docs/SESSION.md, Token reuse). before the fix the
+    // third was denied with the slot free.
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 1;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    for ( int cycle = 0; cycle < 5; cycle++ )
+    {
+        uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+        rocketnet_check( client );
+
+        double start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 5.0 )
+        {
+            rocketnet_client_transport_update( client, rocketnet_platform_time() );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_send_packets( server );
+            if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+                 rocketnet_client_transport_state( client ) < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+                break;
+            rocketnet_platform_sleep( 0.001 );
+        }
+        if ( rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            printf( "reconnect churn: cycle %d of 5 ended in client state %d\n", cycle + 1, rocketnet_client_transport_state( client ) );
+        rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+        rocketnet_client_transport_disconnect( client );
+
+        start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 3.0 && rocketnet_server_transport_num_connected_clients( server ) != 0 )
+        {
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_send_packets( server );
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
+
+        ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    }
+
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
 struct rocketnet_test_state_recorder_t
 {
     int count;
@@ -6180,6 +6239,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config },
     { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery },
+    { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn },
     { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "client_io_linux_handoff_round_trip", rocketnet_test_client_io_linux_handoff_round_trip },

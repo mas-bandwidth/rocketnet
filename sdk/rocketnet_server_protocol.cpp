@@ -199,7 +199,6 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     rocketnet_assert( response_bytes );
     rocketnet_assert( server->encryption_map );
     rocketnet_assert( server->used_token_history );
-    rocketnet_assert( server->admitted_token_set );
     rocketnet_assert( server->client_slots );
     rocketnet_assert( server->counters );
 
@@ -557,13 +556,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( rocketnet_admitted_token_set_contains( server->admitted_token_set, token_identifier, current_timestamp ) )
-    {
-        rocketnet_debug( "server ignored connection request. connect token already admitted its connection" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
-
     // no used-token history record here: a request proves nothing about who
     // holds the token's keys, so the binding waits for a response that opens
     // under the handshake key (STANDARD.md, Processing Connection Response
@@ -731,6 +723,14 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // one token, one live connection (tla/RNSecurityTables.tla,
+    // OneTokenOneLiveConnection; docs/SESSION.md 1.6). a token carries one
+    // client id, so with the binding at the response, when two addresses each
+    // hold a mapping for one token, the first to be admitted connects and the
+    // second is refused here while that connection lives. no admitted-token
+    // set: once the connection closes, its slot is free and the token may
+    // connect again inside its expiry.
+
     if ( rocketnet_client_slots_find( server->client_slots, mapping->client_id ) != -1 )
     {
         rocketnet_debug( "server ignored connection response. a client with this id is already connected" );
@@ -738,43 +738,14 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // with the binding at the response, two addresses can each hold a mapping
-    // for one token; the first to be admitted consumes it, and the second is
-    // refused here (tla/RNSecurityTables.tla, OneConnectionPerToken with
-    // RefuseAdmittedAtResponse)
-
-    if ( rocketnet_admitted_token_set_contains( server->admitted_token_set, mapping->token_identifier, current_timestamp ) )
-    {
-        rocketnet_debug( "server ignored connection response. connect token already admitted its connection" );
-        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
-
-    // the slots check runs before the admitted-token set takes its entry: a
-    // client denied for a full server has not connected, and its token must
-    // stay usable for the retry. the set consumes the token only at the
-    // moment it actually admits a connection. the set never evicts unexpired
-    // entries, so a full set refuses -- fail closed -- with a denied the
-    // client can open.
-
-    int denied = 0;
+    // the server denies a response only when it is full: a client denied has
+    // not connected, and its token stays usable for the retry
 
     if ( rocketnet_client_slots_num_free( server->client_slots ) <= 0 )
     {
         rocketnet_debug( "server denied connection response. no client slots available" );
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
-        denied = 1;
-    }
 
-    if ( !denied && !rocketnet_admitted_token_set_add( server->admitted_token_set, mapping->token_identifier, mapping->token_expire_timestamp, current_timestamp ) )
-    {
-        rocketnet_debug( "server denied connection response. admitted token set is full" );
-        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_ADMITTED_SET_FULL]++;
-        denied = 1;
-    }
-
-    if ( denied )
-    {
         int denied_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_DENIED_PACKET,
                                                           server->filter_value, mapping->send_sequence_handshake,
                                                           mapping->session_nonce, NULL, 0,

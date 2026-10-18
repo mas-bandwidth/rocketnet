@@ -121,14 +121,13 @@ static void client_reassembled_batch_holds_half_received_load()
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, 2 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, 8 );
-    server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, 2 );
     server.client_slots = rocketnet_client_slots_create( NULL, 1 );
     server.acks = rocketnet_server_acks_create( NULL, 1 );
     const int server_capacity = rocketnet_server_reassembly_delivered_capacity( 1, num_slots );
     const uint64_t server_bytes = rocketnet_server_reassembly_delivered_bytes( 1, num_slots, max_payload_bytes );
     server.reassembly = rocketnet_reassembly_set_create_delivered( NULL, 1, num_slots, max_payload_bytes, server_capacity, server_bytes );
     server.counters = &server_counters;
-    check( server.encryption_map && server.used_token_history && server.admitted_token_set &&
+    check( server.encryption_map && server.used_token_history &&
            server.client_slots && server.acks && server.reassembly );
     rocketnet_reassembly_set_begin_update( server.reassembly );
     rocketnet_server_protocol_update( &server, ROCKETNET_TEST_CREATE_TS );
@@ -307,7 +306,6 @@ static void client_reassembled_batch_holds_half_received_load()
     rocketnet_reassembly_set_destroy( client.reassembly );
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );

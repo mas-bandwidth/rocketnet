@@ -123,7 +123,6 @@ static void server_reassembled_batch_holds_legitimate_load()
     server.handshake_deadline_seconds = 5.0;
     server.encryption_map = rocketnet_encryption_map_create( NULL, SRB_NUM_CLIENTS * 2 );
     server.used_token_history = rocketnet_used_token_history_create( NULL, SRB_NUM_CLIENTS * 8 );
-    server.admitted_token_set = rocketnet_admitted_token_set_create( NULL, SRB_NUM_CLIENTS * 2 );
     server.client_slots = rocketnet_client_slots_create( NULL, SRB_NUM_CLIENTS );
     server.acks = rocketnet_server_acks_create( NULL, SRB_NUM_CLIENTS );
     const int delivered_capacity = rocketnet_server_reassembly_delivered_capacity( SRB_NUM_CLIENTS, num_slots );
@@ -132,7 +131,7 @@ static void server_reassembled_batch_holds_legitimate_load()
     check( delivered_bytes >= (uint64_t) SRB_TOTAL_PAYLOADS * SRB_PAYLOAD_BYTES );
     server.reassembly = rocketnet_reassembly_set_create_delivered( NULL, SRB_NUM_CLIENTS, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes );
     server.counters = &server_counters;
-    check( server.encryption_map && server.used_token_history && server.admitted_token_set &&
+    check( server.encryption_map && server.used_token_history &&
            server.client_slots && server.acks && server.reassembly );
 
     // the wire: no loss, no latency, no jitter, no duplicates
@@ -306,7 +305,6 @@ static void server_reassembled_batch_holds_legitimate_load()
     rocketnet_network_simulator_destroy( wire );
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
-    rocketnet_admitted_token_set_destroy( server.admitted_token_set );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );
