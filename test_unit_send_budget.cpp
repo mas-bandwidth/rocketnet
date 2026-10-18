@@ -401,6 +401,9 @@ static void class_order_retransmit_first()
 
 static void runtime_change_takes_effect_next_window()
 {
+    // The capped token bucket keeps its rule: 0 is not a rate it holds.
+    // Uncapping is the message layer's rule and holds no bucket at all
+    // (sdk/rocketnet_send_budget.h's header comment).
     rocketnet_send_budget_t budget;
     check( !rocketnet_send_budget_init( &budget, 0, 0.0 ) );
     check( budget.kbps == 0 );

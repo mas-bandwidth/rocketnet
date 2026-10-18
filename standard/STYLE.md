@@ -194,10 +194,7 @@ unique across the three documents. Inside the fence, input lines come first,
 one per input, as `name: value`; then the bytes, lower-case hex, 16 bytes to a
 row separated by single spaces, the last row 1 to 16 bytes:
 
-    ```vector t3.token-identifier
-    input: the 576 signed connect data bytes of the frozen connect token
-    f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
-    ```
+    ```vector t3.token-identifier input: the 576 signed connect data bytes of the frozen connect token f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61 ```
 
 A vector sits in the section that defines what it encodes. Each document's
 Appendix A is an index of its vector ids by section, between the markers
@@ -263,8 +260,7 @@ unpinned row; the checker fails every `#unpinned` line in a pin file.
 
 Pin files are owned by sections. `transport.tsv` holds rows of RN-1 t1 to t3
 and `messages.tsv` rows of RN-2 m1, the sections this skeleton wrote. A
-section card adds rows only to its own pin file, `standard/pins/<section
-id>.tsv` (for example `t8.tsv`), never to a shared one, and every row of that
+section card adds rows only to its own pin file, `standard/pins/<section id>.tsv` (for example `t8.tsv`), never to a shared one, and every row of that
 file lies in that section; the document is RN-1 for a `t` id and RN-2 for an
 `m` id. The checker fails a row outside its file's sections.
 
