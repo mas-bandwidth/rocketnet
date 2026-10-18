@@ -59,7 +59,6 @@ CONSTANTS
     UPerTick,       \* unreliable items arriving per update, at most
     MaxRel,         \* reliable items that ever arrive (finite arrivals)
     MaxLoss,        \* transport packet losses, at most
-    MaxKbps,        \* the largest capped rate SetKbps accepts
     CheckBudget,    \* TRUE: send only what fits (FALSE: BrokenOverspend)
     ReliableFirst   \* TRUE: the class order (FALSE: BrokenUnreliableFirst)
 
@@ -71,9 +70,11 @@ ASSUME /\ W \in Nat \ {0, 1} /\ Rate \in Nat \ {0}
        \* stated bound, so a stall releases no more than Depth at once
        /\ Depth \in Nat /\ Depth >= MaxPkt
        /\ UPerTick \in Nat /\ MaxRel \in Nat /\ MaxLoss \in Nat
-       /\ MaxKbps \in Nat
        /\ CheckBudget \in BOOLEAN /\ ReliableFirst \in BOOLEAN
 
+\* the largest capped rate SetKbps accepts. A definition, not a constant, so
+\* the existing witness configurations need no new line.
+MaxKbps == 2
 Budget == Rate * W
 DropCap == 2
 Min(a, b) == IF a < b THEN a ELSE b

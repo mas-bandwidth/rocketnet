@@ -109,8 +109,9 @@ Properties:
 
 `W = 2`, `Rate = 1` (so `Budget = 2`), `Depth = 2 = MaxPkt`, `RelSize = 2`
 (larger than one tick's refill, so a reliable item can be starved),
-`UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`, `MaxKbps = 2`
-(so `SetKbps` ranges over 0, 1, 2 and the refused 3).
+`UnrelSize = 1`, `UPerTick = 2`, `MaxRel = 2`, `MaxLoss = 1`; the module
+defines `MaxKbps = 2` (so `SetKbps` ranges over 0, 1, 2 and the refused 3).
+A constant would have forced a new line into the reversal configurations.
 
 ## Reversed witnesses
 
