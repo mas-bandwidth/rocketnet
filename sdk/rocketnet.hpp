@@ -124,7 +124,7 @@ public:
  * @brief Seal and stage the payload written through a packet lease.
  * Returns the sealed wire size, or zero if the packet is dropped or the call is refused.
  * @param[in] context Input active lease context owned by this transport; NULL is a counted no-op.
- * @param[in] payload_bytes Number of payload bytes written, from zero through the lease capacity.
+ * @param[in] payload_bytes Number of payload bytes written, from one through the lease capacity.
  * @return Returns the sealed wire size, or zero when the packet is dropped or refused.
  * @pre Create the transport before calling; do not call after destruction.
  * @note This interface maps to the corresponding same-named C transport function with the transport pointer omitted.
@@ -297,8 +297,9 @@ public:
  * @pre Create the transport before calling; do not call after destruction.
  * @note This interface maps to the corresponding same-named C transport function with the transport pointer omitted.
  * @code
+ * int client_index = 0; // connected client slot
  * rocketnet_packet_context_t lease;
- * if (transport.start_packet(64, &lease)) {
+ * if (transport.start_packet(client_index, 64, &lease)) {
  *     int capacity = 0;
  *     uint8_t * payload = transport.packet_payload(&lease, &capacity);
  *     if (payload) { // write at most capacity bytes
@@ -325,7 +326,7 @@ public:
  * @brief Seal and stage the payload written through a packet lease.
  * Returns the sealed wire size, or zero if the packet is dropped or the call is refused.
  * @param[in] context Input active lease context owned by this transport; NULL is a counted no-op.
- * @param[in] payload_bytes Number of payload bytes written, from zero through the lease capacity.
+ * @param[in] payload_bytes Number of payload bytes written, from one through the lease capacity.
  * @return Returns the sealed wire size, or zero when the packet is dropped or refused.
  * @pre Create the transport before calling; do not call after destruction.
  * @note This interface maps to the corresponding same-named C transport function with the transport pointer omitted.
