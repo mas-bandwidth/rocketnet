@@ -831,7 +831,50 @@ static void message_config_never_received_is_reliable_timeout()
     mc_pair_teardown( &pair );
 }
 
+// STANDARD.md labels the CONFIG defaults vector; this case regenerates it
+// from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
+// byte: enabled 0xFF, all eight types of the first version's mask (7.5).
+// Red if the default mask or the default config drifts from the standard.
+static void config_vector_is_library_default()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+
+    // the body rn_ordered_announce_config writes for a NULL/default config
+    struct rocketnet_message_config_body_t body;
+    body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
+    body.enabled = ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu;
+    body.num_channels = (uint32_t) config.num_channels;
+    body.window_messages = (uint32_t) config.window_messages;
+    body.receive_ring_bytes = (uint32_t) config.receive_ring_bytes;
+    body.max_message_bytes = (uint32_t) config.max_message_bytes;
+    body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+
+    // the first version's mask is all eight types: the intended default
+    check( body.enabled == 0xFF );
+
+    uint8_t config_bytes[ROCKETNET_MESSAGE_CONFIG_BYTES];
+    rocketnet_message_write_config_body( config_bytes, &body );
+
+    struct rocketnet_message_record_t record;
+    memset( &record, 0, sizeof( record ) );
+    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+    record.data = config_bytes;
+    record.bytes = ROCKETNET_MESSAGE_CONFIG_BYTES;
+    record.control = 1;
+
+    static const uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+                                        0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    uint8_t payload[ROCKETNET_MAX_PAYLOAD_BYTES];
+    struct rocketnet_message_writer_t writer;
+    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PAYLOAD_BYTES );
+    check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+    check( rocketnet_message_writer_finish( &writer ) == (int) sizeof( expected ) );
+    check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
+}
+
 REGISTER_UNIT_TEST( message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( message_config_never_received_is_reliable_timeout );
+REGISTER_UNIT_TEST( config_vector_is_library_default );
