@@ -175,11 +175,10 @@ static int slot_ok( const struct rocketnet_reassembly_slot_t * slot, int max_pay
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
         /* bits at or above the count are never set */
-        for ( int j = 0; j < 8; j++ )
-        {
-            if ( i * 8 + j >= count && ( ( slot->received[i] >> j ) & 1 ) )
-                high_bits++;
-        }
+        const int low = i * 8;
+        const int mask = count <= low ? 0xff : ( count >= low + 8 ? 0 : ( 0xff << ( count - low ) ) & 0xff );
+        if ( slot->received[i] & mask )
+            high_bits++;
     }
 
     const int stride = slot->fragment_stride;
