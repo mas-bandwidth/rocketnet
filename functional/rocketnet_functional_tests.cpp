@@ -3348,6 +3348,11 @@ void rocketnet_test_server_driver_pin_iocp()
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
 }
 
+void rocketnet_test_server_driver_pin_rio()
+{
+    rocketnet_test_driver_pin_exchange( "rio", "rio" );
+}
+
 // the rio driver (sdk/rocketnet_server_rio_windows.cpp, tla/RNRioDriver.tla)
 // against a plain UDP peer on loopback
 
@@ -6026,6 +6031,119 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
     rocketnet_platform_socket_destroy( sender );
 }
 
+// The Linux client's mmsg batch send/receive (#client-io-linux-mmsg): two
+// loopback sockets, 100 datagrams of distinct sizes 20..119 in one
+// send_packets_mmsg call, receive_packets_mmsg with max 64 returning them
+// in order over two calls byte-exact with the sender's address, and an
+// empty socket returning 0. A real socket pair, so this case lives in the
+// functional tier.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( receiver );
+
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    const int num_packets = 100;
+    const int stride = 256;
+    static uint8_t send_data[100][128];
+    static uint8_t receive_data[100][stride];
+    static rocketnet_address_t from[100];
+    static int packet_bytes[100];
+
+    struct rocketnet_platform_send_t sends[100];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        const int bytes = 20 + i;
+        for ( int j = 0; j < bytes; j++ )
+            send_data[i][j] = (uint8_t) ( i + j );
+        sends[i].to = &bind_address;
+        sends[i].packet_data = send_data[i];
+        sends[i].packet_bytes = bytes;
+    }
+    rocketnet_platform_socket_send_packets_mmsg( sender, sends, num_packets );
+
+    int received = 0;
+    double start_time = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        const int got = rocketnet_platform_socket_receive_packets_mmsg( receiver, from + received, receive_data[received], stride, packet_bytes + received, 64 );
+        if ( got == 0 )
+            rocketnet_platform_sleep( 0.001 );
+        received += got;
+    }
+    rocketnet_check( received == num_packets );
+
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        rocketnet_check( rocketnet_address_equal( &from[i], &sender_bind ) );
+        const int bytes = 20 + i;
+        rocketnet_check( packet_bytes[i] == bytes );
+        for ( int j = 0; j < bytes; j++ )
+            rocketnet_check( receive_data[i][j] == (uint8_t) ( i + j ) );
+    }
+
+    rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
+
+    // One recvmmsg result with a truncated datagram followed by two kept
+    // datagrams exercises both chunk indexing and rejection compaction.
+    uint8_t truncated_data[16];
+    memset( truncated_data, 'T', sizeof(truncated_data) );
+    uint8_t kept_data[2] = { 0xA1, 0xB2 };
+    struct rocketnet_platform_send_t compact_sends[3];
+    compact_sends[0].to = &bind_address;
+    compact_sends[0].packet_data = truncated_data;
+    compact_sends[0].packet_bytes = sizeof(truncated_data);
+    compact_sends[1].to = &bind_address;
+    compact_sends[1].packet_data = &kept_data[0];
+    compact_sends[1].packet_bytes = 1;
+    compact_sends[2].to = &bind_address;
+    compact_sends[2].packet_data = &kept_data[1];
+    compact_sends[2].packet_bytes = 1;
+    rocketnet_platform_socket_send_packets_mmsg( sender, compact_sends, 3 );
+    rocketnet_platform_sleep( 0.01 );
+
+    uint8_t compact_receive_data[3][8];
+    rocketnet_address_t compact_from[3];
+    int compact_bytes[3];
+    const int compact_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, compact_from, compact_receive_data[0], sizeof(compact_receive_data[0]), compact_bytes, 3 );
+    rocketnet_check( compact_received == 2 );
+    rocketnet_check( rocketnet_address_equal( &compact_from[0], &sender_bind ) && compact_bytes[0] == 1 && compact_receive_data[0][0] == kept_data[0] );
+    rocketnet_check( rocketnet_address_equal( &compact_from[1], &sender_bind ) && compact_bytes[1] == 1 && compact_receive_data[1][0] == kept_data[1] );
+
+    // A kernel-refused entry drops by itself and the unsent suffix is retried.
+    uint8_t retry_byte = 0x5A;
+    struct rocketnet_platform_send_t retry_sends[2];
+    retry_sends[0].to = &bind_address;
+    retry_sends[0].packet_data = &retry_byte;
+    retry_sends[0].packet_bytes = 0x7fffffff;
+    retry_sends[1].to = &bind_address;
+    retry_sends[1].packet_data = &retry_byte;
+    retry_sends[1].packet_bytes = 1;
+    rocketnet_platform_socket_send_packets_mmsg( sender, retry_sends, 2 );
+
+    static uint8_t retry_data[64][stride];
+    rocketnet_address_t retry_from[64];
+    int retry_bytes[64];
+    const int retry_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, retry_from, retry_data[0], stride, retry_bytes, 64 );
+    rocketnet_check( retry_received == 1 );
+    rocketnet_check( rocketnet_address_equal( &retry_from[0], &sender_bind ) );
+    rocketnet_check( retry_bytes[0] == 1 && retry_data[0][0] == retry_byte );
+
+    rocketnet_platform_socket_destroy( sender );
+    rocketnet_platform_socket_destroy( receiver );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 // The kqueue wake beside a real socket on macOS and iOS: the EVFILT_USER
 // trigger is set and consumed, the socket's EVFILT_READ is seen only when
 // readable is true (the filter is disabled and enabled in the wait's own
@@ -6201,6 +6319,7 @@ extern void rocketnet_test_lifecycle_driver();
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_rio, "test_server_driver_pin_rio", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv4, "test_server_rio_wire_ipv4", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv6, "test_server_rio_wire_ipv6", "not on windows: the rio driver is windows-only" )
@@ -6229,6 +6348,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_dr
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip, "client_io_linux_mmsg_batch_round_trip", "linux only: the mmsg batch pump is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
@@ -6466,6 +6586,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "platform_wake_linux_wakes_and_reads", rocketnet_functional_skip_platform_wake_linux_wakes_and_reads },
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "client_io_linux_mmsg_batch_round_trip", rocketnet_test_client_io_linux_mmsg_batch_round_trip },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "client_io_linux_mmsg_batch_round_trip", rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip },
+#endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "platform_wake_apple_wakes_and_reads", rocketnet_test_platform_wake_apple_wakes_and_reads },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -6504,6 +6629,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+    { "test_server_driver_pin_rio", rocketnet_test_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_test_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_test_server_rio_wire_ipv4 },
     { "test_server_rio_wire_ipv6", rocketnet_test_server_rio_wire_ipv6 },
@@ -6513,6 +6639,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_iocp_uso_wire", rocketnet_test_server_iocp_uso_wire },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_functional_skip_server_driver_pin_iocp },
+    { "test_server_driver_pin_rio", rocketnet_functional_skip_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_functional_skip_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_functional_skip_server_rio_wire_ipv4 },
     { "test_server_rio_wire_ipv6", rocketnet_functional_skip_server_rio_wire_ipv6 },

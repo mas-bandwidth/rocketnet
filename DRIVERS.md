@@ -141,6 +141,20 @@ hardware failure tests or per-platform line-rate measurements.
 Dispatch measurements and their limits are recorded in
 [bench/transport_fill.md](bench/transport_fill.md).
 
+## The RIO server driver
+
+`rio` (`sdk/rocketnet_server_rio_windows.cpp`, `sdk/rocketnet_server_rio.h`)
+is a Windows staged server driver with one registered memory region, polled
+send and receive completion queues, deferred sends committed once per flush,
+and two send phases so a phase stays owned until its sends complete. It uses no
+worker threads. Its server rank is 45, after IOCP's 40, so automatic selection
+never chooses it ahead of IOCP; pin `rio` to select it directly. Its
+`ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
+slots, failed sends, waits for a send phase, failed receives, dropped-size and
+dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
+send phases, receive banks and destruction are modelled in
+`tla/RNRioDriver.tla`.
+
 ## The io_uring server driver
 
 `io_uring` (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_uring.h`)

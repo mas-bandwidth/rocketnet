@@ -79,12 +79,26 @@ static void portable_io_client_send( void * driver, const rocketnet_address_t * 
 static int portable_io_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
 { struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity ); }
 // RNClientIo IoSend / IoReceive batches (docs/CLIENT-IO.md The I/O step): the
-// batch pump seam, which loops per packet on this platform; still off the
-// main thread.
+// batch pump seam; on Linux it is sendmmsg/recvmmsg (#client-io-linux-mmsg),
+// otherwise the seam's portable loop. Still off the main thread.
 static void portable_io_client_send_batch( void * driver, const rocketnet_platform_send_t * sends, int num_packets )
-{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_socket_send_packets( client->socket, sends, num_packets ); }
+{
+    struct portable_io_client_t * client = (struct portable_io_client_t*) driver;
+#if defined(__linux__)
+    rocketnet_platform_socket_send_packets_mmsg( client->socket, sends, num_packets );
+#else
+    rocketnet_platform_socket_send_packets( client->socket, sends, num_packets );
+#endif
+}
 static int portable_io_client_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
-{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_receive_packets( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets ); }
+{
+    struct portable_io_client_t * client = (struct portable_io_client_t*) driver;
+#if defined(__linux__)
+    return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
+#else
+    return rocketnet_platform_socket_receive_packets( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
+#endif
+}
 // RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake):
 // readable passes through, so with it false the socket is not polled and a
 // full receive buffer waits on the eventfd alone.
@@ -104,8 +118,18 @@ static void portable_client_send( void * driver, const rocketnet_address_t * to,
 { rocketnet_platform_socket_send_packet( (rocketnet_platform_socket_t*) driver, to, data, bytes ); }
 static int portable_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
 { return rocketnet_platform_socket_receive_packet( (rocketnet_platform_socket_t*) driver, from, data, capacity ); }
+#if defined(__linux__)
+static void portable_client_send_batch( void * driver, const rocketnet_platform_send_t * sends, int count )
+{ rocketnet_platform_socket_send_packets_mmsg( (rocketnet_platform_socket_t*) driver, sends, count ); }
+static int portable_client_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
+{ return rocketnet_platform_socket_receive_packets_mmsg( (rocketnet_platform_socket_t*) driver, from, data, stride, bytes, count ); }
+#endif
 static const rocketnet_client_driver_operations_t portable_client_operations =
-{ portable_client_create, portable_destroy, portable_client_send, portable_client_receive };
+{ portable_client_create, portable_destroy, portable_client_send, portable_client_receive,
+#if defined(__linux__)
+  portable_client_send_batch, portable_client_receive_batch,
+#endif
+};
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_driver_backend_t rocketnet_portable_driver = { &portable_server_operations, &portable_client_operations };
 extern const rocketnet_driver_backend_t rocketnet_msgx_driver = { &portable_server_operations, &portable_client_operations };
@@ -236,6 +260,24 @@ static const rocketnet_server_driver_operations_t iocp_operations =
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL
 };
 extern const rocketnet_driver_backend_t rocketnet_iocp_driver = { &iocp_operations, NULL };
+
+#include "rocketnet_server_rio.h"
+static void * rio_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+{ return rocketnet_server_rio_create( context, bind, 0 ); }
+static void rio_destroy( void * driver ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t*) driver ); }
+static bool rio_stop( void * driver )
+{
+    rocketnet_server_rio_stop( (rocketnet_server_rio_t*) driver );
+    return rocketnet_server_rio_stopped( (rocketnet_server_rio_t*) driver );
+}
+ROCKETNET_STAGED_ADAPTER(rio, rocketnet_server_rio_t, rocketnet_server_rio)
+static const rocketnet_server_driver_operations_t rio_operations =
+{
+    ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
+    rio_create, rio_destroy, rio_stop,
+    rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL
+};
+extern const rocketnet_driver_backend_t rocketnet_rio_driver = { &rio_operations, NULL };
 #endif
 #undef ROCKETNET_STAGED_ADAPTER
 
@@ -289,6 +331,11 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         const int workers = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
         plan.driver_bytes = rocketnet_server_iocp_allocation_bytes(workers);
         plan.worker_threads = workers; plan.sockets = 1;
+    }
+    else if (strcmp(driver, "rio") == 0)
+    {
+        plan.driver_bytes = rocketnet_server_rio_allocation_bytes();
+        plan.worker_threads = 0; plan.sockets = 1;
     }
 #endif
     else return false; // A custom driver's resource policy remains native to it.
