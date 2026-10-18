@@ -63,7 +63,7 @@ static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + TC_TOKEN_LIFETIME;
-    signed_fields.timeout_seconds = 10;
+    signed_fields.timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
@@ -154,7 +154,7 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
     int payload_bytes = 0;
     int payload_client_index = -1;
     const double start = t->time;
-    for ( ; t->time < start + 10.0; t->time += 0.05 )
+    for ( ; t->time < start + ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS; t->time += 0.05 )
     {
         if ( c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
              c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED )

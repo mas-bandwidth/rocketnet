@@ -44,6 +44,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 // ---------------------------------------------------------------------------
@@ -622,7 +624,60 @@ static void tampered_vector_refused()
     }
 }
 
+// The unit suite links the release archive, whose development minting helper
+// is compiled out; the development shared library built beside it carries the
+// writer, so load that library and mint through its own symbol.
+typedef int ( *ctv_dev_token_writer_t )( const char * server_address_string, uint64_t client_id,
+                                         uint64_t current_timestamp, uint8_t * connect_token );
+
+static ctv_dev_token_writer_t ctv_dev_token_writer()
+{
+    ctv_dev_token_writer_t writer = NULL;
+#if defined(_WIN32)
+    HMODULE library = LoadLibraryA( "rocketnet_dev.dll" );
+    if ( library == NULL )
+        library = LoadLibraryA( "bin\\rocketnet_dev.dll" );
+    rocketnet_unit_check( library != NULL );
+    writer = (ctv_dev_token_writer_t) (void *) GetProcAddress( library, "rocketnet_write_dev_connect_token" );
+#else
+    const char * names[] = { "bin/librocketnet_dev.so", "librocketnet_dev.so",
+                             "bin/librocketnet_dev.dylib", "librocketnet_dev.dylib" };
+    void * library = NULL;
+    for ( size_t i = 0; i < sizeof(names) / sizeof(names[0]) && library == NULL; i++ )
+        library = dlopen( names[i], RTLD_NOW | RTLD_LOCAL );
+    rocketnet_unit_check( library != NULL );
+    writer = (ctv_dev_token_writer_t) dlsym( library, "rocketnet_write_dev_connect_token" );
+#endif
+    rocketnet_unit_check( writer != NULL );
+    return writer;
+}
+
+// The dev connect token writes its connection timeout from the named
+// constant, and its lifetime from the expiry constant. Mint one with the
+// development writer at timestamp 1000 and read its signed fields back with
+// the development backend key, pinning both values.
+static void dev_connect_token_timeout_is_the_named_constant()
+{
+    const uint64_t now = 1000;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+
+    ctv_dev_token_writer_t write_dev = ctv_dev_token_writer();
+    rocketnet_unit_check( write_dev( "127.0.0.1:40000", 1, now, token ) == 1 );
+
+    struct rocketnet_connect_token_t read_token;
+    rocketnet_read_connect_token( &read_token, token );
+    rocketnet_unit_check( rocketnet_verify_signed_connect_data( read_token.signed_connect_data, read_token.signature,
+                                                                rocketnet_dev_backend_public_key ) );
+
+    struct rocketnet_signed_connect_data_t parsed;
+    rocketnet_read_signed_connect_data( &parsed, read_token.signed_connect_data );
+    rocketnet_unit_check( parsed.create_timestamp == now );
+    rocketnet_unit_check( parsed.timeout_seconds == ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS );
+    rocketnet_unit_check( parsed.expire_timestamp - parsed.create_timestamp == ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS );
+}
+
 REGISTER_UNIT_TEST( vectors_regenerate_byte_identical );
+REGISTER_UNIT_TEST( dev_connect_token_timeout_is_the_named_constant );
 REGISTER_UNIT_TEST( each_vector_verifies_and_opens );
 REGISTER_UNIT_TEST( deterministic_seal_matches_libsodium_open );
 REGISTER_UNIT_TEST( tampered_vector_refused );
