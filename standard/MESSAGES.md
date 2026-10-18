@@ -665,7 +665,7 @@ WIDE   |      channel, little-endian   |
 |---|---:|---|---|
 | channel wide boundary | `256` | channels | first channel encoded as WIDE |
 | default maximum channel count | `32` | channels | SDK default for the build-specific maximum |
-| maximum allowed build-specific channel count | `65,536` | channels | largest build-specific maximum permitted |
+| maximum allowed build-specific channel count | `65536` | channels | largest build-specific maximum permitted |
 
 ```vector m10.narrow-channel
 record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"
