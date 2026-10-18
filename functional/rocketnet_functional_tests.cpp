@@ -1000,22 +1000,30 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
 
     // The server sends two payloads; the client queues them without any call to
-    // receive_packet, so the cursor has not been touched.
-
-    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "capacity", 8 );
-    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "second", 6 );
-    rocketnet_server_transport_send_packets( server );
+    // receive_packet, so the cursor has not been touched. The batch is valid
+    // until the next update, and with the client I/O thread the two datagrams
+    // can be published in two batches (docs/CLIENT-IO.md "The receive path:
+    // the handoff", RNClientIo IoPublish), so the pair is sent again, after
+    // the last round has drained, until one batch holds both.
 
     bool queued = false;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 && !queued )
     {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
-        rocketnet_server_transport_update( server, rocketnet_platform_time() );
-        if ( rocketnet_client_transport_num_payloads( client ) >= 2 )
-            queued = true;
-        else
-            rocketnet_platform_sleep( 0.001 );
+        rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "capacity", 8 );
+        rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "second", 6 );
+        rocketnet_server_transport_send_packets( server );
+
+        const double sent = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - sent < 0.25 && !queued )
+        {
+            rocketnet_client_transport_update( client, rocketnet_platform_time() );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            if ( rocketnet_client_transport_num_payloads( client ) >= 2 )
+                queued = true;
+            else
+                rocketnet_platform_sleep( 0.001 );
+        }
     }
     rocketnet_check( queued );
     rocketnet_check( rocketnet_client_transport_num_payloads( client ) == 2 );
