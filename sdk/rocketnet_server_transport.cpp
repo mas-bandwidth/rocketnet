@@ -44,6 +44,13 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include <stdlib.h>
 #include <time.h>
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#include <linux/if_xdp.h>
+#endif
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#include <pthread.h>
+#endif
+
 // The transport driver is selected at RUNTIME (#106): one build carries
 // every driver its platform has, and create walks the config's ordered
 // candidate list -- config->driver, overridden by ROCKETNET_SERVER_DRIVER --
@@ -445,6 +452,111 @@ uint64_t rocketnet_server_transport_required_memory(const rocketnet_server_trans
 {
     rocketnet_server_memory_plan_t plan;
     return rocketnet_server_transport_memory_plan(config, driver, plan) ? plan.total_bytes : 0;
+}
+
+// The stack a driver thread is created with. rocketnet_platform_thread_create
+// passes no stack size (pthread_create with NULL attributes, CreateThread with
+// zero), so the size is the platform default: on POSIX the default attribute's
+// stack size, read without creating a thread; on Windows the executable's
+// default reserve, 1 MiB unless the binary is linked with another /STACK.
+static uint64_t rocketnet_server_thread_stack_bytes()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    return 1024 * 1024;
+#else
+    pthread_attr_t attributes;
+    if ( pthread_attr_init( &attributes ) != 0 )
+        return 0;
+    size_t bytes = 0;
+    if ( pthread_attr_getstacksize( &attributes, &bytes ) != 0 )
+        bytes = 0;
+    pthread_attr_destroy( &attributes );
+    return (uint64_t) bytes;
+#endif
+}
+
+// Whole-host estimate (TRANSPORT_READINESS.md #155): the plan plus what each
+// built-in driver asks of the kernel. Requests only, never grants. The sizes
+// are the ones the drivers pass: the portable and msgx socket and every gso
+// queue socket set SO_SNDBUF/SO_RCVBUF to ROCKETNET_SOCKET_SEND_BUFFER_SIZE and
+// ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE (rocketnet_driver_builtin.cpp,
+// rocketnet_server_gso_linux.cpp), as does the iocp socket
+// (rocketnet_server_iocp_windows.cpp); each xdp queue's AF_XDP socket asks for
+// ROCKETNET_XDP_RECV_QUEUE_SIZE RX and ROCKETNET_XDP_SEND_QUEUE_SIZE TX
+// descriptors and sets no socket buffer (rocketnet_server_socket_linux.cpp).
+bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config,
+                                                      const char * driver,
+                                                      struct rocketnet_host_memory_estimate_t * estimate )
+{
+    if ( !rocketnet_api_null_guard( estimate ) )
+        return false;
+    memset( estimate, 0, sizeof(*estimate) );
+
+    rocketnet_server_memory_plan_t plan;
+    if ( !driver || !rocketnet_server_transport_memory_plan( config, driver, plan ) )
+        return false;
+
+    struct rocketnet_host_memory_estimate_t e;
+    memset( &e, 0, sizeof(e) );
+    e.allocator_bytes = plan.total_bytes - plan.umem_bytes;
+    e.umem_bytes = plan.umem_bytes;
+    e.sockets = plan.sockets;
+    e.worker_threads = plan.worker_threads;
+
+    const bool xdp = strcmp( driver, "xdp" ) == 0;
+    if ( xdp )
+    {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        const uint64_t ring_bytes = (uint64_t) ( ROCKETNET_XDP_RECV_QUEUE_SIZE + ROCKETNET_XDP_SEND_QUEUE_SIZE ) * sizeof(struct xdp_desc);
+        if ( !rocketnet_memory_add( e.xdp_ring_bytes, (uint64_t) plan.sockets, ring_bytes ) )
+            return false;
+#else
+        return false;
+#endif
+    }
+    else
+    {
+        if ( !rocketnet_memory_add( e.socket_send_buffer_bytes, (uint64_t) plan.sockets, ROCKETNET_SOCKET_SEND_BUFFER_SIZE ) ||
+             !rocketnet_memory_add( e.socket_receive_buffer_bytes, (uint64_t) plan.sockets, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE ) )
+            return false;
+    }
+
+    if ( plan.worker_threads > 0 )
+    {
+        e.thread_stack_bytes_per_thread = rocketnet_server_thread_stack_bytes();
+        if ( !e.thread_stack_bytes_per_thread ||
+             !rocketnet_memory_add( e.thread_stack_bytes, (uint64_t) plan.worker_threads, e.thread_stack_bytes_per_thread ) )
+            return false;
+    }
+
+    for ( uint64_t bytes : { e.allocator_bytes, e.umem_bytes, e.socket_send_buffer_bytes,
+                             e.socket_receive_buffer_bytes, e.xdp_ring_bytes, e.thread_stack_bytes } )
+    {
+        if ( !rocketnet_memory_add( e.total_bytes, 1, bytes ) )
+            return false;
+    }
+
+    // what the library cannot know, named rather than guessed
+    const char * excluded[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
+    int count = 0;
+    excluded[count++] = "kernel socket accounting beyond the buffer requests (linux doubles each SO_SNDBUF/SO_RCVBUF request) and grants smaller than the requests";
+    if ( xdp )
+    {
+        excluded[count++] = "AF_XDP fill and completion rings (the umem config leaves their sizes to libxdp), ring headers and page rounding";
+        excluded[count++] = "libbpf/libxdp allocations, the XDP program and its maps";
+    }
+    if ( plan.worker_threads > 0 )
+        excluded[count++] = "thread guard pages, thread-local storage and kernel thread structures; stacks count reserved address space, not resident pages";
+    excluded[count++] = "kernel page tables and loader/shared-library memory";
+    excluded[count++] = "libc allocator bookkeeping outside the SDK allocator";
+    excluded[count++] = "application memory";
+    rocketnet_assert( count <= ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS );
+    for ( int i = 0; i < count; i++ )
+        e.exclusions[i] = excluded[i];
+    e.num_exclusions = count;
+
+    *estimate = e;
+    return true;
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context,
