@@ -137,7 +137,7 @@ static rn_message_link_t boundary_link(boundary_endpoint_t * e) {
 struct boundary_pair_t { boundary_net_t * net; rocketnet_message_server_t * server; rocketnet_message_client_t * client; double time; };
 struct boundary_received_t { int channel; std::vector<uint8_t> data; };
 static void boundary_config(rocketnet_message_config_t * c) {
-    rocketnet_message_default_config(c); c->num_channels=32; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
+    rocketnet_message_default_config(c); c->num_channels=300; c->window_messages=64; c->receive_ring_bytes=65536; c->max_message_bytes=16384;
     c->send_buffer_bytes=65536; c->send_queue_messages=64; c->packets_in_flight=64; c->max_packets_per_update=8; c->unreliable_deliveries=64;
     c->rto_initial_ms=100; c->rto_min_ms=20; c->rto_max_ms=400; c->reliable_timeout_ms=120000;
 }
@@ -159,7 +159,7 @@ static void boundary_teardown(boundary_pair_t * pair) {
     rocketnet_reassembly_set_destroy(pair->net->reassembly); delete pair->net->server; delete pair->net->client; delete pair->net;
 }
 static void boundary_drain(boundary_pair_t * pair,std::vector<boundary_received_t> * got) {
-    for(int channel=0;channel<32;++channel) {
+    for(int channel=0;channel<300;++channel) {
         const uint8_t * data=NULL; int bytes=0;
         while(rocketnet_message_server_receive(pair->server,0,channel,&data,&bytes)) {
             boundary_received_t r; r.channel=channel; r.data.assign(data,data+bytes); got->push_back(r);
@@ -188,8 +188,8 @@ static void unreliable_promotion_every_mode()
     const int modes[3]={ROCKETNET_UNRELIABLE,ROCKETNET_UNRELIABLE_SEQUENCED,ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT};
     for(int m=0;m<3;++m) {
         const int reliability=modes[m];
-        const int channels[2]={0,31};
-        for(int c=0;c<2;++c) {
+        const int channels[3]={0,31,256};
+        for(int c=0;c<3;++c) {
             const int channel=channels[c];
             boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
             const int header=3+3+3+(channel>=256?2:1);
@@ -215,25 +215,31 @@ static void unreliable_promotion_every_mode()
                 check(rocketnet_message_client_send(pair.client,channel,reliability,message.data(),bytes)!=0);
                 check(rocketnet_counter_value(cc,promotion_counters[m])==before+(promote?1u:0u));
                 if(promote) expected_promotions++;
-                std::vector<uint8_t> follow=boundary_data((uint32_t)(200+m*64+c*8+i),16);
-                check(rocketnet_message_client_send(pair.client,channel,ROCKETNET_UNRELIABLE,follow.data(),16)!=0);
-                // wait for this pair by identity, not by count
+                // Drain the promoted message before a same-channel sequenced
+                // follow, so the test observes both successive sequence values.
                 got.clear();
-                int found_message=0,found_follow=0;
-                for(int step=0;step<256 && (found_message==0 || found_follow==0);++step) {
+                int found_message=0;
+                for(int step=0;step<256 && found_message==0;++step) {
                     boundary_step(&pair,&got);
-                    found_message=0; found_follow=0;
-                    for(size_t k=0;k<got.size();++k) {
+                    for(size_t k=0;k<got.size();++k)
                         if(got[k].data==message) found_message++;
+                }
+                check(found_message==1 && got.size()==1 && got[0].data==message);
+                check(got[0].channel==expected_channel);
+
+                std::vector<uint8_t> follow=boundary_data((uint32_t)(200+m*64+c*8+i),16);
+                const int follow_reliability=reliability==ROCKETNET_UNRELIABLE_SEQUENCED ?
+                    ROCKETNET_RELIABLE_SEQUENCED : ROCKETNET_UNRELIABLE;
+                check(rocketnet_message_client_send(pair.client,channel,follow_reliability,follow.data(),16)!=0);
+                got.clear();
+                int found_follow=0;
+                for(int step=0;step<256 && found_follow==0;++step) {
+                    boundary_step(&pair,&got);
+                    for(size_t k=0;k<got.size();++k)
                         if(got[k].data==follow) found_follow++;
-                    }
                 }
-                check(found_message==1 && found_follow==1);
-                for(size_t k=0;k<got.size();++k) {
-                    // the follow is a plain code-0 send, which has no channel on the wire
-                    check(got[k].channel==(got[k].data==message?expected_channel:0));
-                    check(got[k].data==message || got[k].data==follow);
-                }
+                check(found_follow==1 && got.size()==1 && got[0].data==follow);
+                check(got[0].channel==(follow_reliability==ROCKETNET_RELIABLE_SEQUENCED ? expected_channel : 0));
             }
             check(rocketnet_counter_value(cc,promotion_counters[m])==(uint32_t)expected_promotions);
             for(int other=0;other<3;++other) if(other!=m)
