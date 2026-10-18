@@ -6543,6 +6543,7 @@ extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
+extern void live_message_matrix_loopback();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
@@ -6720,6 +6721,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full },
     { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },
     { "block_resend_cost_over_long_path", block_resend_cost_over_long_path },
+    { "live_message_matrix_loopback", live_message_matrix_loopback },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
