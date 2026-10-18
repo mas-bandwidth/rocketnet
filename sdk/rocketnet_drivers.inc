@@ -8,6 +8,7 @@ ROCKETNET_DRIVER(XDP,      "xdp",      false, rocketnet_xdp_driver,      ROCKETN
 ROCKETNET_DRIVER(MSGX,     "msgx",     true,  rocketnet_msgx_driver,     ROCKETNET_DRIVER_MAC,           10, 10)
 ROCKETNET_DRIVER(IOCP,     "iocp",     true,  rocketnet_iocp_driver,     ROCKETNET_DRIVER_WINDOWS,       40,  0)
 ROCKETNET_DRIVER(LOOPBACK, "loopback", true,  rocketnet_loopback_driver, ROCKETNET_DRIVER_ALL_PLATFORMS, ROCKETNET_DRIVER_PIN_ONLY, ROCKETNET_DRIVER_PIN_ONLY)
+ROCKETNET_DRIVER(IO_URING, "io_uring", true,  rocketnet_io_uring_driver, ROCKETNET_DRIVER_IO_URING_PLATFORMS, 25, 0)
 
 #if defined(ROCKETNET_DRIVER_REGISTRY_HEADER)
 #include ROCKETNET_DRIVER_REGISTRY_HEADER

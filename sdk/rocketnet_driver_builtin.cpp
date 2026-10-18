@@ -74,6 +74,27 @@ static const rocketnet_server_driver_operations_t gso_operations =
 };
 extern const rocketnet_driver_backend_t rocketnet_gso_driver = { &gso_operations, NULL };
 
+#include "rocketnet_server_uring.h"
+static void * io_uring_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * bind )
+{
+    if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
+    {
+        rocketnet_warn( "io_uring driver refused: num_xdp_queues %d is past the io_uring driver's %d queue geometry",
+            config->transport->num_xdp_queues, ROCKETNET_URING_MAX_QUEUES );
+        return NULL;
+    }
+    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues );
+}
+static void io_uring_destroy( void * driver ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t*) driver ); }
+ROCKETNET_STAGED_ADAPTER(io_uring, rocketnet_server_uring_t, rocketnet_server_uring)
+static const rocketnet_server_driver_operations_t io_uring_operations =
+{
+    ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
+    io_uring_create, io_uring_destroy, synchronous_stop,
+    io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL
+};
+extern const rocketnet_driver_backend_t rocketnet_io_uring_driver = { &io_uring_operations, NULL };
+
 static void * xdp_create( void * context, const rocketnet_server_driver_config_t * config, rocketnet_address_t * )
 {
     const int queues = config->transport->num_xdp_queues > 0 ? config->transport->num_xdp_queues : 7;
@@ -163,6 +184,12 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_GSO_DEFAULT_QUEUES;
         plan.driver_bytes = rocketnet_server_gso_allocation_bytes(queues);
         plan.worker_threads = queues; plan.sockets = queues;
+    }
+    else if (strcmp(driver, "io_uring") == 0)
+    {
+        const int queues = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
+        plan.driver_bytes = rocketnet_server_uring_allocation_bytes(queues);
+        plan.worker_threads = 0; plan.sockets = queues;
     }
     else if (strcmp(driver, "xdp") == 0)
     {
