@@ -182,7 +182,9 @@ The constants this section names are:
    is at most W; its fragment count plus one, times `message fragment bytes`,
    is at most the maximum message size plus `message fragment bytes` minus 1;
    every fragment but the last is exactly `message fragment bytes` long; the
-   last is at most `message fragment bytes` long. Counter: `MESSAGE_BAD_BLOCK`.
+   last is at most `message fragment bytes` long; its ring base, the ring less
+   the fragment index times `message fragment bytes` divided by 16, agrees with
+   a live block descriptor for the same block. Counter: `MESSAGE_BAD_BLOCK`.
 8. A holdable record MUST have a span inside B. The span of a non-block record
    is its length rounded up to 16 bytes, added to 16 times its ring value. The
    span of a block runs from its base, the ring value less the fragment index
