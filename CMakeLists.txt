@@ -447,7 +447,7 @@ if(ROCKETNET_BUILD_TESTS)
         add_dependencies(functional test_serialize test_transport_control)
     endif()
     add_library(rocketnet_abi_mismatch SHARED EXCLUDE_FROM_ALL tools/abi_mismatch.cpp)
-    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT)
+    target_compile_definitions(rocketnet_abi_mismatch PRIVATE ROCKETNET_SHARED ROCKETNET_EXPORT ROCKETNET_ABI_QUERIES_ONLY)
     target_compile_features(rocketnet_abi_mismatch PRIVATE cxx_std_11)
     set_target_properties(rocketnet_abi_mismatch PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
