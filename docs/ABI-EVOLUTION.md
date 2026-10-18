@@ -108,23 +108,27 @@ Sizes are bytes on every supported target (64-bit Linux x86_64 and s390x,
 macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 `rocketnet_abi_type_size` is the authority.
 
-| Struct | Direction | Revision 1 | Revision 1 last field | Sized |
-| :--- | :--- | ---: | :--- | :--- |
-| `rocketnet_client_transport_config_t` | in | 96 | `time_callback` | yes |
-| `rocketnet_server_transport_config_t` | in | 456 | `handshake_deadline_seconds` | yes |
-| `rocketnet_message_config_t` | in | 60 | `reliable_timeout_ms` | yes |
-| `rocketnet_client_transport_stats_t` | out | 28 | `bandwidth_received_kbps` | no |
-| `rocketnet_server_transport_stats_t` | out | 24 | `bandwidth_received_kbps` | no |
-| `rocketnet_server_transport_client_stats_t` | out | 24 | `bandwidth_acked_kbps` | no |
-| `rocketnet_packet_context_t` | in and out | 40 | `client_index` | no |
-| `rocketnet_frame_sync_stats_t` | out | 40 | `wakeup_error_seconds` | no |
-| `rocketnet_message_receipt_t` | out, in an array | 8 | `status` | no |
+| Struct | Direction | Revision 1 | Revision 2 | Latest last field | Sized |
+| :--- | :--- | ---: | ---: | :--- | :--- |
+| `rocketnet_client_transport_config_t` | in | 96 | - | `time_callback` | yes |
+| `rocketnet_server_transport_config_t` | in | 456 | - | `handshake_deadline_seconds` | yes |
+| `rocketnet_message_config_t` | in | 60 | 68 | `server_send_kbps` | yes |
+| `rocketnet_client_transport_stats_t` | out | 28 | - | `bandwidth_received_kbps` | no |
+| `rocketnet_server_transport_stats_t` | out | 24 | - | `bandwidth_received_kbps` | no |
+| `rocketnet_server_transport_client_stats_t` | out | 24 | - | `bandwidth_acked_kbps` | no |
+| `rocketnet_packet_context_t` | in and out | 40 | - | `client_index` | no |
+| `rocketnet_frame_sync_stats_t` | out | 40 | - | `wakeup_error_seconds` | no |
+| `rocketnet_message_receipt_t` | out, in an array | 8 | - | `status` | no |
 
 The client transport config's table (`ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE`)
 is followed by `state_change_callback` and `time_callback`, pointers outside
 the table. A field added to that config goes after `time_callback`, never into
 the table in front of it, because the table's fields are not the end of the
 struct.
+
+The message config's revision 2 appends `client_send_kbps` and
+`server_send_kbps` after `reliable_timeout_ms`; a revision 1 caller reads both
+at their defaults (1000 and 10000).
 
 Revision 1 is the layout of the first release that carries the sized entry
 points. `time_callback` joins the client config before that release, so it is
