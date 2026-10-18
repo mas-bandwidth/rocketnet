@@ -692,8 +692,8 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
 1. A sender MUST NOT put receipt types 5, 6 or 7 on the wire. Types 5, 6 and 7
    use codes 0, 2 and 3, respectively, as [m1.3 Reliability types](#m1.3)
    defines.
-2. After applying the send-size limits of [m2 Payload forms and sender size
-   rules](#m2), a sender MUST use the reliable code-2 path for a permitted
+2. After applying limits in [m2 Payload forms and sender size rules](#m2),
+   a sender MUST use the reliable code-2 path for a permitted
    type-5 send whose data exceeds the row code-0 single-record data maximum.
    The sender MUST preserve the type-5 receipt for that send. The receiver
    sees code 2; the sender reports ACKED only after every block fragment is
