@@ -491,6 +491,24 @@ def main():
         if implemented is not None:
             compare("handshake deadline (glance table)", ints(cell)[0], implemented)
 
+    # The two server handshake budgets: each row's number and window are the
+    # implementation's macros, so a doc number and a code number move together.
+    cell = row("Handshake work budget")
+    if cell is not None:
+        implemented = require("ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE")
+        if implemented is not None:
+            compare("handshake work budget (glance table)", ints(cell)[0], implemented)
+
+    cell = row("Failed-signature budget")
+    if cell is not None:
+        published = ints(cell)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET")
+        if implemented is not None:
+            compare("failed-signature budget (glance table)", published[0], implemented)
+        implemented = require("ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS")
+        if implemented is not None:
+            compare("failed-signature window (glance table)", published[1], implemented)
+
     cell = row("Cookie lifetime / key rotation")
     if cell is not None:
         numbers = ints(cell)

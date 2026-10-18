@@ -208,6 +208,12 @@ int main()
     // Timing defaults and sizing ratios: the macros rocketnet_server_transport_create
     // assigns.
 
+    // The two server handshake budgets: local policy STANDARD.md states with
+    // these defaults and the implementation applies.
+    print_int( "ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE", ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET", ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS", ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS );
+
     print_real( "DEFAULT_SEND_RATE", ROCKETNET_DEFAULT_SEND_RATE );
     print_real( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );
     print_int( "DEFAULT_COOKIE_LIFETIME_SECONDS", ROCKETNET_DEFAULT_COOKIE_LIFETIME_SECONDS );
