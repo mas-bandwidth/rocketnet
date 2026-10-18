@@ -2450,6 +2450,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 #include "rocketnet_platform.h"
 #include <limits.h>
+#include <math.h>
 #include "rocketnet_address.h"
 
 #if ROCKETNET_UNREAL_ENGINE
@@ -3192,6 +3193,111 @@ static int get_connection_type()
     return result;
 }
 
+// ---------------------------------------------------
+
+// The client I/O wake on Windows: a manual-reset event beside an event the
+// socket signals on FD_READ (docs/CLIENT-IO.md "The wake" and
+// rocketnet-client-io-windows; tla/RNClientIo.tla's IoWait, IoWake and Wake).
+// The wake is level-triggered: a set made while no wait runs leaves the event
+// signalled, so the next wait returns at once. FD_READ is re-armed by the
+// drain the I/O step runs to a would-block, so no readable datagram is missed.
+
+struct rocketnet_platform_wake_t
+{
+    void * context;
+    rocketnet_platform_socket_handle_t socket_handle;
+    WSAEVENT read_event;
+    HANDLE wake_event;
+};
+
+// docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
+// manual-reset wake event (tla/RNClientIo.tla's Init: wake = FALSE)
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+{
+    if ( !socket )
+        return NULL;
+    rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t*) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
+    if ( !wake )
+        return NULL;
+    wake->context = context;
+    wake->socket_handle = socket->handle;
+    wake->read_event = WSACreateEvent();
+    if ( wake->read_event == WSA_INVALID_EVENT )
+    {
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    if ( WSAEventSelect( (SOCKET) socket->handle, wake->read_event, FD_READ ) != 0 )
+    {
+        WSACloseEvent( wake->read_event );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    wake->wake_event = CreateEvent( NULL, TRUE, FALSE, NULL );
+    if ( wake->wake_event == NULL )
+    {
+        WSAEventSelect( (SOCKET) socket->handle, NULL, 0 );
+        WSACloseEvent( wake->read_event );
+        rocketnet_free( context, wake );
+        return NULL;
+    }
+    return wake;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+    CloseHandle( wake->wake_event );
+    WSACloseEvent( wake->read_event );
+    rocketnet_free( wake->context, wake );
+}
+
+// tla/RNClientIo.tla's IoWait and IoWake: wait on the wake and, only when
+// readable is true, the socket (docs/CLIENT-IO.md "The wake": a full buffer
+// waits on the wake alone). The wake event is first in the array, so when both
+// are signalled WaitForMultipleObjects reports the wake and the wake is
+// consumed (IoWake's wake' = FALSE). The signalled handle is reset before the
+// return, so a wake set after the reset is kept for the next wait.
+bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readable, double timeout_seconds )
+{
+    rocketnet_assert( wake );
+    DWORD timeout_ms = 0;
+    if ( timeout_seconds > 0.0 )
+    {
+        const double ms = ceil( timeout_seconds * 1000.0 );
+        timeout_ms = ms < 2147483647.0 ? (DWORD) ms : (DWORD) 2147483647;
+    }
+    DWORD result;
+    if ( readable )
+    {
+        HANDLE handles[2] = { wake->wake_event, wake->read_event };
+        result = WaitForMultipleObjects( 2, handles, FALSE, timeout_ms );
+    }
+    else
+    {
+        result = WaitForSingleObject( wake->wake_event, timeout_ms );
+    }
+    if ( result == WAIT_OBJECT_0 )
+    {
+        ResetEvent( wake->wake_event );
+        return true;
+    }
+    if ( readable && result == WAIT_OBJECT_0 + 1 )
+    {
+        WSAResetEvent( wake->read_event );
+        return true;
+    }
+    return false;
+}
+
+// tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
+void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( wake );
+    SetEvent( wake->wake_event );
+}
+
 #if ROCKETNET_UNREAL_ENGINE
 #include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
@@ -3253,10 +3359,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 // ----------------------------------------------------------------
 
 // the client I/O wake's portable fallback: a platform that does not define
-// ROCKETNET_PLATFORM_HAS_WAKE has no wake. create returns NULL, destroy
-// asserts its argument is NULL, wait returns false and set does nothing.
+// ROCKETNET_PLATFORM_HAS_WAKE and has no wake of its own (Windows has one,
+// above, before the client turns it on) has no wake. create returns NULL,
+// destroy asserts its argument is NULL, wait returns false and set does nothing.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -3283,7 +3390,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
     (void) wake;
 }
 
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // ----------------------------------------------------------------
 
