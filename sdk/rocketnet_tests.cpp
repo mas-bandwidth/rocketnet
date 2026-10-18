@@ -39,6 +39,7 @@
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_memory.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
 
@@ -7523,6 +7524,7 @@ static const char * rocketnet_test_exports[] =
     "rocketnet_server_transport_default_config_sized",
     "rocketnet_server_transport_dev_config",
     "rocketnet_server_transport_required_memory",
+    "rocketnet_server_transport_host_memory_estimate",
     "rocketnet_server_transport_create",
     "rocketnet_server_transport_create_ex",
     "rocketnet_server_transport_create_sized",
@@ -7662,6 +7664,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_server_transport_default_config",
     "rocketnet_server_transport_default_config_sized",
     "rocketnet_server_transport_dev_config",
+    "rocketnet_server_transport_host_memory_estimate",
     "rocketnet_server_transport_create",
     "rocketnet_server_transport_create_ex",
     "rocketnet_server_transport_create_sized",
@@ -8048,6 +8051,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before );
     rocketnet_check( rocketnet_client_transport_required_memory( NULL, NULL ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( !rocketnet_server_transport_host_memory_estimate( NULL, "portable", NULL ) );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_counter_value( NULL, 0 ) == 0 );
@@ -13576,6 +13583,107 @@ void rocketnet_test_connection_type_probe_ends_on_receive_error()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+// the whole-host estimate bounds the constructor plan: every component is a
+// request the driver makes (never a grant), the total is their sum, the total
+// covers required_memory, and an XDP estimate's UMEM is the plan's UMEM.
+
+static uint64_t rocketnet_test_host_memory_sum( const struct rocketnet_host_memory_estimate_t & e )
+{
+    return e.allocator_bytes + e.umem_bytes + e.socket_send_buffer_bytes + e.socket_receive_buffer_bytes +
+           e.xdp_ring_bytes + e.thread_stack_bytes;
+}
+
+void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
+{
+    const char * drivers[] = { "portable", "msgx", "gso", "io_uring", "xdp", "iocp" };
+    int estimated = 0;
+    for ( const char * driver : drivers )
+    {
+        struct rocketnet_host_memory_estimate_t estimate;
+        memset( &estimate, 0xff, sizeof(estimate) );
+        const uint64_t required = rocketnet_server_transport_required_memory( NULL, driver );
+        const bool ok = rocketnet_server_transport_host_memory_estimate( NULL, driver, &estimate );
+        rocketnet_check( ok == ( required > 0 ) );
+        if ( !ok )
+        {
+            rocketnet_check( estimate.total_bytes == 0 );
+            continue;
+        }
+        estimated++;
+
+        rocketnet_check( estimate.sockets >= 0 );
+        rocketnet_check( estimate.worker_threads >= 0 );
+        rocketnet_check( estimate.num_exclusions > 0 && estimate.num_exclusions <= ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS );
+        for ( int i = 0; i < estimate.num_exclusions; i++ )
+            rocketnet_check( estimate.exclusions[i] && estimate.exclusions[i][0] != '\0' );
+
+        // every component is non-negative and no component wrapped past the total
+        const uint64_t components[] = { estimate.allocator_bytes, estimate.umem_bytes, estimate.socket_send_buffer_bytes,
+                                        estimate.socket_receive_buffer_bytes, estimate.xdp_ring_bytes, estimate.thread_stack_bytes };
+        for ( uint64_t bytes : components )
+            rocketnet_check( bytes <= estimate.total_bytes );
+
+        rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
+        rocketnet_check( estimate.total_bytes >= required );
+        rocketnet_check( estimate.allocator_bytes + estimate.umem_bytes == required );
+        rocketnet_check( estimate.thread_stack_bytes == (uint64_t) estimate.worker_threads * estimate.thread_stack_bytes_per_thread );
+        if ( estimate.worker_threads > 0 )
+            rocketnet_check( estimate.thread_stack_bytes_per_thread > 0 );
+
+        rocketnet_server_memory_plan_t plan;
+        rocketnet_check( rocketnet_server_transport_memory_plan( NULL, driver, plan ) );
+        rocketnet_check( estimate.umem_bytes == plan.umem_bytes );
+        rocketnet_check( estimate.sockets == plan.sockets );
+        rocketnet_check( estimate.worker_threads == plan.worker_threads );
+
+        if ( strcmp( driver, "xdp" ) == 0 )
+        {
+            rocketnet_check( estimate.umem_bytes > 0 );
+            rocketnet_check( estimate.xdp_ring_bytes > 0 );
+            rocketnet_check( estimate.socket_send_buffer_bytes == 0 && estimate.socket_receive_buffer_bytes == 0 );
+        }
+        else
+        {
+            rocketnet_check( estimate.umem_bytes == 0 && estimate.xdp_ring_bytes == 0 );
+            rocketnet_check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
+            rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+        }
+        if ( strcmp( driver, "portable" ) == 0 )
+            rocketnet_check( estimate.sockets == 1 && estimate.worker_threads == 0 && estimate.thread_stack_bytes == 0 );
+    }
+    rocketnet_check( estimated >= 1 );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // the socket requests and the stacks scale with the configured queue count
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        config.num_xdp_queues = 8;
+        struct rocketnet_host_memory_estimate_t estimate;
+        rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
+        rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 8 );
+        rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
+        rocketnet_check( estimate.thread_stack_bytes == 8ull * estimate.thread_stack_bytes_per_thread );
+        rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
+    }
+#endif
+
+    // no plan, no estimate: candidate lists, custom names and bad geometry
+    // report zero and false, the same refusals required_memory gives
+    {
+        struct rocketnet_host_memory_estimate_t estimate;
+        rocketnet_check( !rocketnet_server_transport_host_memory_estimate( NULL, "auto", &estimate ) );
+        rocketnet_check( estimate.total_bytes == 0 );
+        rocketnet_check( !rocketnet_server_transport_host_memory_estimate( NULL, "custom", &estimate ) );
+        rocketnet_check( !rocketnet_server_transport_host_memory_estimate( NULL, NULL, &estimate ) );
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
+        rocketnet_check( !rocketnet_server_transport_host_memory_estimate( &config, "portable", &estimate ) );
+        rocketnet_check( estimate.total_bytes == 0 );
+    }
+}
+
 struct rocketnet_unit_test_t
 {
     const char * name;
@@ -13800,6 +13908,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_xdp_empty_map_drops", rocketnet_test_skip_linux_only_xdp_empty_map_drops },
 #endif
     { "test_config_override_logging", rocketnet_test_config_override_logging },
+    { "test_server_host_memory_estimate_bounds_the_plan", rocketnet_test_server_host_memory_estimate_bounds_the_plan },
     { "test_log_level_refuses_out_of_range", rocketnet_test_log_level_refuses_out_of_range },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },

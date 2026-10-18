@@ -297,4 +297,23 @@ inline void rocketnet_client_io_thread_function( void * data )
     while ( rocketnet_client_io_step( io, true ) != ROCKETNET_CLIENT_IO_EXITED ) {}
 }
 
+// The transport's wiring of this core (sdk/rocketnet_client_transport.cpp);
+// internal, not exported. True when the operations have both wait and wake:
+// the transport then runs the I/O thread design through rocketnet_client_io_t,
+// and otherwise the BASE path.
+bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations );
+
+// Unit tests only: a client transport on the caller's driver operations (the
+// driver's create receives driver_context) with no I/O thread. When the
+// operations have wait and wake the caller runs rocketnet_client_io_step on
+// rocketnet_client_transport_client_io in place of the thread, and destroy
+// runs the step in place of the sleep and the join (docs/CLIENT-IO.md _Stop
+// and destroy order_). Returns NULL on any create refusal.
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
+    const struct rocketnet_client_transport_config_t * config, double time,
+    const rocketnet_client_driver_operations_t * operations, void * driver_context );
+
+// The transport's I/O core, or NULL on the BASE path.
+rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
+
 #endif // #ifndef ROCKETNET_CLIENT_IO_H

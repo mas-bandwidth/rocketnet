@@ -549,7 +549,21 @@
     /* addresses can each hold a mapping for one token, and the second to */ \
     /* respond is refused (STANDARD.md, Processing Connection Response */ \
     /* Packets). appended: indices are the contract. */ \
-    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED )
+    X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
+    \
+    /* A client hand-off deferred because the other send ring is still */ \
+    /* handed off or sending (docs/CLIENT-IO.md, Reuse only after sent; a */ \
+    /* hand-off never waits; tla/RNClientIo.tla Defer): the committed slots */ \
+    /* stay in the Filling ring and leave with the next hand-off. EXPECTED: */ \
+    /* deferral is the common case, not an overload signal. appended: */ \
+    /* indices are the contract. */ \
+    X( CLIENT_SEND_DEFERRED, EXPECTED, NONE ) \
+    \
+    /* The kernel prefilter counter ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED */ \
+    /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
+    /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
+    /* appended: indices are the contract. */ \
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
 
 enum
 {
