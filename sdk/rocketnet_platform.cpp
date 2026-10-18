@@ -855,39 +855,15 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                 break;
             }
 
-            // the kernel refused an entry with another error: sendmmsg
-            // marks the failing message with msg_len == -1, and everything
-            // before it went. drop that entry, logged as the per-packet
-            // send log, and retry from the first unsent entry after it.
+            // No message was sent in this call, so the first unsent entry is
+            // the one the kernel refused. Drop it as the per-packet path does,
+            // then retry the remaining entries in order.
             const int error = errno;
-            int failed_index = -1;
-            for ( int i = 0; i < count - sent; i++ )
-            {
-                if ( msg[sent + i].msg_len == (ssize_t) -1 )
-                {
-                    failed_index = i;
-                    break;
-                }
-            }
-            if ( failed_index < 0 )
-            {
-                for ( int i = sent; i < count; i++ )
-                {
-                    char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-                    const rocketnet_platform_send_t * send = &sends[map[i]];
-                    rocketnet_address_to_string( send->to, address_string );
-                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
-                }
-                sent = count;
-                break;
-            }
-            {
-                char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-                const rocketnet_platform_send_t * send = &sends[map[sent + failed_index]];
-                rocketnet_address_to_string( send->to, address_string );
-                rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
-            }
-            sent += failed_index + 1;
+            char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+            const rocketnet_platform_send_t * send = &sends[map[sent]];
+            rocketnet_address_to_string( send->to, address_string );
+            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            sent += 1;
         }
 
         base += scanned;
