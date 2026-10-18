@@ -133,7 +133,7 @@ struct rn_message_object_t
     rn_arena_t * arena;
     rn_message_connection_t * connections;
     struct rn_slots_t slots;                    // the slots machine (CHANNELS.md 10.2)
-    uint32_t default_kbps;                      // a new connection's send budget
+    int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time
     double clock_origin;                        // the game's time the transport's 0.0 stands for
@@ -163,7 +163,7 @@ uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config
 // link's transport destroyed, on a refused argument.
 struct rn_message_object_t * rn_message_object_create( void * context, const struct rn_message_link_t * link, int is_server, int num_connections,
                                                        const struct rocketnet_message_config_t * config, void * memory, uint64_t memory_bytes,
-                                                       uint32_t default_kbps, double time );
+                                                       int32_t default_kbps, double time );
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
 
@@ -181,7 +181,7 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 int rn_message_object_receive( struct rn_message_object_t * object, int index, int channel, const uint8_t ** data, int * bytes );
 void rn_message_object_release( struct rn_message_object_t * object, int index, const uint8_t * data );
 
-bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, uint32_t kbps );
+bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps );
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index );
 int rn_message_object_connected( const struct rn_message_object_t * object, int index );
 

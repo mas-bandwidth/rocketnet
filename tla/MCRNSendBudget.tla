@@ -20,5 +20,6 @@ EXTENDS RNSendBudget
 SafetyInvariants ==
     /\ TypeOK /\ NeverOverspend /\ ReliableNeverDropped
     /\ UnreliableDroppedOnlyOverBudget /\ ClassOrder
+    /\ UncappedNeverDropsOrWaits
 
 =============================================================================

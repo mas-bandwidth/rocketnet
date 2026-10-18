@@ -121,10 +121,30 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
     if ( !rocketnet_api_null_guard( connect_token ) )
         return NULL;
 
-    const uint32_t kbps = send_kbps != 0 ? send_kbps : ROCKETNET_DEFAULT_CLIENT_SEND_KBPS;
+    // R6 (docs/CHANNELS.md 11.5): 0 takes client_send_kbps from the message
+    // config; a positive value overrides it for this create. The create
+    // argument is uint32_t, so refuse above the maximum before narrowing:
+    // a value in [2^31, 2^32) must not wrap negative and become uncapped.
+    if ( send_kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
+        rocketnet_error( "message client create refused: send budget above maximum" );
+        return NULL;
+    }
+    int32_t kbps = (int32_t) send_kbps;
+    if ( kbps == 0 )
+    {
+        rocketnet_message_config_t defaults;
+        const rocketnet_message_config_t * resolved = message_config;
+        if ( !resolved )
+        {
+            rocketnet_message_default_config( &defaults );
+            resolved = &defaults;
+        }
+        kbps = resolved->client_send_kbps;
+    }
 
     // refuse before the transport opens a socket
-    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !rocketnet_send_budget_kbps_valid( kbps ) )
+    if ( rn_message_object_required_bytes( message_config, 1, 0 ) == 0 || !( kbps <= 0 || rocketnet_send_budget_kbps_valid( (uint32_t) kbps ) ) )
     {
         rocketnet_error( "message client create refused: message config or send budget" );
         return NULL;
@@ -237,7 +257,7 @@ void rocketnet_message_client_release( struct rocketnet_message_client_t * clien
     rn_message_object_release( &client->object, 0, data );
 }
 
-int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps )
+int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, int32_t kbps )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;

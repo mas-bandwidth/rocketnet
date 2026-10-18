@@ -1,0 +1,5 @@
+usage: check_exports.py [-h] [--sources-only] [--header HEADER]
+                        [--tests TESTS]
+                        [shared] [archive]
+check_exports.py: error: the following arguments are required: shared archive
+Source exports: 160 declared, table matches
