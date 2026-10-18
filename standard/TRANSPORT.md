@@ -518,13 +518,78 @@ It is generated; the bytes are in the sections.
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
 
-Status: pending
+This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
+the bytes on the wire and in the decisions a receiver makes. It states no
+requirements; each difference is specified by the section named in its row.
 
-Scope: a list of facts, one per difference on the wire or in processing.
+| Area | netcode 1.02 | RN-1 |
+|---|---|---|
+| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
+| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
+| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
+| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the source address whose connection response first opened under it, and admits one live connection ([t12 Handshake: server](#t12)). |
+| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
+| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
+| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
+| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
+| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
+| Fragmentation | No fragment packet type. | The fragment packet type carries a fragment, with reassembly slots and an abandonment rule ([t16 Fragmentation and reassembly](#t16)). |
+| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
 
-Status: pending
+This appendix is informative. It records implementation choices that the wire
+format does not require; a conforming implementation may choose otherwise.
+Each note points to the section whose rule it serves.
 
-Scope: informative notes for implementers; no requirements.
+### Transport selection
+
+An implementation offers a set of transports for one endpoint role on one
+platform, and `auto` expands to its documented order for that role and
+platform. An explicit list is tried in order, nothing is appended or
+reordered, and a list of one name is a pin that refuses rather than falls.
+The endpoint reports the transport that carries it and logs each earlier
+candidate's skip or refusal. A transport never changes a byte on the wire, so
+transport selection is a deployment and diagnosis surface rather than a
+protocol one. See [t2.4 Transport selection](#t2.4).
+
+### Kernel prefilter and XDP
+
+A Linux server may place a prefilter and a source-address whitelist in an XDP
+program so that traffic the connection layer would refuse is dropped before
+it is queued to userspace. The kernel path may perform any prefix of the
+receive checks; it rejects no more and no less than the full sequence, and the
+userspace path still performs the checks on what survives. Traffic the kernel
+does not see is not counted there, so the transport imports the kernel
+counters beside its own. See [t10 Receive processing](#t10) and
+[t14 Replay protection](#t14).
+
+### Check placement
+
+Every check this standard specifies is defined by what it rejects and in what
+order, never by where it runs. A transport may perform any prefix of the
+sequence as early as it can, including in a kernel program, and a transport
+without such a path performs the same checks in userspace. Pushing work down
+reduces the volume that reaches userspace rather than removing the check from
+it, which keeps one implementation of the logic rather than one per transport.
+See [t10 Receive processing](#t10).
+
+### Configuration surface
+
+Each configuration field is declared once with its type, default and valid
+range, and the environment variable name derives from the field name. The
+precedence is default, then configuration struct, then environment; every
+override is logged with the value it displaced, and an out-of-range or
+unparsable value refuses the create rather than being clamped or corrected.
+The message layer's fields follow the same surface in the section that owns
+each one. See [t2.3 Configuration surface](#t2.3).
+
+### Counters per execution context
+
+A multithreaded implementation keeps a counter block per execution context,
+padded and aligned so that no two contexts share a cache line, and sums the
+blocks at readout. In a kernel dataplane the context is a CPU; in userspace
+it is a thread. Counters are monotonic and never reset, so a rate is derived
+by differencing two snapshots and a zero still means that the event never
+happened. See [t18 Error handling and counters](#t18).
