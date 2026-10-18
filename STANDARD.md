@@ -307,6 +307,7 @@ section, and this table exists so an implementer never hunts for a number.
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
 | Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
+| Replay buffer maximum | 32768 | _Replay window sizing_ |
 | Kernel replay prefilter | optional; read-only high-water, drops 16 or more behind | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
 
@@ -1609,9 +1610,9 @@ the RFCs require it regardless, and it is four lines.
 
 **Replay and delivery history are explicit memory budgets in sequence numbers,
 never frame-rate, send-rate or ACK-rate contracts.** A replay window MUST hold
-at least 4096 sequences. Implementations MUST document their retained depth and
-provide a way to choose a larger memory budget. The application does not need
-to declare a packets-per-second rate, and an implementation MUST NOT throttle
+at least 4096 sequences and MUST NOT hold more than 32768. Implementations MUST
+document their retained depth. The application does not need to declare a
+packets-per-second rate, and an implementation MUST NOT throttle
  application sends to preserve an assumed time span of history.
 
 An implementation MAY drop session packets before decryption in a kernel
@@ -1619,7 +1620,8 @@ prefilter that holds, per peer address, a high-water sequence written only by
 userspace after a packet opens and never by the prefilter itself; such a
 prefilter drops a packet 16 or more sequences behind that high-water in
 RocketNet (ROCKETNET_XDP_REPLAY_WINDOW). It is sized separately from the replay
-window, which keeps its own rule (at least 4096). Like an undersized window it
+window, which keeps its own rule (at least 4096 and at most 32768). Like an
+undersized window it
 may discard old legitimate packets earlier, and it never accepts a replay,
 because it only ever drops.
 
@@ -2258,6 +2260,14 @@ received. For ordering it is the channel's next ordering index. For sequencing
 it is the channel's sequencing watermark. Every live value lies within `W` (at
 most 2^20) of its reference, so the half range never aliases.
 
+A stale reliable copy can be opened after its number was acknowledged, so two
+transport preconditions bound how far behind the reference it can be. First,
+the replay window depth MUST NOT exceed 32768 sequences (_Replay window
+sizing_). Second, transport sequences MUST rise in packet write order: a packet
+written later carries a higher sequence than every packet written before it on
+the same connection. The message tier relies on both, and the half range never
+aliases only while they hold.
+
 ### Known-answer vectors
 
 The bytes below are the payload, before the transport seals it. An
@@ -2274,7 +2284,7 @@ RECORDS, the two records above in one packet:
 RECORDS, fragment 1 of 3 of a RELIABLE_ORDERED block, number 9, ring 72, ordering 7, channel 300 (WIDE):
                                              1b 80 04 09 00 00 48 00 07 00 00 2c 01 01 00 02 00 <1152 data bytes> 01
 CONFIG, defaults, number 0:
-                                             22 1c 00 00 00 00 01 01 09 00 20 00 00 00 00 04 00 00
+                                             22 1c 00 00 00 00 01 01 ff 00 20 00 00 00 00 04 00 00
                                              00 00 04 00 00 00 04 00 80 04 00 00 00 00 00 00 01
 ```
 
@@ -2282,7 +2292,7 @@ The block vector, field by field: flags `0x1b` (code 3, BLOCK, WIDE); length
 `0x0480`, 1152; number 9; ring 72, so its data starts at `72 × 16 = 1152`,
 fragment 1 of a block based at 0; ordering 7; channel 300 as `2c 01`; fragment
 1; fragments − 1, 2. The CONFIG vector: flags `0x22` (code 2 with CONTROL);
-length 28; number 0; kind 1, version 1; enabled `0x09` (types 0 and 3); 32
+length 28; number 0; kind 1, version 1; enabled `0xFF` (all eight types); 32
 channels, `W` 1024, `B` 262144, max 262144, F 1152. The reference implementation
 regenerates every vector from its codec and compares it byte for byte
 (`test_channels_message_record_vectors`).
@@ -3516,21 +3526,22 @@ system every one of its players can forge, which is not a subtle condition, and
 any adversarial look finds it immediately. There is no state in which the test
 keys are quietly load-bearing.
 
-**The test keys are embedded in the library and used by default.** A developer
-who configures nothing gets a working connection, which is the entire objective;
-requiring configuration to reach the working path would put the hoop back where
-it started. Supplying real keys is what takes an act, and that act belongs to
-the deployment, not to the person trying the library for the first time.
+**The test keys are never used unless configured.** A developer who wants the
+no-backend flow configures them explicitly; a deployment that supplies no keys
+does not silently inherit a public credential. Supplying real keys is what
+takes an act, and that act belongs to the deployment, not to the person trying
+the library for the first time.
 
 The rules that keep it honest:
 
-* An implementation MUST warn, unmissably and on every start, whenever either
-  test key is in use. This is the one thing standing between a default that
-  helps everybody and a default that ships, so it is a MUST and not a SHOULD,
-  and it should be hard to filter out of a log.
-* An implementation SHOULD refuse to use either test key in a build configured
-  for release, and where it does, SHOULD NOT allow configuration alone to
-  override that refusal.
+* An implementation MUST warn, at ROCKETNET_LOG_LEVEL_WARN or louder and on
+  every start, whenever either test key is in use, at each end that can tell
+  it is (the server from its keys, the client from its token's server key).
+  The warning must say the keys are public and not for production. This is the
+  one thing standing between a development key and a production deployment, so
+  it is a MUST and not a SHOULD, and it should be hard to filter out of a log.
+* An implementation MUST refuse to use either test key in a build configured
+  for release, and MUST NOT allow configuration alone to override that refusal.
 * A deployment that supplies its own backend public key MUST NOT also accept the
   test one. Accepting both would mean every player could forge a token for a
   server that looks correctly configured, which is the worst of both worlds.
