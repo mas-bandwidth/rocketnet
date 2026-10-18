@@ -20,6 +20,6 @@ SafetyInvariants ==
     /\ OneClientPerSlot /\ OneSlotPerClientId
     /\ SlotMappingBijection /\ NoSlotBeforeResponse /\ MappingsBounded
     /\ OneConnectionPerToken /\ NonceFresh
-    /\ TimeoutHonoured /\ DeadlineHonoured
+    /\ TimeoutHonoured /\ DeadlineHonoured /\ HalfOpenIdleHonoured
 
 =============================================================================

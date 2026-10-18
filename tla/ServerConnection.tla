@@ -78,8 +78,8 @@ CONSTANTS
     MaxNonces,         \* the pool of session nonces
     MaxMoves,          \* address changes per client
     SendInterval,      \* ticks between scheduled sends, both ends; >= 1
-    Timeout,           \* the established mapping's idle timeout in ticks; 0 = off
-    HandshakeDeadline, \* the half-open mapping's deadline in ticks; 0 = off
+    Timeout,           \* the idle timeout in ticks, either state; 0 = off
+    HandshakeDeadline, \* the half-open mapping's fixed deadline in ticks; 0 = off
     Disconnects,       \* BOOLEAN: may either application disconnect, may a client vanish
     DisconnectCopies,  \* the redundant disconnect burst (10 in the code)
     SameId,            \* BOOLEAN: every token carries one client id
@@ -411,9 +411,11 @@ ServerRecvRequest(p) ==
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] m.live ->
                  /\ IF p.salt = m.salt
-                      THEN ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                      ELSE ServerSilent
-                 /\ UNCHANGED <<smap, bound, churnDenied>>
+                      THEN /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
+                           /\ smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
+                      ELSE /\ ServerSilent
+                           /\ UNCHANGED smap
+                 /\ UNCHANGED <<bound, churnDenied>>
             [] p.tok \in ExpiredTokens ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
             [] ~p.cookie ->
@@ -549,12 +551,14 @@ ServerDiscCopy ==
 (***************************************************************************)
 (* Time passes on both ends and on both wires.  Clients: the send clocks.  *)
 (* Server, rocketnet_server_protocol_update (the sweep): a half-open        *)
-(* mapping is removed at its handshake deadline; an established one idle   *)
-(* for the timeout releases its slot and is removed with it (the witness   *)
-(* SweepRemovesMapping = FALSE releases the slot and leaves the mapping).   *)
+(* mapping is removed at whichever of its idle and handshake deadlines     *)
+(* comes first; an established one idle for the timeout releases its slot  *)
+(* and is removed with it (the witness SweepRemovesMapping = FALSE          *)
+(* releases the slot and leaves the mapping).                              *)
 (***************************************************************************)
-Expired(m)  == m.live /\ ~m.est /\ HandshakeDeadline > 0 /\ Sat(m.age, HandshakeDeadline) = HandshakeDeadline
-TimedOut(m) == m.live /\ m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
+Expired(m)   == m.live /\ ~m.est /\ HandshakeDeadline > 0 /\ Sat(m.age, HandshakeDeadline) = HandshakeDeadline
+IdleExpired(m) == m.live /\ ~m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
+TimedOut(m)  == m.live /\ m.est /\ Timeout > 0 /\ Sat(m.sinceRecv, Timeout) = Timeout
 
 Tick ==
     /\ C2S!Age /\ S2C!Age
@@ -563,7 +567,9 @@ Tick ==
                   LET m == smap[a] IN
                   CASE ~m.live -> m
                     [] Expired(m) -> NoMap
-                    [] ~m.est -> [m EXCEPT !.age = Sat(m.age, HandshakeDeadline)]
+                    [] IdleExpired(m) -> NoMap
+                    [] ~m.est -> [m EXCEPT !.age = Sat(m.age, HandshakeDeadline),
+                                          !.sinceRecv = Sat(m.sinceRecv, Timeout)]
                     [] TimedOut(m) /\ SweepRemovesMapping -> NoMap
                     [] OTHER -> [m EXCEPT !.sinceRecv = Sat(m.sinceRecv, Timeout),
                                           !.sinceKA = Sat(m.sinceKA, SendInterval)]]
@@ -693,6 +699,8 @@ NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout
 DeadlineHonoured == \A a \in Addrs : (smap[a].live /\ ~smap[a].est /\ HandshakeDeadline > 0)
                                        => smap[a].age < HandshakeDeadline
+HalfOpenIdleHonoured == \A a \in Addrs : (smap[a].live /\ ~smap[a].est /\ Timeout > 0)
+                                           => smap[a].sinceRecv < Timeout
 
 \* a client's packets never reach another client's slot: a client packet
 \* that touches a used slot (its record, or the mapping behind it) came
