@@ -415,10 +415,148 @@ packet type, which key seals which type; sealed vectors.
 <a id="t10"></a>
 ## t10. Receive processing
 
-Status: pending
+A receiver MUST process every received datagram through the ordered list
+below. Each check MUST reject exactly the packets named for it, MUST
+increment exactly the counter named for it in
+[t18 Error handling and counters](#t18), and MUST leave the packet's other
+state unchanged. A receiver MUST NOT examine a packet beyond the first check
+that rejects it. The list is the same for both ends; a row marked server or
+client applies only at that end.
 
-Scope: the receiver's ordered checks for every packet, from prefilter to
-dispatch, with the counter each refusal increments.
+1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry, before
+   any check.
+2. A receiver MUST apply the prefilter of [t5 Prefilter header](#t5). A
+   datagram shorter than the prefilter header is `PREFILTER_TOO_SHORT`; a
+   datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
+   epoch this receiver does not hold is `PREFILTER_WRONG_EPOCH`; a filter
+   value that does not compare is `PREFILTER_WRONG_VALUE`. The comparison is
+   constant time when the epoch is nonzero.
+3. A receiver MUST reject a packet type at or above the first reserved
+   packet type as `RESERVED_TYPE`.
+4. A server MUST reject the connection denied, connection challenge and
+   connection cookie types as `WRONG_DIRECTION`. A client MUST reject the
+   connection request and connection response types as `WRONG_DIRECTION`.
+   These types travel in one direction only.
+5. A server MUST pass a connection request to
+   [t12 Handshake: server](#t12) and a client MUST pass a connection cookie
+   to [t11 Handshake: client](#t11). Those types carry no sealed data.
+6. A receiver MUST apply the type's size check before that type's state
+   gate and before any decryption. A packet that fails the size check MUST
+   increment the type's `WRONG_SIZE` counter and MUST NOT increment the
+   integrity-failure count or a `DID_NOT_OPEN` counter.
+7. A receiver MUST apply the type's state gate. A packet the current state
+   does not process is dropped with the type's `WRONG_STATE` counter.
+8. A server MUST look up the connection mapping for the source address. A
+   packet with no mapping is `NO_MAPPING`. A client MUST drop a datagram
+   whose source is not the server it dialed, before the list above.
+9. A receiver MUST reconstruct the 64-bit sequence from the 32-bit wire
+   field and the highest sequence already opened. A reconstructed sequence
+   of zero is `ZERO_SEQUENCE`.
+10. For the session types, a receiver MUST reject a sequence already marked
+    received as `ALREADY_RECEIVED`, before decryption. The handshake types
+    have no replay test.
+11. For the connection denied and connection challenge types, the clear
+    session nonce sits between the sequence and the sealed data; a client
+    MUST derive handshake keys into temporary storage and MUST commit them
+    only after the open succeeds.
+12. A receiver MUST open the sealed data with the key for the type and the
+    associated data of [t9 Packet protection](#t9). A packet that does not
+    open is `DID_NOT_OPEN`, and this check alone increments the
+    integrity-failure count that
+    [t14 Replay protection](#t14) bounds.
+13. A server MUST reject a session packet whose mapping has no assigned
+    slot as `NOT_CONNECTED`, after the open and before marking the sequence.
+14. For the session types, a receiver MUST mark the sequence received and
+    then advance the most recent sequence.
+15. A receiver MUST read the ack block at the front of the opened data as
+    [t15 Acknowledgement](#t15) specifies. A malformed block is
+    `BAD_ACK_BLOCK`; the type data behind it is not examined.
+16. A receiver MUST check the opened size less the ack block against the
+    type. A mismatch is `WRONG_OPENED_SIZE`.
+17. A receiver MUST apply the type's own check on its sized data. Each
+    refusal increments the type's counter for that cause, as
+    [t16 Fragmentation and reassembly](#t16) specifies for fragments.
+18. Only after every check passes does the receiver apply the ack block's
+    delivery information, refresh the connection's receive time, and
+    dispatch the type's action.
+
+| Step | Check | Position | Refusal counter |
+|---|---|---|---|
+| 1 | packet counted | entry | |
+| 2 | prefilter length, epoch, value | before decryption | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE`, `PREFILTER_WRONG_EPOCH`, `PREFILTER_WRONG_VALUE` |
+| 3 | reserved type | before decryption | `RESERVED_TYPE` |
+| 4 | direction | before decryption | `WRONG_DIRECTION` |
+| 6 | wire size for the type | before the state gate and before decryption | the type's `WRONG_SIZE` |
+| 7 | state gate | before decryption | the type's `WRONG_STATE` |
+| 8 | server mapping | before decryption | `NO_MAPPING` |
+| 9 | sequence reconstruction | before decryption | `ZERO_SEQUENCE` |
+| 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
+| 12 | sealed open | decryption | `DID_NOT_OPEN` |
+| 13 | server slot gate | after decryption, before the replay mark | `NOT_CONNECTED` |
+| 15 | ack block | after decryption | `BAD_ACK_BLOCK` |
+| 16 | opened size | after decryption | `WRONG_OPENED_SIZE` |
+| 17 | type data | after decryption | the type's own counters |
+
+The fixed sizes of the handshake types, the minimum wire sizes of the session
+types, and the response padding are:
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
+| connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
+| connection cookie wire size | `38` | bytes | size | [t8 Packet formats](#t8) |
+| connection keep-alive minimum wire size | `41` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload minimum wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
+| connection disconnect minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
+| connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
+| connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
+
+A session packet's total wire size is its minimum or larger, up to the
+receive ceiling. The payload's opened data holds at least one payload byte
+after the ack block.
+
+The vectors below name one malformed packet per refusal and the counter it
+fires. Each packet begins with the prefilter header of type, epoch and the
+test filter value, and each is truncated or altered at the step it tests.
+
+```vector t10.prefilter-too-short
+input: a connection payload packet truncated one byte below the prefilter header
+counter: PREFILTER_TOO_SHORT
+05 00 b7 59 01
+```
+
+```vector t10.prefilter-wrong-epoch
+input: a connection payload packet whose epoch is not a held generation
+counter: PREFILTER_WRONG_EPOCH
+05 01 b7 59 01 00
+```
+
+```vector t10.prefilter-wrong-value
+input: a connection payload packet whose filter value is not the receiver's
+counter: PREFILTER_WRONG_VALUE
+05 00 00 00 00 00
+```
+
+```vector t10.reserved-type
+input: a packet whose type is the first reserved packet type
+counter: RESERVED_TYPE
+0a 00 b7 59 01 00
+```
+
+```vector t10.server-wrong-direction
+input: a connection denied packet arriving at a server
+counter: WRONG_DIRECTION
+01 00 b7 59 01 00
+```
+
+```vector t10.client-session-wrong-size
+input: a connection keep-alive packet one byte below its minimum wire size
+counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
+04 00 b7 59 01 00
+```
 
 <a id="t11"></a>
 ## t11. Handshake: client
@@ -513,6 +651,12 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t10 Receive processing](#t10) | `t10.client-session-wrong-size` |
+| [t10 Receive processing](#t10) | `t10.prefilter-too-short` |
+| [t10 Receive processing](#t10) | `t10.prefilter-wrong-epoch` |
+| [t10 Receive processing](#t10) | `t10.prefilter-wrong-value` |
+| [t10 Receive processing](#t10) | `t10.reserved-type` |
+| [t10 Receive processing](#t10) | `t10.server-wrong-direction` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
