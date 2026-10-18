@@ -190,7 +190,7 @@ leg bench_gso      recv recv-errno recvmmsg  "a GRO batch receive refused"
 uring_recv_refused=""
 if [ -x ./bench_uring ]; then
     next_port
-    ./bench_uring recv "$PORT" 1 1 1 > "$WORK/bench_uring_recv_probe.txt" 2>&1
+    env -u BENCH_FAULT ./bench_uring recv "$PORT" 1 1 1 > "$WORK/bench_uring_recv_probe.txt" 2>&1
     if grep -q 'BENCH ABORTED: io_uring_setup_buf_ring' "$WORK/bench_uring_recv_probe.txt"; then
         uring_recv_refused="$( grep -m1 'BENCH ABORTED' "$WORK/bench_uring_recv_probe.txt" )"
     fi
