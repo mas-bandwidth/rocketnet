@@ -25,9 +25,10 @@ One word for one thing, everywhere:
 
 | Word | Means | Never |
 |---|---|---|
-| transport | one selectable packet backend: `xdp`, `gso`, `msgx`, `portable`, `iocp` | driver |
-| `transport` (config field) | the ordered candidate list of transports for one endpoint; environment `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` | driver list |
-| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | client transport, server transport |
+| transport | the RN-1 packet-carrying layer | driver |
+| driver | one selectable transport backend: `xdp`, `gso`, `msgx`, `portable`, `iocp` | transport |
+| `driver` (config field) | the ordered candidate list of drivers for one endpoint; environment `ROCKETNET_SERVER_DRIVER` and `ROCKETNET_CLIENT_DRIVER` | transport list |
+| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | client driver, server driver |
 | connection layer | what RN-1 specifies | transport tier |
 | message layer | what RN-2 specifies | channels tier |
 | maximum packet size | the largest UDP payload a sender emits (RN-1, bytes) | send budget |
@@ -37,8 +38,8 @@ One word for one thing, everywhere:
 | number | the RN-2 reliable message counter | sequence |
 | vector | a known-answer byte string a conforming implementation reproduces | test case |
 
-A transport is selected by its name in the config string, and it never changes
-a byte on the wire; neither RN-1 nor RN-2 varies by transport.
+A driver is selected by its name in the config string, and it never changes a
+byte on the wire; neither RN-1 nor RN-2 varies by driver.
 
 ## 3. Section ids, headings and the outline
 

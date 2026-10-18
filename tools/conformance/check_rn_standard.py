@@ -277,6 +277,10 @@ def check_outline(docs, outline, faults, only):
                                % (doc.name, section.line, ident)))
             if position >= len(found) or found[position][0] != ident:
                 faults.append((ident, "%s: section %s is out of the outline's order" % (doc.name, ident)))
+            matches = [candidate for candidate in doc.sections if candidate.id == ident]
+            if len(matches) > 1:
+                faults.append((ident, "%s:%d section %s appears %d times; outline sections appear exactly once"
+                               % (doc.name, matches[1].line, ident, len(matches))))
         if not only:
             known = {i for i, _ in expected}
             for section in doc.sections:
