@@ -195,7 +195,8 @@ static void sized_config_refuses_unknown_size()
     const size_t server_current = sizeof( struct rocketnet_server_transport_config_t );
     const size_t message_current = sizeof( struct rocketnet_message_config_t );
 
-    const size_t client_unknown[] = { 0, 1, client_current - 1, client_current + 1, client_current + 8, SIZE_MAX };
+    // the end of state_change_callback was never a revision: time_callback is part of revision 1 (docs/ABI-EVOLUTION.md 4)
+    const size_t client_unknown[] = { 0, 1, client_current - 1, offsetof( struct rocketnet_client_transport_config_t, time_callback ), client_current + 1, client_current + 8, SIZE_MAX };
     const size_t server_unknown[] = { 0, 1, server_current - 1, server_current + 1, server_current + 8, SIZE_MAX };
     const size_t message_unknown[] = { 0, 1, message_current - 1, message_current + 1, message_current + 8, SIZE_MAX };
 
