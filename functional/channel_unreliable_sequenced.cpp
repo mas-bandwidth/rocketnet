@@ -79,9 +79,9 @@ void state_stream_never_goes_backwards_over_lossy_link()
 
 void large_unreliable_sequenced_uses_transport_fragments()
 {
-    // Use the production socket transports: the channel harness intentionally
-    // models only unfragmented frames. One code-1 RECORDS payload must travel
-    // through type-9 transport fragments and reassemble before channel dispatch.
+    // Use the production socket transports. An UNRELIABLE_SEQUENCED send too
+    // big for one packet's record is promoted to RELIABLE_SEQUENCED, as
+    // RakNet's ReliabilityLayer does, and is counted, never fragmented.
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 2;
@@ -118,9 +118,11 @@ void large_unreliable_sequenced_uses_transport_fragments()
     for ( int i = 0; i < message_bytes; i++ )
         write[i] = (uint8_t) ( i * 37 + 11 );
     sequenced_functional_check( rocketnet_message_client_finish( client, message_bytes ) != 0, "large client finish" );
-    sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
-                                                                 ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES ) == NULL,
-                                "configured transport maximum refused before enqueue" );
+    uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED,
+                                                         ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES );
+    sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
+    if ( promoted )
+        rocketnet_message_client_abort( client );
     sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_SEQUENCED, 65536 ) == NULL,
                                 "u16 record maximum refused before enqueue" );
 
@@ -146,10 +148,10 @@ void large_unreliable_sequenced_uses_transport_fragments()
         }
     }
     sequenced_functional_check( received == 1, "large fragment reassembly" );
-    const rocketnet_counters_t * counters = rocketnet_server_transport_counters( rocketnet_message_server_transport( server ) );
-    sequenced_functional_check( counters->values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] >= 1, "large transport fragments" );
-    printf( "large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d reassembled=%llu\n",
-            message_bytes, received, (unsigned long long) counters->values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] );
+    const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
+    sequenced_functional_check( counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1, "large unreliable promotion counted" );
+    printf( "large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d promoted=%llu\n",
+            message_bytes, received, (unsigned long long) counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] );
 
     rocketnet_message_client_destroy( client );
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( server );

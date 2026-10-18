@@ -2224,13 +2224,20 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // ROCKETNET_RELIABLE_SEQUENCED, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT,
 // ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, and ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
 // a type a caller's own mask leaves out is refused (counted
-// MESSAGE_SEND_TYPE_NOT_ENABLED). Plain
-// UNRELIABLE is one record in one packet, up to 1411 bytes. UNRELIABLE_SEQUENCED
-// can use the transport's fragments for one larger unreliable RECORDS payload.
-// Receipt-bearing UNRELIABLE uses the code-0 wire form at single-packet size and promotes a larger
-// message to a reliable code-2 block with an ACKED-only receipt. Both are
-// received on channel 0. The reliable types and promoted blocks are bounded
-// by the config's max_message_bytes.
+// MESSAGE_SEND_TYPE_NOT_ENABLED). An unreliable send too big for one packet's
+// record is promoted to its reliable twin, as RakNet's ReliabilityLayer does,
+// and counted (MESSAGE_PROMOTED_UNRELIABLE, MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED,
+// MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT). Plain UNRELIABLE is one
+// record in one packet up to 1411 bytes and promotes to RELIABLE above that.
+// UNRELIABLE_SEQUENCED is one record while its payload fits 1416 bytes (up to
+// 1405 bytes, 1404 when the channel is WIDE) and promotes to
+// RELIABLE_SEQUENCED past that. Receipt-bearing UNRELIABLE uses the code-0
+// wire form at single-packet size and promotes to the reliable code-2 block
+// path above 1411 bytes, keeping its ACKED-only receipt. The receiver sees the
+// twin's wire code. Unreliable sends are received on channel 0; a promoted
+// sequenced send keeps its channel. The reliable types and promoted records
+// and blocks are bounded by the config's max_message_bytes; a send above it,
+// or above the u16 record length for UNRELIABLE_SEQUENCED, is still refused.
 //
 // A start the connection's region has no room for ends the connection (R5):
 // the server disconnects that client, the client disconnects itself, with the

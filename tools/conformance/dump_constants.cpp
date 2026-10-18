@@ -18,6 +18,7 @@
 
 #include "rocketnet.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_message.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_fragment.h"
@@ -149,6 +150,14 @@ int main()
     print_int( "ROCKETNET_MAX_PAYLOAD_BYTES", ROCKETNET_MAX_PAYLOAD_BYTES );
     print_int( "ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES", ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES );
     print_int( "ROCKETNET_MESSAGE_SINGLE_BYTES", ROCKETNET_MESSAGE_SINGLE_BYTES );
+    print_int( "ROCKETNET_MESSAGE_RECORD_FIXED_BYTES", ROCKETNET_MESSAGE_RECORD_FIXED_BYTES );
+    // the largest unreliable message one packet's record holds (STANDARD.md _Messages_)
+    print_int( "ROCKETNET_MESSAGE_UNRELIABLE_RECORD_BYTES",
+               ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES );
+    print_int( "ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_NARROW",
+               ROCKETNET_MAX_PAYLOAD_BYTES - ( 3 + 3 + 3 + 1 ) - 1 );
+    print_int( "ROCKETNET_MESSAGE_SEQUENCED_RECORD_BYTES_WIDE",
+               ROCKETNET_MAX_PAYLOAD_BYTES - ( 3 + 3 + 3 + 2 ) - 1 );
     print_int( "ROCKETNET_MAX_FRAGMENT_BYTES", ROCKETNET_MAX_FRAGMENT_BYTES );
     print_int( "ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES", ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES );
 

@@ -32,6 +32,17 @@ The four counter names and the packet-input action names align with the
 changed: the approved standalone interface keeps this work independent.
 Channel dispatch composes the models later.
 
+## Promotion
+
+An unreliable send too big for one packet's record is promoted to its
+reliable twin: 0 to 2, 1 to 4, and 5 to the reliable code-2 path (the receipt
+stays with the layer above). `Source(m)` is the API mode and `Code(m)` is the
+wire twin, so every sender and receiver rule runs on the twin. The `promote`
+scenario passes codes 1, 0 and 5 as `LargeMessages`; `PromotedIsTwin` checks
+the mapping and `PromotedNeverUnreliable` checks that a promoted code-0 or
+code-5 send is delivered, never dropped as unreliable. A promoted code-1 send
+follows code-4 sequenced semantics, including their permitted supersession.
+
 ## Types
 
 ### 1: UNRELIABLE_SEQUENCED
@@ -150,7 +161,7 @@ exact generated/distinct counts after the evaluation change.
 
 | Configuration | Generated | Distinct | Seconds | Expected result |
 |---|---:|---:|---:|---|
-| `MCRNChannelTypes.cfg` | 109855 | 23381 | 3.850 | pass - |
+| `MCRNChannelTypes.cfg` | 2058385 | 376853 | 65.946 | pass - |
 | `MCRNChannelBrokenSequencedBackwards.cfg` | 49 | 32 | 0.659 | invariant SequencedNeverBackwards |
 | `MCRNChannelBrokenHeapDrainNoReset.cfg` | 723 | 304 | 0.721 | invariant EpochWatermark |
 | `MCRNChannelBrokenReliableTwice.cfg` | 53 | 35 | 0.663 | invariant ReliableExactlyOnce |

@@ -3,6 +3,10 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
+# The promotion unit test exercises the WIDE channel header (a channel index of
+# 256 or more), so the build's channel cap must exceed 256 (RakNet promotion
+# rule: oversize unreliable sends promote to their reliable twin).
+add_compile_definitions(ROCKETNET_MAX_CHANNELS=300)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)

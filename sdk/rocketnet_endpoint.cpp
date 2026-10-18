@@ -162,26 +162,34 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     {
         if ( rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
             return NULL;
-        // Code 1 may occupy one large RECORDS payload. Its u16 length and
-        // the transport's configured payload cap are permanent refusal
-        // boundaries; checking here keeps an impossible send off the FIFO.
         const int header = 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 );
         const int transport_max = transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
-        const bool too_large = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
-            bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES || bytes > endpoint->config->max_message_bytes ||
-            bytes + header + 1 > transport_max : (uint32_t) bytes > endpoint->unreliable_limit;
-        if ( too_large )
+        // One packet's record lives in a payload no larger than both the
+        // transport's cap and the message tier's one-packet payload.
+        const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+        // Keep the reservation's transport cap so finish applies the rule to
+        // the actual byte count, even when the caller finishes short.
+        endpoint->max_payload_bytes = transport_max;
+        // The configured maximum and the u16 record length stay refusal
+        // boundaries. A send too big for one packet's record is promoted to
+        // its reliable twin, as RakNet's ReliabilityLayer does.
+        const bool over_max = (uint32_t) bytes > endpoint->config->max_message_bytes ||
+            ( reliability == ROCKETNET_UNRELIABLE_SEQUENCED && bytes > ROCKETNET_MESSAGE_MAX_RECORD_BYTES );
+        const bool promote = reliability == ROCKETNET_UNRELIABLE_SEQUENCED ?
+            bytes + header + 1 > record_capacity : (uint32_t) bytes > endpoint->unreliable_limit;
+        if ( over_max && reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
         {
-            if ( reliability != ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
-            {
-                // Non-receipt unreliable sends cannot exceed their wire limit.
-                rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
-                return NULL;
-            }
-            // RNReceipts EffectiveKind: a large public type 5 reserves through
-            // the internal reliable code-2 block path, preserving code 5's
-            // receipt serial and reliable-only completion.
-            pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, ROCKETNET_RELIABLE, (uint32_t) bytes );
+            rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+            return NULL;
+        }
+        if ( promote || ( over_max && reliability == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) )
+        {
+            // RakNet ReliabilityLayer promotion: code 0 to 2, code 1 to 4, and
+            // code 5 to its reliable receipt twin (wire code 2, receipt kept).
+            const int twin = reliability == ROCKETNET_UNRELIABLE ? ROCKETNET_RELIABLE :
+                             reliability == ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABLE_SEQUENCED :
+                             ROCKETNET_RELIABLE;
+            pointer = rn_channels_start( &endpoint->ordered.channels, (uint32_t) channel, twin, (uint32_t) bytes );
             if ( !pointer )
             {
                 if ( rn_region_exhausted( region ) )
@@ -249,9 +257,19 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             serial = 1;
     }
 
-    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
-         ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE &&
-           (uint32_t) bytes > endpoint->unreliable_limit ) )
+    // Start reserves for its requested capacity; finish decides promotion
+    // from the actual byte count and can downgrade a short reservation.
+    const bool reserved_reliable = endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE;
+    const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
+    const int record_capacity = transport_max < ROCKETNET_MAX_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PAYLOAD_BYTES;
+    const bool actual_over_record = endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ?
+        bytes + 3 + 3 + 3 + ( ( reserved_reliable ? endpoint->ordered.channels.pending_channel : endpoint->region->send_descriptors[endpoint->pending_descriptor].channel ) >= 256 ? 2 : 1 ) + 1 > record_capacity :
+        (uint32_t) bytes > endpoint->unreliable_limit;
+    const bool unreliable_source = endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+        endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+    const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
+    if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
     {
         const uint32_t d = endpoint->ordered.channels.pending;
         if ( !rn_channels_finish( &endpoint->ordered.channels, (uint32_t) bytes ) )
@@ -260,6 +278,14 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         descriptor->serial = serial;
         if ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT )
             descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
+        if ( promoted )
+        {
+            // RakNet ReliabilityLayer: every promotion is counted, once per send.
+            const int counter = endpoint->pending_type == ROCKETNET_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
+                                endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
+                                ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
+            rn_endpoint_count( endpoint, counter );
+        }
     }
     else
     {
@@ -270,9 +296,13 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         {
             // A caller may reserve a block and finish fewer bytes. Move the
             // same region descriptor to the single-packet route without a copy.
-            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            rocketnet_assert( endpoint->pending_type == ROCKETNET_UNRELIABLE ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
+                              endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT );
+            const uint32_t channel = endpoint->ordered.channels.pending_channel;
             endpoint->ordered.channels.pending = RN_DESCRIPTOR_NONE;
-            descriptor->reliability = ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT;
+            descriptor->channel = (uint16_t) channel;
+            descriptor->reliability = (uint8_t) endpoint->pending_type;
             descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
             descriptor->fragments = 1;
         }
@@ -306,7 +336,7 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
     // Enqueue's first half returned): a start that will not be finished, its
     // room returned to the region
     if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) ||
-         ( endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT && endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE ) )
+         endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE )
         rn_channels_cancel( &endpoint->ordered.channels );
     else if ( ( endpoint->pending_type == ROCKETNET_UNRELIABLE || endpoint->pending_type == ROCKETNET_UNRELIABLE_SEQUENCED ||
                 endpoint->pending_type == ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT ) &&
