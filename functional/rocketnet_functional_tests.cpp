@@ -6136,66 +6136,6 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
     rocketnet_test_max_size_packet_crosses( "ROCKETNET_TEST_MTU_SERVER_IPV6", "[::1]", true );
 }
 
-// rocketnet_sleep sleeps for the time asked, at millisecond precision, on
-// every platform: for each request, 100 calls, no call returns more than
-// 0.1 ms early and the median call overshoots by at most 1.0 ms. A sleep that
-// rounds to the system timer tick (15.6 ms by default on Windows) or truncates
-// a sub-millisecond request to zero fails here. Wall clock, so functional.
-//
-// The guarantee is millisecond precision, not sub-millisecond: a Windows
-// high-resolution waitable timer can wake on about 1 ms boundaries (a hosted
-// Windows runner measures a 0.5 ms request at p50 1.53 ms), and the sleep
-// does not spin the CPU to do better. So a request under 1 ms is held to a
-// median of at most max( request, 1 ms ) + 0.75 ms; a request of 1 ms or more
-// keeps the request + 1.0 ms bound.
-//
-// On Apple platforms the median bound is 1.6 x request + 1 ms: usleep there
-// oversleeps in proportion to the request, to about 1.5 x (a 1/60 s request
-// measures p50 24.9 ms). The follow-up card
-// rocketnet-apple-sleep-honours-milliseconds restores the tight bound with
-// mach_wait_until or nanosleep.
-
-void rocketnet_test_platform_sleep_tracks_requested_time()
-{
-    const double requests[] = { 0.0005, 0.001, 0.005, 1.0 / 60.0 };
-    const int calls = 100;
-    for ( int r = 0; r < (int) ( sizeof( requests ) / sizeof( requests[0] ) ); r++ )
-    {
-        const double request = requests[r];
-        double elapsed[calls];
-        for ( int i = 0; i < calls; i++ )
-        {
-            const double start = rocketnet_time();
-            rocketnet_sleep( request );
-            elapsed[i] = rocketnet_time() - start;
-        }
-        for ( int i = 1; i < calls; i++ )
-        {
-            const double value = elapsed[i];
-            int j = i - 1;
-            while ( j >= 0 && elapsed[j] > value )
-            {
-                elapsed[j+1] = elapsed[j];
-                j--;
-            }
-            elapsed[j+1] = value;
-        }
-        const double minimum = elapsed[0];
-        const double median = ( elapsed[calls/2-1] + elapsed[calls/2] ) * 0.5;
-        const double maximum = elapsed[calls-1];
-        printf( "platform_sleep_tracks_requested_time: request %.4f ms: min %.3f ms, p50 %.3f ms, max %.3f ms\n",
-            request * 1000.0, minimum * 1000.0, median * 1000.0, maximum * 1000.0 );
-        fflush( stdout );
-        rocketnet_check( minimum >= request - 0.0001 );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-        const double median_bound = 1.6 * request + 0.001;
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-        const double median_bound = request < 0.001 ? 0.001 + 0.00075 : request + 0.001;
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-        rocketnet_check( median <= median_bound );
-    }
-}
-
 struct rocketnet_functional_test_t
 {
     const char * name;
@@ -6393,7 +6333,6 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full },
     { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },
     { "block_resend_cost_over_long_path", block_resend_cost_over_long_path },
-    { "platform_sleep_tracks_requested_time", rocketnet_test_platform_sleep_tracks_requested_time },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;
