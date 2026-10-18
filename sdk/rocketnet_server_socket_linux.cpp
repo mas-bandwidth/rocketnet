@@ -1481,7 +1481,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             umem_config.frame_headroom = 0;
 
             result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
-            if ( result ) 
+            if ( result )
             {
                 rocketnet_error( "server could not create umem" );
                 rocketnet_server_socket_destroy( server_socket );

@@ -1075,17 +1075,24 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
         return true;
     }
 
+    // a failed add means the pair is not ours (the name may already be taken), so nothing is removed
+
     char command[256];
-    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s && ip link set %s up && ip link set %s up", zc_veth, zc_veth_peer, zc_veth, zc_veth_peer );
+    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s", zc_veth, zc_veth_peer );
     if ( system( command ) != 0 )
     {
-        printf( "  could not create the veth pair %s/%s\n", zc_veth, zc_veth_peer );
-        snprintf( command, sizeof(command), "ip link del %s 2>/dev/null", zc_veth );
-        if ( system( command ) != 0 ) {}
+        printf( "  could not create the veth pair %s/%s; nothing removed\n", zc_veth, zc_veth_peer );
         return false;
     }
 
-    const bool ok = xsk_bind_on_veth( zc_veth );
+    // from here the pair is ours and is removed on every exit path
+
+    snprintf( command, sizeof(command), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_peer );
+    const bool up = system( command ) == 0;
+    if ( !up )
+        printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_peer );
+
+    const bool ok = up && xsk_bind_on_veth( zc_veth );
 
     // deleting one end removes the pair
 
