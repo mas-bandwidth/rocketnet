@@ -3516,21 +3516,22 @@ system every one of its players can forge, which is not a subtle condition, and
 any adversarial look finds it immediately. There is no state in which the test
 keys are quietly load-bearing.
 
-**The test keys are embedded in the library and used by default.** A developer
-who configures nothing gets a working connection, which is the entire objective;
-requiring configuration to reach the working path would put the hoop back where
-it started. Supplying real keys is what takes an act, and that act belongs to
-the deployment, not to the person trying the library for the first time.
+**The test keys are never used unless configured.** A developer who wants the
+no-backend flow configures them explicitly; a deployment that supplies no keys
+does not silently inherit a public credential. Supplying real keys is what
+takes an act, and that act belongs to the deployment, not to the person trying
+the library for the first time.
 
 The rules that keep it honest:
 
-* An implementation MUST warn, unmissably and on every start, whenever either
-  test key is in use. This is the one thing standing between a default that
-  helps everybody and a default that ships, so it is a MUST and not a SHOULD,
-  and it should be hard to filter out of a log.
-* An implementation SHOULD refuse to use either test key in a build configured
-  for release, and where it does, SHOULD NOT allow configuration alone to
-  override that refusal.
+* An implementation MUST warn, at ROCKETNET_LOG_LEVEL_WARN or louder and on
+  every start, whenever either test key is in use, at each end that can tell
+  it is (the server from its keys, the client from its token's server key).
+  The warning must say the keys are public and not for production. This is the
+  one thing standing between a development key and a production deployment, so
+  it is a MUST and not a SHOULD, and it should be hard to filter out of a log.
+* An implementation MUST refuse to use either test key in a build configured
+  for release, and MUST NOT allow configuration alone to override that refusal.
 * A deployment that supplies its own backend public key MUST NOT also accept the
   test one. Accepting both would mean every player could forge a token for a
   server that looks correctly configured, which is the worst of both worlds.
