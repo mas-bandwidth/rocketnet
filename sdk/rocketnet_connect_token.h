@@ -170,6 +170,9 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 
 #define ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS 30
 
+// The connection timeout the development token carries, in seconds.
+#define ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS 10
+
 // Mints a development connect token for a server at this address, signed
 // with the published development backend key and sealed to the published
 // development server key. What a real backend does with real keys, done

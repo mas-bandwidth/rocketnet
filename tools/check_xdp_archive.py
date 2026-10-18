@@ -3,20 +3,41 @@
 import argparse
 import hashlib
 import io
+import locale
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
 
+if sys.platform == "win32" and not getattr(sys.flags, "utf8_mode", 0):
+    os.environ["PYTHONUTF8"] = "1"
+    if sys.argv and sys.argv[0] and Path(sys.argv[0]).is_file():
+        raise SystemExit(subprocess.run([sys.executable, "-X", "utf8", *sys.argv], env=os.environ).returncode)
+
+
+def utf8_env():
+    return {**os.environ, "PYTHONUTF8": "1"}
+
+
 def inputs_for(root, directory):
+    root, directory = Path(root), Path(directory)
+    if not root.exists():
+        try:
+            recovered = Path(str(root).encode(locale.getpreferredencoding(False)).decode("utf-8"))
+            if recovered.exists():
+                root = recovered
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
     listing = directory / "source-list.txt"
-    subprocess.run(["cmake", f"-DROCKETNET_XDP_SOURCE_LIST_OUTPUT={listing}",
-                    "-P", str(root / "cmake/XdpSources.cmake")], check=True)
-    paths = [root / name for name in listing.read_text().splitlines()]
+    subprocess.run(["cmake", f"-DROCKETNET_XDP_SOURCE_LIST_OUTPUT={str(listing)}",
+                    "-P", str(root / "cmake/XdpSources.cmake")],
+                   check=True, encoding="utf-8", env=utf8_env())
+    paths = [root / name for name in listing.read_text(encoding="utf-8").splitlines()]
     inputs = {path.name: path for path in paths}
     if not inputs or len(inputs) != len(paths):
         raise RuntimeError("XDP source basenames must be nonempty and unique")
@@ -34,7 +55,7 @@ def check_archive(data, inputs):
 
 
 def embedded_bytes(header):
-    text = header.read_text()
+    text = header.read_text(encoding="utf-8")
     body = re.search(r"rocketnet_server_xdp_tar_gz\[\]\s*=\s*\{(.*?)\};", text, re.S)
     length = re.search(r"rocketnet_server_xdp_tar_gz_len\s*=\s*(\d+)\s*;", text)
     if not body or not length:
@@ -49,11 +70,12 @@ def generate_and_check(root, output, inputs, xxd):
     staging = output / "source"
     staging.mkdir(parents=True, exist_ok=True)
     (staging / "server_xdp.o").write_bytes(b"stale object")
-    (staging / "stray.c").write_text("not a source input\n")
+    (staging / "stray.c").write_text("not a source input\n", encoding="utf-8")
     (staging / "nested").mkdir(exist_ok=True)
-    (staging / "nested/unrelated").write_text("keep out\n")
-    subprocess.run(["cmake", f"-DSOURCE_DIR={root}", f"-DOUTPUT_DIR={output}",
-                    f"-DXXD={xxd}", "-P", str(root / "cmake/EmbedXdp.cmake")], check=True)
+    (staging / "nested/unrelated").write_text("keep out\n", encoding="utf-8")
+    subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
+                    f"-DXXD={str(xxd)}", "-P", str(root / "cmake/EmbedXdp.cmake")],
+                   check=True, encoding="utf-8", env=utf8_env())
     data = (output / "rocketnet_server_xdp.tar.gz").read_bytes()
     check_archive(data, inputs)
     if embedded_bytes(output / "rocketnet_server_xdp.h") != data:
@@ -80,8 +102,9 @@ def check_reproducible(source, directory, inputs, xxd):
         previous_umask = os.umask(umask)
         try:
             output = directory / f"repro{index}-generated"
-            subprocess.run(["cmake", f"-DSOURCE_DIR={root}", f"-DOUTPUT_DIR={output}",
-                            f"-DXXD={xxd}", "-P", str(root / "cmake/EmbedXdp.cmake")], check=True)
+            subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
+                            f"-DXXD={str(xxd)}", "-P", str(root / "cmake/EmbedXdp.cmake")],
+                           check=True, encoding="utf-8", env=utf8_env())
         finally:
             os.umask(previous_umask)
         archives.append((output / "rocketnet_server_xdp.tar.gz").read_bytes())
@@ -130,10 +153,10 @@ def main():
             for name in ("XdpSources.cmake", "EmbedXdp.cmake"):
                 shutil.copyfile(source / "cmake" / name, fixture / "cmake" / name)
             manifest = fixture / "cmake/XdpSources.cmake"
-            text = manifest.read_text()
+            text = manifest.read_text(encoding="utf-8")
             end = text.index(")", text.index("set(ROCKETNET_XDP_SOURCES"))
-            manifest.write_text(text[:end] + "\n    sdk/future_xdp_input.h" + text[end:])
-            (fixture / "sdk/future_xdp_input.h").write_text("/* future archive input */\n")
+            manifest.write_text(text[:end] + "\n    sdk/future_xdp_input.h" + text[end:], encoding="utf-8")
+            (fixture / "sdk/future_xdp_input.h").write_text("/* future archive input */\n", encoding="utf-8")
             extended = inputs_for(fixture, directory)
             if len(extended) != len(inputs) + 1 or "future_xdp_input.h" not in extended:
                 raise RuntimeError("future source was not added to the shared list")
