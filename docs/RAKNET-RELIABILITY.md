@@ -1016,95 +1016,18 @@ RocketNet's connection protocol is below the message layer; keep it there.
 
 **I17. The receive side hands up messages, not packets, and in one stream.**
 RakNet's `Receive()` returns one message at a time with system notices and
-receipts interleaved (`RL.cpp:1507-1530`, `RP.cpp:6226`), and the C# shim
-(section 13) expects exactly that. RocketNet's transport delivers a batch of
-payloads per update (`rocketnet.h:785-809`); the message layer's drain is a
-loop over those payloads producing messages, with the batch lifetime the same
-("valid until the next update"). An ordered message released from the reorder
-buffer in a later update is delivered then; copy-out semantics for what a
-caller keeps are the transport's already (`USAGE.md:73-76`).
+receipts interleaved (`RL.cpp:1507-1530`, `RP.cpp:6226`). RocketNet's transport
+delivers a batch of payloads per update (`rocketnet.h:785-809`); the message
+layer's drain is a loop over those payloads producing messages, with the batch
+lifetime the same ("valid until the next update"). An ordered message released
+from the reorder buffer in a later update is delivered then; copy-out semantics
+for what a caller keeps are the transport's already (`USAGE.md:73-76`).
 
-## 13. The C# shim surface
+## 13. Language bindings
 
-Provisional until the customer's shim arrives as data. This is what RakNet's
-C# binding exposes, so that the shim written against it can be mapped.
-
-RakNet's C# binding is SWIG-generated from the public headers
-(`DependentExtensions/Swig/SwigInterfaceFiles/RakNet.i`), including
-`MessageIdentifiers.h`, `RakNetTypes.h`, `BitStream.h`, `PacketPriority.h`,
-`RakPeerInterface.h` and `RakPeer.h`
-(`DependentExtensions/Swig/SwigInterfaceFiles/RakNetCSharpSwigIncludes.i:9, 13, 16, 24, 31, 32`), with `Packet.data` surfaced as a `byte[]`
-(`DependentExtensions/Swig/SwigInterfaceFiles/RakNetCSharpTypeMaps.i:312`). A
-generated copy of the C# is checked in under
-`DependentExtensions/Swig/InternalSwigItems/InternalSwigWindowsCSharpSample/InternalSwigTestApp/SwigFiles/`
-(cited below by file name only), and the sample app shows the calls a shim will
-make (`DependentExtensions/Swig/SwigWindowsCSharpSample/SwigTestApp/TestMain.cs:69-81`):
-
-```csharp
-peer.Send(bitStream, PacketPriority.LOW_PRIORITY, PacketReliability.RELIABLE_ORDERED,
-          (char)0, new AddressOrGUID(new SystemAddress("127.0.0.1", 60001)), false);
-Packet p = peer.Receive();
-if (p != null && p.data[0] == (byte)DefaultMessageIDTypes.ID_USER_PACKET_ENUM) { ... }
-peer.DeallocatePacket(p);
-```
-
-The calls, from `RPI.h` and the generated `RakPeerInterface.cs`:
-
-| call | signature | what the shim expects |
-|---|---|---|
-| `Send` | C++: `uint32_t Send(const char *data, int length, PacketPriority, PacketReliability, char orderingChannel, AddressOrGUID, bool broadcast, uint32_t forceReceiptNumber = 0)` (`RPI.h:198`) and a `BitStream` overload (`RPI.h:217`). C#: `uint Send(string data, ...)` and `uint Send(BitStream, ...)` with and without `forceReceiptNumber` (`RakPeerInterface.cs:190-216`), plus `uint Send(byte[] inByteArray, int length, PacketPriority, PacketReliability, char orderingChannel, AddressOrGUID, bool broadcast)` (`RakPeerInterface.cs:548`) | returns the receipt serial, 0 on bad input; `broadcast = true` sends to all but the named system (`RPI.h:195`); the channel is a C# `char` |
-| `SendList` | `RPI.h:239` | several blocks concatenated into one message; ignored by the SWIG binding (`RakNetCSharpIgnores.i:64`) |
-| `Receive` | `Packet* Receive()` (`RPI.h:247`), `Packet Receive()` (`RakPeerInterface.cs:218`) | one message per call, null when empty; "Be sure to call this in a loop ... until it returns 0" (`RPI.h:245`) |
-| `DeallocatePacket` | `RPI.h:251`, `RakPeerInterface.cs:224` | required after each `Receive` |
-| `GetNextSendReceipt`, `IncrementNextSendReceipt` | `RPI.h:179, 184`, `RakPeerInterface.cs:180, 185` | for callers that want the serial before `Send` |
-| `CloseConnection` | `RPI.h:262`, `RakPeerInterface.cs:233-243` | takes the ordering channel for the disconnect notice |
-| `Shutdown` | `RPI.h:165`, `RakPeerInterface.cs:163-171` | same |
-| `SetTimeoutTime` | `RPI.h:429`, `RakPeerInterface.cs:407` | per system or default |
-| `GetMTUSize` | `RPI.h:438`, `RakPeerInterface.cs:418` | per system |
-| `SetSplitMessageProgressInterval` | `RPI.h:474`, `RakPeerInterface.cs:453` | enables `ID_DOWNLOAD_PROGRESS` |
-| `SetUnreliableTimeout` | `RPI.h:484`, `RakPeerInterface.cs:462` | the unsent-unreliable cull |
-| `PushBackPacket` | `RPI.h:507`, `RakPeerInterface.cs:482` | re-queue a packet to `Receive` |
-| `GetReceiveBufferSize` | `RPI.h:591` | |
-
-The `Packet` the shim reads (`RakNetTypes.h:428-454`; `Packet.cs:57-144`):
-`systemAddress`, `guid`, `length` (bytes), `bitSize`, `data` (`byte[]`), and
-two internal flags `deleteData` and `wasGeneratedLocally`. The **first byte of
-every message is a message id** (`RPI.h:188`): user ids start at
-`ID_USER_PACKET_ENUM` (`MessageIdentifiers.h:430`); the system ids a shim
-switches on share the stream: `ID_CONNECTION_REQUEST_ACCEPTED`
-(`MessageIdentifiers.h:111`), `ID_NEW_INCOMING_CONNECTION` (`:117`),
-`ID_DISCONNECTION_NOTIFICATION` (`:122`), `ID_CONNECTION_LOST` (`:125`),
-`ID_SND_RECEIPT_ACKED` (`:96`), `ID_SND_RECEIPT_LOSS` (`:103`), `ID_TIMESTAMP`
-(`:139`; a timestamp follows and is clock-shifted by RakPeer,
-`RP.cpp:1549-1553`), `ID_DOWNLOAD_PROGRESS` (`:151`). The C# enum is
-`DefaultMessageIDTypes` (`DefaultMessageIDTypes.cs:26-27, 39, 42, 142`;
-`TestMain.cs:57`). A receipt is 5 bytes: id then `uint32` serial, native order.
-
-The enums the shim names: `PacketPriority` with four values and
-`PacketReliability` with the eight values of section 2, in that order and with
-those numbers (`PacketReliability.cs:11-21`); a shim may pass the enum's
-integer.
-
-What a RocketNet-backed shim therefore needs from the message API, provisionally:
-
-- a per-send call taking `(payload, reliability, channel, target or broadcast)`
-  and returning a non-zero 32-bit serial, with priority accepted and either
-  mapped or ignored (RakNet's priority is a queue weight, section 5.3);
-- the eight reliability values with RakNet's numbering, so a shim can pass
-  them through; the two commented-out names never had values;
-- a channel argument that is a number on the send; RakNet silently maps 32 and
-  above to 0 and accepts a signed `char`, so the shim may pass values RocketNet
-  refuses; the shim's behaviour on refusal is the shim author's to decide;
-- a receive drain that yields one message at a time with its sender, including
-  connection notices and receipts as messages, or an equivalent the shim can
-  wrap into that shape; whether RocketNet reserves the first payload byte as
-  RakNet does, or the shim adds it, is open until the shim is read;
-- receipts as `(serial, acked | lost)` events, with LOSS only for the
-  unreliable receipt type;
-- `DeallocatePacket` as a no-op or a copy-out model, since RocketNet's
-  delivered batch is library-owned until the next update (`USAGE.md:68-76`).
-
-Everything in this section is to be rechecked against the shim when it arrives.
+RakNet's C# binding is SWIG-generated from its public headers. RocketNet
+offers C and C++ only: `sdk/rocketnet.h` is the public C surface, and the C++
+headers sit beside it. There is no C# or managed binding in this tree.
 
 ## 14. Not done, and open for a harness
 
@@ -1119,5 +1042,5 @@ Everything in this section is to be rechecked against the shim when it arrives.
   of the reliability layer and the receipt serial; the handshake, pings beyond
   the keep-alive, and plugins were not.
 - The SWIG `.i` files were read for the include list, the ignores and the
-  `byte[]` typemap; the generated C# was taken as the surface. The customer's
-  shim replaces section 13 when it arrives.
+  `byte[]` typemap. RakNet's C# binding has no counterpart in RocketNet, which
+  offers C and C++ only.

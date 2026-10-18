@@ -23,6 +23,7 @@ names.
 | Ubuntu 24.04 (Linux, hosted) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | ubuntu-24.04 |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | self-hosted, Linux, X64, fleet |
 | macOS latest | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macos-latest |
+| Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | windows-2025 |
 | Windows Server 2025 | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | windows-2025 |
 | Linux | arm64 | none | none | unsupported | - | - |
 | Windows | arm64 | none | none | unsupported | - | - |
@@ -100,12 +101,11 @@ new support claim:
 - `static.yml`, `tlc.yml`, `msan.yml` and `nightly-leaks.yml` run on the
   self-hosted `[self-hosted, Linux, X64, fleet]` runners. They are analysis
   and leak gates on the supported Linux x86_64 platform.
-- `nightly-soak.yml` runs its soak job on the self-hosted Linux x86_64 fleet
-  and on hosted `macos-latest`, and its sanitized-soak job on hosted
-  `ubuntu-24.04`.
+- `nightly-soak.yml` runs its soak job on `ubuntu-latest` with the
+  `self-hosted, Linux, X64, fleet` label, on hosted `macos-latest`, and on
+  hosted `windows-2025`, and its sanitized-soak job on hosted `ubuntu-24.04`.
 - `ci.yml`'s `platform-selftests` job runs on hosted `ubuntu-24.04` and
-  `macos-15`; `csharp-smoke` runs on the Linux x86_64 fleet, `macos-15` and
-  `windows-2025`.
+  `macos-15`.
 - `fuzz-nightly.yml` runs on hosted `ubuntu-24.04`.
 
 ## Checking the table

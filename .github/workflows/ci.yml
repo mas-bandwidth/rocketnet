@@ -579,7 +579,7 @@ jobs:
         if: runner.environment == 'github-hosted'   # self-hosted runners come provisioned; apt on four concurrent runners collides on the lock
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
 
       # the library is built once with coverage instrumentation and the
       # sanitizers, then the harness links against it -- one parallel build
@@ -604,7 +604,7 @@ jobs:
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz
 
       - name: Build the message harness
@@ -613,7 +613,7 @@ jobs:
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isdk fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
-            -lbpf -lxdp -lpthread \
+            -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz_message
 
       # THE GATE: each committed input, once, in order. libFuzzer given files
@@ -695,7 +695,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev xxd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang libbpf-dev libxdp-dev libsodium-dev liburing-dev xxd
 
       - name: Configure the instrumented library
         run: >
@@ -717,7 +717,7 @@ jobs:
               -DROCKETNET_DEVELOPMENT=1 -DNDEBUG \
               -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
               -Isodium -Isdk -Itest "fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
-              -lbpf -lxdp -lpthread \
+              -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
 
