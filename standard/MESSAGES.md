@@ -2282,23 +2282,19 @@ promotion defined here and in [m2 Payload forms and sender size rules](#m2).
    defines.
 2. After applying limits in [m2 Payload forms and sender size rules](#m2),
    a sender MUST use the reliable code-2 path for a permitted
-   type-5 send whose data exceeds the row code-0 single-record data maximum.
-   The sender MUST preserve the type-5 receipt for that send. The receiver
-   sees code 2; the sender reports ACKED only after every block fragment is
-   acknowledged.
+   type-5 send whose data exceeds the row `UNRELIABLE record limit` of
+   [m2.2 Constants](#m2.2). The sender MUST preserve the type-5 receipt for
+   that send. The receiver sees code 2; the sender reports ACKED only after
+   every block fragment is acknowledged.
 3. A type-6 or type-7 receipt reports ACKED when all reliable numbers for its
    send are acknowledged. A type-5 send that remains unreliable reports ACKED
    when its carrying packet is acknowledged and LOSS when it is lost, refused
    by the send budget, or expires without an acknowledgement. These outcomes
    are API semantics and are not carried on the wire.
 
-| Name | Value | Units | Meaning |
-|---|---:|---|---|
-| code-0 single-record data maximum | `1411` | bytes | largest data field carried as one code-0 record |
-
 ```vector m12.promotion
 public type: 5 (unreliable with ack receipt)
-data length: one byte above the code-0 single-record data maximum
+data length: one byte above the UNRELIABLE record limit
 data: 0x41 in every byte
 packet: second payload of the promoted code-2 block
 0a 04 01 01 00 00 48 00 01 00 01 00 41 41 41 41
