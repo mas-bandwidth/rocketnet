@@ -1,0 +1,4 @@
+# The rows of RN-2 m8 (MESSAGES.md) this card wrote: document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_message.h"
+block stride	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
