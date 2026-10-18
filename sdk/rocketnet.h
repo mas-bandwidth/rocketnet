@@ -747,7 +747,7 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
 /** @brief Create a client transport and report the exact refusal status.
- * @param context [in] Caller-provided per-transport allocator context; NULL is allowed.
+ * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
  * @param connect_token [in] Non-NULL complete token buffer of ROCKETNET_CONNECT_TOKEN_BYTES.
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
@@ -1080,7 +1080,7 @@ ROCKETNET_EXPORT_FUNC bool rocketnet_server_transport_host_memory_estimate( cons
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
 
 /** @brief Create a server transport and report the exact refusal status.
- * @param context [in] Caller-provided per-transport allocator context; NULL is allowed.
+ * @param context [in] Caller-provided allocator context passed to allocations for this transport; NULL is allowed if supported by the configured allocator.
  * @param public_address_string [in] Non-NULL numeric bind/public address with optional port; port zero requests a dynamically assigned port when the selected driver supports it.
  * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
  * @param time [in] Finite monotonic initial time in seconds.
