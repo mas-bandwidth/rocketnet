@@ -199,8 +199,9 @@ The constants this section names are:
     `MESSAGE_SLOT_COLLISION`.
 11. A code 3 record MUST NOT carry an ordering index behind its channel's read
     index. Counter: `MESSAGE_ORDERING_BEHIND`.
-12. A CONTROL record MUST carry a recognised kind and a body of exactly
-    `config body bytes` bytes for kind 1. Counter: `MESSAGE_BAD_CONTROL`.
+12. A CONTROL record MUST carry a recognised kind, a body of exactly
+    `config body bytes` bytes for kind 1, and zero reserved bytes for a known
+    version. Counter: `MESSAGE_BAD_CONTROL`.
 
 The vectors below freeze one malformed payload for each check and the counter
 it produces.
