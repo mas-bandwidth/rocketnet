@@ -1706,9 +1706,11 @@ ROCKETNET_EXPORT_FUNC int rocketnet_counters_conserved( const struct rocketnet_c
 // once, in place; finish(bytes_written) queues it and returns its receipt
 // serial, nonzero (CHANNELS 7.4); abort gives the room back. One start is
 // pending per object at a time. The enabled types are ROCKETNET_UNRELIABLE,
-// ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE, ROCKETNET_RELIABLE_ORDERED, and
-// ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT; the others are refused (counted
-// MESSAGE_SEND_TYPE_NOT_ENABLED) until their cards enable them. Plain
+// ROCKETNET_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABLE, ROCKETNET_RELIABLE_ORDERED,
+// ROCKETNET_RELIABLE_SEQUENCED, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT,
+// ROCKETNET_RELIABLE_WITH_ACK_RECEIPT, and ROCKETNET_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+// a type a caller's own mask leaves out is refused (counted
+// MESSAGE_SEND_TYPE_NOT_ENABLED). Plain
 // UNRELIABLE is one record in one packet, up to 1411 bytes. UNRELIABLE_SEQUENCED
 // can use the transport's fragments for one larger unreliable RECORDS payload.
 // Receipt-bearing UNRELIABLE uses the code-0 wire form at single-packet size and promotes a larger

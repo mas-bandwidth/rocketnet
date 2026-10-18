@@ -830,9 +830,9 @@ The coupling is RakNet's (`RL.h:423-439`), applied on **one** path:
 A single function performs both "deliver" steps, and it runs whether a message
 is delivered as it arrives or released from a hold. So the study's items 18 and
 19 cannot happen: there is no second path to drift. The first version runs the
-`sequenced_write = 0` and `sequenced_watermark = 0` resets even though no
-sequenced type is enabled yet. Enabling sequenced later therefore changes no
-ordered trace, and `RNChannel` checks that.
+`sequenced_write = 0` and `sequenced_watermark = 0` resets on every ordered
+send. Enabling sequenced therefore changes no ordered trace, and `RNChannel`
+checks that.
 
 ### 7.2 Dispatch per record
 
@@ -853,8 +853,9 @@ Each later type's case lives in its own file, so its card runs without touching
 the dispatch: `sdk/rocketnet_channel_reliable.cpp` (code 2),
 `sdk/rocketnet_channel_sequenced.cpp` (codes 1 and 4) and
 `sdk/rocketnet_channel_receipts.cpp` (codes 5, 6 and 7). Each holds its
-enabled flag (false today) and its refusal; `rn_channels_dispatch` calls into
-them and counts `MESSAGE_TYPE_NOT_ENABLED` on the way back. Code 0's path is
+enabled flag (true in the first version) and its refusal;
+`rn_channels_dispatch` calls into them and counts `MESSAGE_TYPE_NOT_ENABLED`
+on the way back. Code 0's path is
 complete, and so is code 3's, in `rn_channels_dispatch_ordered`:
 
 - **Order in 24 bits.** The ordering index is 24 bits on the wire, so a record's
@@ -936,15 +937,15 @@ no receipt variants (study §2).
 ### 7.5 What "enabled" means in the first version
 
 The object holds a compile-time mask of the types an application may send. In
-the first version it is `{0, 3}`.
+the first version it is all eight types.
 
-- A send with any other reliability is refused (0, counted as
-  `MESSAGE_SEND_TYPE_NOT_ENABLED`).
+- A caller may initialise with a narrower mask; a send with a type the mask
+  leaves out is refused, counted as `MESSAGE_SEND_TYPE_NOT_ENABLED`.
 - The mask goes into CONFIG (section 13.4). Peers with different masks
-  disconnect at CONFIG, so a first-version receiver never meets codes 1, 2 or 4
-  from a correct peer. Code 2 is still live internally, because CONFIG uses it.
-  The receiver treats an application record with code 1, 2 or 4 as violation
-  `MESSAGE_TYPE_NOT_ENABLED`.
+  disconnect at CONFIG, so a receiver never meets a wire code its own mask
+  does not enable from a correct peer. Code 2 is still live internally, because
+  CONFIG uses it. The receiver treats an application record with such a code as
+  violation `MESSAGE_TYPE_NOT_ENABLED`.
 - Enabling a type means three things: one bit in the mask, removing one
   refusal, and the dispatch case. The dispatch code is written and unit-tested
   from the first version, behind the mask.
@@ -1793,7 +1794,7 @@ The CONFIG vector:
 - flags `0x22`: code 2 with CONTROL.
 - length 28, then number 0.
 - kind 1, version 1.
-- enabled `0x09`: types 0 and 3.
+- enabled `0xFF`: all eight types.
 - 32 channels, `W` 1024, `B` 262144, max 262144, F 1152.
 
 Card C2 regenerates every vector from the codec and diffs it byte for byte.
@@ -2217,7 +2218,7 @@ requires.
 - **C2.** Layer 2: codec, checks, vectors and fuzz target. The STANDARD.md
   _Messages_ section lands with it (G4).
 - **C3.** Layer 3: window, ring, sent map, RTO; `RNWindow`, `RNRing`.
-- **C4.** Layer 4: channels and dispatch, codes 0 and 3 enabled; `RNChannel`.
+- **C4.** Layer 4: channels and dispatch, all eight codes enabled; `RNChannel`.
 - **C5.** Layer 5: blocks; `RNBlocks`.
 - **C6.** Layer 6: scheduler and builder; `RNScheduler`.
 - **C7.** Layer 7: endpoint and slots machines, with socketless tests;
