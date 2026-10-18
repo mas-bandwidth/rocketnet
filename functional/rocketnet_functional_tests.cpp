@@ -3348,6 +3348,11 @@ void rocketnet_test_server_driver_pin_iocp()
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
 }
 
+void rocketnet_test_server_driver_pin_rio()
+{
+    rocketnet_test_driver_pin_exchange( "rio", "rio" );
+}
+
 // the rio driver (sdk/rocketnet_server_rio_windows.cpp, tla/RNRioDriver.tla)
 // against a plain UDP peer on loopback
 
@@ -6035,6 +6040,7 @@ extern void rocketnet_test_lifecycle_driver();
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_rio, "test_server_driver_pin_rio", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv4, "test_server_rio_wire_ipv4", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp driver is windows-only" )
@@ -6335,12 +6341,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+    { "test_server_driver_pin_rio", rocketnet_test_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_test_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_test_server_rio_wire_ipv4 },
     { "test_server_iocp_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe },
     { "test_server_iocp_uso_wire", rocketnet_test_server_iocp_uso_wire },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_functional_skip_server_driver_pin_iocp },
+    { "test_server_driver_pin_rio", rocketnet_functional_skip_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_functional_skip_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_functional_skip_server_rio_wire_ipv4 },
     { "test_server_iocp_uso_uro_probe", rocketnet_functional_skip_server_iocp_uso_uro_probe },

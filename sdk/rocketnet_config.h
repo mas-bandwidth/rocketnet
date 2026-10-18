@@ -150,7 +150,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 //   linux       xdp, gso, io_uring, portable      portable
 //   macOS       msgx, portable                    msgx, portable
 //   iOS         portable                          portable
-//   windows     portable                          portable
+//   windows     portable, iocp, rio               portable
 //   BSDs        portable                          portable
 //
 // (the staged linux drivers are server-side machinery; the client is the

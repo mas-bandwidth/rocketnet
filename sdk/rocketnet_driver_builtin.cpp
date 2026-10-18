@@ -236,6 +236,24 @@ static const rocketnet_server_driver_operations_t iocp_operations =
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL
 };
 extern const rocketnet_driver_backend_t rocketnet_iocp_driver = { &iocp_operations, NULL };
+
+#include "rocketnet_server_rio.h"
+static void * rio_create( void * context, const rocketnet_server_driver_config_t *, rocketnet_address_t * bind )
+{ return rocketnet_server_rio_create( context, bind, 0 ); }
+static void rio_destroy( void * driver ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t*) driver ); }
+static bool rio_stop( void * driver )
+{
+    rocketnet_server_rio_stop( (rocketnet_server_rio_t*) driver );
+    return rocketnet_server_rio_stopped( (rocketnet_server_rio_t*) driver );
+}
+ROCKETNET_STAGED_ADAPTER(rio, rocketnet_server_rio_t, rocketnet_server_rio)
+static const rocketnet_server_driver_operations_t rio_operations =
+{
+    ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FLUSH_ON_UPDATE,
+    rio_create, rio_destroy, rio_stop,
+    rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL
+};
+extern const rocketnet_driver_backend_t rocketnet_rio_driver = { &rio_operations, NULL };
 #endif
 #undef ROCKETNET_STAGED_ADAPTER
 
@@ -289,6 +307,11 @@ bool rocketnet_builtin_server_memory_plan(const rocketnet_server_transport_confi
         const int workers = config->num_xdp_queues ? config->num_xdp_queues : ROCKETNET_IOCP_DEFAULT_WORKERS;
         plan.driver_bytes = rocketnet_server_iocp_allocation_bytes(workers);
         plan.worker_threads = workers; plan.sockets = 1;
+    }
+    else if (strcmp(driver, "rio") == 0)
+    {
+        plan.driver_bytes = rocketnet_server_rio_allocation_bytes();
+        plan.worker_threads = 0; plan.sockets = 1;
     }
 #endif
     else return false; // A custom driver's resource policy remains native to it.
