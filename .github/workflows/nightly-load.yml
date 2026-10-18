@@ -1,0 +1,97 @@
+# The nightly many-client load tier (docs/LOAD.md): all 1000 clients run
+# traffic for 300 seconds on each supported desktop/server OS. A nonzero
+# load exit is a failed leg; its last summary line is printed and saved.
+
+name: nightly-load
+
+on:
+  schedule:
+    - cron: "40 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        os:
+          # Keep the nightly-soak.yml runner selection and build paths.
+          - ubuntu-latest
+          - macos-latest
+          - windows-2025
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON('["self-hosted","Linux","X64","fleet"]') || matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Install dependencies (Linux)
+        if: (runner.os == 'Linux') && runner.environment == 'github-hosted'
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libcurl4-openssl-dev libsodium-dev xxd
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkgconf || brew install libsodium pkg-config
+
+      - name: Build
+        if: runner.os != 'Windows'
+        run: make
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      - name: Many-client load (Linux and macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set +e
+          ./bin/load 1000 300 > load.log 2>&1
+          result=$?
+          grep '^load: .*verdict=' load.log | tail -1 > load-summary.txt || true
+          if [ -s load-summary.txt ]; then
+            cat load-summary.txt
+          else
+            tail -50 load.log
+            echo 'load did not print a summary'
+            exit 1
+          fi
+          exit "$result"
+
+      - name: Many-client load (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set +e
+          ./bin/Release/load.exe 1000 300 > load.log 2>&1
+          result=$?
+          grep '^load: .*verdict=' load.log | tail -1 > load-summary.txt || true
+          if [ -s load-summary.txt ]; then
+            cat load-summary.txt
+          else
+            tail -50 load.log
+            echo 'load did not print a summary'
+            exit 1
+          fi
+          exit "$result"
+
+      - name: Upload the load summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-load-${{ matrix.os }}-${{ strategy.job-index }}
+          path: load-summary.txt
+          if-no-files-found: error
