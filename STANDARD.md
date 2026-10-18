@@ -2353,7 +2353,12 @@ of the transport's wire bytes: **1000 kbps for the client's one connection,
 not a wire constant: the message config fields `client_send_kbps` and
 `server_send_kbps` carry those defaults, and an application changes one
 connection with `rocketnet_message_client_set_send_kbps` or
-`rocketnet_message_server_set_send_kbps`.
+`rocketnet_message_server_set_send_kbps`. An operator overrides either field
+with the environment variable `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` or
+`ROCKETNET_MESSAGE_SERVER_SEND_KBPS`, read at create over the config field and
+the create argument (default < struct < environment) and logged with the value
+it displaces; a value that does not parse, or one above the maximum, refuses
+the create.
 
 An unreliable send over the budget is dropped and counted as
 `MESSAGE_UNRELIABLE_OVER_BUDGET`; a reliable send over the budget waits and is

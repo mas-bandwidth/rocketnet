@@ -2102,6 +2102,68 @@ static void unreliable_over_a_lossy_link_arrives_intact_at_most_once()
 REGISTER_UNIT_TEST( start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( receive_view_is_the_record );
 REGISTER_UNIT_TEST( release_returns_room );
+
+// the operator's environment overrides the config field and the create
+// argument, loudly: DEFAULT < STRUCT < ENV (docs/CHANNELS.md 11.5). Windows
+// has no setenv or unsetenv: _putenv_s sets, and an empty value removes.
+
+#if defined( _WIN32 )
+static void mo_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
+static void mo_unsetenv( const char * name ) { _putenv_s( name, "" ); }
+#else
+static void mo_setenv( const char * name, const char * value ) { setenv( name, value, 1 ); }
+static void mo_unsetenv( const char * name ) { unsetenv( name ); }
+#endif
+
+static void send_budget_env_overrides_config()
+{
+    rocketnet_message_config_t config;
+    mo_config( &config );
+    config.client_send_kbps = 250;
+    config.server_send_kbps = 4000;
+
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "300" );
+    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "-1" );
+    {
+        // over the config field: the client takes 300, every server slot is uncapped
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
+        check( mo_client_connection( pair.clients[0] )->send_budget_enabled == 1 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
+        check( mo_server_slot( &pair, 1 )->send_budget_enabled == 0 );
+        mo_pair_teardown( &pair );
+    }
+    {
+        // and over a positive create argument
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 500, 5000 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 300 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 0 );
+        mo_pair_teardown( &pair );
+    }
+    {
+        // a value that does not parse, or one above the maximum, refuses the create
+        mo_net_t * net = mo_net_new();
+        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
+        check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "10000001" );
+        check( mo_client_create( net, 0, &config, 0 ) == NULL );
+        mo_net_free( net );
+    }
+    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
+    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
+    {
+        // unset: the config fields again
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1, &config, 0, 0 );
+        check( mo_client_connection( pair.clients[0] )->budget.kbps == 250 );
+        check( mo_server_slot( &pair, 0 )->budget.kbps == 4000 );
+        check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
+        mo_pair_teardown( &pair );
+    }
+}
+
 REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
@@ -2112,6 +2174,7 @@ REGISTER_UNIT_TEST( send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( set_send_kbps_zero_or_negative_uncaps );
+REGISTER_UNIT_TEST( send_budget_env_overrides_config );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );

@@ -324,8 +324,10 @@ budget is in kbps, configured by the message config's `client_send_kbps`
 (default 1000) and `server_send_kbps` (default 10000 per server slot). At
 create, 0 takes that field and a positive value overrides it; a value of 0 or
 lower disables the budget, which is not recommended. `rocketnet_message_*_set_send_kbps`
-changes it at runtime under the same rule. The design is docs/CHANNELS.md,
-section 11.5 for what is built.
+changes it at runtime under the same rule. The environment variables
+`ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` and `ROCKETNET_MESSAGE_SERVER_SEND_KBPS`
+override the field and the create argument, logged at create. The design is
+docs/CHANNELS.md, section 11.5 for what is built.
 
 ## Connection quality
 
