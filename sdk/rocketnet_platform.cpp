@@ -883,7 +883,8 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
 
     while ( total < max_packets )
     {
-        int want = max_packets - total;
+        const int chunk_base = total;
+        int want = max_packets - chunk_base;
         if ( want > ROCKETNET_MSS_BATCH )
             want = ROCKETNET_MSS_BATCH;
 
@@ -893,7 +894,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
         for ( int i = 0; i < want; i++ )
         {
             memset( &msg[i], 0, sizeof(msg[i]) );
-            iov[i].iov_base = packet_data + (size_t) ( total + i ) * (size_t) packet_stride;
+            iov[i].iov_base = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
             iov[i].iov_len = (size_t) packet_stride;
             msg[i].msg_hdr.msg_name = &addresses[i];
             msg[i].msg_hdr.msg_namelen = sizeof(addresses[i]);
@@ -935,17 +936,18 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
             const int bytes = (int) msg[i].msg_len;
             if ( bytes <= 0 )
                 continue;
-            const uint8_t * source = packet_data + (size_t) ( total + i ) * (size_t) packet_stride;
-            uint8_t * target = packet_data + (size_t) ( total + kept ) * (size_t) packet_stride;
+            const uint8_t * source = packet_data + (size_t) ( chunk_base + i ) * (size_t) packet_stride;
+            uint8_t * target = packet_data + (size_t) ( chunk_base + kept ) * (size_t) packet_stride;
             if ( target != source )
             {
                 memmove( target, source, (size_t) bytes );
             }
-            from[total] = parsed;
-            packet_bytes[total] = bytes;
-            total++;
+            from[chunk_base + kept] = parsed;
+            packet_bytes[chunk_base + kept] = bytes;
             kept++;
         }
+
+        total += kept;
 
         if ( result < want )
             return total;
