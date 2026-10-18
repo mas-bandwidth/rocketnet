@@ -328,17 +328,152 @@ single delivery; vectors.
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
-Status: pending
+### m9.1. Acknowledgement mapping
 
-Scope: mapping RN-1 packet acknowledgements to records; resend timing and
-the reliable timeout; the send budget. Decided requirements this section
-states, with their pins: the send budget default is 1000 kilobits per second
-for a client (client to server) and 10000 kilobits per second for a server,
-per client (server to each client); both are configuration fields under
-[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2); a value of 0 or
-below disables the budget, and disabling it is NOT RECOMMENDED; a reliable
-record that does not fit the budget waits and is never dropped; an
-unreliable record that does not fit is dropped and counted.
+The connection layer reports which of a sender's packets the peer
+acknowledged. The message layer keeps its own reliable numbering, so it MUST
+translate each report into the reliable numbers and receipt serials that
+packet carried.
+
+A sender MUST keep a sent-packet map from the connection layer's sequence of
+each send to the reliable numbers and receipt serials that send carries. Every
+send, a resend included, MUST take a fresh sequence, so an acknowledgement
+names exactly one send. A sender MUST ignore an acknowledgement whose sequence
+the map does not hold.
+
+On an acknowledgement, for each number the packet carried that is still
+unacknowledged, the sender MUST mark the number acknowledged, remove it from
+its resend queue, advance the lowest unacknowledged number, and take one
+round-trip sample equal to the time between the send and the acknowledgement.
+A number that was already acknowledged MUST NOT be acknowledged or sampled a
+second time.
+
+### m9.2. Round-trip estimate and retransmission timeout
+
+The sender MUST estimate the round-trip time with the algorithm of RFC 6298
+over the samples of the acknowledgement mapping. The retransmission timeout
+MUST be
+
+    clamp( srtt x rto_scale_percent / 100 + 2 x rttvar, rto_min_ms, rto_max_ms )
+
+where srtt is the smoothed round-trip time and rttvar is its variation, both
+in seconds. Before the first sample the timeout MUST be rto_initial_ms. The
+timeout MUST NOT back off after a resend: every pass uses the same function of
+the samples, so a record that is never acknowledged is resent at the same
+delay until the reliable timeout ends the connection.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| `rto_initial_ms` | `100` | ms | the timeout before the first round-trip sample |
+| `rto_min_ms` | `10` | ms | the smallest timeout the estimate may take |
+| `rto_max_ms` | `250` | ms | the largest timeout the estimate may take |
+| `rto_scale_percent` | `125` | percent | the srtt weight in the timeout |
+| `reliable_timeout_ms` | `10000` | ms | how long the oldest unacknowledged number may stand |
+| `resend_interval_ms` | `100` | ms | the cap on the resend delay of a single-packet record |
+| `min_resend_attempts` | `4` | count | the sends that fit before the reliable timeout |
+
+### m9.3. Resend classes and the reliable timeout
+
+A sender MUST keep two resend queues. A single-packet reliable record is in the
+small-record queue; a fragment of a block is in the chunk queue. A number MUST
+be in at most one queue.
+
+The resend delay of a single-packet record MUST be min( rto,
+resend_interval_ms ). The resend delay of a chunk MUST be min( rto,
+reliable_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+at the first update whose time is at least the number's last send plus its
+resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
+connection layer sequence and MUST move the number to the tail of its queue.
+
+The sender MUST end the connection with ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT
+when the oldest unacknowledged reliable number has stood unacknowledged for
+reliable_timeout_ms or more, measured from its first send. A connection that
+ends with ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT MUST stop resending.
+
+### m9.4. Send budget
+
+Every connection MUST send at most its send budget, a rate in kilobits per
+second where 1 kbps is 1000 bit/s. The bytes counted MUST be the wire bytes of
+each sealed packet: the prefilter header, sequence, acknowledgement block,
+payload and tag, excluding the IP and UDP headers. A budget of K kbps is
+K x 125 bytes per second.
+
+The sender MUST hold the budget in a token bucket. The bucket starts full. It
+refills at the budget rate multiplied by the elapsed time since its last
+refill, and its contents MUST NOT exceed its depth. The depth MUST be the
+larger of 100 ms of the budget and one maximum packet, so that one maximum
+packet always fits an idle bucket and a stalled update releases at most 100 ms
+of budget at once. An update at or before the last refill time MUST NOT add
+tokens and MUST NOT move the refill time backwards.
+
+Within one update the sender MUST offer its items in this order: retransmits
+and ordered progress first, then new reliable records, then unreliable
+records. A reliable item that does not fit MUST wait for a later update and
+MUST NOT be dropped. Once a reliable item waits, every later item in that
+update MUST NOT spend the bucket. An unreliable item that does not fit MUST be
+dropped and counted as MESSAGE_UNRELIABLE_OVER_BUDGET. An item offered after a
+lower-priority class in the same update MUST be counted as an order refusal; a
+reliable item among them waits rather than spending bytes promised to the
+earlier class.
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| `client_default_kbps` | `1000` | kbps | the send budget of a new client connection |
+| `server_default_kbps` | `10000` | kbps | the send budget of a new server connection to one client |
+| `send_kbps_min` | `1` | kbps | the smallest enabled budget |
+| `send_kbps_max` | `10000000` | kbps | the largest budget |
+| `depth_seconds` | `0.1` | s | the bucket's time depth |
+| `maximum_packet_wire_bytes` | `1452` | bytes | one maximum packet, the smallest bucket depth |
+
+The client's budget to the server defaults to client_default_kbps and the
+server's budget to each client defaults to server_default_kbps. A positive
+value outside send_kbps_min to send_kbps_max MUST be refused and MUST leave the
+budget unchanged. A budget of 0 or less disables that direction's budget, so
+the endpoint sends unthrottled; disabling a budget is NOT RECOMMENDED.
+
+A setter MUST refill at the old rate up to its time argument, then apply the
+new rate and depth from that time, keeping the bucket's bytes capped at the new
+depth. The budget change is visible when the setter returns success.
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| Open | a reliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
+| Open | a reliable item is offered | it does not fit, or a reliable item waits | keep it for a later update | Waiting |
+| Open | an unreliable item is offered | it fits and no reliable item waits | spend its bytes | Open |
+| Open | an unreliable item is offered | it does not fit, or a reliable item waits | drop it and count it | Open |
+| Waiting | any item is offered | | an unreliable item is dropped and counted; a reliable item waits | Waiting |
+| Waiting | the update ends | | | Open |
+| Any | an item is offered after a lower-priority class | | count the order refusal; a reliable item waits | Waiting |
+
+### m9.5. Vectors
+
+```vector m9.resend-trace
+clock: 1000.0
+trace: short path: a 20 ms sample, resend passes at 0.040, 0.046, 0.090 and 0.091 seconds, reliable timeout checks at 9.999 and 10.000 seconds; long path: a 400 ms sample, resend passes at 0.400, 0.499 and 0.501 seconds
+00 01 00 01 00 01 04 01 00 01
+```
+
+The first seven bytes are the short path's resend counts at its four passes,
+then the timeout checks at 9.999 and 10.000 seconds, then the error value. The
+last three are the long path's resend counts.
+
+```vector m9.budget-trace
+clock: 1000.0
+rate: the client default
+trace: a reliable 1452-byte item, seven unreliable 1452-byte items, then one more unreliable item; no time passes, a reliable 1452-byte item waits and an unreliable 100-byte item is dropped; 100 ms of refill, a reliable 1452-byte item; the rate is set to 2000 kbps; 100 ms of refill at the new rate, a reliable 1452-byte item; the budget is set to 0, then one 13000-byte unreliable sequenced item is offered, written whole and committed
+00 00 00 00 00 00 00 00 02 01 02 00 01 00 01 01
+01 01 01 01
+```
+
+The first fourteen bytes are the decision for each offer in order: SEND,
+WAIT, DROP and REFUSED are 0, 1, 2 and 3; the setter's success is 1. They are
+the reliable item, the seven unreliable items that fit, the unreliable item
+that is dropped, the reliable item that waits, the unreliable item behind it
+that is dropped, the refill's reliable item, the setter and the new-rate
+reliable item. The last six bytes are, in order, the setter to 0 returning
+success, a packet request of more than zero, the item written larger than one
+maximum packet, the queue drained, no bytes charged to the budget and no
+unreliable item dropped.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
@@ -384,4 +519,6 @@ It is generated; the bytes are in the sections.
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
+| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.budget-trace` |
+| [m9 Acknowledgement mapping, resend and send budget](#m9) | `m9.resend-trace` |
 <!-- vector-index:end -->
