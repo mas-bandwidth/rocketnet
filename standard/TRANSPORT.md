@@ -521,10 +521,252 @@ dispatch, with the counter each refusal increments.
 <a id="t11"></a>
 ## t11. Handshake: client
 
-Status: pending
+The client is in exactly one of the states of the table below. A state number is signed: a negative state is how the last attempt or connection ended, and a non-negative state is a state the client acts in.
 
-Scope: the client states, with their values, and the client's state table
-from requesting a cookie to connected.
+1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0). In every other state, a connect token MUST be ignored and the state MUST NOT change.
+2. A connect token accepted in disconnected (0) MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, or when its version is not the version of [t3 Constants and registries](#t3). An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
+3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set, otherwise the IPv4 address.
+4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
+5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
+6. While the client is in requesting cookie (1), sending connection request (2) or sending connection response (3), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in connected (4).
+7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t3 Constants and registries](#t3) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
+8. In a positive state below connected (4), a client that has received no packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5).
+9. A negative state MUST persist until the client disconnects. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0) the client MAY connect again with a new token.
+
+The state numbers:
+
+| Name | Value | Meaning |
+|---|---|---|
+| connect token expired | `-7` | the attempt ended at the token's lifetime |
+| invalid connect token | `-6` | the attempt never began: the token failed a pre-send check |
+| connection timed out | `-5` | an established connection received nothing for the timeout |
+| connection response timed out | `-4` | no answer to the response for the timeout |
+| connection request timed out | `-3` | no answer to the request for the timeout |
+| cookie request timed out | `-2` | no answer to the first request for the timeout |
+| connection denied | `-1` | the server denied the attempt |
+| disconnected | `0` | the client holds no connection and may connect |
+| requesting cookie | `1` | the client waits for a cookie |
+| sending connection request | `2` | the client waits for a challenge or a denial |
+| sending connection response | `3` | the client waits for the server's first session packet |
+| connected | `4` | the connection is established |
+
+<a id="t11.1"></a>
+### t11.1. Cookie processing
+
+A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change.
+
+<a id="t11.2"></a>
+### t11.2. Challenge and denial processing order
+
+A connection challenge packet MUST be processed only in sending connection request (2); in every other state it MUST be ignored. A connection denied packet MUST be processed in sending connection request (2) and sending connection response (3); in every other state it MUST be ignored.
+
+Each packet MUST be checked in this order:
+
+1. Its size MUST be the packet's wire size of [t8 Packet formats](#t8). A client MUST refuse a wrong-size packet as WRONG_SIZE before any state, sequence or cryptographic check, MUST NOT count an integrity failure for it, and MUST NOT change its state.
+2. Its sequence MUST be nonzero; a sequence of zero MUST be refused with no state change.
+3. In sending connection request (2), a challenge MUST derive the handshake keys from the carried session nonce and open under them. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
+4. An accepted challenge MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3).
+5. A denial in sending connection request (2) MUST open under handshake keys derived from its carried session nonce; a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
+6. An accepted denial MUST release the connection state and MUST move to connection denied (-1).
+
+The response of step 4 MUST be retransmitted byte for byte; a later challenge MUST NOT produce a second response.
+
+<a id="t11.3"></a>
+### t11.3. Session processing before connected
+
+A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be delivered to the application. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0).
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| disconnected (0) | connect | token invalid | do not begin an attempt | invalid connect token (-6) |
+| disconnected (0) | connect | token expired | do not begin an attempt | connect token expired (-7) |
+| disconnected (0) | connect | token valid | fresh salt and ephemeral keypair; sequences at one | requesting cookie (1) |
+| disconnected (0) | any other event | | ignore | disconnected (0) |
+| any negative state | disconnect | | per-connection reset | disconnected (0) |
+| any negative state | connect | | ignore | unchanged |
+| any negative state | any other event | | ignore | unchanged |
+| requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
+| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes | sending connection request (2) |
+| requesting cookie (1) | cookie | size wrong or salt differs | ignore | requesting cookie (1) |
+| requesting cookie (1) | timeout | no packet received for the token timeout | | cookie request timed out (-2) |
+| requesting cookie (1) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| sending connection request (2) | update, send due | | send request with the stored cookie | sending connection request (2) |
+| sending connection request (2) | cookie | size correct, salt matches | replace the stored cookie | sending connection request (2) |
+| sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
+| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response | sending connection response (3) |
+| sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
+| sending connection request (2) | challenge | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
+| sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |
+| sending connection request (2) | denied | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
+| sending connection request (2) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
+| sending connection request (2) | timeout | no packet received for the token timeout | | connection request timed out (-3) |
+| sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
+| sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
+| sending connection response (3) | payload | opens | deliver the payload | sending connection response (3) |
+| sending connection response (3) | denied | size correct, opens | release the connection state | connection denied (-1) |
+| sending connection response (3) | denied | size wrong | refuse as WRONG_SIZE | sending connection response (3) |
+| sending connection response (3) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection response (3) |
+| sending connection response (3) | disconnect | opens | release the connection state | disconnected (0) |
+| sending connection response (3) | timeout | no packet received for the token timeout | | connection response timed out (-4) |
+| sending connection response (3) | total deadline | token lifetime elapsed | | connect token expired (-7) |
+| connected (4) | update, send due | | send a keep-alive with the client index and the slot count | connected (4) |
+| connected (4) | session packet | opens | refresh the last-received time; deliver a payload; apply an ack block | connected (4) |
+| connected (4) | disconnect | opens | release the connection state | disconnected (0) |
+| connected (4) | timeout | no packet received for the token timeout | | connection timed out (-5) |
+
+An event a state does not list is ignored in that state with no state change. A packet that fails a guard is refused and counted, with no state change except where the table states one.
+
+```vector t11.client-transcript
+input: the frozen connect token of 768 bytes and its protocol id
+input: connection salt 53 41 4c 54 30 30 30 31
+input: the published client ephemeral keypair and server ephemeral keypair
+input: the published session nonce 4e 4f 4e 43 45 30 30 31
+input: updates at 1000.0, 1000.1, 1000.2 and 1000.31 seconds; the challenge is lost
+input: bytes 1 to 710 are the first request, 711 to 1420 the request with the cookie, 1421 to 2130 the request retransmitted after the lost challenge, 2131 to 2180 the response
+state after packet 1: requesting cookie (1)
+state after packet 2: sending connection request (2)
+state after packet 3: sending connection request (2), the challenge lost
+state after packet 4: sending connection response (3)
+00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 41
+4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
+9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
+c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+22 11 00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
+00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
+24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3
+10 fd d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21
+34 f1 e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2
+f2 87 72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1
+bf 01 fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6
+0c 08 f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a
+46 58 80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c
+d3 67 17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb
+10 42 bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f
+44 e4 de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd
+8d 7b f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0
+5e 5b 09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31
+66 00 c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73
+d4 60 ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4
+e0 8d 52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8
+02 95 f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4
+2b 67 06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56
+55 4f 26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50
+1f 9e 3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3
+24 d9 03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7
+96 26 06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0
+3f 61 e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c
+1c 5c 14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9
+5c cb 8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc
+b0 eb 7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad
+d3 20 a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d
+d3 5c f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68
+d8 00 d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30
+33 40 ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60
+ff e0 77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76
+8b 80 0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6
+4e a6 b0 9e 76 0d 00 00 b7 59 01 00 2c fa ac 68
+00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36 4f 57
+74 86 f3 e9 53 41 4c 54 30 30 30 31 3a 55 3d 74
+79 2d 72 7e fa 9b 9a 4c de 3d a1 ad 93 f1 a2 d0
+c0 9c b6 39 b1 a3 c0 fd a1 4c be 24 93 1a 7c 4e
+88 77 66 55 44 33 22 11 00 f9 ac 68 00 00 00 00
+2c fa ac 68 00 00 00 00 0a 00 00 00 01 cb 00 71
+0a 40 9c 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 3d 24 90 88 9d 37 4c 29 6f ab 1d
+57 70 cb 71 47 6a 06 f7 4e f2 f2 54 0c f2 21 5f
+76 14 f4 80 1c b3 10 fd d3 03 d6 aa d8 c7 90 0d
+fc 42 52 d9 4d 21 34 f1 e6 e1 73 20 f4 c5 b1 bd
+4f 28 79 da 3c e2 f2 87 72 08 61 88 73 78 ed f0
+1d e9 be fc 09 f1 bf 01 fd 3d f1 9e 2a 79 e6 08
+59 e8 96 34 6e b6 0c 08 f6 86 72 1d 81 94 6e 78
+1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0 68 ed e0 b0
+39 cf 52 81 a9 7c d3 67 17 76 6b 5b b1 38 69 83
+8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f 62 f9 cb b0
+20 dd bd a6 cb 5f 44 e4 de f4 36 66 64 2f f8 e6
+f8 35 a5 f2 95 dd 8d 7b f2 26 86 84 b2 a9 3e c1
+7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a fa c3 ec 0f
+00 50 8e 9d 43 31 66 00 c6 b7 45 d6 db b9 c6 8f
+12 d5 69 a1 95 73 d4 60 ba 34 e8 01 d7 44 d6 db
+6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd 44 36 7e f8
+9b cb b3 82 7f d8 02 95 f2 b9 40 4c dd 29 79 e3
+aa 17 51 3f f9 f4 2b 67 06 24 8e a7 62 28 20 28
+d4 fe 0c f7 11 56 55 4f 26 bf 90 cb 2b fc fe f4
+38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0 b3 36 51 ec
+75 6f 60 f4 23 f3 24 d9 03 23 ad c9 f6 c8 f1 76
+2b 02 ba 31 c7 e7 96 26 06 7f e7 f1 09 59 4a 80
+3d 33 05 02 fe b0 3f 61 e9 29 7e c1 1a ad eb cd
+69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b cd 11 4c 35
+32 2e 79 78 43 e9 5c cb 8b c9 74 8f da 08 19 7c
+e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7 38 a7 42 f6
+8f a3 eb 77 df ad d3 20 a1 1a 55 42 0e 3c cd 03
+f1 5e fc 18 3a 5d d3 5c f8 65 7f a7 12 b7 c9 74
+96 00 0e 6a 54 68 d8 00 d4 9d 13 45 ce 18 5d c0
+f7 bc 71 47 a9 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 6b 36 92 b4
+9d 36 b7 a2 76 30 33 40 ab 83 99 b9 85 61 ac 68
+81 fc 7a a2 bb 60 ff e0 77 32 ea 71 21 fe 50 44
+eb b5 f5 3d be 76 8b 80 0c 30 d7 53 70 eb 9b eb
+49 14 ae 13 3d a6 4e a6 b0 9e 76 0d 00 00 b7 59
+01 00 2c fa ac 68 00 00 00 00 0f b2 b2 8f 32 db
+d6 c9 eb 36 4f 57 74 86 f3 e9 53 41 4c 54 30 30
+30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d
+a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c
+be 24 93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9
+ac 68 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00
+00 00 01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d
+37 4c 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2
+f2 54 0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03
+d6 aa d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1
+73 20 f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08
+61 88 73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d
+f1 9e 2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86
+72 1d 81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3
+a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76
+6b 5b b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a
+7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4
+36 66 64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26
+86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92
+7b 6a fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7
+45 d6 db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34
+e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03
+bb bd 44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9
+40 4c dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24
+8e a7 62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf
+90 cb 2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2
+4b c0 b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23
+ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f
+e7 f1 09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29
+7e c1 1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a
+e2 3b cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9
+74 8f da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4
+71 d7 38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a
+55 42 0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65
+7f a7 12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d
+13 45 ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83
+99 b9 85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32
+ea 71 21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30
+d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e
+76 0d 03 00 b7 59 01 00 01 00 00 00 9c 08 60 98
+96 b9 d4 05 d5 14 9e 1e d9 da e4 dc 2b d2 4a e4
+cd a1 93 10 5c bf a9 ce 74 61 b3 97 ce 4b 50 c0
+1b 2f 8f 7e
+```
+The cookie moves the client from requesting cookie (1) to sending connection request (2); the lost challenge leaves it in sending connection request (2) until the retransmitted request draws the same challenge again; the accepted challenge moves it to sending connection response (3); the server's keep-alive moves it to connected (4).
 
 <a id="t12"></a>
 ## t12. Handshake: server
@@ -618,6 +860,7 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t11 Handshake: client](#t11) | `t11.client-transcript` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
