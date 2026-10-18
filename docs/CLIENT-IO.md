@@ -311,6 +311,38 @@ The gate is total main-thread time per frame: **total_us_p99 at most 100 us at P
 
 What the 100 us gate means for this design. The I/O thread design removes the send walk (509 us p99 at P = 32) and the receive-mutex wait (71-86 us p99), and leaves in `update` the per-reply work: the checks, the decrypt and the protocol, about 6 to 13 us per reply, so 187 to 418 us per frame at P = 32 (update p50 at BASE is 370 us at P = 32). That alone is above 100 us. So these cards can meet the send rows and the P = 1 and P = 8 rows, but the P = 32 total cannot be met while the per-reply work stays on the main thread: each implementation card reports `total_us_p99 P=32 head <x> target 100 gap <x - 100>` with the send and update windows separately, and the P = 32 total is gated at most 100 only by rocketnet-client-io-gate-100us, after the decrypt study (rocketnet-client-io-decrypt-study) decides how the per-reply decrypt and checks leave the main thread (`rocketnet-client-io-decrypt`, its own design with its own model, see What is left out). Moving it leaves update a copy-out of already-verified payloads and the protocol state, which the same meter measures.
 
+### The gate, measured
+
+2026-10-18, head 8ddc93e (sprint/rocketnet-client-io-gate-100us.w1.g1.e21; BASE and head are the same tree, so one measurement serves both columns), on a 16-core x86_64 Linux 6.8.0-139-generic member with g++ 13.3.0. The runs sit under ambient load (load average 6 to 13 on 16 cores, above a quarter of the core count), so p99 carries that load and an idle run would only read lower. Medians of three runs at each P, `./bin/client_main_thread_cost portable <P> 2000`:
+
+| P | measure | BASE | head |
+|---|---:|---:|---:|
+| 1 | send_us_p50 / p99 | 0.880 / 1.420 | 0.880 / 1.420 |
+| 1 | update_us_p50 / p99 | 0.630 / 1.350 | 0.630 / 1.350 |
+| 1 | total_us_p50 / p99 | 1.520 / 2.750 | 1.520 / 2.750 |
+| 8 | send_us_p50 / p99 | 1.500 / 2.120 | 1.500 / 2.120 |
+| 8 | update_us_p50 / p99 | 4.260 / 4.990 | 4.260 / 4.990 |
+| 8 | total_us_p50 / p99 | 5.760 / 7.590 | 5.760 / 7.590 |
+| 32 | send_us_p50 / p99 | 1.580 / 5.880 | 1.580 / 5.880 |
+| 32 | update_us_p50 / p99 | 12.830 / 20.441 | 12.830 / 20.441 |
+| 32 | total_us_p50 / p99 | 14.440 / 51.272 | 14.440 / 51.272 |
+
+Raw head lines:
+
+```
+client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.580 send_us_p99=5.880 send_us_max=220.396 update_us_p50=12.830 update_us_p99=30.101 update_us_max=55.381 total_us_p50=14.440 total_us_p99=51.272 total_us_max=271.788 received=70336
+client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.230 send_us_p99=113.003 send_us_max=744.361 update_us_p50=8.550 update_us_p99=20.441 update_us_max=106.293 total_us_p50=9.770 total_us_p99=133.444 total_us_max=769.612 received=70336
+client_main_thread_cost driver=portable packets_per_frame=32 frames=2000 send_us_p50=1.610 send_us_p99=2.810 send_us_max=179.975 update_us_p50=13.031 update_us_p99=17.441 update_us_max=45.521 total_us_p50=14.681 total_us_p99=20.051 total_us_max=211.246 received=70336
+client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.180 send_us_max=1999.466 update_us_p50=4.260 update_us_p99=6.471 update_us_max=14.640 total_us_p50=5.760 total_us_p99=8.870 total_us_max=2008.496 received=17584
+client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.400 send_us_p99=1.990 send_us_max=4.870 update_us_p50=4.140 update_us_p99=4.990 update_us_max=10.820 total_us_p50=5.560 total_us_p99=7.590 total_us_max=12.300 received=17584
+client_main_thread_cost driver=portable packets_per_frame=8 frames=2000 send_us_p50=1.500 send_us_p99=2.120 send_us_max=5.290 update_us_p50=4.290 update_us_p99=4.980 update_us_max=14.471 total_us_p50=5.790 total_us_p99=7.340 total_us_max=17.121 received=17584
+client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.850 send_us_p99=1.260 send_us_max=3.480 update_us_p50=0.600 update_us_p99=1.350 update_us_max=7.070 total_us_p50=1.440 total_us_p99=2.520 total_us_max=8.020 received=2198
+client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.880 send_us_p99=1.640 send_us_max=4.110 update_us_p50=0.630 update_us_p99=1.960 update_us_max=4.010 total_us_p50=1.520 total_us_p99=3.380 total_us_max=6.170 received=2198
+client_main_thread_cost driver=portable packets_per_frame=1 frames=2000 send_us_p50=0.911 send_us_p99=1.420 send_us_max=5.791 update_us_p50=0.660 update_us_p99=1.260 update_us_max=3.030 total_us_p50=1.600 total_us_p99=2.750 total_us_max=6.802 received=2198
+```
+
+Reached: total_us_p99 P=32 head 51.272 target 100 gap -48.728.
+
 ## Per-platform cards
 
 **rocketnet-client-io-transport (lands first, platform-generic).** PATHS:
