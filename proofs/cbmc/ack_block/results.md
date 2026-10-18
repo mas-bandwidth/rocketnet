@@ -19,3 +19,15 @@ The exact-size reader at 768, 1024, and the full 1472 bytes reached Z3 but ended
 The input is actually symbolic: a gate-only canary asserting `data[0] == 0` after the reader's exact-size allocation failed on a reachable path (one failed property). The canary is absent from the committed harness. The unchanged per-commit `all` target remains outside this nightly proof target; no full `all` gate is claimed here.
 
 Raw logs: `/home/nova/stella-jobs/resumed-1508-gates/rocketnet-cbmc-ack-block-read.w3/logs/` on the allocated Linux gate, notably `read-512.log`, `read-full.log`, `read-768.log`, `read-1024.log`, `reconstruct-cpp2.log`, `write-full.log`, `build-8-optimized.log`, `apply-1.log`, `apply-2.log`, `apply-8.log`, and `read-canary.log`.
+
+## Exact-size reader partition staged in the next attempt
+
+This is a proposed decomposition, **not a new proof result**. The default nightly bounds above remain unchanged. The harness now accepts compile-time bounds for an independent pilot:
+
+- Size 0 is invoked separately with a valid pointer; sizes 1..6 form the short-input shard. The SDK returns before reading a header.
+- For sizes 7..1472, split the actual count byte `data[4]` into the 16 disjoint bands `[0,15]`, `[16,31]`, ..., `[240,255]`. Each run retains a symbolic exact-size `malloc(data_bytes)` buffer, all other bytes symbolic, and arbitrary `highest_sent`. The byte-four pre-read is safe because this domain has at least seven bytes; `rocketnet_ack_block_read` reads the same byte after the four-byte wire largest field.
+- Within each band, split on `7 + 4*count > data_bytes` and `<= data_bytes`. The first branch returns before the range loop; the second enters the actual SDK range-validation path. The count-zero rejecting subcase is infeasible and is not claimed. The accepting branch of every band has a witness at `data_bytes = 7 + 4*count <= 1027`. For the high pilot, count 240 and size 967 are a witness; setting the first run to one and each subsequent gap/run to one gives a valid accepted block when largest is encoded as 481 and `highest_sent` is 481.
+
+The bands plus short-input shard cover every input length 0..1472 and every count byte. A full-domain claim requires a completed verdict for **each** feasible shard with unwinding assertions enabled. The high-count contained-geometry pilot uses `ACK_READ_MIN_BYTES=7`, `ACK_READ_MAX_BYTES=1472`, `ACK_READ_COUNT_LO=240`, `ACK_READ_COUNT_HI=255`, `ACK_READ_GEOMETRY_CASE=2`, and unwind 256. These constraints preserve the full input length range within the shard and do not constrain arbitrary payload bytes or highest sent. The prior failed 1472-byte run is not converted into a success by this plan.
+
+The one w4 pilot was prepared and syntax-checked, but its guarded invocation returned exit 75 before starting ESBMC: `Gate deferred: load1=31.42 exceeds 16.00`. It has no property result. The command and deferral are recorded in the allocated gate job's `logs/read-high-contained.log`.

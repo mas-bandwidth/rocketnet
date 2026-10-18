@@ -15,8 +15,39 @@
 #define ACK_APPLY_SENT_BOUND 8
 #endif
 
+#ifndef ACK_READ_MIN_BYTES
+#define ACK_READ_MIN_BYTES 1
+#endif
+
 #ifndef ACK_READ_MAX_BYTES
 #define ACK_READ_MAX_BYTES ROCKETNET_RECEIVE_CEILING
+#endif
+
+#ifndef ACK_READ_COUNT_LO
+#define ACK_READ_COUNT_LO 0
+#endif
+
+#ifndef ACK_READ_COUNT_HI
+#define ACK_READ_COUNT_HI ROCKETNET_ACK_BLOCK_MAX_RANGES
+#endif
+
+// 0 checks both geometries; 1 checks refused geometry; 2 checks contained geometry.
+#ifndef ACK_READ_GEOMETRY_CASE
+#define ACK_READ_GEOMETRY_CASE 0
+#endif
+
+#if ACK_READ_MIN_BYTES > ACK_READ_MAX_BYTES || ACK_READ_MAX_BYTES > ROCKETNET_RECEIVE_CEILING
+#error invalid_ack_read_size_domain
+#endif
+#if ACK_READ_COUNT_LO > ACK_READ_COUNT_HI || ACK_READ_COUNT_HI > ROCKETNET_ACK_BLOCK_MAX_RANGES
+#error invalid_ack_read_count_domain
+#endif
+#if ACK_READ_GEOMETRY_CASE < 0 || ACK_READ_GEOMETRY_CASE > 2
+#error invalid_ack_read_geometry_case
+#endif
+#if ACK_READ_MIN_BYTES < ROCKETNET_ACK_BLOCK_MIN_BYTES && \
+    (ACK_READ_COUNT_LO != 0 || ACK_READ_COUNT_HI != ROCKETNET_ACK_BLOCK_MAX_RANGES || ACK_READ_GEOMETRY_CASE != 0)
+#error count_partition_requires_complete_header
 #endif
 
 #ifndef ROCKETNET_ESBMC
@@ -34,9 +65,19 @@ void harness_ack_read(void)
     __CPROVER_assert(rocketnet_ack_block_read(&block, zero, 0, nondet_uint64()) == 0,
                      "zero-byte block is refused without reading");
     int n = nondet_int();
-    __CPROVER_assume(n >= 1 && n <= ACK_READ_MAX_BYTES);
+    __CPROVER_assume(n >= ACK_READ_MIN_BYTES && n <= ACK_READ_MAX_BYTES);
     uint8_t *data = (uint8_t *)malloc((size_t)n);
     __CPROVER_assume(data != NULL);
+#if ACK_READ_MIN_BYTES >= ROCKETNET_ACK_BLOCK_MIN_BYTES
+    // The actual decoder reads the count at byte four after the uint32 field.
+    const unsigned int wire_count = data[4];
+    __CPROVER_assume(wire_count >= ACK_READ_COUNT_LO && wire_count <= ACK_READ_COUNT_HI);
+#if ACK_READ_GEOMETRY_CASE == 1
+    __CPROVER_assume(ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * wire_count > (unsigned int)n);
+#elif ACK_READ_GEOMETRY_CASE == 2
+    __CPROVER_assume(ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * wire_count <= (unsigned int)n);
+#endif
+#endif
     uint64_t highest = nondet_uint64();
     int got = rocketnet_ack_block_read(&block, data, n, highest);
     __CPROVER_assert(got >= 0 && got <= n, "decoded length fits exact input object");
