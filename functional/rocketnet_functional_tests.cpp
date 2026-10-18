@@ -5838,6 +5838,25 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
+    // A kernel-refused entry drops by itself and the unsent suffix is retried.
+    uint8_t retry_byte = 0x5A;
+    struct rocketnet_platform_send_t retry_sends[2];
+    retry_sends[0].to = &bind_address;
+    retry_sends[0].packet_data = &retry_byte;
+    retry_sends[0].packet_bytes = 0x7fffffff;
+    retry_sends[1].to = &bind_address;
+    retry_sends[1].packet_data = &retry_byte;
+    retry_sends[1].packet_bytes = 1;
+    rocketnet_platform_socket_send_packets_mmsg( sender, retry_sends, 2 );
+
+    static uint8_t retry_data[64][stride];
+    rocketnet_address_t retry_from[64];
+    int retry_bytes[64];
+    const int retry_received = rocketnet_platform_socket_receive_packets_mmsg( receiver, retry_from, retry_data[0], stride, retry_bytes, 64 );
+    rocketnet_check( retry_received == 1 );
+    rocketnet_check( rocketnet_address_equal( &retry_from[0], &sender_bind ) );
+    rocketnet_check( retry_bytes[0] == 1 && retry_data[0][0] == retry_byte );
+
     rocketnet_platform_socket_destroy( sender );
     rocketnet_platform_socket_destroy( receiver );
 }
