@@ -218,6 +218,7 @@ struct live_matrix_t
     double offset;
     uint32_t cycle;
     uint64_t failures;
+    uint64_t edge_failures;         // probes that never arrived: named, then the matrix still runs
     uint64_t verified;
     uint64_t not_delivered;              // modes 0, 1 and 4: lost or superseded, counted, not failed
     uint64_t refusals;
@@ -959,7 +960,11 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
                     arrived = live_matrix_probe_one( m, direction, mode, channel, sequence, lengths[i] );
                 }
                 if ( !arrived && m->failures == 0 )
+                {
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "never-arrived", (int) lengths[i] );
+                    m->failures--;
+                    m->edge_failures++;
+                }
                 else if ( arrived )
                     printf( "edge %d %d %u arrived on channel %d\n", direction, mode, lengths[i], live_matrix_carries_channel( mode ) ? channel : 0 );
             }
@@ -1073,7 +1078,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             break;
         if ( rocketnet_platform_time() > deadline )
         {
-            printf( "fail window %u wall bound reached\n", m->cycle );
+            live_matrix_fail( m, "window", -1, -1, -1, -1, "wall-bound", 0 );
             break;
         }
     }
@@ -1097,6 +1102,21 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             }
             if ( sent > received )
                 m->not_delivered += (uint64_t) ( sent - received );
+        }
+        // the modes without completeness still deliver on the loopback: each
+        // (direction, mode) that sent must have received
+        for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
+        {
+            int64_t sent = 0;
+            int64_t received = 0;
+            for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
+            {
+                sent += d->streams[mode][channel].sent;
+                received += d->streams[mode][channel].received;
+            }
+            printf( "delivery %u %d %d %lld/%lld\n", m->cycle, direction, mode, (long long) received, (long long) sent );
+            if ( sent > 0 && received == 0 )
+                live_matrix_fail( m, "delivery", direction, mode, -1, -1, "nothing-delivered", 0 );
         }
         live_matrix_owed( m, direction, 1 );
     }
@@ -1218,7 +1238,6 @@ void live_message_matrix_loopback()
     live_matrix_connect( m );
     memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
     live_matrix_edge_probes( m );
-    live_matrix_check( m->failures == 0 );
     live_matrix_window( m, deadline );
     live_matrix_check( m->failures == 0 );
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
@@ -1302,8 +1321,8 @@ void live_message_matrix_loopback()
     const double elapsed = rocketnet_platform_time() - m->wall_start;
 
     live_matrix_print_table();
-    printf( "live_message_matrix_loopback: verified=%llu failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
-            (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->not_delivered,
+    printf( "live_message_matrix_loopback: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (bound %.0f s)\n",
+            (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
             (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_PASS_SECONDS );
     fflush( stdout );
 
@@ -1319,5 +1338,6 @@ void live_message_matrix_loopback()
     rocketnet_message_server_destroy( m->server );
 
     live_matrix_check( m->failures == 0 );
+    live_matrix_check( m->edge_failures == 0 );
     live_matrix_check( elapsed < LIVE_MATRIX_PASS_SECONDS );
 }
