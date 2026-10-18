@@ -570,5 +570,72 @@ static void endpoint_never_allocates_or_reads_a_clock()
     check( rocketnet_init( NULL ) );
 }
 
+// R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
+// an uncapped endpoint's large sequenced state, larger than one packet, is
+// written whole and never touches the bucket: no charge, no settle, no
+// refusal, no drop. Simulated time from 1000.0; no transport but this loop.
+static void endpoint_uncapped_large_sequenced_skips_the_bucket()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+    rn_endpoint_config_t endpoint_config;
+    memset( &endpoint_config, 0, sizeof( endpoint_config ) );
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = -1;
+    endpoint_config.max_payload_bytes = 4 * ROCKETNET_MAX_PAYLOAD_BYTES;
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    const double now = 1000.0;
+    rn_endpoint_reset( &endpoint, now );
+    check( endpoint.send_budget_enabled == 0 );
+
+    const int bytes = 3000;
+    uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
+    check( p != NULL );
+    if ( p )
+    {
+        memset( p, 0x5a, (size_t) bytes );
+        check( rn_endpoint_finish( &endpoint, bytes, 0 ) != 0 );
+    }
+    check( endpoint.unreliable_count == 1 );
+
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_tick( &endpoint, now );
+    rn_endpoint_config_tick( &endpoint, 1, now );
+    static uint8_t frame[4 * ROCKETNET_MAX_PAYLOAD_BYTES];
+    uint64_t packet_id = 1;
+    int large_written = 0;
+    for ( int i = 0; i < 16; i++ )
+    {
+        const int request = rn_endpoint_next_packet_bytes( &endpoint, now );
+        if ( request == 0 )
+            break;
+        check( request > 0 && request <= (int) sizeof( frame ) );
+        const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
+        if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
+            large_written++;
+        // the large state is the sum of its fragments on the wire: more than its payload
+        if ( written > ROCKETNET_MAX_PAYLOAD_BYTES )
+            rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
+        else if ( written > 0 )
+            rn_endpoint_packet_sent( &endpoint, packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );
+        packet_id++;
+    }
+
+    check( large_written == 1 );                                       // the whole state, in one payload the transport fragments
+    check( endpoint.unreliable_count == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
+    check( endpoint.budget.refusals == 0 );                            // no settle against a bucket it does not hold
+    check( endpoint.budget.bytes_spent == 0 );
+    check( endpoint.budget.unreliable_dropped == 0 );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( endpoint_back_to_back_over_lossy_array );
+REGISTER_UNIT_TEST( endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( endpoint_never_allocates_or_reads_a_clock );

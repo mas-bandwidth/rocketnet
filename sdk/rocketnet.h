@@ -192,6 +192,10 @@
 /** @brief Default server send budget in decimal kilobits per second for each client. */
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
 #endif
+#ifndef ROCKETNET_SEND_BUDGET_MAX_KBPS
+/** @brief Maximum supported send budget in decimal kilobits per second per connection. */
+#define ROCKETNET_SEND_BUDGET_MAX_KBPS                      10000000    // 10 Gbit/s per connection
+#endif
 
 #define ROCKETNET_MESSAGE_OK                                0
 /** @brief Update result indicating that a received message view remains unreleased. */
@@ -680,7 +684,7 @@ struct rocketnet_client_config_t
     const char * transport;                         // ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );   // no env form; NULL is none
     double (*time_callback)( void * context );      // no env form: the receive stamp clock, read once at create; NULL is the platform clock
-    int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED
+    int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         // ROCKETNET_CLIENT_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -727,7 +731,7 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;                 // ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
     const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"
     const char * public_address;                    // ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
-    int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED
+    int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED; above ROCKETNET_SEND_BUDGET_MAX_KBPS is refused
     int num_channels;                               // ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_SERVER_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         // ROCKETNET_SERVER_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -892,7 +896,7 @@ ROCKETNET_EXPORT void rocketnet_client_release( struct rocketnet_client_t * clie
 // NULL client or out is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
-// 1 when the budget took the new rate, from now on; 0 or less disables the budget in this direction, client to server (NOT RECOMMENDED). a NULL client is a counted no-op that returns 0.
+// 1 when the budget took the new rate, from now on. 0 or less disables the budget in this direction, client to server (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns 0 with the rate unchanged. a NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL client is a counted no-op that returns 0.
@@ -1000,7 +1004,7 @@ ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * serv
 // As rocketnet_client_receipts, for one connected client. Invalid inputs return 0.
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
-// 1 when the client's budget took the new rate, from now on; 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED). a NULL server is a counted no-op that returns 0.
+// 1 when the client's budget took the new rate, from now on. 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED); a positive value up to ROCKETNET_SEND_BUDGET_MAX_KBPS caps it; above the maximum returns 0 with the rate unchanged. a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL server is a counted no-op that returns 0.

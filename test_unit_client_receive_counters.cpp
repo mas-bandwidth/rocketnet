@@ -715,6 +715,21 @@ static void client_handshake_receive_counters_move_exactly()
         RCR_EXPECT( "denied to a client that is not connecting", &before, &pair.client_counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 },
                       { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE, 1 } } );
+
+        // wrong-size challenge and denied are refused before the state gate
+        bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES - 1, packet );
+        before = pair.client_counters;
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        RCR_EXPECT( "wrong-size challenge to a client that is not connecting", &before, &pair.client_counters,
+                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED, 1 },
+                      { ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE, 1 } } );
+
+        bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES - 1, packet );
+        before = pair.client_counters;
+        check( !rcr_to_client( &pair, packet, bytes ) );
+        RCR_EXPECT( "wrong-size denied to a client that is not connecting", &before, &pair.client_counters,
+                    { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 },
+                      { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE, 1 } } );
     }
     rcr_pair_teardown( &pair );
 
