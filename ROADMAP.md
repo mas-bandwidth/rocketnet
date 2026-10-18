@@ -168,12 +168,12 @@ The XDP server transport. Further XDP work comes later, separately, by the owner
 | Kernel filter decisions run as host C in the unit suite | ✅ |
 | IPv6 in the kernel program and the userspace path | ✅ |
 | Kernel filter counters through the transport counter surface | ✅ |
-| Kernel replay protection with a read-only high-water map | ❌ |
+| Kernel replay protection with a read-only high-water map | ✅ |
 | STANDARD.md states the kernel replay map is sized apart from the userspace replay window | ❌ |
 | Packet blaster and simulated-client harnesses at line rate | ❌ |
 | Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ |
 | Privileged syscall-failure coverage in its own lab | ❌ |
-| complete | 50% |
+| complete | 60% |
 
 [Source data](docs/roadmap.sexp)
 
