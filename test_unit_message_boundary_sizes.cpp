@@ -177,7 +177,7 @@ static std::vector<uint8_t> boundary_data(uint32_t sequence,int bytes) {
 }
 static void boundary_check_counter(const rocketnet_counters_t * counters,int index) { check(rocketnet_counter_value(counters,index)==0); }
 static void message_boundary_sizes_every_mode_every_channel() {
-    const int sizes[]={1404,1405,1406,16};
+    const int sizes[]={1404,16,1405,16,1406,16};
     for(int reliability=0;reliability<ROCKETNET_CHANNEL_NUM_TYPES;++reliability) {
         // Only channel-bearing wire codes route across the configured channel set.
         const int channels = reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ||
@@ -186,8 +186,8 @@ static void message_boundary_sizes_every_mode_every_channel() {
         for(int channel=0;channel<channels;++channel) {
         boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
         std::vector<std::vector<uint8_t> > expected;
-        for(int i=0;i<4;++i) {
-            const uint32_t sequence=(uint32_t)(1+reliability*32+channel*4+i); expected.push_back(boundary_data(sequence,sizes[i]));
+        for(int i=0;i<6;++i) {
+            const uint32_t sequence=(uint32_t)(1+reliability*32+channel*8+i); expected.push_back(boundary_data(sequence,sizes[i]));
             const uint32_t serial=rocketnet_message_client_send(pair.client,channel,reliability,expected.back().data(),(int)expected.back().size());
             if(serial==0) fprintf(stderr, "boundary send refused mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[i]);
             check(serial!=0);
@@ -196,7 +196,7 @@ static void message_boundary_sizes_every_mode_every_channel() {
         for(int step=0;step<16;++step) boundary_step(&pair,&got);
         if(got.size()!=expected.size()) {
             fprintf(stderr, "boundary count mode=%d channel=%d got=%zu expected=%zu\n", reliability, channel, got.size(), expected.size());
-            for(int j=0;j<4;++j) {
+            for(int j=0;j<6;++j) {
                 bool seen=false; for(size_t k=0;k<got.size();++k) if(got[k].data==expected[j]) seen=true;
                 if(!seen) fprintf(stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[j]);
             }
@@ -204,15 +204,15 @@ static void message_boundary_sizes_every_mode_every_channel() {
         check(got.size()==expected.size());
         const bool ordered=reliability==ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED || reliability==ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ||
             reliability==ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || reliability==ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT;
-        bool matched[4]={false,false,false,false};
+        bool matched[6]={false,false,false,false,false,false};
         for(size_t i=0;i<got.size();++i) {
             if(got[i].channel!=channel) fprintf(stderr, "boundary channel mode=%d expected=%d got=%d bytes=%zu first=%d\n", reliability, channel, got[i].channel, got[i].data.size(), got[i].data.empty() ? -1 : got[i].data[0]);
             check(got[i].channel==channel); int found=-1;
-            for(int j=0;j<4;++j) if(!matched[j] && got[i].data==expected[j]) { found=j; break; }
+            for(int j=0;j<6;++j) if(!matched[j] && got[i].data==expected[j]) { found=j; break; }
             if(found<0) fprintf(stderr, "boundary data mode=%d channel=%d received=%zu\n", reliability, channel, got[i].data.size());
             check(found>=0); matched[found]=true; if(ordered && found>=0) check((int)i==found);
         }
-        for(int i=0;i<4;++i) {
+        for(int i=0;i<6;++i) {
             if(!matched[i]) fprintf(stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[i]);
             check(matched[i]);
         }
