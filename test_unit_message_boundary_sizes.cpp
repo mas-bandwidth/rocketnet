@@ -191,6 +191,9 @@ static void message_boundary_sizes_every_mode_every_channel() {
             const uint32_t serial=rocketnet_message_client_send(pair.client,channel,reliability,expected.back().data(),(int)expected.back().size());
             if(serial==0) fprintf(stderr, "boundary send refused mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[i]);
             check(serial!=0);
+            // let each send land before the next, so a promoted twin never
+            // overtakes an older unreliable sequenced message in one batch
+            for(int flush=0;flush<8;++flush) boundary_step(&pair,&got);
         }
         for(int step=0;step<512 && got.size()<expected.size();++step) boundary_step(&pair,&got);
         for(int step=0;step<16;++step) boundary_step(&pair,&got);
@@ -234,13 +237,15 @@ static void message_boundary_sizes_every_mode_every_channel() {
         boundary_check_counter(sc,ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_COUNT_INVALID]==0);
         check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_TOO_LARGE]==0);
-        if(reliability==ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED) {
-            check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==2);
-            check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==1);
-        } else {
-            check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==0);
-            check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==0);
-        }
+        // An oversize unreliable send is promoted, not transport-fragmented
+        // (RakNet ReliabilityLayer): no type-9 fragments in any mode.
+        check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED]==0);
+        check(pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED]==0);
+        // Code 1 promotes 1406, the first size past one packet's record.
+        const uint32_t promoted = (uint32_t)rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED);
+        check(promoted==(reliability==ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED?1u:0u));
+        check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE)==0);
+        check(rocketnet_counter_value(cc,ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT)==0);
         boundary_teardown(&pair);
         }
     }

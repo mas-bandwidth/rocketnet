@@ -575,7 +575,15 @@
     /* gate and before any AEAD open (STANDARD.md, Reading packets). */ \
     /* appended: indices are the contract. */ \
     X( CLIENT_CHALLENGE_WRONG_SIZE, REFUSAL, CLIENT_CHALLENGE_RECEIVED ) \
-    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED )
+    X( CLIENT_DENIED_WRONG_SIZE, REFUSAL, CLIENT_DENIED_RECEIVED ) \
+    /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
+    /* too big for one packet's record is promoted to its reliable twin, as */ \
+    /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
+    /* for a large unreliable send, one count per send. appended: indices are */ \
+    /* the contract. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
 
 enum
 {
