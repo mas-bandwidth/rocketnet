@@ -530,19 +530,23 @@ marked as specified by [t14 Replay protection](#t14).
 <a id="t15.3"></a>
 ### t15.3. Building and processing
 
-A sender MUST build a block from the replay state for all opened session
-packet types. It MUST list the newest received run first and may include older
+A sender MUST build a block from the single session replay state defined in
+[t14 Replay protection](#t14), shared by all opened session packet types. It
+MUST list the newest received run first and may include older
 runs while its range-count and packet-capacity limits permit. When capacity
 omits entries, it MUST drop the oldest entries first and MUST NOT emit a
 trailing gap without a received run. Every session packet MUST have room for
 the [t3 Constants and registries](#t3) (ack block minimum row). For payload and fragment packets, the sender
 reserves room for their type data before choosing the block's range count.
 
-After a valid block is opened, a receiver MUST acknowledge the named session
-sequences in its sent-packet history. It MUST ignore named sequences
-below its retained sent-history window and sequences within that window which
-it never sent. It MUST bound this processing by its retained history, not by
-the number of sequence values asserted by the block.
+After a valid block is opened, a receiver MUST process its named session
+sequences in sent-packet history. It MUST silently ignore sequences below its
+retained sent-history window. For a named sequence within that window which it
+never sent, it MUST apply no acknowledgment effect and count that sequence in
+ACK_UNKNOWN_SEQUENCE. A receiver MUST bound this processing by its retained
+history, not by the number of sequence values asserted by the block. A block
+is the sender's assertion about its receive state; the receiver cannot verify
+that assertion and MUST process an in-window sent sequence as acknowledged.
 
 <a id="t15.4"></a>
 ### t15.4. Elicitation and standalone acknowledgement
