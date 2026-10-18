@@ -145,12 +145,32 @@ void control_denied_when_server_full()
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
 
     // fill all four server slots with distinct client ids before the client
-    // connects, so the server has none free for the request
-    uint8_t user_data[4] = { 9, 9, 9, 9 };
+    // connects, so the server has none free for the request. each filler is
+    // a connected client as the server sees one: a live, established
+    // encryption mapping at its own address, assigned the slot the way the
+    // connect path assigns it, with no timeout so it holds the slot for the
+    // whole case. a connected slot always has a live mapping behind it.
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 9, sizeof(user_data) );
     for ( int i = 0; i < 4; i++ )
     {
-        const int slot = rocketnet_client_slots_assign( h.server.client_slots, (uint64_t) ( 1000 + i ), i, user_data );
+        char filler_address_string[64];
+        snprintf( filler_address_string, sizeof(filler_address_string), "198.51.100.%d:5000", 20 + i );
+        struct rocketnet_address_t filler_address;
+        control_check( rocketnet_address_parse( &filler_address, filler_address_string ), "filler address" );
+        const int mapping_index = rocketnet_encryption_map_add( h.server.encryption_map, &filler_address, h.now + h.server.handshake_deadline_seconds );
+        control_check( mapping_index >= 0, "filler mapping add" );
+        struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h.server.encryption_map, mapping_index );
+        mapping->client_id = (uint64_t) ( 1000 + i );
+        memcpy( mapping->user_data, user_data, ROCKETNET_USER_DATA_BYTES );
+        mapping->timeout_seconds = -1;
+        mapping->last_receive_time = h.now;
+        mapping->last_send_time = h.now;
+        mapping->last_keep_alive_send_time = h.now;
+        const int slot = rocketnet_client_slots_assign( h.server.client_slots, mapping->client_id, mapping_index, mapping->user_data );
         control_check( slot >= 0, "slot assign" );
+        mapping->client_index = slot;
+        mapping->established = 1;
     }
     const uint64_t denied_before = h.server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS];
     for ( int i = 0; i < 60 * 5; i++ )
