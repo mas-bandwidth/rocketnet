@@ -161,10 +161,161 @@ never goes backwards on its channel.
 <a id="m7"></a>
 ## m7. Delivery: reliable codes 2, 3 and 4
 
-Status: pending
+This section starts after the receive window of
+[m5 Message numbering and the reliable window](#m5) has accepted a record's
+number. A duplicate number is dropped by the window and counted as a
+duplicate; it is never delivered and is not a violation.
 
-Scope: exactly-once delivery; ordered delivery on a channel; reliable
-sequenced delivery; the receive ring.
+### m7.1. Code 2, RELIABLE
+
+1. A receiver MUST deliver a code 2 record exactly once, when its number is
+   accepted, and MUST NOT consult an ordering index, a sequencing index or a
+   channel.
+2. Code 2 records MAY be delivered in an order other than their number order.
+3. A code 2 record whose number is outside the window, or whose slot is held
+   by another live number, is a violation.
+
+### m7.2. Code 3, RELIABLE_ORDERED
+
+1. A receiver MUST deliver a code 3 record on a channel only when the
+   record's ordering index equals the channel's next ordering index.
+2. When the ordering index is ahead of the next index by fewer than the
+   window count, the receiver MUST hold the record whole, copy it once into
+   the receive ring at the ring offset the sender chose, and keep its number
+   live until it is delivered. The receiver MUST key the held record by the
+   channel and the ordering index.
+3. An ordering index ahead of the next index by the window count or more is a
+   violation, because a correct sender numbers fewer than the window count of
+   records at once.
+4. An ordering index behind the next index in 24-bit half-range order is a
+   violation; a duplicate number was already dropped by the window.
+5. Delivering a code 3 record MUST set the channel's next ordering index to
+   one past the record's ordering index.
+6. After every delivery on a channel, the receiver MUST drain: it MUST deliver
+   the held record whose ordering index is now the next index, and repeat,
+   until no held record carries the next index or the record carrying it is a
+   block whose fragments are not all present ([m8 Blocks](#m8)).
+7. A held record MUST be delivered exactly once, in ascending ordering order
+   on its channel, and only by the drain or by being in turn.
+
+### m7.3. Code 4, RELIABLE_SEQUENCED
+
+1. A code 4 record carries an ordering index and a sequencing index. The
+   receiver MUST deliver it only in its ordering epoch: the record's ordering
+   index MUST equal the channel's next ordering index, and its sequencing
+   index MUST not be behind the channel's sequencing watermark in 24-bit
+   half-range order.
+2. Delivering a code 4 record MUST set the sequencing watermark to one past
+   the record's sequencing index, and MUST NOT advance the next ordering
+   index. Only an ordered delivery advances the next ordering index.
+3. A code 4 record in its epoch whose sequencing index is behind the
+   watermark MUST be dropped and counted as stale; it is not a violation.
+4. A code 4 record ahead of its epoch by fewer than the window count MUST be
+   held in the receive ring at the ring offset the sender chose. The receiver
+   MUST keep at most one held code 4 record per channel, the newest by
+   ordering index and then sequencing index; a newer record replaces the held
+   one, and an older or equal one MUST be dropped and counted as superseded.
+5. A code 4 record behind its epoch in 24-bit half-range order MUST be
+   dropped and counted as stale; it is not a violation.
+6. An ordering index ahead of the next index by the window count or more is a
+   violation.
+7. When an ordered delivery opens an epoch, the drain MUST first release the
+   held code 4 record for that epoch if its sequencing index is not behind the
+   watermark, then continue with the held ordered records. An ordered
+   delivery sets the sequencing watermark to zero.
+
+### m7.4. Outcomes
+
+Every change this section makes to a record is visible to the application or
+to a counter: a delivery, a hold, a stale drop, a superseded drop, a duplicate
+drop or a violation. Nothing is silent.
+
+The tables below define the trace vectors of this section. They are not wire
+fields; a trace is the record of what the delivery rules above did with a
+sequence of records.
+
+```
+  0                   1                   2                   3
+  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |  dispatch     |  violation    |  deliveries   |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |  code         |  channel      |             bytes             |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |                            data ...                           |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| dispatch | 0 | 1 | u8 | what the dispatch did with the input record | a row of the table below |
+| violation | 1 | 1 | u8 | nonzero when the connection became violated on this record | `0`, `1` |
+| deliveries | 2 | 1 | u8 | delivery entries that follow, in delivery order | `0` to `255` |
+| code | 3 | 1 | u8 | the delivered record's application code | `2`, `3`, `4` |
+| channel | 4 | 1 | u8 | the delivered record's channel | `0` to `255` |
+| bytes | 5 | 2 | u16 | the delivered message's length | `1` to `65535` |
+| data | 7 | `bytes` | bytes[`bytes`] | the delivered message | the input record's data |
+
+Each delivery entry is 7 bytes plus its data. A step is 3 bytes plus its
+delivery entries. The trace is the steps of the input records in order.
+
+| Name | Value | Meaning |
+|---|---|---|
+| `none` | `0` | no dispatch: the window dropped the record as a duplicate, or refused it |
+| `delivered` | `1` | the record produced at least one delivery entry |
+| `held` | `2` | the record is held for a later ordering index or epoch |
+| `stale` | `3` | the record is dropped as stale or superseded |
+
+### m7.5. Vectors
+
+The traces below fix the receiver's configuration at one channel, window
+count 64, receive ring 4096 bytes, maximum message 4096 bytes and 16
+sequenced holds. Every record carries one data byte. `ring` and `number` are
+the record's fields as [m3 Record format](#m3) defines them.
+
+```vector m7.reliable-loss-reorder
+config: 1 channel, window 64, ring 4096, max message 4096, sequenced holds 16
+input: code 2 number 2 data 12
+input: code 2 number 0 data 10 (reordered behind number 2)
+input: code 2 number 3 data 13 (number 1 is delayed)
+input: code 2 number 1 data 11 (the delayed record arrives last)
+input: code 2 number 2 data 12 (a duplicate)
+input: code 2 number 68 data 44 (64 ahead of the next unread number)
+01 00 01 02 00 01 00 12 01 00 01 02 00 01 00 10
+01 00 01 02 00 01 00 13 01 00 01 02 00 01 00 11
+00 00 00 00 01 00
+```
+
+```vector m7.reliable-ordered-hold-drain
+config: 1 channel, window 64, ring 4096, max message 4096, sequenced holds 16
+input: code 3 number 0 ring 1 ordering 1 channel 0 data 21
+input: code 3 number 1 ring 3 ordering 3 channel 0 data 23
+input: code 3 number 2 ring 0 ordering 0 channel 0 data 20
+input: code 3 number 3 ring 2 ordering 2 channel 0 data 22
+input: code 3 number 2 ring 0 ordering 0 channel 0 data 20 (a duplicate)
+input: code 3 number 4 ring 4 ordering 0 channel 0 data 24 (behind)
+02 00 00 02 00 00 01 00 02 03 00 01 00 20 03 00
+01 00 21 01 00 02 03 00 01 00 22 03 00 01 00 23
+00 00 00 00 01 00
+```
+
+```vector m7.reliable-sequenced-hold-drain
+config: 1 channel, window 64, ring 4096, max message 4096, sequenced holds 16
+input: code 3 number 0 ring 0 ordering 0 channel 0 data 30 (opens epoch 0)
+input: code 4 number 1 ring 1 ordering 1 sequencing 0 channel 0 data 31
+input: code 4 number 2 ring 1 ordering 1 sequencing 1 channel 0 data 32
+input: code 4 number 3 ring 1 ordering 1 sequencing 0 channel 0 data 33 (behind the watermark)
+input: code 4 number 4 ring 2 ordering 2 sequencing 0 channel 0 data 34 (held)
+input: code 4 number 5 ring 2 ordering 2 sequencing 1 channel 0 data 35 (replaces the held record)
+input: code 4 number 6 ring 2 ordering 2 sequencing 0 channel 0 data 36 (superseded)
+input: code 3 number 7 ring 1 ordering 1 channel 0 data 37 (opens epoch 1 and drains)
+input: code 4 number 8 ring 2 ordering 2 sequencing 3 channel 0 data 38
+input: code 4 number 9 ring 3 ordering 66 sequencing 0 channel 0 data 39 (64 ahead of the next ordering index)
+01 00 01 03 00 01 00 30 01 00 01 04 00 01 00 31
+01 00 01 04 00 01 00 32 03 00 00 02 00 00 02 00
+00 03 00 00 01 00 02 03 00 01 00 37 04 00 01 00
+35 01 00 01 04 00 01 00 38 00 01 00
+```
 
 <a id="m8"></a>
 ## m8. Blocks
@@ -228,5 +379,9 @@ This appendix indexes every vector of RN-2 by the section that defines it.
 It is generated; the bytes are in the sections.
 
 <!-- vector-index:begin -->
-No vectors yet.
+| Section | Vector |
+|---|---|
+| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
+| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
+| [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |
 <!-- vector-index:end -->
