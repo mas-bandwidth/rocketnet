@@ -194,6 +194,13 @@ It is not on the nightly list. Every full-bound run below stopped at the
 solver's memory, or at the 30-minute limit, without a verdict; the proved
 bounds are the largest that finished inside a 16 GB address-space limit.
 
+- **The bound: `max_payload_bytes` at most 40.** This is the bound proved for
+  `rocketnet_reassembly_process_fragment`; the full production range is not.
+  Payload bytes are copied opaquely: no branch or index depends on a payload
+  byte, so bytes beyond a small window add no new case to the region, index
+  and refusal arithmetic the harness checks. The fragment itself is proved at
+  its full size (1433 bytes). Full-size payload bounds exhaust the solver's
+  memory (below), so the largest bound that finishes is the one proved.
 - **harness_process_fragment at `max_payload_bytes` up to
   `ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES` (361,728).** Not proved. The
   deployed range starts at `ROCKETNET_MAX_PAYLOAD_BYTES` (1416), so no
