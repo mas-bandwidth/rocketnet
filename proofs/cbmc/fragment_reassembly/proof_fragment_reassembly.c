@@ -270,7 +270,7 @@ void harness_process_fragment( void )
     __CPROVER_assume( delivered_capacity >= 1 && delivered_capacity <= PROOF_DELIVERED_CAPACITY );
     const uint64_t delivered_bytes = nondet_uint64();
     __CPROVER_assume( delivered_bytes >= (uint64_t) max_payload
-                      && delivered_bytes <= (uint64_t) delivered_capacity * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( max_payload ) );
+                      && delivered_bytes <= (uint64_t) PROOF_DELIVERED_CAPACITY * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( PROOF_MAX_PAYLOAD ) );
     uint8_t * delivered = (uint8_t *) malloc( (size_t) delivered_bytes );
     __CPROVER_assume( delivered != NULL );
     const int num_delivered = nondet_int();
