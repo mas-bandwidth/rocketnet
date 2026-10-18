@@ -30,6 +30,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
+#include "rocketnet_server_replay_marks.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_fragment.h"
@@ -178,6 +179,11 @@ struct rocketnet_server_transport_t
     int driver;
 
     rocketnet_server_driver_t io;
+
+    // the kernel replay marks: allocated only when the granted driver reports
+    // the replay capability, written from the update walk and committed to the
+    // driver's map before the staged flush
+    struct rocketnet_server_replay_marks_t * replay_marks;
 
     struct rocketnet_counters_t counters;
     struct rocketnet_server_protocol_t protocol;
@@ -1104,7 +1110,10 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     server_transport->send_arena = rocketnet_send_arena_create( context, ROCKETNET_SEND_ARENA_SLOTS,
                                                                ( server_transport->max_payload_bytes + 15 ) & ~15 );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->reassembly || !server_transport->send_arena )
+    if ( server_transport->io.operations->replay_mark )
+        server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
+
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->admitted_token_set || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
@@ -1150,6 +1159,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_reassembly_set_destroy( server_transport->protocol.reassembly );
     if ( server_transport->send_arena )
         rocketnet_send_arena_destroy( server_transport->send_arena );
+    if ( server_transport->replay_marks )
+        rocketnet_server_replay_marks_destroy( server_transport->replay_marks );
 
     // teardown branches on which socket is live, so a partial create --
     // any rung granted or none -- destroys cleanly
@@ -1532,6 +1543,20 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
 
     acks->update_count++;
+
+    // The kernel replay walk and commit: after the maintenance sweep, the
+    // transport tells the granted driver which client addresses to forget and
+    // mark, then commits them. tla/RNXdpReplay.tla Walk and Commit.
+    if ( server_transport->io.operations->replay_mark )
+    {
+        struct rocketnet_server_replay_sink_t replay_sink;
+        replay_sink.context = server_transport->io.instance;
+        replay_sink.forget = server_transport->io.operations->replay_forget;
+        replay_sink.mark = server_transport->io.operations->replay_mark;
+        rocketnet_server_replay_marks_walk( server_transport->replay_marks, server_transport->protocol.client_slots,
+                                           server_transport->protocol.encryption_map, &replay_sink );
+        server_transport->io.operations->replay_commit( server_transport->io.instance );
+    }
 
     // Drivers with FLUSH_ON_UPDATE publish update-generated responses here.
     // Other staged drivers publish at send_packets after the joined fill phase.

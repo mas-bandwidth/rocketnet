@@ -194,11 +194,24 @@ static void xdp_prefilter_counters( void * driver, uint64_t * values )
 {
     rocketnet_server_socket_xdp_counters( (rocketnet_server_socket_t*) driver, values );
 }
+static void xdp_replay_forget( void * driver, const rocketnet_address_t * address )
+{
+    rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) driver, address );
+}
+static void xdp_replay_mark( void * driver, const rocketnet_address_t * address, uint32_t high_water )
+{
+    rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) driver, address, high_water );
+}
+static void xdp_replay_commit( void * driver )
+{
+    rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) driver );
+}
 static const rocketnet_server_driver_operations_t xdp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FINISH_FINAL | ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop,
-    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters
+    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit
 };
 extern const rocketnet_driver_backend_t rocketnet_xdp_driver = { &xdp_operations, NULL };
 #endif
