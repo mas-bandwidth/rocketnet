@@ -16,6 +16,7 @@
 #endif
 
 #include "rocketnet.h"
+#include "rocketnet_layers.h"
 
 #ifdef __linux__
 #define ROCKETNET_XDP 1
@@ -296,8 +297,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 // declared ONCE, in a table below: field name, type, default, valid range.
 // Everything else derives from the table mechanically -- the struct field,
 // the environment variable name (ROCKETNET_ prefix plus the endpoint and
-// field name uppercased: cfg.driver -> ROCKETNET_SERVER_DRIVER or
-// ROCKETNET_CLIENT_DRIVER), the parse, the validation,
+// field name uppercased: cfg.driver -> ROCKETNET_SERVER_TRANSPORT or
+// ROCKETNET_CLIENT_TRANSPORT), the parse, the validation,
 // and the field descriptors a test walks to prove every field round-trips
 // from environment. Adding a field here IS adding it everywhere; there is
 // no second list to forget.

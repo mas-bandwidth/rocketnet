@@ -276,14 +276,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( fd < 0 )
     {
-        rocketnet_error( "gso driver: failed to create socket: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to create socket: %s", strerror( errno ) );
         return -1;
     }
 
     int one = 1;
     if ( setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set SO_REUSEPORT: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -293,7 +293,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         int zero = 0;
         if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero) ) != 0 )
         {
-            rocketnet_error( "gso driver: failed to clear socket ipv6 only: %s", strerror( errno ) );
+            rocketnet_error( "gso transport: failed to clear socket ipv6 only: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
@@ -310,14 +310,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set socket send buffer size: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
     if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof(int) ) != 0 )
     {
-        rocketnet_error( "gso driver: failed to set socket receive buffer size: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -335,12 +335,12 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
     {
         if ( granted_send < send_buffer_size || granted_receive < receive_buffer_size )
         {
-            rocketnet_warn( "gso driver: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
+            rocketnet_warn( "gso transport: socket buffers granted below request: send %d/%d receive %d/%d (raise net.core.wmem_max/rmem_max)",
                             granted_send, send_buffer_size, granted_receive, receive_buffer_size );
         }
         else
         {
-            rocketnet_info( "gso driver: socket buffers granted: send %d receive %d", granted_send, granted_receive );
+            rocketnet_info( "gso transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
         }
     }
 
@@ -356,7 +356,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( socklen == 0 || bind( fd, (struct sockaddr*) &sockaddr, socklen ) < 0 )
     {
-        rocketnet_error( "gso driver: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -367,14 +367,14 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         socklen_t bound_length = sizeof(bound);
         if ( getsockname( fd, (struct sockaddr*) &bound, &bound_length ) != 0 )
         {
-            rocketnet_error( "gso driver: failed to get bound socket port: %s", strerror( errno ) );
+            rocketnet_error( "gso transport: failed to get bound socket port: %s", strerror( errno ) );
             close( fd );
             return -1;
         }
         rocketnet_address_t bound_address;
         if ( !rocketnet_server_gso_sockaddr_to_address( &bound, ipv6, &bound_address ) )
         {
-            rocketnet_error( "gso driver: could not read bound socket address" );
+            rocketnet_error( "gso transport: could not read bound socket address" );
             close( fd );
             return -1;
         }
@@ -383,7 +383,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
     if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
     {
-        rocketnet_error( "gso driver: failed to set socket non-blocking: %s", strerror( errno ) );
+        rocketnet_error( "gso transport: failed to set socket non-blocking: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
@@ -564,7 +564,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
     if ( num_queues > ROCKETNET_GSO_MAX_QUEUES )
     {
-        rocketnet_error( "gso driver num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_GSO_MAX_QUEUES );
+        rocketnet_error( "gso transport num_queues %d is out of range (1 to %d)", num_queues, ROCKETNET_GSO_MAX_QUEUES );
         return NULL;
     }
 
@@ -671,7 +671,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         }
     }
 
-    rocketnet_info( "gso driver: %d queue reuseport group on port %d, UDP_SEGMENT %s, UDP_GRO %s",
+    rocketnet_info( "gso transport: %d queue reuseport group on port %d, UDP_SEGMENT %s, UDP_GRO %s",
                     num_queues, bound_port,
                     ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) ? "yes" : "no (plain sendmmsg)",
                     ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_GRO ) ? "yes" : "no (plain recvmmsg)" );
@@ -799,7 +799,7 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     if ( slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE || slot < 0 )
     {
-        rocketnet_spam( "gso driver send staging full. packet dropped" );
+        rocketnet_spam( "gso transport send staging full. packet dropped" );
         return NULL;
     }
 
@@ -1028,7 +1028,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
                 // this message's first slot as plain packets -- degradation
                 // is lossless, not a dropped batch.
 
-                rocketnet_warn( "gso driver: live GSO send refused (%s). degrading to plain sendmmsg", strerror( errno ) );
+                rocketnet_warn( "gso transport: live GSO send refused (%s). degrading to plain sendmmsg", strerror( errno ) );
                 *disable_gso = true;
                 return message_first_slot[sent];
             }
@@ -1040,7 +1040,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, int 
             for ( int i = sent; i < num_messages; i++ )
                 gso->counter_send_dropped += (uint64_t) message_num_packets[i];
 
-            rocketnet_spam( "gso driver sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
+            rocketnet_spam( "gso transport sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
 
             sent = num_messages;
         }

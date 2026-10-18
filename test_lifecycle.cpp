@@ -541,7 +541,7 @@ static void make_valid_token( uint8_t * token )
     struct rocketnet_connect_token_private_t private_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
     memset( &private_fields, 0, sizeof(private_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = 1;
     const uint64_t now = (uint64_t) time( NULL );
     signed_fields.create_timestamp = now - 100;

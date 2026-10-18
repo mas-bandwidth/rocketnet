@@ -155,7 +155,7 @@ static void check_read_write()
     // protocol id, little-endian, exactly these bytes
     uint8_t ad[12];
     uint8_t * a = ad;
-    rocketnet_write_uint32( &a, ROCKETNET_VERSION );
+    rocketnet_write_uint32( &a, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &a, 0x1122334455667788ULL );
     const uint8_t expected_ad[12] = { 0x93, 0x1a, 0x7c, 0x4e,
                                       0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
@@ -360,7 +360,7 @@ static void check_base64_and_config()
 
     char env_name[64];
     CHECK( rocketnet_config_env_var_name( "driver", env_name, sizeof( env_name ) ) );
-    CHECK( strcmp( env_name, "ROCKETNET_DRIVER" ) == 0 );
+    CHECK( strcmp( env_name, "ROCKETNET_TRANSPORT" ) == 0 );
 }
 
 int main()

@@ -2951,7 +2951,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
 {
     struct rocketnet_test_env_guard_t deadline_guard, driver_guard;
     rocketnet_test_env_clear( &deadline_guard, "ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS" );
-    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_DRIVER" );
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_SERVER_TRANSPORT" );
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.handshake_deadline_seconds = 2;
@@ -3170,8 +3170,8 @@ void rocketnet_test_server_driver_pin_loopback()
 
     struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
     rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
-    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_DRIVER" );
-    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -3292,10 +3292,10 @@ void rocketnet_test_driver_env_pins_loopback()
 
     struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
     rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
-    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_DRIVER" );
-    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
-    setenv( "ROCKETNET_SERVER_DRIVER", "loopback", 1 );
-    setenv( "ROCKETNET_CLIENT_DRIVER", "loopback", 1 );
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+    setenv( "ROCKETNET_SERVER_TRANSPORT", "loopback", 1 );
+    setenv( "ROCKETNET_CLIENT_TRANSPORT", "loopback", 1 );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -4000,7 +4000,7 @@ void rocketnet_test_server_port_zero_driver()
         // and would pass this check without the rule being mentioned
 
         char expected_rung_refusal[128];
-        snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server driver %s refused: a port-zero public address", name );
+        snprintf( expected_rung_refusal, sizeof(expected_rung_refusal), "server transport %s refused: a port-zero public address", name );
 
         rocketnet_test_captured_log[0] = '\0';
         rocketnet_log_function( rocketnet_test_capture_log );
@@ -4977,7 +4977,7 @@ static bool rocketnet_test_server_uring_skipped( const char * test_name )
 
     char reason[256];
     reason[0] = '\0';
-    const char * line = strstr( rocketnet_test_captured_log, "io_uring driver refused" );
+    const char * line = strstr( rocketnet_test_captured_log, "io_uring transport refused" );
     rocketnet_check( line != NULL );
     if ( line )
     {

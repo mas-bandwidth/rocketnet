@@ -432,7 +432,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     if ( num_workers == 0 ) num_workers = ROCKETNET_IOCP_DEFAULT_WORKERS;
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
     {
-        rocketnet_warn( "iocp driver refused: worker count %d is outside 1..%d", num_workers, ROCKETNET_IOCP_MAX_WORKERS );
+        rocketnet_warn( "iocp transport refused: worker count %d is outside 1..%d", num_workers, ROCKETNET_IOCP_MAX_WORKERS );
         return NULL;
     }
     void * storage = rocketnet_malloc( context, sizeof(rocketnet_server_iocp_t) );
@@ -535,13 +535,13 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         if ( fail_stage == 4 ) goto failed;
     }
     if ( !rocketnet_iocp_address_read( &address, address_bytes, bind_address ) ) goto failed;
-    rocketnet_info( "iocp driver: %d workers on port %d, USO %s, URO %s", num_workers, bind_address->port,
+    rocketnet_info( "iocp transport: %d workers on port %d, USO %s, URO %s", num_workers, bind_address->port,
         ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
         ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
     return iocp;
 
 failed:
-    rocketnet_warn( "iocp driver create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    rocketnet_warn( "iocp transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
     rocketnet_server_iocp_destroy( iocp );
     return NULL;
 }
@@ -689,7 +689,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
     {
         // As the GSO driver does for a refused live UDP_SEGMENT send:
         // degrade the tier and resend losslessly, never drop the run.
-        rocketnet_warn( "iocp driver: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
+        rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
         iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
         iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed );
         rocketnet_iocp_set_stride( iocp, 0 );

@@ -53,7 +53,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 
 // The transport driver is selected at RUNTIME (#106): one build carries
 // every driver its platform has, and create walks the config's ordered
-// candidate list -- config->driver, overridden by ROCKETNET_SERVER_DRIVER --
+// candidate list -- config->driver, overridden by ROCKETNET_SERVER_TRANSPORT --
 // left to right, first grant wins. On linux that is the runtime ladder:
 // probe XDP (privilege and NIC support), fall to the non-root GSO driver
 // (SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the #81
@@ -66,7 +66,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 // and degradation remains runtime inside the driver, below this ladder.
 
 #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
-#error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_DRIVER
+#error driver selection is runtime now (#106): drop ROCKETNET_SERVER_XDP / ROCKETNET_SERVER_GSO and select with config driver or ROCKETNET_SERVER_TRANSPORT
 #endif // #if defined( ROCKETNET_SERVER_XDP ) || defined( ROCKETNET_SERVER_GSO )
 
 #define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS 256
@@ -877,7 +877,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
+            *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
         return NULL;
     }
 
@@ -928,7 +928,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 (unsigned long long)plan.umem_bytes, plan.worker_threads, plan.sockets);
             if ( memory_budget > 0 && plan.total_bytes > memory_budget )
             {
-                rocketnet_warn("server driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                rocketnet_warn("server transport %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
                     name, (unsigned long long)plan.total_bytes, (unsigned long long)memory_budget);
                 budget_refused[candidate] = true;
                 budget_refused_total++;
@@ -937,14 +937,14 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 budget_allowed++;
         }
         else
-            rocketnet_info("server memory plan [%s]: unavailable; consult this driver's resource policy", name);
+            rocketnet_info("server memory plan [%s]: unavailable; consult this transport's resource policy", name);
     }
 
     if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
-        rocketnet_error("server driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        rocketnet_error("server transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
             (unsigned long long)memory_budget);
         return NULL;
     }
@@ -1070,7 +1070,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                 snprintf( port_zero_refused_names + used, sizeof(port_zero_refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
             }
 
-            rocketnet_warn( "server driver %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s driver binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a driver that discovers one in the list",
+            rocketnet_warn( "server transport %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s transport binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a transport that discovers one in the list",
                             rocketnet_driver_name( candidate ), rocketnet_driver_name( candidate ) );
         }
         else
@@ -1084,7 +1084,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
         if ( granted_driver < 0 )
         {
-            rocketnet_warn( "server driver %s refused%s", rocketnet_driver_name( candidate ),
+            rocketnet_warn( "server transport %s refused%s", rocketnet_driver_name( candidate ),
                             i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
 
             // deduped on the same rule as the port-zero list below it: a
@@ -1113,7 +1113,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
             snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( ladder.skipped[i] ) );
         }
 
-        rocketnet_error( "server driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
@@ -1130,13 +1130,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
 
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a driver that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a transport that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
                              port_zero_refused_names, rocketnet_driver_discovering_names() );
         }
 
         if ( status )
-            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED
-                                                             : ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
+            *status = ( port_zero_refused_names[0] != '\0' ) ? ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED
+                                                             : ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         rocketnet_server_transport_destroy( server_transport );
         return NULL;
     }
@@ -1145,7 +1145,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "server driver ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
+        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
     }
 
     // the started line names the granted tier -- performance claims attach

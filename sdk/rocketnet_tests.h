@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-ROCKETNET_EXPORT void rocketnet_run_tests( void );
+void rocketnet_run_tests( void );
 
 #ifdef __cplusplus
 }

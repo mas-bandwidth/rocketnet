@@ -56,7 +56,7 @@ has 11 failure exits that all return `NULL`:
 | C5 | `sdk/rocketnet_client_transport.cpp:197-198` | `!rocketnet_driver_ladder_parse(config->driver, ...)` (`sdk/rocketnet_config.cpp:503-638`) | `rocketnet_error` (`sdk/rocketnet_config.cpp:554,560,567,585,599`) | None. |
 | C6 | `sdk/rocketnet_client_transport.cpp:200-205` | `!client_transport` from `rocketnet_malloc` | `rocketnet_error("could not allocate client")` (`:203`) | None. |
 | C7 | `sdk/rocketnet_client_transport.cpp:220-235` | `!client_transport->send_arena \|\| !client_transport->reassembly` | `rocketnet_error("client could not allocate fragmentation storage")` (`:232`) | Destroys `client_transport` (`:233`). |
-| C8 | `sdk/rocketnet_client_transport.cpp:254-258` | `!rocketnet_client_protocol_connect(...)` (`sdk/rocketnet_client_protocol.cpp:141-149`): bad `address_flags`, `create_timestamp > expire_timestamp`, or `version != ROCKETNET_VERSION` | `rocketnet_debug` (`:146`) and `rocketnet_info` (`:42`) — **silent at default `ROCKETNET_LOG_LEVEL_ERROR`** | Sets `STATE_INVALID_CONNECT_TOKEN`, then destroys `client_transport` (`:256`) so caller cannot read state. |
+| C8 | `sdk/rocketnet_client_transport.cpp:254-258` | `!rocketnet_client_protocol_connect(...)` (`sdk/rocketnet_client_protocol.cpp:141-149`): bad `address_flags`, `create_timestamp > expire_timestamp`, or `version != ROCKETNET_WIRE_VERSION` | `rocketnet_debug` (`:146`) and `rocketnet_info` (`:42`) — **silent at default `ROCKETNET_LOG_LEVEL_ERROR`** | Sets `STATE_INVALID_CONNECT_TOKEN`, then destroys `client_transport` (`:256`) so caller cannot read state. |
 | C9 | `sdk/rocketnet_client_transport.cpp:254-258` | `!rocketnet_client_protocol_connect(...)` (`sdk/rocketnet_client_protocol.cpp:151-156`): `expire_timestamp <= current_timestamp` | `rocketnet_debug` (`:153`) and `rocketnet_info` (`:42`) — **silent at default `ROCKETNET_LOG_LEVEL_ERROR`** | Sets `STATE_CONNECT_TOKEN_EXPIRED`, then destroys `client_transport` (`:256`). |
 | C10 | `sdk/rocketnet_client_transport.cpp:326-341` | `granted_driver < 0` after trying `ladder.candidates` (`:307-324`) | Per-rung `rocketnet_warn` (`:319`) plus `rocketnet_error("client driver ladder exhausted...")` (`:336`) | Destroys `client_transport` (`:339`). |
 | C11 | `sdk/rocketnet_client_transport.cpp:355-368` | `!rocketnet_platform_mutex_create` (`:355`) or `!client_transport->thread` (`:362`) | `rocketnet_error("client could not create mutex")` (`:357`) or `"client could not create thread"` (`:365`) | Destroys `client_transport` (`:358,366`). |
@@ -138,15 +138,15 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
     ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
     ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
-    ROCKETNET_STATUS_INVALID_DRIVER_LIST                = 14,
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST                = 14,
 
     // client connect token pre-send checks (rocketnet_client_protocol_connect)
     ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
     ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
 
     // driver ladder and OS resources
-    ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED       = 17,
-    ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED            = 18,
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED       = 17,
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED            = 18,
     ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
     ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
     ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
@@ -162,14 +162,14 @@ Every failure exit in Section 1 maps deterministically to one code:
 `LIVE_ALLOCATIONS` (`:499`); `rocketnet_allocator` $\to$ `INVALID_ARGUMENT` (`:261`),
 `ALREADY_INITIALIZED` (`:264`), `LIVE_ALLOCATIONS` (`:266`);
 `rocketnet_client_transport_create` $\to$ C1 `INVALID_ARGUMENT`, C2 `CONFIG_ENV_INVALID`,
-C3 `CONFIG_OUT_OF_RANGE`, C4 `MEMORY_BUDGET_EXCEEDED`, C5 `INVALID_DRIVER_LIST`,
+C3 `CONFIG_OUT_OF_RANGE`, C4 `MEMORY_BUDGET_EXCEEDED`, C5 `INVALID_TRANSPORT_LIST`,
 C6/C7 `OUT_OF_MEMORY`, C8 `INVALID_CONNECT_TOKEN`, C9 `CONNECT_TOKEN_EXPIRED`,
-C10 `DRIVER_LADDER_EXHAUSTED`, C11 `MUTEX_CREATE_FAILED` / `THREAD_CREATE_FAILED`;
+C10 `TRANSPORT_LADDER_EXHAUSTED`, C11 `MUTEX_CREATE_FAILED` / `THREAD_CREATE_FAILED`;
 `rocketnet_server_transport_create` $\to$ S1 `INVALID_ARGUMENT`, S2/S3 `CONFIG_ENV_INVALID`,
 S4 `CONFIG_OUT_OF_RANGE`, S5 `MEMORY_BUDGET_EXCEEDED`, S6 `MISSING_KEYS`,
-S7 `INVALID_PROTOCOL_ID`, S8 `INVALID_DRIVER_LIST`, S9 `INVALID_ADDRESS`,
-S10/S14 `OUT_OF_MEMORY`, S11 `DEV_KEYS_IN_RELEASE`, S12 `DRIVER_PORT_ZERO_UNSUPPORTED`,
-S13 `DRIVER_LADDER_EXHAUSTED`; `rocketnet_frame_sync_create` $\to$ F1 `INVALID_ARGUMENT`,
+S7 `INVALID_PROTOCOL_ID`, S8 `INVALID_TRANSPORT_LIST`, S9 `INVALID_ADDRESS`,
+S10/S14 `OUT_OF_MEMORY`, S11 `DEV_KEYS_IN_RELEASE`, S12 `TRANSPORT_PORT_ZERO_UNSUPPORTED`,
+S13 `TRANSPORT_LADDER_EXHAUSTED`; `rocketnet_frame_sync_create` $\to$ F1 `INVALID_ARGUMENT`,
 F2 `OUT_OF_MEMORY`, F3 `TIMER_CREATE_FAILED`; `rocketnet_message_validate_config` $\to$
 `CONFIG_OUT_OF_RANGE`.
 

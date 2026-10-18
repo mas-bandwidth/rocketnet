@@ -17,7 +17,7 @@
 #ifndef ROCKETNET_HPP
 #define ROCKETNET_HPP
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 namespace rocketnet
 {

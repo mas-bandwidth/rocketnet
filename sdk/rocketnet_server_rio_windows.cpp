@@ -192,7 +192,7 @@ static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
         return;
     if ( !rio->rio.RIOSendEx( rio->request_queue, NULL, 0, NULL, NULL, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
     {
-        rocketnet_warn( "rio driver: send commit refused (Winsock %d); retried", WSAGetLastError() );
+        rocketnet_warn( "rio transport: send commit refused (Winsock %d); retried", WSAGetLastError() );
         return;
     }
     rio->uncommitted = false;
@@ -262,7 +262,7 @@ static void rocketnet_rio_retire_send( rocketnet_server_rio_t * rio, const RIORE
     if ( rocketnet_rio_context_kind( context ) != ROCKETNET_RIO_CONTEXT_SEND || phase < 0 || phase > 1 ||
          slot < 0 || slot >= ROCKETNET_RIO_SEND_QUEUE_SIZE )
     {
-        rocketnet_error( "rio driver: send completion with a foreign request context %llx", (unsigned long long) context );
+        rocketnet_error( "rio transport: send completion with a foreign request context %llx", (unsigned long long) context );
         return;
     }
     const int index = phase * ROCKETNET_RIO_SEND_QUEUE_SIZE + slot;
@@ -283,7 +283,7 @@ static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
         const ULONG count = rio->rio.RIODequeueCompletion( rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
         if ( count == RIO_CORRUPT_CQ )
         {
-            rocketnet_error( "rio driver: send completion queue corrupt" );
+            rocketnet_error( "rio transport: send completion queue corrupt" );
             return total;
         }
         for ( ULONG i = 0; i < count; ++i )
@@ -370,7 +370,7 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
     else
     {
         rocketnet_rio_leaked_regions.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_error( "rio driver: %d sends and %d receives still posted after close; the registered region is leaked, not freed under the kernel",
+        rocketnet_error( "rio transport: %d sends and %d receives still posted after close; the registered region is leaked, not freed under the kernel",
                          rio->outstanding[0] + rio->outstanding[1], rio->posted_receives );
     }
 }
@@ -489,12 +489,12 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     }
 
     if ( !rocketnet_rio_address_read( &address, bind_address ) ) goto failed;
-    rocketnet_info( "rio driver: port %d, %d receive slices, %d send frames per phase, %llu registered bytes", bind_address->port,
+    rocketnet_info( "rio transport: port %d, %d receive slices, %d send frames per phase, %llu registered bytes", bind_address->port,
                     ROCKETNET_RIO_RECEIVES, ROCKETNET_RIO_SEND_QUEUE_SIZE, (unsigned long long) rio->layout.total_bytes );
     return rio;
 
 failed:
-    rocketnet_warn( "rio driver create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
+    rocketnet_warn( "rio transport create failed (Winsock %d, Win32 %lu, test stage %d)", WSAGetLastError(), GetLastError(), fail_stage );
     rocketnet_server_rio_destroy( rio );
     return NULL;
 }
@@ -618,7 +618,7 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS );
             if ( rocketnet_platform_time() > deadline )
             {
-                rocketnet_error( "rio driver: %d sends of phase %d still outstanding; the switch is owed and the fill phase stays closed",
+                rocketnet_error( "rio transport: %d sends of phase %d still outstanding; the switch is owed and the fill phase stays closed",
                                  rio->outstanding[other], other );
                 return;
             }
@@ -641,7 +641,7 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
     const int slice = rocketnet_rio_context_index( context );
     if ( rocketnet_rio_context_kind( context ) != ROCKETNET_RIO_CONTEXT_RECEIVE || slice < 0 || slice >= ROCKETNET_RIO_RECEIVES )
     {
-        rocketnet_error( "rio driver: receive completion with a foreign request context %llx", (unsigned long long) context );
+        rocketnet_error( "rio transport: receive completion with a foreign request context %llx", (unsigned long long) context );
         return;
     }
     rio->posted_receives--;
@@ -690,7 +690,7 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
 #endif
         if ( count == RIO_CORRUPT_CQ )
         {
-            rocketnet_error( "rio driver: receive completion queue corrupt" );
+            rocketnet_error( "rio transport: receive completion queue corrupt" );
             break;
         }
         for ( ULONG i = 0; i < count; ++i )

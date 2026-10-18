@@ -469,8 +469,8 @@ so an operator is never silently ignored.
 an explicit msgx pin. The deprecated switch retains its original pump-disable
 meaning: `auto` may continue to portable, while `driver = "msgx"` fails loudly
 because its only candidate refused. It never silently changes a pin to portable.
-Unset the legacy variable to allow msgx, or use `ROCKETNET_SERVER_DRIVER` /
-`ROCKETNET_CLIENT_DRIVER` `=portable` to request portable through the current
+Unset the legacy variable to allow msgx, or use `ROCKETNET_SERVER_TRANSPORT` /
+`ROCKETNET_CLIENT_TRANSPORT` `=portable` to request portable through the current
 driver selector. The refusal log names both the old switch and its successor.
 
 **Precedence is default < struct < env, evaluated per endpoint.** The struct you
@@ -484,9 +484,9 @@ naming the field and its range.
 
 Environment names are mechanical: `ROCKETNET_` plus the endpoint plus the field
 name uppercased. On the server `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`,
-`driver` is `ROCKETNET_SERVER_DRIVER`, `public_address` is
+`driver` is `ROCKETNET_SERVER_TRANSPORT`, `public_address` is
 `ROCKETNET_SERVER_PUBLIC_ADDRESS`; on the client `driver` is
-`ROCKETNET_CLIENT_DRIVER`. A field's old process-wide spelling
+`ROCKETNET_CLIENT_TRANSPORT`. A field's old process-wide spelling
 (`ROCKETNET_MAX_CLIENTS`, `ROCKETNET_DRIVER`, `ROCKETNET_PUBLIC_ADDRESS`) is
 refused aloud with the per-endpoint name to use instead. Byte fields (keys,
 filter value) are base64. An environment variable set to the empty string is
@@ -535,7 +535,7 @@ environment, without code or a rebuild.
 Selection is **runtime**, not compile time (#106): one build carries every driver
 its platform has, and the transport walks an ordered candidate list at create,
 left to right, **first grant wins**. The list rides `config.driver` or
-`ROCKETNET_SERVER_DRIVER` (server) / `ROCKETNET_CLIENT_DRIVER` (client), under
+`ROCKETNET_SERVER_TRANSPORT` (server) / `ROCKETNET_CLIENT_TRANSPORT` (client), under
 the usual precedence.
 
     driver = "auto"            the platform's recommended order for this endpoint

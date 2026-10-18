@@ -395,7 +395,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     if ( !rocketnet_driver_ladder_parse( config->driver, available_drivers, num_available_drivers, &ladder ) )
     {
         if ( status )
-            *status = ROCKETNET_STATUS_INVALID_DRIVER_LIST;
+            *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
         return NULL;
     }
 
@@ -428,7 +428,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 name, (unsigned long long) plan.total_bytes, plan.sockets );
             if ( memory_budget > 0 && plan.total_bytes > memory_budget )
             {
-                rocketnet_warn( "client driver %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
+                rocketnet_warn( "client transport %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
                     name, (unsigned long long) plan.total_bytes, (unsigned long long) memory_budget );
                 budget_refused[candidate] = true;
                 budget_refused_total++;
@@ -437,15 +437,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 budget_allowed++;
         }
         else
-            rocketnet_info( "client memory plan [%s]: unavailable; consult this driver's resource policy", name );
+            rocketnet_info( "client memory plan [%s]: unavailable; consult this transport's resource policy", name );
     }
 
     if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
     {
-        rocketnet_error( "client driver ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
+        rocketnet_error( "client transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
             (unsigned long long) memory_budget );
         if ( status )
-            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         return NULL;
     }
 
@@ -597,7 +597,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
         if ( granted_driver < 0 )
         {
-            rocketnet_warn( "client driver %s refused%s", rocketnet_driver_name( candidate ),
+            rocketnet_warn( "client transport %s refused%s", rocketnet_driver_name( candidate ),
                             i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
             const size_t used = strlen( refused_names );
             snprintf( refused_names + used, sizeof(refused_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( candidate ) );
@@ -614,12 +614,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             snprintf( skipped_names + used, sizeof(skipped_names) - used, "%s%s", used > 0 ? ", " : "", rocketnet_driver_name( ladder.skipped[i] ) );
         }
 
-        rocketnet_error( "client driver ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+        rocketnet_error( "client transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
         rocketnet_client_transport_destroy( client_transport );
         if ( status )
-            *status = ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED;
+            *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         return NULL;
     }
 
@@ -627,7 +627,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     if ( refused_names[0] != '\0' )
     {
-        rocketnet_info( "client driver ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
+        rocketnet_info( "client transport ladder granted %s after refusals: %s", rocketnet_driver_name( granted_driver ), refused_names );
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];

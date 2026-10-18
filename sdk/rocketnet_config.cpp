@@ -285,10 +285,21 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
+// the public name of a config field's env var: the table row "driver" is
+// the public config's "transport" (the candidate list), so its variable is
+// ROCKETNET_<ENDPOINT>_TRANSPORT. every other row is its own name.
+
+static const char * rocketnet_config_env_field_name( const char * field_name )
+{
+    return strcmp( field_name, "driver" ) == 0 ? "transport" : field_name;
+}
+
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
 {
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
+
+    field_name = rocketnet_config_env_field_name( field_name );
 
     const char * prefix = "ROCKETNET_";
     const int prefix_length = (int) strlen( prefix );
@@ -314,6 +325,8 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     rocketnet_assert( transport_name );
     rocketnet_assert( field_name );
     rocketnet_assert( buffer );
+
+    field_name = rocketnet_config_env_field_name( field_name );
 
     char prefix[64];
     const int written = snprintf( prefix, sizeof(prefix), "ROCKETNET_%s_", transport_name );
@@ -727,20 +740,20 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
         if ( name_length == 0 )
         {
-            rocketnet_error( "empty driver name in driver list \"%s\" (valid names: %s)", value, rocketnet_driver_names() );
+            rocketnet_error( "empty transport name in transport list \"%s\" (valid names: %s)", value, rocketnet_driver_names() );
             return false;
         }
 
         if ( name_length == 4 && memcmp( name, "auto", 4 ) == 0 )
         {
-            rocketnet_error( "\"auto\" must stand alone, not ride a driver list (\"%s\")", value );
+            rocketnet_error( "\"auto\" must stand alone, not ride a transport list (\"%s\")", value );
             return false;
         }
 
         const int driver = rocketnet_driver_id_from_name( name, name_length );
         if ( driver < 0 )
         {
-            rocketnet_error( "unknown driver \"%.*s\" in driver list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_driver_names() );
+            rocketnet_error( "unknown transport \"%.*s\" in transport list \"%s\" (valid names: %s)", name_length, name, value, rocketnet_driver_names() );
             return false;
         }
 
@@ -758,7 +771,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
         {
             if ( ladder->num_candidates >= ROCKETNET_MAX_DRIVER_CANDIDATES )
             {
-                rocketnet_error( "driver list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many candidates (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
                 return false;
             }
             ladder->candidates[ladder->num_candidates++] = driver;
@@ -772,11 +785,11 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 
             if ( ladder->num_skipped >= ROCKETNET_MAX_DRIVER_CANDIDATES )
             {
-                rocketnet_error( "driver list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
+                rocketnet_error( "transport list \"%s\" has too many skipped names (%d maximum)", value, ROCKETNET_MAX_DRIVER_CANDIDATES );
                 return false;
             }
             ladder->skipped[ladder->num_skipped++] = driver;
-            rocketnet_info( "driver %.*s is not available here. skipped", name_length, name );
+            rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
         }
 
         if ( !comma )
@@ -805,7 +818,7 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
             snprintf( auto_names + used, sizeof(auto_names) - used, "%s%s", used > 0 ? "," : "", rocketnet_driver_name( available[i] ) );
         }
 
-        rocketnet_warn( "driver list \"%s\" names no driver for this endpoint on this platform. using auto (%s)", value, auto_names );
+        rocketnet_warn( "transport list \"%s\" names no transport for this endpoint on this platform. using auto (%s)", value, auto_names );
 
         // Pin-only drivers are never chosen by auto; a pin selects them.
         for ( int i = 0; i < num_available; i++ )

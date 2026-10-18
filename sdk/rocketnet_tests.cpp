@@ -39,6 +39,7 @@
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_config.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_memory.h"
 
 // The interrupt matcher matches fixture lines. Driver creates live in functional/.
@@ -1368,7 +1369,7 @@ static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_d
                                                struct rocketnet_connect_token_private_t * private_fields )
 {
     memset( signed_fields, 0, sizeof(*signed_fields) );
-    signed_fields->version = ROCKETNET_VERSION;
+    signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
     signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -7362,13 +7363,198 @@ static void rocketnet_test_null_assert_hook( const char * condition, const char 
 // checks both the return and the misuse count's rise. A NULL handle is refused
 // before any I/O, so no socket opens.
 
-// The export audit: a mirror of every ROCKETNET_EXPORT entry point compiled
+// The export audit: a mirror of every ROCKETNET_EXPORT entry point of
+// rocketnet.h compiled into the non-development library, in header order.
+// Every name is either exercised in rocketnet_test_public_api_null below (a
+// NULL case) or exempt (no NULL-able pointer, or NULL is a valid value: the
+// defaults), each exactly once. tools/check_exports.py derives the set of
+// exported entry points from sdk/rocketnet.h and refuses any name missing
+// here, any table name the header does not declare, and any duplicate.
+static const char * rocketnet_test_exports[] =
+{
+    "rocketnet_version",
+    "rocketnet_abi_version",
+    "rocketnet_abi_type_size",
+    "rocketnet_abi_field_count",
+    "rocketnet_abi_field_offset",
+    "rocketnet_abi_field_size",
+    "rocketnet_init",
+    "rocketnet_init_ex",
+    "rocketnet_term",
+    "rocketnet_term_ex",
+    "rocketnet_num_status_codes",
+    "rocketnet_status_string",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_get_log_level",
+    "rocketnet_log_level_string",
+    "rocketnet_log_function",
+    "rocketnet_set_log_callback",
+    "rocketnet_api_misuse_count",
+    "rocketnet_protocol_version",
+    "rocketnet_time",
+    "rocketnet_sleep",
+    "rocketnet_allocator",
+    "rocketnet_allocator_ex",
+    "rocketnet_client_default_config",
+    "rocketnet_client_default_config_sized",
+    "rocketnet_client_validate_config",
+    "rocketnet_client_required_memory",
+    "rocketnet_client_create",
+    "rocketnet_client_create_sized",
+    "rocketnet_client_destroy",
+    "rocketnet_client_update",
+    "rocketnet_client_send_packets",
+    "rocketnet_client_disconnect",
+    "rocketnet_client_state",
+    "rocketnet_client_state_name",
+    "rocketnet_client_disconnect_reason",
+    "rocketnet_client_index",
+    "rocketnet_client_transport_name",
+    "rocketnet_client_start",
+    "rocketnet_client_finish",
+    "rocketnet_client_abort",
+    "rocketnet_client_send",
+    "rocketnet_client_receive",
+    "rocketnet_client_release",
+    "rocketnet_client_receipts",
+    "rocketnet_client_set_send_kbps",
+    "rocketnet_client_counter",
+    "rocketnet_client_stat",
+    "rocketnet_server_default_config",
+    "rocketnet_server_default_config_sized",
+    "rocketnet_server_dev_config",
+    "rocketnet_server_validate_config",
+    "rocketnet_server_required_memory",
+    "rocketnet_server_create",
+    "rocketnet_server_create_sized",
+    "rocketnet_server_destroy",
+    "rocketnet_server_update",
+    "rocketnet_server_send_packets",
+    "rocketnet_server_port",
+    "rocketnet_server_transport_name",
+    "rocketnet_server_max_clients",
+    "rocketnet_server_num_connected_clients",
+    "rocketnet_server_client_connected",
+    "rocketnet_server_client_id",
+    "rocketnet_server_disconnect_client",
+    "rocketnet_server_disconnect_reason",
+    "rocketnet_server_start",
+    "rocketnet_server_finish",
+    "rocketnet_server_abort",
+    "rocketnet_server_send",
+    "rocketnet_server_broadcast",
+    "rocketnet_server_receive",
+    "rocketnet_server_release",
+    "rocketnet_server_receipts",
+    "rocketnet_server_set_send_kbps",
+    "rocketnet_server_counter",
+    "rocketnet_server_stat",
+    "rocketnet_server_client_counter",
+    "rocketnet_server_client_stat",
+};
+
+static const char * rocketnet_test_public_null_case_exports[] =
+{
+    "rocketnet_abi_type_size",
+    "rocketnet_abi_field_count",
+    "rocketnet_abi_field_offset",
+    "rocketnet_abi_field_size",
+    "rocketnet_allocator",
+    "rocketnet_allocator_ex",
+    "rocketnet_client_default_config",
+    "rocketnet_client_default_config_sized",
+    "rocketnet_client_create",
+    "rocketnet_client_destroy",
+    "rocketnet_client_update",
+    "rocketnet_client_send_packets",
+    "rocketnet_client_disconnect",
+    "rocketnet_client_state",
+    "rocketnet_client_disconnect_reason",
+    "rocketnet_client_index",
+    "rocketnet_client_transport_name",
+    "rocketnet_client_start",
+    "rocketnet_client_finish",
+    "rocketnet_client_abort",
+    "rocketnet_client_send",
+    "rocketnet_client_receive",
+    "rocketnet_client_release",
+    "rocketnet_client_receipts",
+    "rocketnet_client_set_send_kbps",
+    "rocketnet_client_counter",
+    "rocketnet_client_stat",
+    "rocketnet_server_default_config",
+    "rocketnet_server_default_config_sized",
+    "rocketnet_server_dev_config",
+    "rocketnet_server_create",
+    "rocketnet_server_destroy",
+    "rocketnet_server_update",
+    "rocketnet_server_send_packets",
+    "rocketnet_server_port",
+    "rocketnet_server_transport_name",
+    "rocketnet_server_max_clients",
+    "rocketnet_server_num_connected_clients",
+    "rocketnet_server_client_connected",
+    "rocketnet_server_client_id",
+    "rocketnet_server_disconnect_client",
+    "rocketnet_server_disconnect_reason",
+    "rocketnet_server_start",
+    "rocketnet_server_finish",
+    "rocketnet_server_abort",
+    "rocketnet_server_send",
+    "rocketnet_server_broadcast",
+    "rocketnet_server_receive",
+    "rocketnet_server_release",
+    "rocketnet_server_receipts",
+    "rocketnet_server_set_send_kbps",
+    "rocketnet_server_counter",
+    "rocketnet_server_stat",
+    "rocketnet_server_client_counter",
+    "rocketnet_server_client_stat",
+};
+
+static const char * rocketnet_test_public_null_exempt_exports[] =
+{
+    "rocketnet_version",
+    "rocketnet_abi_version",
+    "rocketnet_init",
+    "rocketnet_init_ex",
+    "rocketnet_term",
+    "rocketnet_term_ex",
+    "rocketnet_num_status_codes",
+    "rocketnet_status_string",
+    "rocketnet_assert_function",
+    "rocketnet_quiet",
+    "rocketnet_log_level",
+    "rocketnet_get_log_level",
+    "rocketnet_log_level_string",
+    "rocketnet_log_function",
+    "rocketnet_set_log_callback",
+    "rocketnet_api_misuse_count",
+    "rocketnet_protocol_version",
+    "rocketnet_time",
+    "rocketnet_sleep",
+    "rocketnet_client_validate_config",
+    "rocketnet_client_required_memory",
+    "rocketnet_client_create_sized",
+    "rocketnet_client_state_name",
+    "rocketnet_server_validate_config",
+    "rocketnet_server_required_memory",
+    "rocketnet_server_create_sized",
+};
+
+
+// The layer audit: every entry point of the SDK's layers (rocketnet_layers.h,
+// and the public calls they share), each exercised with NULL or exempt.
+// The public audit, rocketnet_test_exports below, mirrors rocketnet.h.
+// Formerly the export audit: a mirror of every exported entry point compiled
 // into the non-development library, in header order. Every name is either
 // exercised here (a NULL case above) or exempt (no NULL-able pointer, or NULL
 // is a valid value), each exactly once. tools/check_exports.py derives the set
 // of exported entry points from sdk/rocketnet.h and refuses any name missing
 // here, any table name the header does not declare, and any duplicate.
-static const char * rocketnet_test_exports[] =
+static const char * rocketnet_test_layer_exports[] =
 {
     "rocketnet_abi_version",
     "rocketnet_abi_type_size",
@@ -7535,7 +7721,7 @@ static const char * rocketnet_test_exports[] =
 // the entry points this suite gives a NULL case (a misuse that increments the
 // count), and the ones that are exempt (no NULL-able pointer, or NULL valid).
 
-static const char * rocketnet_test_null_case_exports[] =
+static const char * rocketnet_test_layer_null_case_exports[] =
 {
     "rocketnet_abi_type_size",
     "rocketnet_abi_field_count",
@@ -7656,7 +7842,7 @@ static const char * rocketnet_test_null_case_exports[] =
     "rocketnet_message_server_counters",
 };
 
-static const char * rocketnet_test_null_exempt_exports[] =
+static const char * rocketnet_test_layer_null_exempt_exports[] =
 {
     "rocketnet_abi_version",
     "rocketnet_init",
@@ -7709,6 +7895,130 @@ static bool rocketnet_test_name_in( const char * name, const char * const * list
         if ( strcmp( name, list[i] ) == 0 )
             return true;
     return false;
+}
+
+
+#define RN_TEST_ONE_MISUSE( call ) do { const uint64_t misuse_before = rocketnet_api_misuse_count(); call; rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 ); } while ( 0 )
+
+void rocketnet_test_public_api_null()
+{
+    void (*saved_assert)( const char * condition, const char * function, const char * file, int line ) = rocketnet_assert_function_pointer;
+    rocketnet_assert_function( rocketnet_test_null_assert_hook );
+
+    uint8_t data[8] = { 0 };
+    const uint8_t * view = NULL;
+    int bytes = 0;
+    struct rocketnet_receipt_t receipts[2];
+    struct rocketnet_client_config_t client_config;
+    struct rocketnet_server_config_t server_config;
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES] = { 0 };
+
+    RN_TEST_ONE_MISUSE( rocketnet_abi_type_size( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_abi_field_count( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_abi_field_offset( NULL, NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_abi_field_size( NULL, NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_allocator( NULL, NULL ) ) );
+    RN_TEST_ONE_MISUSE( rocketnet_allocator_ex( NULL, NULL ) );
+
+    RN_TEST_ONE_MISUSE( rocketnet_client_default_config( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_default_config_sized( NULL, sizeof( client_config ) ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_create( NULL, NULL, NULL, NULL, 0 ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_destroy( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_update( NULL, 1000.0 ) == ROCKETNET_MESSAGE_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_disconnect_reason( NULL ) == ROCKETNET_MESSAGE_ERROR_NONE ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start( NULL, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish( NULL, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_abort( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_send( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receive( NULL, 0, &view, &bytes ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_client_release( NULL, data ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_receipts( NULL, receipts, 2 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_set_send_kbps( NULL, 1000 ) == 0 ) );
+    for ( int i = 0; i <= ROCKETNET_CLIENT_COUNTER_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_counter( NULL, (enum rocketnet_client_counter_t) i ) == 0 ) );
+    for ( int i = 0; i <= ROCKETNET_CLIENT_STAT_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_stat( NULL, (enum rocketnet_client_stat_t) i ) == 0.0 ) );
+
+    RN_TEST_ONE_MISUSE( rocketnet_server_default_config( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_default_config_sized( NULL, sizeof( server_config ) ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_dev_config( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_create( NULL, NULL, NULL, NULL, 0 ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_destroy( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_update( NULL, 1000.0 ) == ROCKETNET_MESSAGE_OK ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_send_packets( NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_port( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_transport_name( NULL ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_max_clients( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connected( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_id( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_client( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_disconnect_reason( NULL, 0 ) == ROCKETNET_MESSAGE_ERROR_NONE ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_start( NULL, 0, 0, ROCKETNET_RELIABLE, 4 ) == NULL ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_finish( NULL, 0, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_abort( NULL, 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_send( NULL, 0, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_broadcast( NULL, 0, ROCKETNET_RELIABLE, data, 4 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receive( NULL, 0, 0, &view, &bytes ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_server_release( NULL, 0, data ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_receipts( NULL, 0, receipts, 2 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) == 0 ) );
+    for ( int i = 0; i <= ROCKETNET_SERVER_COUNTER_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_counter( NULL, (enum rocketnet_server_counter_t) i ) == 0 ) );
+    for ( int i = 0; i <= ROCKETNET_SERVER_STAT_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_stat( NULL, (enum rocketnet_server_stat_t) i ) == 0.0 ) );
+    for ( int i = 0; i <= ROCKETNET_SERVER_CLIENT_COUNTER_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_counter( NULL, 0, (enum rocketnet_server_client_counter_t) i ) == 0 ) );
+    for ( int i = 0; i <= ROCKETNET_SERVER_CLIENT_STAT_COUNT; i++ )
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_stat( NULL, 0, (enum rocketnet_server_client_stat_t) i ) == 0.0 ) );
+
+    // the exempt: NULL is the defaults, or there is no pointer
+    const uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
+    rocketnet_check( rocketnet_client_validate_config( NULL ) == 1 );
+    rocketnet_check( rocketnet_client_required_memory( NULL ) > 0 );
+    rocketnet_check( rocketnet_server_validate_config( NULL ) == 1 );
+    rocketnet_check( rocketnet_server_required_memory( NULL ) > 0 );
+    rocketnet_check( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONNECTED ) != NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before );
+
+    // a wrong size is refused before anything else, NULL config or not
+    rocketnet_client_default_config( &client_config );
+    rocketnet_server_default_config( &server_config );
+    rocketnet_check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) - 4 ) == 0 );
+    rocketnet_check( rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) - 4 ) == 0 );
+    rocketnet_check( rocketnet_client_create_sized( NULL, token, &client_config, sizeof( client_config ) - 4, NULL, 0 ) == NULL );
+    rocketnet_check( rocketnet_server_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) - 4, NULL, 0 ) == NULL );
+    rocketnet_check( rocketnet_client_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    rocketnet_check( rocketnet_server_default_config_sized( &server_config, sizeof( server_config ) ) == 1 );
+
+    // the audit itself: every export is a case or exempt, exactly once
+    const int num_exports = (int)( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) );
+    const int num_cases = (int)( sizeof(rocketnet_test_public_null_case_exports) / sizeof(rocketnet_test_public_null_case_exports[0]) );
+    const int num_exempt = (int)( sizeof(rocketnet_test_public_null_exempt_exports) / sizeof(rocketnet_test_public_null_exempt_exports[0]) );
+    for ( int i = 0; i < num_exports; i++ )
+    {
+        const bool in_case = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_public_null_case_exports, num_cases );
+        const bool in_exempt = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_public_null_exempt_exports, num_exempt );
+        rocketnet_check( in_case != in_exempt );
+    }
+    rocketnet_check( num_cases + num_exempt == num_exports );
+
+    rocketnet_assert_function( saved_assert );
+}
+
+// The version is one integer, and the library and the header agree on it.
+
+void rocketnet_test_version_is_one_integer()
+{
+    rocketnet_check( rocketnet_version() == ROCKETNET_VERSION );
+    rocketnet_check( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
+    rocketnet_check( ROCKETNET_VERSION_MAJOR_INT == ROCKETNET_VERSION_MAJOR && ROCKETNET_VERSION_MINOR_INT == ROCKETNET_VERSION_MINOR && ROCKETNET_VERSION_PATCH_INT == ROCKETNET_VERSION_PATCH );
 }
 
 void rocketnet_test_public_api_null_is_a_counted_no_op()
@@ -8155,19 +8465,19 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     // is a valid value), each exactly once, and nothing else is claimed. the
     // static lists mirror sdk/rocketnet.h and the static_assert above pins their
     // count, so a new export without a case fails here.
-    const int num_exports = (int)( sizeof(rocketnet_test_exports) / sizeof(rocketnet_test_exports[0]) );
-    const int num_null_case = (int)( sizeof(rocketnet_test_null_case_exports) / sizeof(rocketnet_test_null_case_exports[0]) );
-    const int num_null_exempt = (int)( sizeof(rocketnet_test_null_exempt_exports) / sizeof(rocketnet_test_null_exempt_exports[0]) );
+    const int num_exports = (int)( sizeof(rocketnet_test_layer_exports) / sizeof(rocketnet_test_layer_exports[0]) );
+    const int num_null_case = (int)( sizeof(rocketnet_test_layer_null_case_exports) / sizeof(rocketnet_test_layer_null_case_exports[0]) );
+    const int num_null_exempt = (int)( sizeof(rocketnet_test_layer_null_exempt_exports) / sizeof(rocketnet_test_layer_null_exempt_exports[0]) );
     for ( int i = 0; i < num_exports; i++ )
     {
-        const bool in_case = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_null_case_exports, num_null_case );
-        const bool in_exempt = rocketnet_test_name_in( rocketnet_test_exports[i], rocketnet_test_null_exempt_exports, num_null_exempt );
+        const bool in_case = rocketnet_test_name_in( rocketnet_test_layer_exports[i], rocketnet_test_layer_null_case_exports, num_null_case );
+        const bool in_exempt = rocketnet_test_name_in( rocketnet_test_layer_exports[i], rocketnet_test_layer_null_exempt_exports, num_null_exempt );
         rocketnet_check( in_case != in_exempt );
     }
     for ( int i = 0; i < num_null_case; i++ )
-        rocketnet_check( rocketnet_test_name_in( rocketnet_test_null_case_exports[i], rocketnet_test_exports, num_exports ) );
+        rocketnet_check( rocketnet_test_name_in( rocketnet_test_layer_null_case_exports[i], rocketnet_test_layer_exports, num_exports ) );
     for ( int i = 0; i < num_null_exempt; i++ )
-        rocketnet_check( rocketnet_test_name_in( rocketnet_test_null_exempt_exports[i], rocketnet_test_exports, num_exports ) );
+        rocketnet_check( rocketnet_test_name_in( rocketnet_test_layer_null_exempt_exports[i], rocketnet_test_layer_exports, num_exports ) );
 
     rocketnet_check( rocketnet_counter_name( 0 ) != NULL );
     rocketnet_check( rocketnet_client_transport_state_name( 0 ) != NULL );
@@ -11990,15 +12300,126 @@ static void rocketnet_test_server_default_config_erased( void * config )
     rocketnet_server_transport_default_config( (struct rocketnet_server_transport_config_t*) config );
 }
 
+
+static void rocketnet_test_message_default_config_erased( void * config )
+{
+    rocketnet_message_default_config( (struct rocketnet_message_config_t*) config );
+}
+
+static void rocketnet_test_budget_default_erased( void * config )
+{
+    *(int*) config = 1000;
+}
+
+static const struct rocketnet_config_field_t * rocketnet_test_find_field( const char * name, const struct rocketnet_config_field_t * fields, int num_fields )
+{
+    for ( int i = 0; i < num_fields; i++ )
+        if ( strcmp( fields[i].name, name ) == 0 )
+            return &fields[i];
+    return NULL;
+}
+
+// Every field of a public config struct, walked from its ABI descriptors, is
+// one row of the tables the env overlay reads -- the endpoint's transport
+// table, the message table or the budget table -- except the callbacks, which
+// have no env form. The descriptors are proven complete first: sorted by
+// offset they tile the struct with no gap a field could hide in. So a field
+// added to the struct without a table row, or to the struct without a
+// descriptor, fails here; and each table's rows round-trip from the
+// environment in rocketnet_test_config_table_round_trip.
+
+static void rocketnet_test_public_config_fields_have_env( const char * type, const char * endpoint,
+                                                          const struct rocketnet_config_field_t * transport_fields, int num_transport_fields,
+                                                          const struct rocketnet_config_field_t * message_fields, int num_message_fields,
+                                                          const struct rocketnet_config_field_t * budget_fields, int num_budget_fields )
+{
+    const int count = rocketnet_abi_field_count( type );
+    rocketnet_check( count > 0 && count <= 64 );
+
+    size_t offsets[64];
+    size_t sizes[64];
+    for ( int i = 0; i < count; i++ )
+    {
+        const char * name = rocketnet_abi_field_name( type, i );
+        rocketnet_check( name != NULL );
+        offsets[i] = rocketnet_abi_field_offset( type, name );
+        sizes[i] = rocketnet_abi_field_size( type, name );
+
+        if ( strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 )
+            continue;
+
+        const char * row = strcmp( name, "transport" ) == 0 ? "driver" : name;
+        const bool found = rocketnet_test_find_field( row, transport_fields, num_transport_fields ) != NULL ||
+                           rocketnet_test_find_field( row, message_fields, num_message_fields ) != NULL ||
+                           rocketnet_test_find_field( row, budget_fields, num_budget_fields ) != NULL;
+        if ( !found )
+            printf( "%s field %s has no env var\n", type, name );
+        rocketnet_check( found );
+
+        char env_name[128];
+        rocketnet_check( rocketnet_config_env_var_name_for( endpoint, row, env_name, sizeof(env_name) ) );
+        char expected[128];
+        snprintf( expected, sizeof(expected), "ROCKETNET_%s_", strcmp( endpoint, "client" ) == 0 ? "CLIENT" : "SERVER" );
+        for ( const char * c = name; *c; c++ )
+        {
+            const size_t used = strlen( expected );
+            expected[used] = (char) toupper( (unsigned char) *c );
+            expected[used + 1] = '\0';
+        }
+        rocketnet_check( strcmp( env_name, expected ) == 0 );
+    }
+
+    // the descriptors tile the struct: walk the fields in offset order
+    size_t end = 0;
+    for ( int done = 0; done < count; done++ )
+    {
+        int next = -1;
+        for ( int i = 0; i < count; i++ )
+            if ( offsets[i] >= end && ( next < 0 || offsets[i] < offsets[next] ) )
+                next = i;
+        rocketnet_check( next >= 0 );
+        const size_t align = sizes[next] >= 8 ? 8 : ( sizes[next] >= 4 ? 4 : 1 );
+        rocketnet_check( offsets[next] - end < align || ( offsets[next] == end ) );
+        end = offsets[next] + sizes[next];
+    }
+    rocketnet_check( rocketnet_abi_type_size( type ) - end < 8 );
+}
+
+void rocketnet_test_public_config_env_round_trip()
+{
+    int num_message_fields = 0;
+    const struct rocketnet_config_field_t * message_fields = rocketnet_message_config_fields( &num_message_fields );
+    int num_client_budget = 0;
+    const struct rocketnet_config_field_t * client_budget = rocketnet_client_budget_config_fields( &num_client_budget );
+    int num_server_budget = 0;
+    const struct rocketnet_config_field_t * server_budget = rocketnet_server_budget_config_fields( &num_server_budget );
+    int num_client_fields = 0;
+    const struct rocketnet_config_field_t * client_fields = rocketnet_client_transport_config_fields( &num_client_fields );
+    int num_server_fields = 0;
+    const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
+
+    // the message fields and the budgets round-trip under both endpoints' names
+    struct rocketnet_message_config_t message;
+    rocketnet_test_config_table_round_trip( "client", &message, rocketnet_test_message_default_config_erased, message_fields, num_message_fields );
+    rocketnet_test_config_table_round_trip( "server", &message, rocketnet_test_message_default_config_erased, message_fields, num_message_fields );
+    int kbps = 0;
+    rocketnet_test_config_table_round_trip( "client", &kbps, rocketnet_test_budget_default_erased, client_budget, num_client_budget );
+    rocketnet_test_config_table_round_trip( "server", &kbps, rocketnet_test_budget_default_erased, server_budget, num_server_budget );
+
+    // and every public field is a row of one of those tables
+    rocketnet_test_public_config_fields_have_env( "rocketnet_client_config_t", "client", client_fields, num_client_fields, message_fields, num_message_fields, client_budget, num_client_budget );
+    rocketnet_test_public_config_fields_have_env( "rocketnet_server_config_t", "server", server_fields, num_server_fields, message_fields, num_message_fields, server_budget, num_server_budget );
+}
+
 void rocketnet_test_config_env_round_trip()
 {
     // the derivation is mechanical: field name uppercased under the prefix
 
     char derived[128];
     rocketnet_check( rocketnet_config_env_var_name_for( "server", "driver", derived, sizeof(derived) ) );
-    rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_DRIVER" ) == 0 );
+    rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_TRANSPORT" ) == 0 );
     rocketnet_check( rocketnet_config_env_var_name_for( "client", "driver", derived, sizeof(derived) ) );
-    rocketnet_check( strcmp( derived, "ROCKETNET_CLIENT_DRIVER" ) == 0 );
+    rocketnet_check( strcmp( derived, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 );
     rocketnet_check( rocketnet_config_env_var_name_for( "server", "num_xdp_queues", derived, sizeof(derived) ) );
     rocketnet_check( strcmp( derived, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) == 0 );
 
@@ -12673,8 +13094,8 @@ class rocketnet_test_environment_t
     void clear(const char * name)
     {
         if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
-        if (strcmp(name, "ROCKETNET_SERVER_DRIVER") == 0) return;
-        if (strcmp(name, "ROCKETNET_CLIENT_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
+        if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
         const char * value = getenv(name);
         entries.push_back({name, value ? value : "", value != NULL});
@@ -13769,6 +14190,8 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_create_before_init_is_refused", rocketnet_test_create_before_init_is_refused },
     { "test_allocator_refusal_is_returned", rocketnet_test_allocator_refusal_is_returned },
     { "test_public_api_null_is_a_counted_no_op", rocketnet_test_public_api_null_is_a_counted_no_op },
+    { "test_public_api_null", rocketnet_test_public_api_null },
+    { "test_version_is_one_integer", rocketnet_test_version_is_one_integer },
     { "test_ack_block_encoding", rocketnet_test_ack_block_encoding },
     { "test_ack_block_validity", rocketnet_test_ack_block_validity },
     { "test_ack_block_build", rocketnet_test_ack_block_build },
@@ -13809,6 +14232,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_send_arena", rocketnet_test_send_arena },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
+    { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },

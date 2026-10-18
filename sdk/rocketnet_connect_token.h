@@ -15,7 +15,7 @@
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
 
-#define ROCKETNET_VERSION                       0x4E7C1A93
+#define ROCKETNET_WIRE_VERSION                       0x4E7C1A93
 
 #define ROCKETNET_PRIVATE_BLOCK_BYTES           384
 #define ROCKETNET_SEALED_BLOCK_BYTES            432     // private block + crypto_box_SEALBYTES

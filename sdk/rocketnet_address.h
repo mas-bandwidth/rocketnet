@@ -12,36 +12,36 @@
 
 #include <stdint.h>
 
-// struct rocketnet_address_t is public: rocketnet.h defines it, for the
-// admission callback. The functions below are the SDK's own.
+// struct rocketnet_address_t is the SDK's own (rocketnet_layers.h); the
+// public API takes and gives addresses only as strings.
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-ROCKETNET_EXPORT void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t big_endian_ipv4, uint16_t big_endian_port );
+void rocketnet_address_load_ipv4( struct rocketnet_address_t * address, uint32_t big_endian_ipv4, uint16_t big_endian_port );
 
-ROCKETNET_EXPORT bool rocketnet_address_parse( struct rocketnet_address_t * address, const char * address_string );
+bool rocketnet_address_parse( struct rocketnet_address_t * address, const char * address_string );
 
 // both of the following write into the caller's buffer bounded by
 // ROCKETNET_MAX_ADDRESS_STRING_LENGTH: the buffer must be at least that many
 // bytes, terminator included. the constant arrives with rocketnet.h, above.
 
-ROCKETNET_EXPORT const char * rocketnet_address_to_string( const struct rocketnet_address_t * address, char * buffer );
+const char * rocketnet_address_to_string( const struct rocketnet_address_t * address, char * buffer );
 
-ROCKETNET_EXPORT const char * rocketnet_address_to_string_without_port( const struct rocketnet_address_t * address, char * buffer );
+const char * rocketnet_address_to_string_without_port( const struct rocketnet_address_t * address, char * buffer );
 
-ROCKETNET_EXPORT bool rocketnet_address_equal( const struct rocketnet_address_t * a, const struct rocketnet_address_t * b );
+bool rocketnet_address_equal( const struct rocketnet_address_t * a, const struct rocketnet_address_t * b );
 
-ROCKETNET_EXPORT void rocketnet_address_anonymize( struct rocketnet_address_t * address );
+void rocketnet_address_anonymize( struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT bool rocketnet_address_is_ipv4_in_ipv6( struct rocketnet_address_t * address );
+bool rocketnet_address_is_ipv4_in_ipv6( struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * address );
+void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * address );
+void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * address );
 
-ROCKETNET_EXPORT uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
+uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 
 #ifdef __cplusplus
 }

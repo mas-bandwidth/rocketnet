@@ -94,6 +94,7 @@ add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
 set(ROCKETNET_SOURCE
     sdk/rocketnet.cpp
     sdk/rocketnet_abi.cpp
+    sdk/rocketnet_api.cpp
     sdk/rocketnet_ack.cpp
     sdk/rocketnet_allocator.cpp
     sdk/rocketnet_window_send.cpp
@@ -487,7 +488,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # rocketnet.h is the whole public C API; rocketnet.hpp is the optional C++ layer over it.
-install(FILES sdk/rocketnet.h sdk/rocketnet.hpp
+install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)

@@ -275,7 +275,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     const uint8_t * signature = signed_connect_data + ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_VERSION;
-        if ( rocketnet_read_uint32( &p ) != ROCKETNET_VERSION )
+        if ( rocketnet_read_uint32( &p ) != ROCKETNET_WIRE_VERSION )
             return pcapng_refused( ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION );
     }
     {

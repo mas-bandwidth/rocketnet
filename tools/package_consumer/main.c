@@ -30,33 +30,27 @@ static void count_null_assertion(const char * condition, const char * function, 
 int main(void)
 {
     CHECK(rocketnet_abi_version() == ROCKETNET_ABI_VERSION);
-    CHECK(rocketnet_abi_type_size("rocketnet_client_transport_config_t") == sizeof(struct rocketnet_client_transport_config_t));
-    CHECK(rocketnet_abi_field_offset("rocketnet_client_transport_config_t", "state_change_callback") == offsetof(struct rocketnet_client_transport_config_t, state_change_callback));
-    CHECK(rocketnet_abi_field_size("rocketnet_server_transport_config_t", "driver") == ROCKETNET_DRIVER_STRING_LENGTH);
-    CHECK(rocketnet_abi_field_count("rocketnet_packet_context_t") == 6);
+    CHECK(rocketnet_version() == ROCKETNET_VERSION);
+    CHECK(rocketnet_abi_type_size("rocketnet_client_config_t") == sizeof(struct rocketnet_client_config_t));
+    CHECK(rocketnet_abi_field_offset("rocketnet_client_config_t", "state_change_callback") == offsetof(struct rocketnet_client_config_t, state_change_callback));
+    CHECK(rocketnet_abi_field_size("rocketnet_server_config_t", "transport") == sizeof(const char *));
+    CHECK(rocketnet_abi_field_count("rocketnet_receipt_t") == 2);
     CHECK(rocketnet_assert_function_pointer != NULL);
     const uint64_t misuse_before = rocketnet_api_misuse_count();
     /* Deliberate NULL queries retain their counted Debug assertion contract. */
     rocketnet_assert_function(count_null_assertion);
     CHECK(rocketnet_abi_type_size(NULL) == SIZE_MAX);
     CHECK(rocketnet_abi_field_count("missing") == -1);
-    CHECK(rocketnet_abi_field_offset("rocketnet_packet_context_t", "missing") == SIZE_MAX);
+    CHECK(rocketnet_abi_field_offset("rocketnet_receipt_t", "missing") == SIZE_MAX);
     CHECK(rocketnet_abi_field_size("missing", NULL) == SIZE_MAX);
     rocketnet_assert_function(NULL);
     CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
     CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
     CHECK(rocketnet_assert_function_pointer != NULL);
-    CHECK(rocketnet_num_counters() > 0);
-    for (int counter = 0; counter < rocketnet_num_counters(); counter++) {
-        CHECK(rocketnet_counter_name(counter) != NULL);
-        CHECK(rocketnet_counter_class(counter) >= 0 && rocketnet_counter_class(counter) < ROCKETNET_NUM_COUNTER_CLASSES);
-    }
-    CHECK(rocketnet_counter_class(rocketnet_num_counters()) == -1);
-    CHECK(rocketnet_counter_class(-1) == -1);
+    CHECK(rocketnet_client_state_name(ROCKETNET_CLIENT_STATE_CONNECTED) != NULL);
     CHECK(rocketnet_init(NULL));
-    rocketnet_forbid_xdp_commit();
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_ERROR);
-    struct rocketnet_server_transport_config_t config;
+    struct rocketnet_server_config_t config;
     /* Public TEST VECTORS, never production credentials. This consumer only
        creates and destroys a loopback server; it sends no authenticated traffic.
        X25519 Alice: https://www.rfc-editor.org/rfc/rfc7748#section-6.1
@@ -79,18 +73,19 @@ int main(void)
         0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
         0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a
     };
-    rocketnet_server_transport_default_config(&config);
+    rocketnet_server_default_config(&config);
     memcpy(config.server_secret_key, test_server_secret_key, sizeof(config.server_secret_key));
     memcpy(config.server_public_key, test_server_public_key, sizeof(config.server_public_key));
     memcpy(config.backend_public_key, test_backend_public_key, sizeof(config.backend_public_key));
     config.protocol_id = 1;
     config.max_clients = 1;
-    strcpy(config.driver, "portable");
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
+    config.transport = "portable";
+    CHECK(rocketnet_server_validate_config(&config));
+    struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", &config, NULL, 0);
     CHECK(server != NULL);
-    CHECK(strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
-    CHECK(rocketnet_server_transport_port(server) != 0);
-    rocketnet_server_transport_destroy(server);
+    CHECK(strcmp(rocketnet_server_transport_name(server), "portable") == 0);
+    CHECK(rocketnet_server_port(server) != 0);
+    rocketnet_server_destroy(server);
     rocketnet_term();
     puts("installed SDK consumer passed");
     return 0;

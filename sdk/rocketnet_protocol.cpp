@@ -223,7 +223,7 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
     rocketnet_assert( connection_salt );
 
     uint8_t * p = associated_data;
-    rocketnet_write_uint32( &p, ROCKETNET_VERSION );
+    rocketnet_write_uint32( &p, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &p, protocol_id );
     rocketnet_write_uint8( &p, packet_type );
     rocketnet_write_bytes( &p, connection_salt, ROCKETNET_CONNECTION_SALT_BYTES );

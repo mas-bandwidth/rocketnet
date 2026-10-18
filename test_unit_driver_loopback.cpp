@@ -348,7 +348,7 @@ static struct rocketnet_client_transport_t * wire_totals_client_create( const ch
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = (uint64_t) 1 << 40;
     signed_fields.expire_timestamp = signed_fields.create_timestamp + 30;

@@ -10,7 +10,7 @@
 // allocator failing at each allocation in turn.
 //
 // Not reachable in the unit tier:
-//   * S13 DRIVER_LADDER_EXHAUSTED (a non-port-zero driver open refusal), which
+//   * S13 TRANSPORT_LADDER_EXHAUSTED (a non-port-zero driver open refusal), which
 //     needs a driver open to refuse -- a socket -- and no unit-tier driver
 //     refuses without opening one; the port-zero refusal (S12) is reachable
 //     because the ladder refuses the XDP rung before opening anything.
@@ -182,7 +182,7 @@ static void server_transport_create_ex_reports_every_status()
         strcpy( config.driver, "portable" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_DRIVER_LADDER_EXHAUSTED );
+        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
     }
     check( unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
 
@@ -208,7 +208,7 @@ static void server_transport_create_ex_reports_every_status()
         strcpy( config.driver, "bogus" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_INVALID_DRIVER_LIST );
+        check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
     }
 
     // S9: an unparsable public address is refused
@@ -230,7 +230,7 @@ static void server_transport_create_ex_reports_every_status()
     }
 
     // S12: a port-zero address refused by a non-discovering driver (XDP) is
-    // DRIVER_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
+    // TRANSPORT_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
     // elsewhere the ladder skips "xdp" for the platform and falls to the
     // auto order (sdk/rocketnet_tests.cpp checks that fall), whose drivers
     // open a real socket, so off Linux the case is a named skip
@@ -241,7 +241,7 @@ static void server_transport_create_ex_reports_every_status()
         strcpy( config.driver, "xdp" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
-        check( status == ROCKETNET_STATUS_DRIVER_PORT_ZERO_UNSUPPORTED );
+        check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
 #else
         printf( "server_transport_create_ex_reports_every_status S12 [SKIPPED off linux: the xdp row is not built, so a pin of it falls to the auto order]\n" );
 #endif

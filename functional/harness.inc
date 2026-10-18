@@ -167,8 +167,8 @@ class rocketnet_test_environment_t
     void clear(const char * name)
     {
         if (strcmp(name, "ROCKETNET_DRIVER") == 0) return;
-        if (strcmp(name, "ROCKETNET_SERVER_DRIVER") == 0) return;
-        if (strcmp(name, "ROCKETNET_CLIENT_DRIVER") == 0) return;
+        if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
+        if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
         for (const auto & entry : entries) if (entry.name == name) return;
         const char * value = getenv(name);
         entries.push_back({name, value ? value : "", value != NULL});

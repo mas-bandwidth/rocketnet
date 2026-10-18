@@ -13,7 +13,7 @@
 //   * the pre-init refusal -> NOT_INITIALIZED
 //   * C2 (config env apply failure) -> CONFIG_ENV_INVALID
 //   * C3 (config validation failure) -> CONFIG_OUT_OF_RANGE
-//   * C5 (driver ladder parse failure) -> INVALID_DRIVER_LIST
+//   * C5 (driver ladder parse failure) -> INVALID_TRANSPORT_LIST
 //   * C6 (transport block malloc refusal) -> OUT_OF_MEMORY
 //   * C7 (fragmentation storage malloc refusal) -> OUT_OF_MEMORY
 //   * C8 (invalid connect token) -> INVALID_CONNECT_TOKEN
@@ -156,7 +156,7 @@ static void client_transport_create_ex_reports_every_status()
         struct rocketnet_client_transport_config_t config;
         rocketnet_client_transport_default_config( &config );
         snprintf( config.driver, sizeof(config.driver), "%s", "no-such-driver" );
-        check_create_status( ROCKETNET_STATUS_INVALID_DRIVER_LIST, token, &config, &state, &status );
+        check_create_status( ROCKETNET_STATUS_INVALID_TRANSPORT_LIST, token, &config, &state, &status );
     }
 
     // C6: the transport block malloc refuses
@@ -179,7 +179,7 @@ static void client_transport_create_ex_reports_every_status()
     // so the signed data is enough to reach C8 and C9.
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof(signed_fields) );
-    signed_fields.version = ROCKETNET_VERSION;
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
     signed_fields.expire_timestamp = 1ULL << 40;

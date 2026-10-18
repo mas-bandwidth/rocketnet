@@ -16,7 +16,7 @@
 // verifies drifts, and a drifted specification is worse than none,
 // because independent implementations are built on it.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_connect_token.h"
@@ -111,7 +111,7 @@ int main()
 {
     const uint8_t test_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
-    printf( "ROCKETNET_VERSION 0x%08X\n", (unsigned int) ROCKETNET_VERSION );
+    printf( "ROCKETNET_VERSION 0x%08X\n", (unsigned int) ROCKETNET_WIRE_VERSION );
 
     printf( "ROCKETNET_TEST_FILTER_VALUE" );
     for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
