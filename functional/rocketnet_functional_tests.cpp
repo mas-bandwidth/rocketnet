@@ -5619,6 +5619,86 @@ void rocketnet_test_platform_wake_apple_wakes_and_reads()
     rocketnet_platform_socket_destroy( sender );
 }
 
+// The level-triggered wake beside a real socket on Windows: the manual-reset
+// wake event is set and consumed, the socket's FD_READ event is seen only when
+// readable is true, and with readable false an unread datagram waits on the
+// wake alone (docs/CLIENT-IO.md "The wake" and rocketnet-client-io-windows;
+// tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
+// this case lives in the functional tier.
+
+void rocketnet_test_platform_wake_windows_wakes_and_reads()
+{
+    // a non-blocking socket on 127.0.0.1 port 0
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+
+    // create returns non-NULL; create with a NULL socket returns NULL
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
+
+    // wait(true, 0) is false: no wake set and nothing readable
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // a wait with a 0.01 s timeout and nothing pending returns false (no
+    // elapsed-time check: a Windows wait deadline rounds to the clock tick)
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.01 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
+
+    // set, then wait(true, 0) is true and the next wait(true, 0) is false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set twice, one wait(true, 0) true then false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // send a datagram from a second socket to the first
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    uint8_t packet[8];
+    memset( packet, 0xAB, sizeof(packet) );
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+
+    // the datagram makes the socket readable: wait(true, 1.0) is true, and
+    // returns as soon as it lands
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+
+    // the drain to a would-block re-arms FD_READ
+    uint8_t received[64];
+    rocketnet_address_t from;
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == (int) sizeof(packet) );
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == 0 );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // a second datagram, left unread: wait(false, 0) is false (socket ignored)
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
+
+    // then set and wait(false, 0) is true
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    // and the following wait(true) sees the datagram (a 1.0 s bound, as the
+    // first datagram above: loopback delivery and the FD_READ post are not
+    // synchronous with the send; the wait returns as soon as it lands)
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == (int) sizeof(packet) );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+    rocketnet_platform_socket_destroy( sender );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 // a test a platform's build compiles out still registers its name, printing a
@@ -5657,6 +5737,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_dr
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5889,6 +5970,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "platform_wake_apple_wakes_and_reads", rocketnet_test_platform_wake_apple_wakes_and_reads },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "platform_wake_apple_wakes_and_reads", rocketnet_functional_skip_platform_wake_apple_wakes_and_reads },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "platform_wake_windows_wakes_and_reads", rocketnet_test_platform_wake_windows_wakes_and_reads },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "platform_wake_windows_wakes_and_reads", rocketnet_functional_skip_platform_wake_windows_wakes_and_reads },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },

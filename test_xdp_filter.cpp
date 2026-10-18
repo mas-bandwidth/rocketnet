@@ -22,6 +22,7 @@
 // not load (the verifier log tail is printed) or the process lacks privilege.
 
 #include "rocketnet_wire.h"
+#include "rocketnet_xdp_replay_marks.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -60,6 +61,7 @@
 #define NUM_COUNTER_SLOTS ROCKETNET_SERVER_XDP_NUM_COUNTERS
 
 static const uint16_t server_port = 40000;
+static const uint16_t client_port = 50000;
 static const uint8_t server_ipv4[4] = { 192, 0, 2, 10 };
 static const uint8_t other_ipv4[4] = { 192, 0, 2, 11 };
 static const uint8_t client_ipv4[4] = { 198, 51, 100, 7 };
@@ -90,6 +92,8 @@ struct spec_t
     uint8_t epoch;
     uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES];
     int truncate_to;                            // cut the frame to this many bytes; -1 = whole frame
+    uint32_t sequence;                          // the 4 little-endian bytes after the prefilter header
+    uint16_t source_port;                       // the client's UDP source port
 };
 
 static spec_t spec_default( bool ipv6 )
@@ -105,6 +109,8 @@ static spec_t spec_default( bool ipv6 )
     spec.epoch = filter_epoch;
     memcpy( spec.filter, filter_value, sizeof(spec.filter) );
     spec.truncate_to = -1;
+    spec.sequence = 0;
+    spec.source_port = client_port;
     return spec;
 }
 
@@ -116,7 +122,7 @@ static void put16( uint8_t * p, uint16_t value )
 
 // Ethernet, then the IP header for the family, then any extension header,
 // then UDP, then the RocketNet packet: the prefilter header (type, epoch,
-// filter value) and zeros after it.
+// filter value), the sequence little endian, and zeros after it.
 
 static void build_frame( frame_t * frame, const spec_t & spec )
 {
@@ -168,7 +174,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     // a frame that only wanted a different next header (ICMPv6) carries the
     // same bytes after the fixed header; the filter must never look at them
 
-    put16( p, 50000 );                          // source port
+    put16( p, spec.source_port );               // source port
     put16( p + 2, spec.destination_port );
     put16( p + 4, (uint16_t) udp_bytes );
     p += ROCKETNET_UDP_HEADER_BYTES;
@@ -179,6 +185,8 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         p[1] = spec.epoch;
     if ( spec.packet_bytes > 2 + ROCKETNET_FILTER_VALUE_BYTES - 1 )
         memcpy( p + 2, spec.filter, ROCKETNET_FILTER_VALUE_BYTES );
+    for ( int i = 0; i < 4 && ROCKETNET_PREFILTER_BYTES + i < spec.packet_bytes; i++ )
+        p[ROCKETNET_PREFILTER_BYTES + i] = (uint8_t) ( spec.sequence >> ( 8 * i ) );
     p += spec.packet_bytes;
 
     frame->size = (int) ( p - frame->data );
@@ -628,6 +636,276 @@ static bool config_layout_matches_header( filter_t * filter )
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// replay: the read-only high-water map (tla/RNXdpReplay.tla, KernelFilter).
+// The same rows as the host tier's xdp_host_replay_drops_behind_the_window,
+// judged here by the verifier-accepted program, the kernel's hash map and
+// its helpers. load_filter cleared every pin path, so the map is private to
+// this process.
+
+static int replay_map_fd( filter_t * filter )
+{
+    struct bpf_map * replay_map = bpf_object__find_map_by_name( filter->object, "server_xdp_replay_map" );
+    return replay_map ? bpf_map__fd( replay_map ) : -1;
+}
+
+// the key of the client's address in a family, at a source port, built by
+// the same function the transport's marks use
+
+static struct rocketnet_server_xdp_replay_key_t replay_client_key( bool ipv6, uint16_t port )
+{
+    struct rocketnet_address_t address;
+    memset( &address, 0, sizeof(address) );
+    if ( !ipv6 )
+    {
+        address.type = ROCKETNET_ADDRESS_IPV4;
+        memcpy( address.data.ipv4, client_ipv4, 4 );
+    }
+    else
+    {
+        address.type = ROCKETNET_ADDRESS_IPV6;
+        for ( int i = 0; i < 8; i++ )
+            address.data.ipv6[i] = (uint16_t) ( ( client_ipv6[i * 2] << 8 ) | client_ipv6[i * 2 + 1] );
+    }
+    address.port = port;
+    struct rocketnet_server_xdp_replay_key_t key;
+    rocketnet_xdp_replay_key_from_address( &address, &key );
+    return key;
+}
+
+static bool replay_clear( int fd )
+{
+    struct rocketnet_server_xdp_replay_key_t key;
+    while ( bpf_map_get_next_key( fd, NULL, &key ) == 0 )
+    {
+        if ( bpf_map_delete_elem( fd, &key ) != 0 )
+        {
+            printf( "  FAIL could not delete a replay map entry: %s\n", strerror( errno ) );
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool replay_write( int fd, bool ipv6, uint32_t high_water )
+{
+    const struct rocketnet_server_xdp_replay_key_t key = replay_client_key( ipv6, client_port );
+    struct rocketnet_server_xdp_replay_value_t value;
+    memset( &value, 0, sizeof(value) );
+    value.high_water = high_water;
+    if ( bpf_map_update_elem( fd, &key, &value, BPF_ANY ) != 0 )
+    {
+        printf( "  FAIL could not write the replay map: %s\n", strerror( errno ) );
+        return false;
+    }
+    return true;
+}
+
+static bool replay_is_session_type( uint8_t type )
+{
+    return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
+           type == ROCKETNET_CONNECTION_PAYLOAD_PACKET    ||
+           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
+           type == ROCKETNET_CONNECTION_ACK_PACKET        ||
+           type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+}
+
+struct replay_row_t
+{
+    char label[96];
+    spec_t spec;
+    bool entry;                 // the client's key at client_port holds high_water
+    uint32_t high_water;
+    int want_verdict;
+    int want_counter;
+};
+
+static replay_row_t replay_row( const char * label, bool ipv6, uint8_t type, uint32_t sequence, uint32_t high_water, bool drops )
+{
+    replay_row_t row;
+    memset( &row, 0, sizeof(row) );
+    snprintf( row.label, sizeof(row.label), "%s %s", ipv6 ? "ipv6" : "ipv4", label );
+    row.spec = spec_default( ipv6 );
+    row.spec.packet_type = type;
+    row.spec.packet_bytes = 100;
+    if ( type == ROCKETNET_CONNECTION_REQUEST_PACKET )
+        row.spec.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    else if ( type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
+        row.spec.packet_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
+    row.spec.sequence = sequence;
+    row.entry = true;
+    row.high_water = high_water;
+    row.want_verdict = drops ? XDP_DROP : XDP_REDIRECT;
+    row.want_counter = drops ? ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED : ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED;
+    return row;
+}
+
+static void replay_rows( bool ipv6, std::vector<replay_row_t> & rows )
+{
+    rows.push_back( replay_row( "payload 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, true ) );
+    rows.push_back( replay_row( "payload 15 behind the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 85, 100, false ) );
+    rows.push_back( replay_row( "payload at the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 100, 100, false ) );
+    rows.push_back( replay_row( "payload one ahead of the high-water", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 101, 100, false ) );
+
+    rows.push_back( replay_row( "keep-alive 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 84, 100, true ) );
+    rows.push_back( replay_row( "ack 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_ACK_PACKET, 84, 100, true ) );
+    rows.push_back( replay_row( "disconnect 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 84, 100, true ) );
+    rows.push_back( replay_row( "fragment 16 behind the high-water", ipv6, ROCKETNET_CONNECTION_FRAGMENT_PACKET, 84, 100, true ) );
+
+    // the handshake types are not checked
+    rows.push_back( replay_row( "connection request at 84 is not checked", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, 84, 100, false ) );
+    rows.push_back( replay_row( "connection response at 84 is not checked", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, 84, 100, false ) );
+
+    // another source port has no entry
+    replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, false );
+    other.spec.source_port = client_port + 1;
+    rows.push_back( other );
+
+    // no entry at all
+    replay_row_t none = replay_row( "no replay entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 84, 100, false );
+    none.entry = false;
+    rows.push_back( none );
+
+    // the wrap: the difference is modulo 2^32, read as signed
+    rows.push_back( replay_row( "high-water 5, sequence 0xfffffff0 is behind across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5, true ) );
+    rows.push_back( replay_row( "high-water 0xfffffff0, sequence 5 is ahead across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u, false ) );
+}
+
+static bool replay_drops_behind_the_window( filter_t * filter )
+{
+    const int fd = replay_map_fd( filter );
+    if ( fd < 0 )
+    {
+        printf( "  FAIL the program has no server_xdp_replay_map\n" );
+        return false;
+    }
+    bool ok = write_config( filter, server_ipv4, server_ipv6 );
+    std::vector<replay_row_t> rows;
+    replay_rows( false, rows );
+    replay_rows( true, rows );
+    for ( size_t i = 0; i < rows.size(); i++ )
+    {
+        ok &= replay_clear( fd );
+        if ( rows[i].entry )
+            ok &= replay_write( fd, rows[i].spec.ipv6, rows[i].high_water );
+        ok &= run_frame( filter, rows[i].label, rows[i].spec, rows[i].want_verdict, rows[i].want_counter );
+    }
+    ok &= replay_clear( fd );
+    return ok;
+}
+
+// The program never writes the map: both families' entries at high-water
+// 100, then a forged payload far ahead and the frame of every row above
+// through that same state, each verdict the rule's, and afterwards each
+// entry still reads 100 and no key the test did not write exists.
+
+static bool replay_never_writes_the_map( filter_t * filter )
+{
+    const int fd = replay_map_fd( filter );
+    if ( fd < 0 )
+    {
+        printf( "  FAIL the program has no server_xdp_replay_map\n" );
+        return false;
+    }
+    bool ok = write_config( filter, server_ipv4, server_ipv6 );
+    ok &= replay_clear( fd );
+    ok &= replay_write( fd, false, 100 );
+    ok &= replay_write( fd, true, 100 );
+
+    std::vector<spec_t> frames;
+    for ( int family = 0; family < 2; family++ )
+    {
+        spec_t forged = spec_default( family == 1 );
+        forged.packet_bytes = 100;
+        forged.sequence = 0x7fffffffu;
+        frames.push_back( forged );
+        std::vector<replay_row_t> rows;
+        replay_rows( family == 1, rows );
+        for ( size_t i = 0; i < rows.size(); i++ )
+            frames.push_back( rows[i].spec );
+    }
+
+    for ( size_t i = 0; i < frames.size(); i++ )
+    {
+        const spec_t & spec = frames[i];
+        const bool checked = replay_is_session_type( spec.packet_type ) && spec.source_port == client_port;
+        const bool behind = checked && (int32_t) ( 100u - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
+        char label[96];
+        snprintf( label, sizeof(label), "%s frame %d, type %d, sequence 0x%08x, entry at 100",
+                  spec.ipv6 ? "ipv6" : "ipv4", (int) i, spec.packet_type, spec.sequence );
+        ok &= run_frame( filter, label, spec, behind ? XDP_DROP : XDP_REDIRECT,
+                         behind ? ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED : ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    }
+
+    // each entry reads back as written
+    for ( int family = 0; family < 2; family++ )
+    {
+        const struct rocketnet_server_xdp_replay_key_t key = replay_client_key( family == 1, client_port );
+        struct rocketnet_server_xdp_replay_value_t value;
+        memset( &value, 0, sizeof(value) );
+        if ( bpf_map_lookup_elem( fd, &key, &value ) != 0 )
+        {
+            printf( "  FAIL the ipv%d entry is gone: %s\n", family == 1 ? 6 : 4, strerror( errno ) );
+            ok = false;
+        }
+        else if ( value.high_water != 100 )
+        {
+            printf( "  FAIL the ipv%d entry reads %u, wrote 100\n", family == 1 ? 6 : 4, value.high_water );
+            ok = false;
+        }
+    }
+
+    // no key the test did not write
+    const struct rocketnet_server_xdp_replay_key_t written[2] = { replay_client_key( false, client_port ), replay_client_key( true, client_port ) };
+    struct rocketnet_server_xdp_replay_key_t key;
+    int keys = 0;
+    int result = bpf_map_get_next_key( fd, NULL, &key );
+    while ( result == 0 )
+    {
+        keys++;
+        if ( memcmp( &key, &written[0], sizeof(key) ) != 0 && memcmp( &key, &written[1], sizeof(key) ) != 0 )
+        {
+            printf( "  FAIL the map holds a key the test did not write (family %d)\n", key.family );
+            ok = false;
+        }
+        struct rocketnet_server_xdp_replay_key_t next;
+        result = bpf_map_get_next_key( fd, &key, &next );
+        key = next;
+    }
+    if ( keys != 2 )
+    {
+        printf( "  FAIL the map holds %d keys, the test wrote 2\n", keys );
+        ok = false;
+    }
+
+    ok &= replay_clear( fd );
+    return ok;
+}
+
+// the replay map the header describes is the one the object was built with
+
+static bool replay_key_layout_matches_header( filter_t * filter )
+{
+    struct bpf_map * replay_map = bpf_object__find_map_by_name( filter->object, "server_xdp_replay_map" );
+    if ( replay_map == NULL )
+    {
+        printf( "  FAIL the program has no server_xdp_replay_map\n" );
+        return false;
+    }
+    bool ok = true;
+    if ( bpf_map__key_size( replay_map ) != sizeof(struct rocketnet_server_xdp_replay_key_t) )
+    {
+        printf( "  FAIL replay map key is %u bytes, the header says %u\n", bpf_map__key_size( replay_map ), (unsigned) sizeof(struct rocketnet_server_xdp_replay_key_t) );
+        ok = false;
+    }
+    if ( bpf_map__value_size( replay_map ) != sizeof(struct rocketnet_server_xdp_replay_value_t) )
+    {
+        printf( "  FAIL replay map value is %u bytes, the header says %u\n", bpf_map__value_size( replay_map ), (unsigned) sizeof(struct rocketnet_server_xdp_replay_value_t) );
+        ok = false;
+    }
+    return ok;
+}
+
 struct case_t
 {
     const char * name;
@@ -646,6 +924,9 @@ static const case_t cases[] =
     { "ipv6_icmpv6_passes", ipv6_icmpv6_passes },
     { "ipv6_same_drops_as_ipv4", ipv6_same_drops_as_ipv4 },
     { "config_layout_matches_header", config_layout_matches_header },
+    { "replay_drops_behind_the_window", replay_drops_behind_the_window },
+    { "replay_never_writes_the_map", replay_never_writes_the_map },
+    { "replay_key_layout_matches_header", replay_key_layout_matches_header },
 };
 
 int main( int argc, char ** argv )
