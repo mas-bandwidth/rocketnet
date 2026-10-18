@@ -116,13 +116,6 @@ void rocketnet_write_signed_connect_data( const struct rocketnet_signed_connect_
  */
 void rocketnet_read_signed_connect_data( struct rocketnet_signed_connect_data_t * output, const uint8_t * buffer );
 
-/** @brief Mint a complete token using fresh sealing randomness.
- * @param signed_fields [in] Non-NULL signed fields; protocol_id and expire_timestamp are copied into the private block.
- * @param private_fields [in] Non-NULL private values and directional keys.
- * @param backend_secret_key [in] Non-NULL 64-byte signing secret key.
- * @param token [out] Non-NULL output buffer of at least ROCKETNET_CONNECT_TOKEN_BYTES.
- * @return 1 when sealing and signing succeed; 0 when a cryptographic operation fails.
- */
 
 /** @brief Mint a complete token with fresh ephemeral sealing randomness.
  * @param signed_fields [in] Non-NULL signed data; protocol_id and expire_timestamp also set the private block values.
