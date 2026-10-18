@@ -1727,7 +1727,7 @@ void rocketnet_test_platform_socket()
 
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 static void rocketnet_test_darwin_oversize_receive( const char * pump )
 {
@@ -1776,7 +1776,7 @@ static void rocketnet_test_darwin_oversize_receive( const char * pump )
     rocketnet_platform_socket_destroy( socket );
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 void rocketnet_test_receive_drops_oversize_datagram()
 {
@@ -1838,10 +1838,10 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     rocketnet_platform_socket_destroy( socket );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     rocketnet_test_darwin_oversize_receive( "msgx" );
     rocketnet_test_darwin_oversize_receive( "portable" );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
 // the batch pump seam (#100): every platform serves it -- portable loops
@@ -1858,11 +1858,11 @@ void rocketnet_test_receive_drops_oversize_datagram()
 // the exchange so a silently-degraded driver can never pass the suite as
 // "tested" -- the batch tests would otherwise green over the fallback.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #define ROCKETNET_TEST_EXPECTED_PUMP "msgx"
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump )
 {
@@ -3949,7 +3949,7 @@ void rocketnet_test_server_driver_ladder_fall()
 }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 void rocketnet_test_server_driver_pin_msgx()
 {
@@ -3991,7 +3991,7 @@ void rocketnet_test_driver_pump_alias()
     rocketnet_test_env_restore( &driver_guard );
 }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 void rocketnet_test_driver_all_skipped_uses_auto()
 {
@@ -4129,7 +4129,7 @@ void rocketnet_test_client_driver()
     rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "portable" ) == 0 );
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
     // the msgx pin grants on macOS and reports itself
 
@@ -4139,7 +4139,7 @@ void rocketnet_test_client_driver()
     rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "msgx" ) == 0 );
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
     // the staged linux drivers are not client transports: a list naming
     // only them is an all-skipped list for the client endpoint, which
@@ -6350,10 +6350,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_uring_send_overflow", rocketnet_functional_skip_server_uring_send_overflow },
     { "test_server_uring_receive_rearms_after_no_buffers", rocketnet_functional_skip_server_uring_receive_rearms_after_no_buffers },
 #endif
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_test_server_driver_pin_msgx },
     { "test_driver_pump_alias", rocketnet_test_driver_pump_alias },
-#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_driver_pin_msgx", rocketnet_functional_skip_server_driver_pin_msgx },
     { "test_driver_pump_alias", rocketnet_functional_skip_driver_pump_alias },
 #endif
