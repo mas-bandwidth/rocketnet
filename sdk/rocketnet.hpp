@@ -382,10 +382,10 @@ public:
  */
     virtual int is_client_connected( int client_index ) = 0;
 /**
- * @brief Return the connection identifier for one client slot.
- * Returns zero when the slot is free, out of range, or the call is refused.
- * @param[in] client_index Zero-based client slot; invalid slots are refused or reported as disconnected.
- * @return Returns the connection identifier, or zero when the slot is free or invalid.
+ * @brief Return the client ID associated with a connected slot.
+ * The client ID identifies the client, not the connection instance. Returns zero when the slot is free or out of range.
+ * @param[in] client_index Zero-based client slot; invalid slots return zero.
+ * @return Returns the connected slot's client ID, or zero when free, out of range, or refused.
  * @pre Create the transport before calling; do not call after destruction.
  * @note This interface maps to the corresponding same-named C transport function with the transport pointer omitted.
  */
@@ -446,10 +446,14 @@ public:
      * @param[in] time Current monotonic game-clock time in seconds.
      * @return New wrapper, or NULL if C creation fails; allocating the wrapper may throw std::bad_alloc.
      * @pre Call rocketnet_init before creating the C transport.
-     * @note The wrapper owns the C transport and destroys it in its destructor.
+     * @note The wrapper owns the C transport. Disconnect and pump a few updates before deleting it.
      * @code
      * PortableClientTransport * client = PortableClientTransport::create(context, token, config, time);
-     * if (client) { client->update(time); delete client; }
+     * if (client) {
+     *     client->disconnect();
+     *     for (int i = 0; i < 3; ++i) client->update(time + 1.0 + i / 60.0);
+     *     delete client;
+     * }
      * @endcode
      */
     static PortableClientTransport * create( void * context, const uint8_t * connect_token,
@@ -533,10 +537,6 @@ public:
      * @return New wrapper, or NULL if C creation fails; allocating the wrapper may throw std::bad_alloc.
      * @pre Call rocketnet_init before creating the C transport.
      * @note Stop the server and wait for its stopped state before destroying the wrapper.
-     * @code
-     * PortableServerTransport * server = PortableServerTransport::create(context, address, config);
-     * if (server) { server->stop(); delete server; }
-     * @endcode
      */
     static PortableServerTransport * create( void * context, const char * public_address_string,
                                             const struct rocketnet_server_transport_config_t * config )
