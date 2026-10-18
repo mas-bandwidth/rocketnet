@@ -519,11 +519,10 @@ capacity MUST be refused before this list and MUST increment
 `RECEIVE_CURSOR_TOO_SMALL`; it does not increment `PACKETS_RECEIVED`.
 A receiver MUST process every datagram that reaches this list through the
 ordered checks below. Each check MUST reject exactly the packets named for
-it, MUST increment exactly the counter named for it in
-[t18 Error handling and counters](#t18), and MUST leave the packet's other
-state unchanged. A receiver MUST NOT examine a packet beyond the first check
-that rejects it. The list is the same for both ends; a row marked server or
-client applies only at that end.
+it and MUST increment exactly the counter named for it in
+[t18 Error handling and counters](#t18). A receiver MUST NOT examine a packet
+beyond the first check that rejects it. The list is the same for both ends;
+a row marked server or client applies only at that end.
 
 1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry to this
    list, before any check.
