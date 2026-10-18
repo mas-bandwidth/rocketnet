@@ -50,7 +50,7 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_address_to_string( const struct roc
 /** @brief Format only the numeric host address into a caller buffer.
  * @param address [in] Non-NULL address to format.
  * @param buffer [out] Non-NULL buffer of at least ROCKETNET_MAX_ADDRESS_STRING_LENGTH bytes, including the terminator.
- * @return The same buffer, containing the host without a port. The buffer remains caller-owned.
+ * @return The same buffer, containing the host without a port; unsupported address types produce NONE. On legacy Windows builds without IPv6 support, IPv6 formats as an empty string. The buffer remains caller-owned.
  */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_address_to_string_without_port( const struct rocketnet_address_t * address, char * buffer );
 
