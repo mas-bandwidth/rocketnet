@@ -1319,7 +1319,7 @@ int rocketnet_message_client_receipts( struct rocketnet_message_client_t * clien
 void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data );
 
 // 1 when the budget took the new rate, from now on. a NULL client is a counted no-op that returns 0.
-int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, uint32_t kbps );
+int rocketnet_message_client_set_send_kbps( struct rocketnet_message_client_t * client, int32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the client ended its connection with, NONE while it has not. a NULL client is a counted no-op that returns NONE.
 int rocketnet_message_client_disconnect_reason( struct rocketnet_message_client_t * client );
@@ -1394,7 +1394,7 @@ int rocketnet_message_server_receipts( struct rocketnet_message_server_t * serve
 void rocketnet_message_server_release( struct rocketnet_message_server_t * server, int client_index, const uint8_t * data );
 
 // a NULL server is a counted no-op that returns 0.
-int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, uint32_t kbps );
+int rocketnet_message_server_set_send_kbps( struct rocketnet_message_server_t * server, int client_index, int32_t kbps );
 
 // ROCKETNET_MESSAGE_ERROR_* the slot's last connection ended with, until the slot's next connection. a NULL server is a counted no-op that returns NONE.
 int rocketnet_message_server_disconnect_reason( struct rocketnet_message_server_t * server, int client_index );
