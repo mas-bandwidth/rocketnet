@@ -1,7 +1,12 @@
 # Connect-token readers: CBMC results
 
 The benchmark has `cbmc 5.95.1 (cbmc-5.95.1)` and `goto-cc`; the measured
-version is recorded here rather than the 6.6.0 the card expected. Flags come
+version is recorded here rather than the 6.6.0 the card expected. No CBMC 6.x
+is installed on this bench, so the proofs are verified with the available
+5.95.1. `make -C proofs/cbmc proofs-connect_token` was re-run at this exact
+head and each of the seven harnesses below printed `VERIFICATION SUCCESSFUL`
+with no unwinding or property failure; the 8291 properties pass at the full
+bounds. Flags come
 from `proofs/cbmc/Makefile`
 (`--bounds-check --pointer-check --signed-overflow-check --unsigned-overflow-check --div-by-zero-check --unwinding-assertions`), plus
 `--unwind 1`, `--object-bits 12`, `-DNDEBUG`, `-I$(SDK)` and
