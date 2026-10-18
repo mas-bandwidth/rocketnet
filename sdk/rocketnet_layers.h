@@ -20,8 +20,11 @@ extern "C" {
 
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 
+/** @brief Address-family value for no address family. */
 #define ROCKETNET_ADDRESS_NONE                             0
+/** @brief Address-family value for IPv4. */
 #define ROCKETNET_ADDRESS_IPV4                             1
+/** @brief Address-family value for IPv6. */
 #define ROCKETNET_ADDRESS_IPV6                             2
 
 /** @brief Sets the storage capacity for a transport driver candidate list.
@@ -44,14 +47,20 @@ extern "C" {
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE    3
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED                      4
 
+/** @brief Server transport state while its receive and update work is active. */
 #define ROCKETNET_SERVER_TRANSPORT_RUNNING                              0
+/** @brief Server transport state while shutdown is in progress. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPING                             1
+/** @brief Server transport state after shutdown completes. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                              2
 
 // what an admission callback returns (rocketnet_server_admission_callback_t)
+/** @brief Admission callback result that allows an unmapped source packet to proceed. */
 #define ROCKETNET_SERVER_ADMISSION_ADMIT                                0
+/** @brief Admission callback result that drops an unmapped source packet. */
 #define ROCKETNET_SERVER_ADMISSION_DROP                                 1
 
+/** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS                            8
 
 #define ROCKETNET_PRIORITY_IMMEDIATE                                    0
@@ -82,12 +91,14 @@ extern "C" {
 //              and side counters)
 //   path_loss  moves only when the path loses or reorders packets
 //   arrival    a RECEIVED counter: a packet of the type arrived
+/** @brief Classifies counters by the change expected on clean and lossy paths. */
 enum
 {
     ROCKETNET_COUNTER_CLASS_REFUSAL = 0,
     ROCKETNET_COUNTER_CLASS_EXPECTED,
     ROCKETNET_COUNTER_CLASS_PATH_LOSS,
     ROCKETNET_COUNTER_CLASS_ARRIVAL,
+    /** @brief Sentinel and number of counter classifications. */
     ROCKETNET_NUM_COUNTER_CLASSES
 };
 
@@ -104,49 +115,70 @@ struct rocketnet_frame_sync_t;
 struct rocketnet_counters_t;            // read through rocketnet_counter_value
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
-// a NULL format is a counted no-op.
+/**
+ * @brief Formats and emits a message at the supplied log level.
+ *
+ * Quiet mode and the configured level filter the message before formatting.
+ * Formatting uses printf rules; output is truncated to 1023 bytes. Unknown
+ * levels are passed to the sink, and the default sink labels them "???".
+ * @param level A log level, normally 0 through 5.
+ * @param format NUL-terminated printf format; NULL is a counted no-op.
+ * The remaining arguments must match the conversion specifiers in format.
+ */
 void rocketnet_printf( int level, const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 void rocketnet_info( const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 void rocketnet_warn( const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 void rocketnet_error( const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 void rocketnet_debug( const char * format, ... );
 
-// a NULL format is a counted no-op.
+/** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 void rocketnet_spam( const char * format, ... );
 
-// a NULL buffer is a counted no-op that returns NULL.
+/** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );
 
+/** @brief Returns a cryptographically generated float in the inclusive range [0, 1]. @return Random value. */
 float rocketnet_random_float( void );
 
+/** @brief Returns a cryptographically generated 8-bit value. @return Value in [0, 255]. */
 uint8_t rocketnet_random_uint8( void );
 
+/** @brief Returns a cryptographically generated 16-bit value. @return Value in [0, 65535]. */
 uint16_t rocketnet_random_uint16( void );
 
+/** @brief Returns a cryptographically generated 32-bit value. @return Value in [0, UINT32_MAX]. */
 uint32_t rocketnet_random_uint32( void );
 
+/** @brief Returns a cryptographically generated 64-bit value. @return Value in [0, UINT64_MAX]. */
 uint64_t rocketnet_random_uint64( void );
 
-// a NULL data is a counted no-op that writes nothing.
+/** @brief Fills a buffer with cryptographically generated bytes. @param data Writable destination; NULL is a counted no-op that writes nothing. @param bytes Number of bytes to write. The caller owns the buffer. */
 void rocketnet_random_bytes( uint8_t * data, size_t bytes );
 
-// a NULL dest or source is a counted no-op that returns 0.
+/** @brief Copies a NUL-terminated string into a bounded caller buffer. @param dest Writable destination; NULL is a counted no-op. @param source NUL-terminated source; NULL is a counted no-op. @param dest_size Destination capacity in bytes; zero writes nothing. @return Bytes copied, excluding NUL; returns 0 for null pointers or zero capacity. For nonzero capacity, output is always terminated; source and destination must not overlap. */
 size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size );
 
-// Returns 64-byte-aligned storage, or NULL on overflow/allocation failure.
-// Free only through rocketnet_free; the original allocator/context are retained.
+/**
+ * @brief Allocates SDK-counted storage aligned to ROCKETNET_ALLOCATION_ALIGNMENT (64 bytes).
+ * @param context Opaque allocator context; NULL is allowed.
+ * @param bytes Requested byte count.
+ * @return Aligned pointer, or NULL on overflow or allocation failure. Free only
+ * through rocketnet_free; the original allocator and context are retained for release.
+ */
 void * rocketnet_malloc( void * context, size_t bytes );
 
+/** @brief Releases storage returned by rocketnet_malloc. @param context Ignored; the allocation's original context and deallocator are retained. @param p Pointer to release; NULL is a no-op. Do not use p after this call. */
 void rocketnet_free( void * context, void * p );
 
+/** @brief Clears a buffer before releasing it through rocketnet_free. @param context Opaque allocator context; allocation metadata selects the original deallocator. @param p Pointer to release; NULL is a no-op. @param p_size Number of bytes to clear. The caller ensures p_size does not exceed the allocation. */
 void rocketnet_clear_and_free( void * context, void * p, size_t p_size );
 
 // -----------------------------------------
@@ -500,6 +532,7 @@ struct rocketnet_address_t
     uint8_t type;
 };
 
+/** @brief Filters packets from sources without an encryption mapping. @param context Application context supplied at registration. @param from Borrowed source address, valid during the callback. @param packet_data Borrowed packet bytes, valid during the callback. @param packet_bytes Packet length in bytes. @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs on the receive thread and must be fast and thread-safe; mapped sources bypass it. */
 typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives

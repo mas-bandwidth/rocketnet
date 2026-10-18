@@ -29,9 +29,13 @@
 
 #if !ROCKETNET_DEVELOPMENT
 
+    /** @brief Text form of the SDK version: the release version string, or "dev" in a development build. */
     #define ROCKETNET_VERSION_FULL                               "1.0.0"
+    /** @brief Major component of the SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_MAJOR                                    1
+    /** @brief Minor component of the SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_MINOR                                    0
+    /** @brief Patch component of the SDK version; development builds use 255. */
     #define ROCKETNET_VERSION_PATCH                                    0
 
 #else // !ROCKETNET_DEVELOPMENT
@@ -53,8 +57,14 @@
 #define ROCKETNET_VERSION_MINOR_INT                 ROCKETNET_VERSION_MINOR
 #define ROCKETNET_VERSION_PATCH_INT                 ROCKETNET_VERSION_PATCH
 
-// SDK ABI revision, independent of the wire version. Existing public layouts
-// remain unchanged. Increment on any incompatible layout/calling-contract change.
+/**
+ * @brief Identifies the public C struct and calling-convention revision.
+ *
+ * This revision is independent of the wire protocol version. Existing public
+ * layouts remain unchanged. Increment it for an incompatible public layout or
+ * calling-contract change; append-only additions that preserve old layouts
+ * keep the revision unchanged.
+ */
 #define ROCKETNET_ABI_VERSION 1
 
 // -----------------------------------------
@@ -108,19 +118,28 @@
 // allocated once at create, to the maximum. The hard ceiling is 256
 // fragments at the full stride: 305,408 bytes.
 
+/** @brief Default maximum payload in bytes. */
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
+/** @brief Default number of simultaneous fragmented-payload reassembly slots per connection. */
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
+/** @brief Required connect-token buffer size in bytes. */
 #define ROCKETNET_CONNECT_TOKEN_BYTES                      768
 
-// the alignment a caller memory block for a client or a server needs
+/** @brief Alignment in bytes that a caller memory block for a client or a server needs, and that SDK allocations return. */
 #define ROCKETNET_ALLOCATION_ALIGNMENT                     64
 
+/** @brief Allows only level-NONE messages when used as the maximum; quiet mode suppresses all messages. */
 #define ROCKETNET_LOG_LEVEL_NONE                                       0
+/** @brief Error log level, the least verbose emitted level. */
 #define ROCKETNET_LOG_LEVEL_ERROR                                      1
+/** @brief Warning log level. */
 #define ROCKETNET_LOG_LEVEL_WARN                                       2
+/** @brief Informational log level. */
 #define ROCKETNET_LOG_LEVEL_INFO                                       3
+/** @brief Debug log level. */
 #define ROCKETNET_LOG_LEVEL_DEBUG                                      4
+/** @brief Most verbose log level. */
 #define ROCKETNET_LOG_LEVEL_SPAM                                       5
 
 // messages (docs/CHANNELS.md): the channel bound, per-send reliability --
@@ -166,58 +185,65 @@
 // per_client_send_kbps.
 
 #ifndef ROCKETNET_DEFAULT_CLIENT_SEND_KBPS
+/** @brief Default client send budget in decimal kilobits per second per connection. */
 #define ROCKETNET_DEFAULT_CLIENT_SEND_KBPS                  1000
 #endif
 #ifndef ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS
+/** @brief Default server send budget in decimal kilobits per second for each client. */
 #define ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS       10000
 #endif
 
 #define ROCKETNET_MESSAGE_OK                                0
+/** @brief Update result indicating that a received message view remains unreleased. */
 #define ROCKETNET_ERROR_MESSAGE_NOT_RELEASED                -1
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Stable status codes (docs/ERRORS-AND-LOGGING.md 2.1): OK is the sole success
-// value, every failure is a positive code, and the numbering is append-only.
-// A published value and meaning never change; a new code appends immediately
-// before ROCKETNET_NUM_STATUS_CODES.
+/**
+ * @brief Stable status values returned by the _ex lifecycle calls and the creates.
+ *
+ * Stable status codes (docs/ERRORS-AND-LOGGING.md 2.1): OK is the sole
+ * success value, every failure is a positive code, and the numbering is
+ * append-only. A published value and meaning never change; a new code appends
+ * immediately before ROCKETNET_NUM_STATUS_CODES.
+ */
 enum rocketnet_status_t
 {
-    ROCKETNET_STATUS_OK                                 = 0,   // success
+    ROCKETNET_STATUS_OK                                 = 0,   ///< success: the operation succeeds
 
     // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
-    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,   // rocketnet_init, or an allocator change, after the library was initialized
-    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,   // a call that needs rocketnet_init came before it, or a term with nothing to terminate
-    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,   // term or an allocator change refused: the library still holds allocations
-    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,   // the platform's socket layer did not start
-    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,   // the crypto library did not start
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,   ///< initialization is complete or transitioning: rocketnet_init, or an allocator change, after the library was initialized
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,   ///< the operation needs an initialized library: a call that needs rocketnet_init came before it, or a term with nothing to terminate
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,   ///< term or an allocator change refused: the library still holds allocations
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,   ///< the platform's socket layer did not start; correct the platform setup before retrying
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,   ///< the crypto library did not start; initialization does not complete
 
     // caller arguments and configuration (client, server, message)
-    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,   // an argument is NULL, out of range, or inconsistent with another
-    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,   // an environment override did not parse
-    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,   // a config field, from the struct or the environment, is out of its range
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,   // the memory the config needs is past the operator's memory budget
-    ROCKETNET_STATUS_MISSING_KEYS                       = 10,   // a server config has no keys
-    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,   // the protocol id is 0, or a development id in a release build
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,   // the published development keys in a release build
-    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,   // an address string did not parse
-    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,   // the transport candidate list did not parse
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,   ///< an argument, or a combination of arguments, is NULL, out of range, or inconsistent with another
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,   ///< an environment override is malformed: it did not parse
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,   ///< a config field, from the struct or the environment, is out of its supported range
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,   ///< the memory the config needs is past the operator's memory budget
+    ROCKETNET_STATUS_MISSING_KEYS                       = 10,   ///< required key material is absent: a server config has no keys
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,   ///< the protocol id is 0, a development id in a release build, or not the expected value
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,   ///< the published development keys in a release build
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,   ///< an address string did not parse or cannot be used
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,   ///< the transport candidate list did not parse, or holds no usable candidate
 
     // client connect token pre-send checks
-    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,   // the connect token did not parse, or is not for this protocol
-    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,   // the connect token expired before the first packet was sent
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,   ///< the connect token fails the client's pre-send checks: it did not parse, or is not for this protocol
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,   ///< the connect token expired before the first packet was sent; obtain a fresh token before connecting
 
     // transport candidate list and OS resources
-    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,   // a pinned transport cannot take port 0 (an ephemeral port)
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,   // every transport in the candidate list refused to start
-    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,   // an allocation failed
-    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,   // the platform refused a mutex
-    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,   // the platform refused a thread
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,   // the platform refused a timer
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,   ///< a pinned transport cannot take port 0 (an ephemeral port)
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,   ///< every transport in the candidate list refused to start
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,   ///< an allocation the operation needs failed
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,   ///< the platform refused a mutex
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,   ///< the platform refused a thread
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,   ///< the platform refused a timer
 
-    ROCKETNET_NUM_STATUS_CODES                          = 23     // the count of codes, OK included
+    ROCKETNET_NUM_STATUS_CODES                          = 23     ///< sentinel: the count of codes, OK included; not an operation result
 };
 
 // -----------------------------------------
@@ -360,103 +386,246 @@ struct rocketnet_server_t;
 // and a shared library from different releases. Callable before init.
 ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 
-// Safe before init; no allocation and no caller-owned struct writes. Type names
-// are the public C struct names. Unknown types/fields return SIZE_MAX for size
-// and offset, and -1 for field count. This describes the plain structs in this header (the two configs and the
+// The ABI queries are safe before init, allocate nothing and write no
+// caller-owned struct. Type names are the public C struct names. Unknown
+// types/fields return SIZE_MAX for size and offset, and -1 for field count.
+// They describe the plain structs in this header (the two configs and the
 // receipt), not the opaque client and server.
+
+/** @brief Returns the SDK ABI revision. @return ROCKETNET_ABI_VERSION; safe before init and allocation-free. */
 ROCKETNET_EXPORT uint32_t rocketnet_abi_version( void );
-// a NULL type is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte size of a public struct known to the ABI table.
+ *
+ * This query is allocation-free and safe before initialization. It describes
+ * the plain structs in this header, not the opaque handles.
+ *
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @return The struct size, or SIZE_MAX for NULL or an unknown name.
+ */
 ROCKETNET_EXPORT size_t rocketnet_abi_type_size( const char * type );
-// a NULL type is a counted no-op that returns -1.
+
+/**
+ * @brief Returns the number of ABI-described fields in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @return The field count, or -1 for NULL or an unknown name.
+ */
 ROCKETNET_EXPORT int rocketnet_abi_field_count( const char * type );
-// a NULL type or field is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte offset of a named field in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @param field NUL-terminated field name; NULL is a counted no-op.
+ * @return The field offset in bytes, or SIZE_MAX if either name is NULL or the pair is unknown.
+ */
 ROCKETNET_EXPORT size_t rocketnet_abi_field_offset( const char * type, const char * field );
-// a NULL type or field is a counted no-op that returns SIZE_MAX.
+
+/**
+ * @brief Returns the byte size of a named field in a known public struct.
+ * @param type NUL-terminated public C struct name; NULL is a counted no-op.
+ * @param field NUL-terminated field name; NULL is a counted no-op.
+ * @return The field size in bytes, or SIZE_MAX if either name is NULL or the pair is unknown.
+ */
 ROCKETNET_EXPORT size_t rocketnet_abi_field_size( const char * type, const char * field );
 
-// context is the allocator context, NULL for the default.
+/**
+ * @brief Initializes the library and its platform and cryptography state.
+ * @param context Opaque allocator context passed to allocation callbacks; NULL is the default.
+ * @return true on success; false if already initialized, platform setup fails, or cryptography setup fails.
+ * Call before creating a client or a server; do not race an init or term transition.
+ * @code
+ * if (!rocketnet_init(NULL)) {
+ *     // handle failure
+ * }
+ * @endcode
+ */
 ROCKETNET_EXPORT bool rocketnet_init( void * context );
 
-// As rocketnet_init, with the exact section-2.1 code written to *status on
-// every return path when status is not NULL. A failure also logs one
-// rocketnet_error line. The non-_ex form passes NULL and keeps its result.
+/**
+ * @brief Initializes RocketNet and optionally returns the exact status code.
+ *
+ * This has the same lifecycle and logging behavior as rocketnet_init, which is
+ * this call with a NULL status. It writes the exact section-2.1 code to status
+ * on every return path when status is non-NULL; a failure logs one error line.
+ * No client or server may be created until initialization succeeds.
+ *
+ * @param context Opaque allocator context retained for platform allocations; NULL is allowed.
+ * @param status Optional writable int receiving a ROCKETNET_STATUS_* value; NULL skips the write.
+ * @return true on success; false on an existing transition or platform/crypto failure.
+ * @code
+ * int status;
+ * if (!rocketnet_init_ex(NULL, &status)) {
+ *     fprintf(stderr, "init failed: %s\n", rocketnet_status_string(status));
+ * }
+ * @endcode
+ */
 ROCKETNET_EXPORT bool rocketnet_init_ex( void * context, int * status );
 
+/**
+ * @brief Terminates the initialized library after every client and server is destroyed.
+ *
+ * This wrapper discards the status returned by rocketnet_term_ex. A refused
+ * termination logs one error line. Do not call concurrently with SDK work that
+ * allocates or depends on platform state.
+ */
 ROCKETNET_EXPORT void rocketnet_term( void );
 
-// As rocketnet_term, returning the section-2.1 code: OK when the library
-// terminated, NOT_INITIALIZED when there was nothing to terminate, and
-// LIVE_ALLOCATIONS when the term refused. A failure logs one error line.
+/**
+ * @brief Terminates the library and returns why termination did or did not occur.
+ *
+ * Call after every client and server is destroyed and every SDK allocation is
+ * released. A failure logs one error line. Do not race termination with other
+ * SDK work.
+ *
+ * @return The section-2.1 code: ROCKETNET_STATUS_OK on termination,
+ * ROCKETNET_STATUS_NOT_INITIALIZED if the library is not initialized (nothing
+ * to terminate) or is transitioning, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while
+ * SDK allocations remain and the term refuses.
+ */
 ROCKETNET_EXPORT int rocketnet_term_ex( void );
 
-// The count includes OK. Allocation-free; callable before init.
+/** @brief Returns the total number of status codes, including OK. @return Count of defined values; allocation-free and safe before init. */
 ROCKETNET_EXPORT int rocketnet_num_status_codes( void );
 
-// The identifier without the ROCKETNET_STATUS_ prefix for 0 .. count - 1, and
-// NULL (without asserting) for an out-of-range value. Allocation-free.
+/** @brief Returns the stable symbolic name of a status code. @param status Status integer to look up. @return Static name without the ROCKETNET_STATUS_ prefix for 0 .. count - 1, or NULL (without asserting) when status is negative or greater than the last defined code. Allocation-free and safe before init; returned storage is process-lifetime. */
 ROCKETNET_EXPORT const char * rocketnet_status_string( int status );
 
-// The library's assert handler, called on a failed internal assert in a debug
-// build. rocketnet_assert_function replaces it; NULL restores the default.
+/**
+ * @brief Process-wide callback for a failed internal assert.
+ *
+ * The library calls it when it is built with asserts enabled (a debug build);
+ * with asserts disabled it is never invoked. The default callback logs and
+ * traps. rocketnet_assert_function replaces it, and NULL restores the default;
+ * set it that way before concurrent SDK calls, since direct writes are not
+ * synchronized. The strings are borrowed for the synchronous callback and the
+ * line is the source line that failed.
+ */
 extern ROCKETNET_EXPORT void (*rocketnet_assert_function_pointer)( const char * condition, const char * function, const char * file, int line );
 
+/**
+ * @brief Installs the process-wide callback for enabled assertion failures.
+ *
+ * Pass NULL to restore the default callback. The callback receives borrowed
+ * condition, function and file strings plus the source line, and runs
+ * synchronously on the thread that fires the assertion. Install it before
+ * concurrent SDK calls; this setter does not synchronize direct pointer reads.
+ *
+ * @param function Callback to install, or NULL to restore the default.
+ */
 ROCKETNET_EXPORT void rocketnet_assert_function( void (*function)( const char * condition, const char * function, const char * file, int line ) );
 
+/**
+ * @brief Suppresses or resumes all RocketNet log output.
+ *
+ * Quiet state is process-wide and atomically read by logging calls. It does not
+ * change the configured log level.
+ * @param flag true suppresses output; false resumes output subject to the log level.
+ */
 ROCKETNET_EXPORT void rocketnet_quiet( bool flag );
 
+/**
+ * @brief Sets the process-wide maximum log level.
+ * @param level An integer from 0 (none) through 5 (spam); other values are ignored.
+ */
 ROCKETNET_EXPORT void rocketnet_log_level( int level );
 
-// the level currently in force, so a caller that moves the level for a
-// bounded stretch can restore what it found rather than guessing
-
+/**
+ * @brief Reads the current process-wide log level.
+ * The level currently in force, so a caller that moves the level for a bounded
+ * stretch can restore what it found rather than guessing. This relaxed atomic
+ * read is diagnostic only; it is not a synchronization operation.
+ * @return A value from ROCKETNET_LOG_LEVEL_NONE through ROCKETNET_LOG_LEVEL_SPAM.
+ */
 ROCKETNET_EXPORT int rocketnet_get_log_level( void );
 
-// the name of a level, so a replacement log function renders it the way the
-// default one does
-
+/**
+ * @brief Returns the display name for a log level.
+ * A replacement log function uses it to render a level the way the default one
+ * does. The returned string is static and remains valid for the process lifetime.
+ * @param level A log level value.
+ * @return "error", "warning", "info", "debug" or "spam" for levels 1 through 5; "???" for none or an unknown value.
+ */
 ROCKETNET_EXPORT const char * rocketnet_log_level_string( int level );
 
+/**
+ * @brief Installs the legacy varargs logging function.
+ *
+ * The last registration across this function and rocketnet_set_log_callback
+ * wins. Passing NULL restores the default sink. The function is called
+ * synchronously on each logging thread with an already formatted message via
+ * the format string "%s"; it must be thread-safe.
+ * @param function Callback to install, or NULL to restore the default sink.
+ */
 ROCKETNET_EXPORT void rocketnet_log_function( void (*function)( int level, const char * format, ... ) );
 
-// a preformatted, FFI-safe log callback (docs/ERRORS-AND-LOGGING.md 3.2). the
-// callback receives the already-formatted bytes and their exact length; message[length]
-// is always NUL-terminated and length is clamped to 1023. message borrows the
-// logging frame's stack buffer and is valid only for the synchronous duration of the
-// call. the callback must be thread-safe and must not call rocketnet_set_log_callback
-// or rocketnet_log_function re-entrantly.
+/**
+ * @brief Receives one preformatted log message through the FFI-safe sink (docs/ERRORS-AND-LOGGING.md 3.2).
+ *
+ * The callback runs synchronously on the logging thread. The message is
+ * NUL-terminated (message[length] is always NUL), length is clamped to at most
+ * 1023 bytes, and the pointer borrows the logging frame's stack buffer, valid
+ * only until the callback returns. The callback must be thread-safe and must
+ * not re-enter rocketnet_set_log_callback or rocketnet_log_function.
+ * @param context Caller-owned pointer supplied when the callback is installed.
+ * @param level The level passed by the logging call.
+ * @param message Borrowed formatted bytes; valid only during this callback.
+ * @param length Number of message bytes before the NUL terminator, at most 1023.
+ */
 typedef void (*rocketnet_log_callback_t)( void * context, int level, const char * message, size_t length );
 
+/**
+ * @brief Installs the preformatted logging callback.
+ *
+ * The last registration across this function and rocketnet_log_function wins.
+ * Passing NULL restores the default sink and clears its context. Calls already
+ * in flight may finish on their previously captured callback; callbacks must
+ * be thread-safe.
+ * @param callback Callback to install, or NULL to restore the default sink.
+ * @param context Caller-owned pointer passed back to callback; keep it valid until any in-flight callback using it returns.
+ */
 ROCKETNET_EXPORT void rocketnet_set_log_callback( rocketnet_log_callback_t callback, void * context );
 
-// Counts every refused API misuse since the process started: a create before
-// rocketnet_init, a late or partial rocketnet_allocator, and any other call the
-// SDK refuses. A relaxed read; a diagnostic, not a synchronization point.
+/**
+ * @brief Reads the process-wide count of refused API calls.
+ * Counts every refused API misuse since the process started: a create before
+ * rocketnet_init, a late or partial rocketnet_allocator, and any other call the
+ * SDK refuses.
+ * @return Relaxed atomic diagnostic count; this read does not synchronize SDK work.
+ */
 ROCKETNET_EXPORT uint64_t rocketnet_api_misuse_count( void );
 
+/** @brief Returns the protocol identifier derived from the selected release version. @return Hashed release version, or 0 in a development build. Safe before init. */
 ROCKETNET_EXPORT uint64_t rocketnet_protocol_version( void );
 
+/** @brief Returns monotonic elapsed time in seconds from an unspecified process-local origin. @return Nondecreasing platform clock value; use the same clock for all time-taking calls. */
 ROCKETNET_EXPORT double rocketnet_time( void );
 
+/** @brief Suspends the calling thread for a requested duration. @param seconds Duration in seconds; provide a finite nonnegative value representable by the platform. This blocks the calling thread. */
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
 // -----------------------------------------
 //                          allocator
 // -----------------------------------------
 
-// Configure before init, with no outstanding allocations. Invalid or late
-// replacements are refused: the call returns false, logs one line and counts
-// the refusal in rocketnet_api_misuse_count. Refused after init, while
-// transitioning, with live allocations, or with a partial set (either callback
-// NULL). Returns true when both callbacks were taken. Callbacks must be
-// thread-safe and return storage aligned for fundamental types. RocketNet adds
-// alignment/ownership metadata, so callbacks receive larger sizes and their
-// original pointer on free.
-// a NULL malloc_function or free_function is a counted no-op that returns false.
+/**
+ * @brief Replaces the allocator before initialization.
+ *
+ * Configure before init, with no outstanding allocations. Invalid or late
+ * replacements are refused: the call returns false, logs one line and counts
+ * the refusal in rocketnet_api_misuse_count. Refused after init, while
+ * transitioning, with live allocations, or with a partial set (either callback
+ * NULL). Callbacks must be thread-safe and return storage aligned for
+ * fundamental types. RocketNet adds alignment/ownership metadata, so callbacks
+ * receive larger sizes and their original pointer on free.
+ *
+ * @param malloc_function Allocator callback; NULL is refused (a counted no-op that returns false). Receives context and requested bytes plus SDK overhead.
+ * @param free_function Matching deallocator; NULL is refused (a counted no-op that returns false) and receives the original allocation pointer.
+ * @return true when both callbacks are installed; false for a partial pair, initialized library, transition, or live allocations.
+ */
 ROCKETNET_EXPORT bool rocketnet_allocator( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
-// As rocketnet_allocator, returning the section-2.1 code: INVALID_ARGUMENT for
-// a partial set, ALREADY_INITIALIZED after init or during the transition, and
-// LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line.
+/** @brief Replaces allocator callbacks and returns the refusal reason. @param malloc_function Non-NULL allocator callback. @param free_function Non-NULL matching deallocator. @return The section-2.1 code: ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a partial pair, ALREADY_INITIALIZED after init or during the transition, or LIVE_ALLOCATIONS with outstanding allocations. A failure logs one error line. Install before init with no live allocations. */
 ROCKETNET_EXPORT int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
 
 // -----------------------------------------
@@ -511,7 +680,7 @@ struct rocketnet_client_config_t
     const char * transport;                         // ROCKETNET_CLIENT_TRANSPORT: the candidate list; NULL is "auto"
     void (*state_change_callback)( void * context, int previous_state, int current_state );   // no env form; NULL is none
     double (*time_callback)( void * context );      // no env form: the receive stamp clock, read once at create; NULL is the platform clock
-    int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less sets the budget to its 10 Gbit/s ceiling, in effect none, NOT RECOMMENDED
+    int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less disables the budget in this direction (client to server), NOT RECOMMENDED
     int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         // ROCKETNET_CLIENT_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -558,7 +727,7 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;                 // ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS: 1 .. 60; default 5
     const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"
     const char * public_address;                    // ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
-    int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less sets the budget to its 10 Gbit/s ceiling, in effect none, NOT RECOMMENDED
+    int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less disables the budget in this direction (server to each client), NOT RECOMMENDED
     int num_channels;                               // ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
     int window_messages;                            // ROCKETNET_SERVER_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
     int receive_ring_bytes;                         // ROCKETNET_SERVER_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
@@ -723,7 +892,7 @@ ROCKETNET_EXPORT void rocketnet_client_release( struct rocketnet_client_t * clie
 // NULL client or out is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity );
 
-// 1 when the budget took the new rate, from now on; 0 or less sets the budget to its 10 Gbit/s ceiling, in effect none (NOT RECOMMENDED). a NULL client is a counted no-op that returns 0.
+// 1 when the budget took the new rate, from now on; 0 or less disables the budget in this direction, client to server (NOT RECOMMENDED). a NULL client is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_client_set_send_kbps( struct rocketnet_client_t * client, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL client is a counted no-op that returns 0.
@@ -831,7 +1000,7 @@ ROCKETNET_EXPORT void rocketnet_server_release( struct rocketnet_server_t * serv
 // As rocketnet_client_receipts, for one connected client. Invalid inputs return 0.
 ROCKETNET_EXPORT int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity );
 
-// 1 when the client's budget took the new rate, from now on; 0 or less sets the budget to its 10 Gbit/s ceiling, in effect none (NOT RECOMMENDED). a NULL server is a counted no-op that returns 0.
+// 1 when the client's budget took the new rate, from now on; 0 or less disables the budget in this direction, server to that client (NOT RECOMMENDED). a NULL server is a counted no-op that returns 0.
 ROCKETNET_EXPORT int rocketnet_server_set_send_kbps( struct rocketnet_server_t * server, int client_index, int kbps );
 
 // a counter by its enum; 0 for a value outside the enum. a NULL server is a counted no-op that returns 0.

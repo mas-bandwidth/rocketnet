@@ -37,10 +37,15 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET_BYTES, "the IPv6 packet is the smaller of the two families" );
 
+/** @brief Connection classification when the type is unknown. */
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
+/** @brief Connection classification for wired access. */
 #define ROCKETNET_CONNECTION_TYPE_WIRED                                1
+/** @brief Connection classification for Wi-Fi access. */
 #define ROCKETNET_CONNECTION_TYPE_WIFI                                 2
+/** @brief Connection classification for cellular access. */
 #define ROCKETNET_CONNECTION_TYPE_CELLULAR                             3
+/** @brief Largest defined connection classification value. */
 #define ROCKETNET_CONNECTION_TYPE_MAX                                  3
 
 #define ROCKETNET_PLATFORM_UNKNOWN                                     0
@@ -212,7 +217,9 @@ do                                                                              
 // it at entry, never per packet. rocketnet_api_misuse_record increments the
 // count above from any refused misuse. The default allocator callbacks let a
 // caller restore them after taking the allocator.
+/** @brief Internal lifecycle-state query used by SDK entry points. @return Whether initialization has completed and the library is active. */
 bool rocketnet_library_initialized();
+/** @brief Internal helper that increments the process-wide refused-call count. */
 void rocketnet_api_misuse_record();
 
 // The public boundary's NULL guard. Every exported entry point calls this once
@@ -229,7 +236,9 @@ static inline bool rocketnet_api_null_guard( const void * p )
     rocketnet_assert( p );
     return false;
 }
+/** @brief Internal default allocator callback. @param context Opaque context, ignored. @param bytes Number of bytes requested. @return Allocated storage or NULL. */
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
+/** @brief Internal default deallocator callback. @param context Opaque context, ignored. @param p Original pointer returned by the default allocator. */
 void rocketnet_default_free_function( void * context, void * p );
 
 // Internal to the SDK. Both transport updates clamp the caller's clock once per
@@ -239,10 +248,12 @@ void rocketnet_default_free_function( void * context, void * p );
 // clamps and goes on, a debug build is loud. It is also the client create's
 // check, seeded with a zero last good time. One compare per update, none per
 // packet.
+/** @brief Internal monotonic-time guard used by transport updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
 
 #ifdef __cplusplus
 
+/** @brief Converts a 16-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint16_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -252,6 +263,7 @@ inline void rocketnet_endian_fix( uint16_t * value )
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
+/** @brief Converts a 32-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint32_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -265,6 +277,7 @@ inline void rocketnet_endian_fix( uint32_t * value )
 #endif // #if ROCKETNET_BIG_ENDIAN
 }
 
+/** @brief Converts a 64-bit integer between host and little-endian representation in place. @param value Writable non-NULL value; conversion is symmetric and a no-op on little-endian hosts. */
 inline void rocketnet_endian_fix( uint64_t * value )
 {
 #if ROCKETNET_BIG_ENDIAN
@@ -314,9 +327,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 // default" beside the stated range; SECRET redacts the value in override
 // logging
 
+/** @brief Config-field flag that gives zero the field default meaning. */
 #define ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT     (1<<0)
+/** @brief Config-field flag that redacts its value in override logs. */
 #define ROCKETNET_CONFIG_SECRET                 (1<<1)
 
+/** @brief Zero initializer for fixed-size byte-array configuration fields. */
 #define ROCKETNET_CONFIG_ZERO_BYTES             {0}
 
 // The client transport config table: filter value, fragmentation shape
@@ -361,7 +377,9 @@ int rocketnet_config_write_sized( const char * type, void * config, size_t confi
 int rocketnet_config_read_sized( const char * type, void * config, const void * defaults, size_t defaults_bytes, const void * source, size_t source_bytes, const size_t * known, int num_known );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
+/** @brief Size in bytes of client transport config revision 1. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
+/** @brief Current known client transport config size, in bytes. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // The server transport config table -- the single declaration everything
@@ -386,7 +404,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    max_timeout_seconds,   60,                             1, 3600,                                              0 )                          \
     INT_FIELD(    handshake_deadline_seconds, 5,                         1, 60,                                                0 )
 
+/** @brief Size in bytes of server transport config revision 1. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Current known server transport config size, in bytes. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1
 
 #if ROCKETNET_MAX_CHANNELS < 1 || ROCKETNET_MAX_CHANNELS > 65536
