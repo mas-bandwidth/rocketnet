@@ -231,11 +231,13 @@ verifies:
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
-A reply frame's destination MAC is the source MAC of the newest packet the
-transport answered from that peer address on the interface, and the gateway's
-MAC for an address with none learned. With no default route the server still
-starts, and a reply to an address with no learned MAC is refused and counted,
-never sent.
+A reply frame's destination MAC is the source MAC of the received packet it
+answers, else that of the newest packet the transport accepted for its client
+slot on the interface (the transport reports each accepted packet through
+`peer_accepted` and routes each frame through `route_packet`), else the
+gateway's MAC. With no default route the server still starts, and a reply
+with no learned MAC is refused, counted as `XDP_REPLY_NO_DESTINATION_MAC`,
+and never sent or counted as sent.
 
 ## Embedded XDP source maintenance
 

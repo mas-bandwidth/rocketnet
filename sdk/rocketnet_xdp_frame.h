@@ -261,42 +261,40 @@ static inline bool rocketnet_xdp_frame_parse(
     return true;
 }
 
-// REPLY MAC: the destination MAC address of a reply frame. A peer is learned
-// from the source MAC of a packet the transport answered (a connection's
-// packet or a connect attempt), never from a packet it dropped; a reply goes
-// to the newest MAC learned for its address, and with none learned to the
-// gateway. With no gateway (an on-link segment with no default route) a reply
-// to an unlearned address is refused and counted, never sent to a zero MAC.
+// REPLY MAC: the destination MAC address of a reply frame. The transport
+// tells the driver which received packets it accepted -- a connection's
+// packet, or a connect attempt it answers -- and never one it dropped, so a
+// spoofed frame cannot steer another peer's replies. An accepted packet's
+// source MAC becomes its client slot's MAC. A reply goes, in order, to the
+// MAC of the received packet it answers (when that packet was accepted), to
+// its client slot's newest learned MAC, or to the gateway. With no gateway
+// (an on-link segment with no default route) a reply with neither learned is
+// refused, never sent to a zero MAC; the caller counts the refusal.
 //
-// The table is fixed-size and lives inside its owner's create-time
-// allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
-// a lookup stopping at the first never-used slot and probing at most
-// ROCKETNET_XDP_REPLY_MAC_PROBES slots. A learn into a full probe window
-// replaces the entry learned longest ago; a forget leaves a tombstone. No
-// allocation, no clock and no lock: its owner serialises writes.
-
-#define ROCKETNET_XDP_REPLY_MAC_ENTRIES     4096
-#define ROCKETNET_XDP_REPLY_MAC_PROBES      16
-
-#define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
-#define ROCKETNET_XDP_REPLY_MAC_LIVE        1
-#define ROCKETNET_XDP_REPLY_MAC_TOMBSTONE   2
-
-struct rocketnet_xdp_reply_mac_entry_t
-{
-    rocketnet_address_t address;
-    uint64_t learned;
-    uint8_t mac[6];
-    uint8_t state;
-};
+// The state is fixed-size and lives inside its owner's create-time
+// allocation: one MAC per client slot and one per receive-view packet. Every
+// operation is O(1) by index: no allocation, no clock, no lock and no walk.
+// Writes (stage, accept) run on the owner's main thread during the receive
+// view; reads (rocketnet_xdp_reply_mac) run on fill threads, which the
+// transport joins before the next receive.
 
 struct rocketnet_xdp_reply_macs_t
 {
     uint8_t gateway_mac[6];
     bool gateway_known;
-    uint64_t learn_count;
-    struct rocketnet_xdp_reply_mac_entry_t entries[ROCKETNET_XDP_REPLY_MAC_ENTRIES];
+    bool slot_known[ROCKETNET_MAX_CLIENTS];
+    uint8_t slot_mac[ROCKETNET_MAX_CLIENTS][6];
+    bool view_accepted[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS];
+    uint8_t view_mac[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS][6];
 };
+
+// a unicast, nonzero MAC; a multicast or zero MAC is never a destination.
+
+static inline bool rocketnet_xdp_reply_mac_is_unicast( const uint8_t * mac )
+{
+    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
+    return mac && ( mac[0] & 1 ) == 0 && memcmp( mac, zero_mac, 6 ) != 0;
+}
 
 // gateway_mac NULL: no gateway is known for this interface.
 
@@ -310,91 +308,46 @@ static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_ma
     }
 }
 
-static inline uint32_t rocketnet_xdp_reply_macs_slot( const rocketnet_address_t * address )
-{
-    // FNV-1a over the family, the port and the address bytes the family uses
-    uint32_t hash = 2166136261u;
-    const int bytes = ( address->type == ROCKETNET_ADDRESS_IPV6 ) ? 16 : 4;
-    const uint8_t * data = (const uint8_t*) &address->data;
-    hash = ( hash ^ address->type ) * 16777619u;
-    hash = ( hash ^ (uint8_t) ( address->port & 0xFF ) ) * 16777619u;
-    hash = ( hash ^ (uint8_t) ( address->port >> 8 ) ) * 16777619u;
-    for ( int i = 0; i < bytes; ++i )
-        hash = ( hash ^ data[i] ) * 16777619u;
-    return hash & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 );
-}
+// a received packet enters the receive view at view_index with its source
+// MAC; it teaches nothing until the transport accepts it.
 
-static inline struct rocketnet_xdp_reply_mac_entry_t * rocketnet_xdp_reply_macs_find( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
+static inline void rocketnet_xdp_reply_macs_stage( struct rocketnet_xdp_reply_macs_t * table, int view_index, const uint8_t * source_mac )
 {
-    const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
-    for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
-    {
-        struct rocketnet_xdp_reply_mac_entry_t * entry = &table->entries[( slot + i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
-        if ( entry->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
-            return NULL;
-        if ( entry->state == ROCKETNET_XDP_REPLY_MAC_LIVE && rocketnet_address_equal( &entry->address, address ) )
-            return entry;
-    }
-    return NULL;
-}
-
-// a unicast, nonzero MAC is learned; anything else is ignored.
-
-static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
-{
-    static const uint8_t zero_mac[6] = { 0, 0, 0, 0, 0, 0 };
-    if ( !table || !address || !mac )
+    if ( view_index < 0 || view_index >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
         return;
-    if ( ( mac[0] & 1 ) || memcmp( mac, zero_mac, 6 ) == 0 )
+    memcpy( table->view_mac[view_index], source_mac, 6 );
+    table->view_accepted[view_index] = false;
+}
+
+// the transport accepted view packet view_index, for client slot
+// client_index or -1 (a connect attempt with no slot yet).
+
+static inline void rocketnet_xdp_reply_macs_accept( struct rocketnet_xdp_reply_macs_t * table, int view_index, int client_index )
+{
+    if ( view_index < 0 || view_index >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
         return;
-
-    table->learn_count++;
-
-    struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
-    if ( !entry )
+    if ( !rocketnet_xdp_reply_mac_is_unicast( table->view_mac[view_index] ) )
+        return;
+    table->view_accepted[view_index] = true;
+    if ( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS )
     {
-        const uint32_t slot = rocketnet_xdp_reply_macs_slot( address );
-        struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
-        for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
-        {
-            struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
-            if ( candidate->state != ROCKETNET_XDP_REPLY_MAC_LIVE )
-            {
-                entry = candidate;
-                break;
-            }
-            if ( !oldest || candidate->learned < oldest->learned )
-                oldest = candidate;
-        }
-        if ( !entry )
-            entry = oldest;
-        entry->address = *address;
-        entry->state = ROCKETNET_XDP_REPLY_MAC_LIVE;
+        memcpy( table->slot_mac[client_index], table->view_mac[view_index], 6 );
+        table->slot_known[client_index] = true;
     }
-
-    memcpy( entry->mac, mac, 6 );
-    entry->learned = table->learn_count;
 }
 
-static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address )
-{
-    struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, address );
-    if ( entry )
-        entry->state = ROCKETNET_XDP_REPLY_MAC_TOMBSTONE;
-}
+// the destination MAC of a reply for client slot client_index (or -1) that
+// answers view packet view_index (or -1): NULL when none is known and there
+// is no gateway -- the reply is refused.
 
-// the reply MAC for a destination: the learned MAC, else the gateway MAC,
-// else NULL with *refused incremented -- the reply is not sent.
-
-static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * destination, uint64_t * refused )
+static inline const uint8_t * rocketnet_xdp_reply_mac( const struct rocketnet_xdp_reply_macs_t * table, int client_index, int view_index )
 {
-    const struct rocketnet_xdp_reply_mac_entry_t * entry = rocketnet_xdp_reply_macs_find( table, destination );
-    if ( entry )
-        return entry->mac;
+    if ( view_index >= 0 && view_index < ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS && table->view_accepted[view_index] )
+        return table->view_mac[view_index];
+    if ( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS && table->slot_known[client_index] )
+        return table->slot_mac[client_index];
     if ( table->gateway_known )
         return table->gateway_mac;
-    if ( refused )
-        ( *refused )++;
     return NULL;
 }
 

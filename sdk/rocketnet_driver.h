@@ -78,6 +78,18 @@ struct rocketnet_server_driver_operations_t
     void (*replay_forget)( void * driver, const rocketnet_address_t * address );
     void (*replay_mark)( void * driver, const rocketnet_address_t * address, uint32_t high_water );
     void (*replay_commit)( void * driver );
+    // optional, each independent of the other and of the rest; a driver
+    // that addresses frames itself (xdp: the destination MAC) takes them.
+    // peer_accepted: main thread, during the receive view. The transport
+    // accepted view packet view_index -- a connection's packet, or a connect
+    // attempt it answers, never one it dropped -- for client slot
+    // client_index, or -1 with no slot.
+    void (*peer_accepted)( void * driver, int view_index, int client_index );
+    // route_packet: the staged path, on the frame's producer thread between
+    // start and finish. Names the frame's client slot (or -1) and the view
+    // packet it answers (or -1). False: the driver has no destination for the
+    // frame; the transport aborts it and counts XDP_REPLY_NO_DESTINATION_MAC.
+    bool (*route_packet)( void * driver, uint64_t packet_id, uint8_t * frame, int client_index, int view_index );
 };
 
 struct rocketnet_client_driver_config_t

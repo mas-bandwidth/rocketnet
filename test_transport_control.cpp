@@ -472,6 +472,142 @@ static void test_entries_carry_connection_id(bool staged)
     printf("test_entries_carry_connection_id staged=%d payloads=%d acked=%d fragmented=1\n", staged, num_payloads, num_acked);
 }
 
+// The two optional addressing ops (sdk/rocketnet_driver.h): peer_accepted
+// hears of every received packet the transport took and of none it dropped,
+// with the client slot it is for; route_packet names each staged frame's slot
+// and the view packet it answers, and a false route aborts the frame, counts
+// XDP_REPLY_NO_DESTINATION_MAC and never counts the frame as sent. A driver
+// without the ops (every other test here) sees none of this. Time is an
+// argument; the clock starts at 1000.0.
+struct addressing_fixture_t
+{
+    control_fixture_t control;
+    int accepted;
+    int accepted_view[8];
+    int accepted_client[8];
+    int routes;
+    int route_client;
+    int route_view;
+    bool refuse;
+};
+static void addressing_peer_accepted(void * p, int view_index, int client_index)
+{
+    auto * f = (addressing_fixture_t*)p;
+    CHECK(f->accepted < 8);
+    f->accepted_view[f->accepted] = view_index;
+    f->accepted_client[f->accepted] = client_index;
+    ++f->accepted;
+}
+static bool addressing_route_packet(void * p, uint64_t, uint8_t * frame, int client_index, int view_index)
+{
+    auto * f = (addressing_fixture_t*)p;
+    CHECK(frame);
+    ++f->routes;
+    f->route_client = client_index;
+    f->route_view = view_index;
+    return !f->refuse;
+}
+
+static void test_driver_addressing_ops()
+{
+    auto * f = new addressing_fixture_t();
+    f->control.capacity = 64;
+    rocketnet_server_driver_operations_t operations;
+    auto * server = make_server(&f->control, &operations, 2, true);
+    server->io.instance = f;            // control_fixture_t is the first member
+    auto * protocol = &server->protocol;
+    const double time = 1000.0;
+    for (int i = 0; i < 2; ++i)
+    {
+        protocol->connection_ids[i] = ++protocol->next_connection_id;
+        rocketnet_encryption_map_entry(protocol->encryption_map,
+            rocketnet_client_slots_mapping_index(protocol->client_slots, i))->last_receive_time = time;
+    }
+    const uint64_t * counters = rocketnet_server_transport_counters(server)->values;
+
+    // without the ops: a payload start routes nothing and counts nothing
+    {
+        rocketnet_packet_context_t context;
+        CHECK(rocketnet_server_transport_start_packet(server, 0, 8, &context));
+        int capacity = 0;
+        uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
+        CHECK(payload && capacity >= 8);
+        memset(payload, 0x11, 8);
+        CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
+        rocketnet_server_transport_send_packets(server);
+        CHECK(f->routes == 0 && counters[ROCKETNET_COUNTER_XDP_REPLY_NO_DESTINATION_MAC] == 0);
+    }
+
+    operations.peer_accepted = addressing_peer_accepted;
+    operations.route_packet = addressing_route_packet;
+
+    // client 0 sends a payload sealed with its key: accepted, for slot 0.
+    // the same bytes claimed from client 1's address do not open: dropped,
+    // so the driver never hears of them
+    auto * mapping0 = rocketnet_encryption_map_entry(protocol->encryption_map,
+        rocketnet_client_slots_mapping_index(protocol->client_slots, 0));
+    rocketnet_replay_protection_t replay;
+    memset(&replay, 0, sizeof(replay));
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 4];
+    const int block = rocketnet_ack_block_build(plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay);
+    CHECK(block > 0);
+    memset(plaintext + block, 0xA0, 4);
+    for (int k = 0; k < 2; ++k)
+    {
+        CHECK(rocketnet_address_parse(&f->control.feed_from[k], "127.0.0.1:0")); f->control.feed_from[k].port = 1000 + k;
+        f->control.feed_bytes[k] = rocketnet_write_sealed_packet(f->control.feed_data[k], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+            protocol->filter_value, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+            mapping0->connection_salt, NULL, mapping0->keys.session_client_to_server);
+        CHECK(f->control.feed_bytes[k] > 0);
+    }
+    f->control.feed_count = 2;
+    rocketnet_server_transport_update(server, time + 0.001);
+    CHECK(f->accepted == 1);
+    CHECK(f->accepted_view[0] == 0 && f->accepted_client[0] == 0);
+
+    // a payload frame is routed by its slot, answering no view packet
+    const int routes_before = f->routes;
+    {
+        rocketnet_packet_context_t context;
+        CHECK(rocketnet_server_transport_start_packet(server, 1, 8, &context));
+        CHECK(f->routes == routes_before + 1 && f->route_client == 1 && f->route_view == -1);
+        int capacity = 0;
+        uint8_t * payload = rocketnet_server_transport_packet_payload(server, &context, &capacity);
+        memset(payload, 0x22, 8);
+        CHECK(rocketnet_server_transport_finish_packet(server, &context, 8) > 0);
+        rocketnet_server_transport_send_packets(server);
+    }
+
+    // the driver has no destination: the start is refused and counted, the
+    // frame is aborted, and nothing is counted as sent
+    f->refuse = true;
+    rocketnet_server_transport_update(server, time + 0.002);
+    rocketnet_server_transport_send_packets(server);
+    const int stats_index = server->current_stats_index;
+    const uint64_t sent_before = server->stats_frames[stats_index].packets_sent + server->stats_pending_packets_sent;
+    const uint64_t refused_before = counters[ROCKETNET_COUNTER_XDP_REPLY_NO_DESTINATION_MAC];
+    const int aborts_before = f->control.aborts;
+    {
+        rocketnet_packet_context_t context;
+        CHECK(rocketnet_server_transport_start_packet(server, 0, 8, &context) == NULL);
+    }
+    CHECK(counters[ROCKETNET_COUNTER_XDP_REPLY_NO_DESTINATION_MAC] == refused_before + 1);
+    CHECK(f->control.aborts == aborts_before + 1);
+
+    // a control frame (the disconnect burst) with no destination: every one
+    // refused, counted, aborted, none counted as sent or delivered
+    rocketnet_server_transport_disconnect_client(server, 0);
+    CHECK(counters[ROCKETNET_COUNTER_XDP_REPLY_NO_DESTINATION_MAC] == refused_before + 1 + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+    CHECK(f->control.aborts == aborts_before + 1 + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+    CHECK(f->route_client == 0 && f->route_view == -1);
+    rocketnet_server_transport_send_packets(server);
+    CHECK(f->control.disconnects == 0);
+    CHECK(server->stats_frames[stats_index].packets_sent + server->stats_pending_packets_sent == sent_before);
+
+    rocketnet_server_transport_destroy(server); delete f;
+    printf("test_driver_addressing_ops accepted=1 refused=%d\n", 1 + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS);
+}
+
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
@@ -495,5 +631,6 @@ int main(int argc, char ** argv)
     test_staged_lease_table_full();
     test_entries_carry_connection_id(false);
     test_entries_carry_connection_id(true);
+    test_driver_addressing_ops();
     rocketnet_term();
 }

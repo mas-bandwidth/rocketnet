@@ -110,6 +110,18 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data );
 
+// The reply-MAC rule's two inputs (rocketnet_xdp_frame.h, DRIVERS.md).
+// peer_accepted runs on the main thread during the receive view: the
+// transport accepted view packet view_index, for client slot client_index or
+// -1. route_packet runs on any fill thread between start and finish: it names
+// the frame's client slot (or -1) and the view packet it answers (or -1), and
+// returns false when no destination MAC is known and no gateway is, the
+// frame then aborted by the caller and never sent.
+
+void rocketnet_server_socket_peer_accepted( struct rocketnet_server_socket_t * server_socket, int view_index, int client_index );
+
+bool rocketnet_server_socket_route_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int client_index, int view_index );
+
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket );
 
 // receive packets (zero copy)

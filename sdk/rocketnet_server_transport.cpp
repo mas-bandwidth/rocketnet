@@ -369,6 +369,30 @@ static void rocketnet_server_driver_abort_packet( rocketnet_server_transport_t *
 {
     transport->io.operations->abort_packet( transport->io.instance, id, frame );
 }
+// route_packet (sdk/rocketnet_driver.h): a staged driver that addresses its
+// own frames names the destination of each one before it is sealed. False:
+// it has none, the refusal is counted, and the caller aborts the frame, so it
+// is never counted as sent. Any thread: the counter is atomic.
+static bool rocketnet_server_driver_route_packet( rocketnet_server_transport_t * transport, uint64_t id, uint8_t * frame, int client_index, int view_index )
+{
+    if ( !rocketnet_server_driver_has( transport->io, ROCKETNET_DRIVER_STAGED ) || !transport->io.operations->route_packet )
+        return true;
+    if ( transport->io.operations->route_packet( transport->io.instance, id, frame, client_index, view_index ) )
+        return true;
+    rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_XDP_REPLY_NO_DESTINATION_MAC], 1 );
+    return false;
+}
+// peer_accepted (sdk/rocketnet_driver.h): main thread, after the protocol
+// read view packet view_index. Only an outcome the transport took -- an
+// accepted packet or an answered connect attempt -- reaches the driver.
+static void rocketnet_server_driver_peer_accepted( rocketnet_server_transport_t * transport, int outcome, int view_index, int client_index )
+{
+    if ( !transport->io.operations->peer_accepted )
+        return;
+    if ( outcome == ROCKETNET_SERVER_PROCESS_IGNORED || outcome == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED )
+        return;
+    transport->io.operations->peer_accepted( transport->io.instance, view_index, client_index );
+}
 static void rocketnet_server_driver_send_packets( rocketnet_server_transport_t * transport )
 {
     transport->io.operations->flush( transport->io.instance );
@@ -411,6 +435,7 @@ struct rocketnet_server_frame_t
     uint64_t packet_id;             // the staged drivers' bookkeeping id; unused on the portable path
     rocketnet_address_t to;
     int client_index;               // slot this frame belongs to, or -1 before assignment
+    int view_index;                 // the receive-view packet this frame answers, or -1
 };
 
 // tla/RNDriverSendStaging.tla Reserve
@@ -420,6 +445,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 {
     frame->to = *to;
     frame->client_index = -1;
+    frame->view_index = -1;
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         frame->data = rocketnet_server_driver_start_packet( server_transport, to, &frame->packet_id );
@@ -444,14 +470,24 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
     return frame->data;
 }
 
-// tla/RNDriverSendStaging.tla Commit
-static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
+static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport_t * server_transport,
+                                                         struct rocketnet_server_frame_t * frame );
+
+// tla/RNDriverSendStaging.tla Commit. False: the driver had no route for the
+// frame (route_packet), which is aborted and not counted as sent.
+static bool rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                           struct rocketnet_server_frame_t * frame,
                                                           int packet_bytes )
 {
     rocketnet_assert( frame->data );
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    if ( !rocketnet_server_driver_route_packet( server_transport, frame->packet_id, frame->data, frame->client_index, frame->view_index ) )
+    {
+        rocketnet_server_abort_send_frame( server_transport, frame );
+        return false;
+    }
 
     // every commit through this seam -- responses, keep-alives, disconnect
     // bursts -- runs on the main thread, so it lands in the current stats
@@ -466,12 +502,13 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         rocketnet_server_driver_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
-        return;
+        return true;
     }
 
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
     send_buffer->num_packets++;
+    return true;
 }
 
 static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport_t * server_transport,
@@ -1486,7 +1523,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( response )
             response += ROCKETNET_FRAME_WIRE_OFFSET;
 
-        rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
+        const int outcome = rocketnet_server_protocol_process_packet( &server_transport->protocol, &received->from[i],
                                          received->packet_data[i], received->packet_bytes[i],
                                          current_timestamp, current_time,
                                          response ? response : response_overflow, &response_bytes,
@@ -1500,6 +1537,11 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                 rocketnet_server_wire_totals_assign( server_transport, wire_client_after, &received->from[i] );
         }
         frame.client_index = wire_client_after;
+        frame.view_index = i;
+
+        // learn on accept: the driver hears of every packet the transport
+        // took, before the response to it is routed
+        rocketnet_server_driver_peer_accepted( server_transport, outcome, i, wire_client_after );
 
         if ( response )
         {
@@ -1885,6 +1927,11 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
         }
+        if ( !rocketnet_server_driver_route_packet( server_transport, packet_id, frame, client_index, -1 ) )
+        {
+            rocketnet_server_driver_abort_packet( server_transport, packet_id, frame );
+            return NULL;
+        }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
     }
@@ -2017,6 +2064,12 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
         if ( !frame->data )
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+            return 0;
+        }
+        if ( !rocketnet_server_driver_route_packet( server_transport, frame->socket_packet_id, frame->data, client_index, -1 ) )
+        {
+            rocketnet_server_driver_abort_packet( server_transport, frame->socket_packet_id, frame->data );
+            frame->data = NULL;
             return 0;
         }
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
@@ -2385,8 +2438,8 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
             break;
         frame.client_index = client_index;
         memcpy( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, burst + i * ROCKETNET_SEND_BUDGET, (size_t) burst_bytes );
-        rocketnet_server_commit_send_frame( server_transport, &frame, burst_bytes );
-        committed++;
+        if ( rocketnet_server_commit_send_frame( server_transport, &frame, burst_bytes ) )
+            committed++;
     }
 
     // The disconnect_client header promise: committed staged frames leave on

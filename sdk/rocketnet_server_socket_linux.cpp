@@ -58,8 +58,7 @@ struct alignas(64) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
     size_t packet_bytes;
-    int answers_index;                  // the receive-view packet this frame answers, -1 for none
-    uint8_t destination_mac[ETH_ALEN];  // chosen at finish by the reply-MAC rule
+    uint8_t destination_mac[ETH_ALEN];  // the reply-MAC rule's choice: the gateway at start, route_packet's after
 };
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing. Each field
@@ -177,12 +176,10 @@ struct rocketnet_server_socket_t
     uint32_t server_address_big_endian;
     uint16_t server_port_big_endian;
 
-    // the reply-MAC rule (rocketnet_xdp_frame.h): learned from the source MAC
-    // of each packet the transport answers, written on the main thread while
-    // the transport processes a receive view, read by finish_packet
+    // the reply-MAC rule (rocketnet_xdp_frame.h): one MAC per client slot and
+    // one per receive-view packet, learned when the transport accepts a
+    // packet (peer_accepted, main thread), read by route_packet (fill threads)
     struct rocketnet_xdp_reply_macs_t reply_macs;
-    uint8_t process_eth[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS][ETH_ALEN];
-    std::atomic<uint64_t> reply_mac_refusals{0};
 
     int interface_index;
     struct xdp_program * program;
@@ -1835,12 +1832,14 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 
-    const uintptr_t view_begin = (uintptr_t) &server_socket->process_packets.from[0];
-    const uintptr_t view_end = (uintptr_t) &server_socket->process_packets.from[server_socket->process_packets.num_packets];
-    const uintptr_t to_pointer = (uintptr_t) to;
-    send_buffer->packet_info[packet_index].answers_index = ( to_pointer >= view_begin && to_pointer < view_end )
-        ? (int) ( ( to_pointer - view_begin ) / sizeof( rocketnet_address_t ) )
-        : -1;
+    // the gateway, or zero with none: route_packet names the peer's MAC, and
+    // finish never sends a frame whose destination is still zero
+
+    const uint8_t * gateway_mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, -1, -1 );
+    if ( gateway_mac )
+        memcpy( send_buffer->packet_info[packet_index].destination_mac, gateway_mac, ETH_ALEN );
+    else
+        memset( send_buffer->packet_info[packet_index].destination_mac, 0, ETH_ALEN );
 
     return send_buffer->packet_data[packet_index];
 }
@@ -1892,28 +1891,62 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
 
     rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[packet_index];
 
-    // a finished response is the transport answering that received packet:
-    // its source MAC is learned for its address (main thread, during the
-    // receive view). a dropped packet is never answered, so never learned.
+    // a frame whose destination is still zero had no route (the transport
+    // aborts those after a false route_packet): it is never sent
 
-    const int answers = info->answers_index;
-    if ( answers >= 0 && answers < server_socket->process_packets.num_packets &&
-         rocketnet_address_equal( &server_socket->process_packets.from[answers], &info->to ) )
-    {
-        rocketnet_xdp_reply_macs_learn( &server_socket->reply_macs, &info->to, server_socket->process_eth[answers] );
-    }
+    if ( !rocketnet_xdp_reply_mac_is_unicast( info->destination_mac ) )
+        return;
 
-    uint64_t refused = 0;
-    const uint8_t * mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, &info->to, &refused );
+    info->packet_bytes = packet_bytes;
+}
+
+// The packet_info slot of a frame the caller holds, or NULL for a frame from
+// another generation: the same pointer arithmetic finish_packet uses.
+
+static rocketnet_server_socket_send_packet_info_t * rocketnet_server_socket_frame_info( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
+{
+    const int queue = packet_id % server_socket->num_queues;
+    rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+    const int flow_index = socket->send_flow_index.load( std::memory_order_relaxed );
+    if ( flow_index < 0 )
+        return NULL;
+    rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
+    const ptrdiff_t offset = ( packet_data - send_buffer->packet_data[0] );
+    const int packet_index = (int) ( offset / ROCKETNET_XDP_FRAME_SIZE );
+    if ( packet_index < 0 || packet_index >= ROCKETNET_XDP_SEND_QUEUE_SIZE )
+        return NULL;
+    return &send_buffer->packet_info[packet_index];
+}
+
+void rocketnet_server_socket_peer_accepted( struct rocketnet_server_socket_t * server_socket, int view_index, int client_index )
+{
+    rocketnet_assert( server_socket );
+    if ( view_index < 0 || view_index >= server_socket->process_packets.num_packets )
+        return;
+    rocketnet_xdp_reply_macs_accept( &server_socket->reply_macs, view_index, client_index );
+}
+
+bool rocketnet_server_socket_route_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int client_index, int view_index )
+{
+    rocketnet_assert( server_socket );
+    rocketnet_assert( packet_data );
+
+    rocketnet_server_socket_send_packet_info_t * info = rocketnet_server_socket_frame_info( server_socket, packet_id, packet_data );
+    if ( !info )
+        return false;
+
+    if ( view_index >= server_socket->process_packets.num_packets )
+        view_index = -1;
+
+    const uint8_t * mac = rocketnet_xdp_reply_mac( &server_socket->reply_macs, client_index, view_index );
     if ( !mac )
     {
-        if ( server_socket->reply_mac_refusals.fetch_add( refused ) == 0 )
-            rocketnet_warn( "xdp reply refused: no MAC is learned for its destination and no gateway is known" );
-        return;
+        memset( info->destination_mac, 0, ETH_ALEN );
+        return false;
     }
 
     memcpy( info->destination_mac, mac, ETH_ALEN );
-    info->packet_bytes = packet_bytes;
+    return true;
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
@@ -1987,7 +2020,6 @@ void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
     rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
-    rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
 }
 
 void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water )
@@ -2218,7 +2250,7 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     server_socket->process_packets.from[index] = *from;
     server_socket->process_packets.packet_data[index] = packet_data;
     server_socket->process_packets.packet_bytes[index] = packet_bytes;
-    memcpy( server_socket->process_eth[index], eth, ETH_ALEN );
+    rocketnet_xdp_reply_macs_stage( &server_socket->reply_macs, index, eth );
 }
 
 static void pin_thread_to_cpu( int cpu ) 
