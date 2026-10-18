@@ -280,6 +280,7 @@ static void ep_update( ep_side_t * side, ep_side_t * peer, double now, uint64_t 
         for ( int i = 0; i < count; i++ )
             ep_deliver( side, peer, &out[i], stats );
     }
+    rn_endpoint_config_tick( endpoint, now );                  // the stand-in transport is connected throughout
     check( rn_endpoint_error( endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
 
     // the application sends a few
@@ -357,6 +358,8 @@ static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stat
 
     rn_endpoint_reset( &a->endpoint, 1000.0 );
     rn_endpoint_reset( &b->endpoint, 1000.0 );
+    rn_endpoint_announce_config( &a->endpoint, 1000.0 );        // RNEndpoint Reset, the CONFIG half
+    rn_endpoint_announce_config( &b->endpoint, 1000.0 );
 
     int step = 0;
     for ( ; step < EP_MAX_STEPS; step++ )
@@ -424,6 +427,28 @@ static void endpoint_back_to_back_over_lossy_array()
     check( rn_endpoint_error( &a->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
     check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
 
+    // CONFIG (10.3): each end announced its CONFIG, and took and matched
+    // the peer's through the same lossy array
+    check( a->endpoint.ordered.config_announced && b->endpoint.ordered.config_announced );
+    check( a->endpoint.ordered.config_received && b->endpoint.ordered.config_received );
+
+    // a peer whose CONFIG never arrives is a RELIABLE_TIMEOUT reliable_timeout
+    // after the wait began, and the deadline names that time
+    {
+        const double start = 1000.0 + steps * EP_STEP;
+        const double timeout = (double) config.reliable_timeout_ms / 1000.0;
+        rn_endpoint_reset( &b->endpoint, start );
+        rn_endpoint_config_tick( &b->endpoint, start );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        check( rn_endpoint_deadline( &b->endpoint ) == start + timeout );
+        rn_endpoint_config_tick( &b->endpoint, start + timeout * 0.5 );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+        rn_endpoint_config_tick( &b->endpoint, start + timeout );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT );
+        rn_endpoint_reset( &b->endpoint, start + timeout );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_MESSAGE_ERROR_NONE );
+    }
+
     // a reset starts a fresh connection on the same region
     rn_endpoint_reset( &a->endpoint, 1000.0 + steps * EP_STEP );
     check( a->endpoint.ordered.send.next == 0 );
@@ -442,6 +467,23 @@ static void endpoint_back_to_back_over_lossy_array()
 
 static uint64_t ep_mallocs = 0;
 static uint64_t ep_frees = 0;
+
+// The clock intercept. Where the build links the test with
+// -Wl,--wrap=rocketnet_platform_time (CMakeLists.txt, GNU-style linkers),
+// every call to the library's one clock, from any object file of the
+// library, lands here first and is counted, then answered by the real clock.
+// Elsewhere the intercept is absent, and the determinism check below stands
+// alone.
+
+#if ROCKETNET_TEST_CLOCK_WRAP
+static uint64_t ep_clock_reads = 0;
+extern "C" double __real_rocketnet_platform_time();
+extern "C" double __wrap_rocketnet_platform_time()
+{
+    ep_clock_reads++;
+    return __real_rocketnet_platform_time();
+}
+#endif // #if ROCKETNET_TEST_CLOCK_WRAP
 
 static void * ep_malloc( void * context, size_t bytes )
 {
@@ -466,6 +508,15 @@ static void endpoint_never_allocates_or_reads_a_clock()
     rocketnet_message_config_t config;
     ep_config( &config );
 
+#if ROCKETNET_TEST_CLOCK_WRAP
+    // the intercept works: a read of the library's clock is counted
+    {
+        const uint64_t before = ep_clock_reads;
+        rocketnet_time();
+        check( ep_clock_reads == before + 1 );
+    }
+#endif // #if ROCKETNET_TEST_CLOCK_WRAP
+
     uint64_t traces[2];
     int steps[2];
     for ( int run = 0; run < 2; run++ )
@@ -480,6 +531,9 @@ static void endpoint_never_allocates_or_reads_a_clock()
         // payload, tick, receipts, error or deadline
         const uint64_t mallocs = ep_mallocs;
         const uint64_t frees = ep_frees;
+#if ROCKETNET_TEST_CLOCK_WRAP
+        const uint64_t clock_reads = ep_clock_reads;
+#endif // #if ROCKETNET_TEST_CLOCK_WRAP
 
         ep_stats_t stats;
         steps[run] = ep_back_to_back( a, b, 77, &stats );
@@ -492,6 +546,9 @@ static void endpoint_never_allocates_or_reads_a_clock()
 
         check( ep_mallocs == mallocs );
         check( ep_frees == frees );
+#if ROCKETNET_TEST_CLOCK_WRAP
+        check( ep_clock_reads == clock_reads );                 // not one clock read from the endpoint
+#endif // #if ROCKETNET_TEST_CLOCK_WRAP
         traces[run] = stats.trace;
 
         ep_side_destroy( a );

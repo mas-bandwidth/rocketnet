@@ -234,6 +234,11 @@ static void receipts_listed_per_update_by_the_c_api()
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
                                                                                                      ROCKETNET_DEFAULT_CLIENT_SEND_KBPS, 0.0 );
     rocketnet_unit_check( client != NULL );
+    rocketnet_unit_check( rocketnet_message_client_update( client, 0.005 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
+    transport.ack_packet = transport.sent_packet;
+    rocketnet_unit_check( rocketnet_message_client_update( client, 0.005 ) == ROCKETNET_MESSAGE_OK );
+    transport.sent_count = 0;
     uint8_t * payload = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, 3 );
     rocketnet_unit_check( payload != NULL );
     rn_message_connection_t * connection = &client->object.connections[0];
@@ -292,6 +297,10 @@ static void promoted_type5_block_replays_last_index_and_reliable_loss_witnesses(
     rocketnet_unit_check( client != NULL );
     rn_message_connection_t * connection = &client->object.connections[0];
     rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_MESSAGE_OK );
+    rocketnet_message_client_send_packets( client );                               // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
+    transport.ack_packet = transport.sent_packet;
+    rocketnet_unit_check( rocketnet_message_client_update( client, 1.0 ) == ROCKETNET_MESSAGE_OK );
+    transport.sent_count = 0;
     const int large = (int) client->object.unreliable_limit + 1;
     uint8_t * payload = rocketnet_message_client_start( client, 0, ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT, large );
     rocketnet_unit_check( payload != NULL );

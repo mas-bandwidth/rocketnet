@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <float.h>
 
 // Layer 1 of the message layer: the region (docs/CHANNELS.md 4, sized by 14).
 //
@@ -70,12 +71,25 @@ struct rn_send_number_t                 // 32 bytes: the sender's per-number tab
 {
     uint64_t number;                    // the message number, reconstructed u64
     uint64_t ring_start;                // absolute ring position of this fragment
-    double last_send;
+    double last_send;                   // RN_SEND_NUMBER_NEVER_SENT: never sent; else the last send time (>= 0.0), or a negative failed-send sentinel
     uint32_t descriptor;                // the send descriptor, or RN_DESCRIPTOR_NONE
     uint16_t fragment;                  // index within its block
     uint8_t ring_units;                 // ring span in 16-byte units: ring_end = ring_start + 16 * ring_units
     uint8_t acked;
 };
+
+// A real send time is >= 0.0, so no real send can equal this sentinel (or a
+// negative sentinel). Whether a number has been sent is never inferred from a
+// send time a real send can have (RNResendTiming!Due reads lastSend as a real
+// tick, 0 included).
+#define RN_SEND_NUMBER_NEVER_SENT   ( -DBL_MAX )
+
+// the number was never sent
+static inline bool rn_send_number_never_sent( double last_send ) { return last_send == RN_SEND_NUMBER_NEVER_SENT; }
+
+// unsent (never sent) or a failed send (negative sentinel): due now as a first
+// write, in the same class's FIFO
+static inline bool rn_send_number_unsent_due( double last_send ) { return last_send < 0.0; }
 
 struct rn_receive_descriptor_t          // 32 bytes: the receiver's descriptors, indexed number % W (6.1)
 {
@@ -124,6 +138,7 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_SPAN       0x01    // the message lives in one contiguous span of the send spans, not in store chunks
 #define RN_SEND_FLAG_RECEIPT_PROMOTED 0x02 // a large public type 5 uses reliable wire code 2 and receives one ACKED outcome
 #define RN_SEND_FLAG_RECEIPT_RELIABLE 0x04 // public type 6 or 7 uses reliable wire code 2 or 3 and receives one ACKED outcome
+#define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {

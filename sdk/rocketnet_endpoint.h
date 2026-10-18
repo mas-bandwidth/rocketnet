@@ -64,6 +64,10 @@ struct rn_endpoint_t
     int max_payload_bytes;                      // the transport's payload cap (rn_endpoint_send)
     int send_error;                             // ROCKETNET_MESSAGE_ERROR_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE
 
+    // CONFIG (10.3): the wait for the peer's CONFIG
+    double config_wait_start;                   // when this end began waiting for the peer's CONFIG, or -1 before its transport is connected
+    int config_error;                           // ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT once the peer's CONFIG is past reliable_timeout, else NONE
+
     uint32_t serial;                            // the receipt serial of the last finished send (7.4)
 
     // the start between start and finish (one at a time)
@@ -97,8 +101,11 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
 // bound to it fresh, so nothing of the previous connection is reachable.
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
 
-// The CONFIG hook (10.3): called when the connection this endpoint was reset
-// for is connected. The CONFIG card queues the announcement here.
+// tla/RNEndpoint.tla Reset, the CONFIG half (10.3): called when the connection
+// this endpoint was reset for is connected, before anything else is queued.
+// This end's CONFIG control record takes the connection's first reliable
+// number and is resent until acked. No room is region exhaustion, which
+// rn_endpoint_error reports.
 void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now );
 
 // ---------------------------------------------------------------
@@ -131,6 +138,15 @@ void rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
 // The receipts' LOSS sweep and the end of the update's receipt list.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
+// tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update
+// while the connection's transport is connected, after the update's payloads.
+// The first call starts the wait for the peer's CONFIG; a later call at
+// reliable_timeout or more after it, with the peer's CONFIG still not taken,
+// sets RELIABLE_TIMEOUT, which rn_endpoint_error reports. Whether the
+// transport is connected is the caller's to say (the endpoint never calls the
+// transport).
+void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, double now );
+
 // The start of an update on the receive side: the last update's deliveries
 // expire and their room returns to the region. Returns how many there were.
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint );
@@ -162,7 +178,8 @@ int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct roc
 int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
 
 // The earliest time the endpoint has work: a resend due, the reliable
-// timeout, a receipt's LOSS, or (0.0) something queued now.
+// timeout, the CONFIG wait's timeout, a receipt's LOSS, or (0.0) something
+// queued now.
 // RN_ENDPOINT_NO_DEADLINE when there is none.
 double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint );
 

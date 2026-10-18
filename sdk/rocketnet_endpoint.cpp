@@ -47,6 +47,8 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->unreliable_limit = ROCKETNET_MESSAGE_SINGLE_BYTES - 1 - ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
     endpoint->max_payload_bytes = config->max_payload_bytes > 0 ? config->max_payload_bytes : ROCKETNET_MAX_PAYLOAD_BYTES;
     endpoint->send_error = ROCKETNET_MESSAGE_ERROR_NONE;
+    endpoint->config_wait_start = -1.0;
+    endpoint->config_error = ROCKETNET_MESSAGE_ERROR_NONE;
     endpoint->pending_type = -1;
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
@@ -67,6 +69,8 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     rn_packet_builder_init( &endpoint->unreliable_builder, endpoint->region, NULL, &endpoint->budget, 1, ROCKETNET_MESSAGE_SINGLE_BYTES );
 
     endpoint->send_error = ROCKETNET_MESSAGE_ERROR_NONE;
+    endpoint->config_wait_start = -1.0;
+    endpoint->config_error = ROCKETNET_MESSAGE_ERROR_NONE;
     endpoint->serial = 0;
     endpoint->pending_type = -1;
     endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
@@ -88,12 +92,14 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
 
 void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now )
 {
-    // tla/RNEndpoint.tla Reset, the CONFIG half (10.3): the hook the CONFIG
-    // card fills (rocketnet-config-announcement): the CONFIG record queued at
-    // the head of IMMEDIATE, taking the first reliable number, and the start
-    // of the wait for the peer's. Nothing is queued until that card lands.
-    (void) endpoint;
+    // tla/RNEndpoint.tla Reset, the CONFIG half (10.3): a connection that
+    // becomes connected (the server's Observe reset, the client's connect at
+    // create) queues this end's CONFIG before anything else, at the head of
+    // IMMEDIATE on channel 0, so it takes the connection's first reliable
+    // number (rn_ordered_announce_config). No room is region exhaustion, and
+    // rn_endpoint_error then ends the connection (R5).
     (void) now;
+    rn_ordered_announce_config( &endpoint->ordered, endpoint->config );
 }
 
 // ---------------------------------------------------------------
@@ -357,6 +363,26 @@ void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now )
     rn_window_ack_receipt_end_update( &endpoint->ordered.ack );
 }
 
+void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, double now )
+{
+    // tla/RNEndpoint.tla Tick, the CONFIG half (10.3): an endpoint still
+    // waiting for the peer's CONFIG reliable_timeout after its connection
+    // began ends it as RELIABLE_TIMEOUT. The wait starts at the first update
+    // the connection is connected at: the server's from its Observe reset,
+    // the client's from the first update its transport reports CONNECTED
+    // (11.3); the caller calls this only while that holds.
+    if ( endpoint->ordered.config_received )
+        return;
+    if ( endpoint->config_wait_start < 0.0 )
+    {
+        endpoint->config_wait_start = now;
+        return;
+    }
+    const double reliable_timeout = (double) endpoint->config->reliable_timeout_ms / 1000.0;
+    if ( now - endpoint->config_wait_start >= reliable_timeout )
+        endpoint->config_error = ROCKETNET_MESSAGE_ERROR_RELIABLE_TIMEOUT;
+}
+
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
@@ -385,7 +411,7 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, uint32_t cursor, do
             return 1;                                           // a long acked prefix: let the write walk it
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
-            return ( slot->last_send <= 0.0 || now >= slot->last_send + delay ) ? 1 : 0;
+            return ( rn_send_number_unsent_due( slot->last_send ) || now >= slot->last_send + delay ) ? 1 : 0;
         cursor = region->resend_fifo[cursor].next;
     }
     return 0;
@@ -814,11 +840,16 @@ int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct roc
 int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
 {
     // tla/RNEndpoint.tla err (12): a send that found no room first (R5), then
-    // the region's exhaustion, a wire violation and a reliable message past
-    // its timeout, in rn_ordered_decide's order
+    // the region's exhaustion, a wire violation (a CONFIG mismatch among
+    // them, logged with the field and both values when it was compared) and a
+    // reliable message past its timeout, in rn_ordered_decide's order, then
+    // the peer's CONFIG past reliable_timeout (rn_endpoint_config_tick)
     if ( endpoint->send_error != ROCKETNET_MESSAGE_ERROR_NONE )
         return endpoint->send_error;
-    return rn_ordered_decide( &endpoint->ordered );
+    const int reason = rn_ordered_decide( &endpoint->ordered );
+    if ( reason != ROCKETNET_MESSAGE_ERROR_NONE )
+        return reason;
+    return endpoint->config_error;
 }
 
 static double rn_endpoint_fifo_deadline( const rn_region_t * region, uint32_t cursor, double delay )
@@ -829,7 +860,7 @@ static double rn_endpoint_fifo_deadline( const rn_region_t * region, uint32_t cu
             return 0.0;                                         // a long acked prefix: the write walks it now
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
-            return slot->last_send <= 0.0 ? 0.0 : slot->last_send + delay;
+            return rn_send_number_unsent_due( slot->last_send ) ? 0.0 : slot->last_send + delay;
         cursor = region->resend_fifo[cursor].next;
     }
     return RN_ENDPOINT_NO_DEADLINE;
@@ -860,6 +891,14 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
         const double timeout = ack->oldest_first_send + ack->reliable_timeout;
         if ( timeout < deadline )
             deadline = timeout;
+    }
+
+    // the CONFIG wait's timeout (10.3, rn_endpoint_config_tick)
+    if ( !ordered->config_received && endpoint->config_wait_start >= 0.0 )
+    {
+        const double config_timeout = endpoint->config_wait_start + (double) endpoint->config->reliable_timeout_ms / 1000.0;
+        if ( config_timeout < deadline )
+            deadline = config_timeout;
     }
 
     uint64_t sweep = ack->receipt_sweep < ack->pkt_head ? ack->pkt_head : ack->receipt_sweep;

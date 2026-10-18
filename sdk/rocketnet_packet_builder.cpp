@@ -82,6 +82,7 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
 
         case ROCKETNET_MESSAGE_CODE_RELIABLE:
             record->number = item->number == ROCKETNET_PACKET_NUMBER_NONE ? 0 : (uint32_t) ( item->number & ROCKETNET_MESSAGE_U24_MASK );
+            record->control = item->control && !item->block ? 1 : 0;   // CONFIG: code 2 with CONTROL set, never a block (10.3, 13.4)
             if ( item->block )
             {
                 record->block = 1;
