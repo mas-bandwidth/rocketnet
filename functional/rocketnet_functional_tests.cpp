@@ -519,6 +519,16 @@ void rocketnet_test_client_io_apple_handoff_round_trip()
     rocketnet_test_client_io_handoff_round_trip( "msgx", "client_io_apple_handoff_round_trip" );
 }
 
+void rocketnet_test_client_io_windows_handoff_round_trip()
+{
+    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-windows: on
+    // Windows the portable client has the event wake (WSAEventSelect FD_READ
+    // and a manual-reset event), so it runs the I/O thread (RNClientIo
+    // HandOff, Defer, IoSend, IoReceive, IoWait); the same round trip as the
+    // Linux case, every payload byte-exact and none lost to a deferral.
+    rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_windows_handoff_round_trip" );
+}
+
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
 {
     // IOCP may still own earlier sends. Keep every successful reservation in
@@ -1059,22 +1069,37 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
 
     // The server sends two payloads; the client queues them without any call to
-    // receive_packet, so the cursor has not been touched.
-
-    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "capacity", 8 );
-    rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "second", 6 );
-    rocketnet_server_transport_send_packets( server );
+    // receive_packet, so the cursor has not been touched. The batch is valid
+    // until the next update, and with the client I/O thread the two datagrams
+    // can be published in two batches (docs/CLIENT-IO.md "The receive path:
+    // the handoff", RNClientIo IoPublish), so the pair is sent again until
+    // one batch holds exactly this round's two, in order (read by index, so
+    // the cursor stays untouched and a late payload of an earlier round is
+    // never taken for this one).
 
     bool queued = false;
     start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 && !queued )
     {
-        rocketnet_client_transport_update( client, rocketnet_platform_time() );
-        rocketnet_server_transport_update( server, rocketnet_platform_time() );
-        if ( rocketnet_client_transport_num_payloads( client ) >= 2 )
-            queued = true;
-        else
-            rocketnet_platform_sleep( 0.001 );
+        rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "capacity", 8 );
+        rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "second", 6 );
+        rocketnet_server_transport_send_packets( server );
+
+        const double sent = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - sent < 0.25 && !queued )
+        {
+            rocketnet_client_transport_update( client, rocketnet_platform_time() );
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            int first_bytes = 0;
+            int second_bytes = 0;
+            const uint8_t * first = rocketnet_client_transport_num_payloads( client ) == 2 ? rocketnet_client_transport_payload( client, 0, &first_bytes ) : NULL;
+            const uint8_t * second = first ? rocketnet_client_transport_payload( client, 1, &second_bytes ) : NULL;
+            if ( first && second && first_bytes == 8 && memcmp( first, "capacity", 8 ) == 0 &&
+                 second_bytes == 6 && memcmp( second, "second", 6 ) == 0 )
+                queued = true;
+            else
+                rocketnet_platform_sleep( 0.001 );
+        }
     }
     rocketnet_check( queued );
     rocketnet_check( rocketnet_client_transport_num_payloads( client ) == 2 );
@@ -6037,6 +6062,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_rou
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_windows_handoff_round_trip, "client_io_windows_handoff_round_trip", "windows only: the portable client I/O event wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -6280,6 +6306,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "platform_wake_windows_wakes_and_reads", rocketnet_test_platform_wake_windows_wakes_and_reads },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "platform_wake_windows_wakes_and_reads", rocketnet_functional_skip_platform_wake_windows_wakes_and_reads },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "client_io_windows_handoff_round_trip", rocketnet_functional_skip_client_io_windows_handoff_round_trip },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
