@@ -265,9 +265,9 @@ void rocketnet_test_client_disconnect_reports_state_change()
 // its report line
 static void rocketnet_test_client_io_handoff_round_trip( const char * driver, const char * name )
 {
-    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-linux: the
-    // portable client on a platform with the wake runs the I/O thread, so the
-    // main thread never walks the send ring. A deferred hand-off loses
+    // docs/CLIENT-IO.md Per-platform cards: a client driver on a platform
+    // with the wake runs the I/O thread, so the main thread never walks the
+    // send ring. A deferred hand-off loses
     // nothing: the committed slots stay in the Filling ring and leave with the
     // next hand-off (RNClientIo HandOff and Defer), so every payload arrives.
 
