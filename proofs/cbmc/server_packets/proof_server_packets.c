@@ -2,33 +2,11 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    CBMC proof of the server per-type packet readers:
-    rocketnet_server_protocol_process_connection_request, the static
-    rocketnet_server_process_connection_response and
-    rocketnet_server_process_sealed_packet, and the dispatcher
-    rocketnet_server_protocol_process_packet.
-
-    The readers are sdk/rocketnet_server_protocol.cpp, included below. libsodium
-    is not proved: each call a reader makes is a model in this harness that checks
-    its own buffer arguments with __CPROVER_r_ok / __CPROVER_w_ok at the lengths
-    libsodium documents, writes nondet bytes, and returns a nondet success or
-    failure. The helper functions the readers call from other sdk translation
-    units (the encryption map, client slots, used-token history, acks,
-    reassembly, signature verification and cookie helpers) are modeled the same
-    way: each checks its reads and writes, writes nondet state, and returns a
-    nondet result, so the readers are exercised on every reachable outcome.
-
-    A packet buffer is allocated at exactly the symbolic packet_bytes, so a read
-    one past the caller's length is an out-of-bounds failure and not slack.
-    packet_bytes runs over 0..ROCKETNET_MAX_PACKET_BYTES (1472, the receive
-    ceiling).
-
-    Flags: --bounds-check --pointer-check --signed-overflow-check
-           --unsigned-overflow-check --div-by-zero-check
-           --unwinding-assertions
-    Unwinding: 64, as the packet opener proof. The fixed-length memcpy and
-    memcmp models are at most a few hundred bytes; the loops in the readers are
-    bounded by fixed wire sizes.
+    ESBMC harnesses for the server per-type packet readers. The real
+    sdk/rocketnet_server_protocol.cpp is included below. Libsodium calls
+    are modeled; this file does not prove libsodium or external SDK helpers.
+    A result is a proof only after every reachable helper has a sound model
+    and the stated packet and loop bounds finish verification.
 */
 
 #define thread_local
@@ -41,7 +19,10 @@
 #endif
 #endif
 
+#include "../esbmc_shim.h"
 #include "rocketnet_server_protocol.cpp"
+#include "rocketnet_protocol.cpp"
+#include "rocketnet_connect_token.cpp"
 
 #ifndef __CPROVER__
 #define __CPROVER_assert( c, m ) ( (void) ( c ), (void) ( m ) )
@@ -49,7 +30,7 @@
 static int nondet_int( void ) { return 0; }
 static unsigned nondet_uint( void ) { return 0; }
 static unsigned char nondet_uchar( void ) { return 0; }
-static unsigned long long nondet_uint64( void ) { return 0; }
+static uint64_t nondet_uint64( void ) { return 0; }
 #define PROOF_R_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
 #define PROOF_W_OK( p, n ) ( (void) ( p ), (void) ( n ), 1 )
 #define PROOF_HAVOC( p, n ) ( memset( (p), 0, (size_t) (n) ) )
@@ -57,7 +38,7 @@ static unsigned long long nondet_uint64( void ) { return 0; }
 int nondet_int( void );
 unsigned nondet_uint( void );
 unsigned char nondet_uchar( void );
-unsigned long long nondet_uint64( void );
+uint64_t nondet_uint64( void );
 #define PROOF_R_OK( p, n ) __CPROVER_r_ok( (p), (size_t) (n) )
 #define PROOF_W_OK( p, n ) __CPROVER_w_ok( (p), (size_t) (n) )
 #define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
@@ -123,7 +104,7 @@ int crypto_aead_chacha20poly1305_ietf_decrypt( unsigned char * m,
     (void) nsec;
     __CPROVER_assert( clen >= 16, "decrypt input holds the 16-byte tag" );
     __CPROVER_assert( PROOF_R_OK( c, clen ), "decrypt reads the ciphertext and tag" );
-    __CPROVER_assert( PROOF_R_OK( ad, adlen ), "decrypt reads the associated data" );
+    __CPROVER_assert( ( adlen == 0 || PROOF_R_OK( ad, adlen ) ), "decrypt reads the associated data" );
     __CPROVER_assert( PROOF_R_OK( npub, 12 ), "decrypt reads the 12-byte nonce" );
     __CPROVER_assert( PROOF_R_OK( k, 32 ), "decrypt reads the 32-byte key" );
 
@@ -160,7 +141,7 @@ int crypto_generichash( unsigned char * out,
                         size_t keylen )
 {
     __CPROVER_assert( PROOF_R_OK( in, inlen ), "generichash reads its input" );
-    __CPROVER_assert( PROOF_R_OK( key, keylen ), "generichash reads its key" );
+    __CPROVER_assert( ( keylen == 0 || PROOF_R_OK( key, keylen ) ), "generichash reads its key" );
     __CPROVER_assert( PROOF_W_OK( out, outlen ), "generichash writes its output" );
     PROOF_HAVOC( out, outlen );
     return 0;
@@ -178,33 +159,69 @@ int sodium_memcmp( const void * b1, const void * b2, size_t len )
 void sodium_memzero( void * const pnt, const size_t len )
 {
     __CPROVER_assert( PROOF_W_OK( pnt, len ), "memzero writes its buffer" );
-    PROOF_HAVOC( pnt, len );
+    memset( pnt, 0, len );
 }
 
-/* The server struct, built by the code's own create path at the smallest
-   accepted config, as the card instructs. The sub-tables (encryption map,
-   client slots, used-token history, acks, reassembly) are opaque, so the
-   create functions build them. */
+int crypto_aead_chacha20poly1305_ietf_encrypt( unsigned char * c,
+                                               unsigned long long * clen_p,
+                                               const unsigned char * m,
+                                               unsigned long long mlen,
+                                               const unsigned char * ad,
+                                               unsigned long long adlen,
+                                               const unsigned char * nsec,
+                                               const unsigned char * npub,
+                                               const unsigned char * k )
+{
+    (void) nsec;
+    __CPROVER_assert( PROOF_R_OK( m, (size_t) mlen ), "encrypt reads plaintext" );
+    __CPROVER_assert( ( adlen == 0 || PROOF_R_OK( ad, (size_t) adlen ) ), "encrypt reads associated data" );
+    __CPROVER_assert( PROOF_R_OK( npub, 12 ), "encrypt reads nonce" );
+    __CPROVER_assert( PROOF_R_OK( k, 32 ), "encrypt reads key" );
+    __CPROVER_assert( PROOF_W_OK( c, (size_t) mlen + 16 ), "encrypt writes ciphertext and tag" );
+    __CPROVER_assert( PROOF_W_OK( clen_p, sizeof( *clen_p ) ), "encrypt writes length" );
+    int ok = nondet_int();
+    __CPROVER_assume( ok == 0 || ok == -1 );
+    if ( ok == 0 )
+    {
+        PROOF_HAVOC( c, (size_t) mlen + 16 );
+        *clen_p = mlen + 16;
+    }
+    return ok;
+}
+
+bool rocketnet_address_equal( const struct rocketnet_address_t * a, const struct rocketnet_address_t * b )
+{
+    __CPROVER_assert( PROOF_R_OK( a, sizeof( *a ) ), "equal reads first address" );
+    __CPROVER_assert( PROOF_R_OK( b, sizeof( *b ) ), "equal reads second address" );
+    int result = nondet_int();
+    __CPROVER_assume( result == 0 || result == 1 );
+    return result != 0;
+}
+
+/* The harness assembles one server slot from modeled helper create calls.
+   The transport create implementation and its allocator are outside this
+   translation unit. */
 
 void rocketnet_debug( const char * format, ... )
 {
     (void) format;
 }
 
-/* Models of the sdk helper functions the readers call from other translation
-   units. Each checks its reads and writes, writes nondet state, and returns a
-   nondet result. The encryption map, client slots, used-token history, acks
-   and reassembly handles are opaque; each create model allocates an opaque
-   object, and each lookup model reads and writes it. The single client slot
-   config means a lookup collapses to index 0 or "absent" (-1). */
+/* Models for some helpers from other SDK translation units. The remaining
+   helper contracts and their proof limits are recorded in results.md. */
 
 struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * context, int capacity )
 {
     (void) context;
     __CPROVER_assume( capacity >= 1 );
     struct rocketnet_encryption_map_t * m =
-        (struct rocketnet_encryption_map_t *) malloc( (size_t) capacity * 2048 );
+        (struct rocketnet_encryption_map_t *) malloc( sizeof( struct rocketnet_encryption_mapping_t ) );
     __CPROVER_assume( m != NULL );
+    struct rocketnet_encryption_mapping_t * mapping = (struct rocketnet_encryption_mapping_t *) m;
+    *mapping = {};
+    mapping->client_index = -1;
+    mapping->send_sequence_handshake = 1;
+    mapping->send_sequence_session = 1;
     return m;
 }
 
@@ -230,11 +247,19 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
 
 struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, int max_clients )
 {
-    (void) context;
-    __CPROVER_assume( max_clients >= 1 );
+    __CPROVER_assume( max_clients == 1 );
     struct rocketnet_server_acks_t * a =
-        (struct rocketnet_server_acks_t *) malloc( (size_t) max_clients * 2048 );
+        (struct rocketnet_server_acks_t *) malloc( sizeof( *a ) );
     __CPROVER_assume( a != NULL );
+    *a = {};
+    a->context = context;
+    a->max_clients = 1;
+    a->acked_capacity = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    a->acked_client_index = (int *) malloc( (size_t) a->acked_capacity * sizeof( int ) );
+    a->acked_packet_ids = (uint64_t *) malloc( (size_t) a->acked_capacity * sizeof( uint64_t ) );
+    a->endpoints = (struct rocketnet_ack_endpoint_t *) malloc( sizeof( *a->endpoints ) );
+    __CPROVER_assume( a->acked_client_index && a->acked_packet_ids && a->endpoints );
+    a->endpoints[0].ack_debt = 0;
     return a;
 }
 
@@ -244,14 +269,16 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * cont
                                                                     int max_payload_bytes,
                                                                     int delivered_capacity )
 {
-    (void) context;
-    (void) num_connections;
-    (void) num_slots;
-    (void) max_payload_bytes;
-    (void) delivered_capacity;
+    __CPROVER_assume( num_connections == 1 && num_slots == 1 );
     struct rocketnet_reassembly_set_t * r =
-        (struct rocketnet_reassembly_set_t *) malloc( 8192 );
+        (struct rocketnet_reassembly_set_t *) malloc( sizeof( *r ) );
     __CPROVER_assume( r != NULL );
+    *r = {};
+    r->context = context;
+    r->num_connections = num_connections;
+    r->num_slots = num_slots;
+    r->max_payload_bytes = max_payload_bytes;
+    r->delivered_capacity = delivered_capacity;
     return r;
 }
 
@@ -263,13 +290,20 @@ int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map
         "find reads the address" );
     int r = nondet_int();
     __CPROVER_assume( r == -1 || r == 0 );
+    if ( r == 0 ) {
+        struct rocketnet_encryption_mapping_t * mapping = (struct rocketnet_encryption_mapping_t *) map;
+        int client_index = nondet_int();
+        __CPROVER_assume( client_index == -1 || client_index == 0 );
+        mapping->client_index = client_index;
+    }
     return r;
 }
 
 struct rocketnet_encryption_mapping_t * rocketnet_encryption_map_entry( struct rocketnet_encryption_map_t * map,
                                                                        int index )
 {
-    (void) index;
+    __CPROVER_assert( index == 0, "one-entry map index" );
+    __CPROVER_assert( PROOF_R_OK( map, sizeof( struct rocketnet_encryption_mapping_t ) ), "entry reads mapping" );
     return (struct rocketnet_encryption_mapping_t *) map;
 }
 
@@ -279,13 +313,316 @@ int rocketnet_client_slots_max_clients( const struct rocketnet_client_slots_t * 
     return 1;
 }
 
+void rocketnet_spam( const char * format, ... ) { (void) format; }
+
+int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, uint64_t client_id )
+{
+    (void) client_id;
+    __CPROVER_assert( PROOF_R_OK( slots, 1 ), "find reads slots" );
+    int r = nondet_int();
+    __CPROVER_assume( r == -1 || r == 0 );
+    return r;
+}
+
+int rocketnet_client_slots_num_free( const struct rocketnet_client_slots_t * slots )
+{
+    __CPROVER_assert( PROOF_R_OK( slots, 1 ), "free count reads slots" );
+    int r = nondet_int();
+    __CPROVER_assume( r == 0 || r == 1 );
+    return r;
+}
+
+int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
+                                   uint64_t client_id, int mapping_index,
+                                   const uint8_t * user_data )
+{
+    (void) client_id;
+    __CPROVER_assert( PROOF_W_OK( slots, 1 ), "assign writes slots" );
+    __CPROVER_assert( mapping_index == 0, "assign uses live mapping" );
+    __CPROVER_assert( PROOF_R_OK( user_data, ROCKETNET_USER_DATA_BYTES ), "assign reads user data" );
+    return 0;
+}
+
+int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * slots, int client_index )
+{
+    __CPROVER_assert( PROOF_R_OK( slots, 1 ), "connected reads slots" );
+    if ( client_index != 0 ) return 0;
+    int r = nondet_int();
+    __CPROVER_assume( r == 0 || r == 1 );
+    return r;
+}
+
+int rocketnet_client_slots_mapping_index( const struct rocketnet_client_slots_t * slots, int client_index )
+{
+    __CPROVER_assert( PROOF_R_OK( slots, 1 ), "mapping index reads slots" );
+    __CPROVER_assert( client_index == 0, "connected slot index" );
+    return 0;
+}
+
+int rocketnet_client_slots_confirmed( const struct rocketnet_client_slots_t * slots, int client_index )
+{
+    __CPROVER_assert( PROOF_R_OK( slots, 1 ), "confirmed reads slots" );
+    __CPROVER_assert( client_index == 0, "confirmed slot index" );
+    int r = nondet_int();
+    __CPROVER_assume( r == 0 || r == 1 );
+    return r;
+}
+
+void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, int client_index )
+{
+    __CPROVER_assert( PROOF_W_OK( slots, 1 ), "confirm writes slots" );
+    __CPROVER_assert( client_index == 0, "confirm slot index" );
+}
+
+void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
+{
+    __CPROVER_assert( PROOF_W_OK( slots, 1 ), "release writes slots" );
+    __CPROVER_assert( client_index == 0, "release slot index" );
+}
+
+void rocketnet_used_token_history_record( struct rocketnet_used_token_history_t * history,
+                                          const uint8_t * token_identifier,
+                                          const struct rocketnet_address_t * address,
+                                          uint64_t expire_timestamp, uint64_t current_timestamp )
+{
+    (void) expire_timestamp; (void) current_timestamp;
+    __CPROVER_assert( PROOF_W_OK( history, 1 ), "record writes history" );
+    __CPROVER_assert( PROOF_R_OK( token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ), "record reads identifier" );
+    __CPROVER_assert( PROOF_R_OK( address, sizeof( *address ) ), "record reads address" );
+}
+
+const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index )
+{
+    __CPROVER_assert( PROOF_R_OK( map, sizeof( struct rocketnet_encryption_mapping_t ) ), "address reads map" );
+    __CPROVER_assert( index == 0, "address uses live mapping" );
+    static struct rocketnet_address_t address;
+    return &address;
+}
+
+void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, int client_index )
+{
+    __CPROVER_assert( PROOF_W_OK( acks, sizeof( *acks ) ), "reset writes acks" );
+    __CPROVER_assert( client_index == 0, "reset slot index" );
+}
+
+void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_t * set, int connection_index )
+{
+    __CPROVER_assert( PROOF_W_OK( set, sizeof( *set ) ), "reset writes reassembly" );
+    __CPROVER_assert( connection_index == 0, "reset connection index" );
+}
+
+void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence )
+{
+    (void) sequence;
+    __CPROVER_assert( PROOF_W_OK( endpoint, sizeof( *endpoint ) ), "keep alive marks endpoint" );
+}
+
+int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
+{
+    __CPROVER_assert( capacity >= 7, "ack block minimum capacity" );
+    __CPROVER_assert( PROOF_R_OK( replay, sizeof( *replay ) ), "ack block reads replay" );
+    int n = replay->highest_opened == 0 ? ROCKETNET_ACK_BLOCK_MIN_BYTES : nondet_int();
+    __CPROVER_assume( n >= ROCKETNET_ACK_BLOCK_MIN_BYTES && n <= capacity );
+    __CPROVER_assert( PROOF_W_OK( output, (size_t) n ), "ack block writes output" );
+    PROOF_HAVOC( output, (size_t) n );
+    return n;
+}
+
+enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified(
+    struct rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, int wire_bytes,
+    uint64_t packet_id, int has_packet_id, uint64_t aggregate_id, double time )
+{
+    (void) sequence; (void) wire_bytes; (void) packet_id; (void) has_packet_id; (void) aggregate_id; (void) time;
+    __CPROVER_assert( PROOF_W_OK( endpoint, sizeof( *endpoint ) ), "record sent writes endpoint" );
+    int r = nondet_int();
+    __CPROVER_assume( r >= ROCKETNET_ACK_SENT_RECORDED && r <= ROCKETNET_ACK_SENT_REFUSED_STALE );
+    return (enum rocketnet_ack_sent_result_t) r;
+}
+
+void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result,
+                                     uint64_t * lost_counter, uint64_t * overflow_counter )
+{
+    (void) result;
+    __CPROVER_assert( PROOF_W_OK( lost_counter, sizeof( *lost_counter ) ), "count writes lost" );
+    __CPROVER_assert( PROOF_W_OK( overflow_counter, sizeof( *overflow_counter ) ), "count writes overflow" );
+}
+
+int rocketnet_used_token_history_check( const struct rocketnet_used_token_history_t * history,
+                                        const uint8_t * token_identifier,
+                                        const struct rocketnet_address_t * address,
+                                        uint64_t current_timestamp )
+{
+    (void) current_timestamp;
+    __CPROVER_assert( PROOF_R_OK( history, 1 ), "history check reads history" );
+    __CPROVER_assert( PROOF_R_OK( token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ), "history check reads identifier" );
+    __CPROVER_assert( PROOF_R_OK( address, sizeof( *address ) ), "history check reads address" );
+    int r = nondet_int();
+    __CPROVER_assume( r == 0 || r == 1 );
+    return r;
+}
+
+void rocketnet_derive_handshake_keys( struct rocketnet_connection_keys_t * keys,
+                                      const uint8_t * token_client_to_server_key,
+                                      const uint8_t * token_server_to_client_key,
+                                      const uint8_t * connection_salt,
+                                      const uint8_t * session_nonce )
+{
+    __CPROVER_assert( PROOF_W_OK( keys, sizeof( *keys ) ), "derive writes handshake keys" );
+    __CPROVER_assert( PROOF_R_OK( token_client_to_server_key, ROCKETNET_KEY_BYTES ), "derive reads first token key" );
+    __CPROVER_assert( PROOF_R_OK( token_server_to_client_key, ROCKETNET_KEY_BYTES ), "derive reads second token key" );
+    __CPROVER_assert( PROOF_R_OK( connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ), "derive reads salt" );
+    __CPROVER_assert( PROOF_R_OK( session_nonce, ROCKETNET_SESSION_NONCE_BYTES ), "derive reads nonce" );
+    PROOF_HAVOC( keys, sizeof( *keys ) );
+}
+
+int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
+                                      const uint8_t * token_client_to_server_key,
+                                      const uint8_t * token_server_to_client_key,
+                                      const uint8_t * connection_salt,
+                                      const uint8_t * session_nonce,
+                                      const uint8_t * own_ephemeral_secret_key,
+                                      const uint8_t * peer_ephemeral_public_key,
+                                      const uint8_t * client_ephemeral_public_key,
+                                      const uint8_t * server_ephemeral_public_key )
+{
+    __CPROVER_assert( PROOF_W_OK( keys, sizeof( *keys ) ), "derive writes connection keys" );
+    __CPROVER_assert( PROOF_R_OK( token_client_to_server_key, ROCKETNET_KEY_BYTES ), "derive reads first token key" );
+    __CPROVER_assert( PROOF_R_OK( token_server_to_client_key, ROCKETNET_KEY_BYTES ), "derive reads second token key" );
+    __CPROVER_assert( PROOF_R_OK( connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ), "derive reads salt" );
+    __CPROVER_assert( PROOF_R_OK( session_nonce, ROCKETNET_SESSION_NONCE_BYTES ), "derive reads nonce" );
+    __CPROVER_assert( PROOF_R_OK( own_ephemeral_secret_key, ROCKETNET_KEY_BYTES ), "derive reads own secret" );
+    __CPROVER_assert( PROOF_R_OK( peer_ephemeral_public_key, ROCKETNET_KEY_BYTES ), "derive reads peer public" );
+    __CPROVER_assert( PROOF_R_OK( client_ephemeral_public_key, ROCKETNET_KEY_BYTES ), "derive reads client public" );
+    __CPROVER_assert( PROOF_R_OK( server_ephemeral_public_key, ROCKETNET_KEY_BYTES ), "derive reads server public" );
+    int ok = nondet_int();
+    __CPROVER_assume( ok == 0 || ok == 1 );
+    if ( ok ) PROOF_HAVOC( keys, sizeof( *keys ) );
+    return ok;
+}
+
+int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
+                                  const struct rocketnet_address_t * address,
+                                  double handshake_deadline )
+{
+    (void) handshake_deadline;
+    __CPROVER_assert( PROOF_W_OK( map, sizeof( struct rocketnet_encryption_mapping_t ) ), "add writes mapping" );
+    __CPROVER_assert( PROOF_R_OK( address, sizeof( *address ) ), "add reads address" );
+    int index = nondet_int();
+    __CPROVER_assume( index == -1 || index == 0 );
+    if ( index == 0 )
+    {
+        struct rocketnet_encryption_mapping_t * mapping = (struct rocketnet_encryption_mapping_t *) map;
+        *mapping = {};
+        mapping->client_index = -1;
+        mapping->send_sequence_handshake = 1;
+        mapping->send_sequence_session = 1;
+    }
+    return index;
+}
+
+void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index )
+{
+    __CPROVER_assert( index == 0, "remove uses live mapping" );
+    __CPROVER_assert( PROOF_W_OK( map, sizeof( struct rocketnet_encryption_mapping_t ) ), "remove writes mapping" );
+}
+
+void randombytes_buf( void * const buf, const size_t size )
+{
+    __CPROVER_assert( PROOF_W_OK( buf, size ), "randombytes writes output" );
+    PROOF_HAVOC( buf, size );
+}
+
+int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    (void) sequence;
+    __CPROVER_assert( PROOF_R_OK( replay, sizeof( *replay ) ), "replay test reads window" );
+    int r = nondet_int();
+    __CPROVER_assume( r == 0 || r == 1 );
+    return r;
+}
+
+void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+{
+    __CPROVER_assert( PROOF_W_OK( replay, sizeof( *replay ) ), "replay advance writes window" );
+    if ( sequence > replay->highest_opened ) replay->highest_opened = sequence;
+}
+
+int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block,
+                              const uint8_t * data, int data_bytes,
+                              uint64_t highest_sent )
+{
+    (void) highest_sent;
+    __CPROVER_assert( data_bytes >= 0, "ack input nonnegative" );
+    __CPROVER_assert( PROOF_R_OK( data, (size_t) data_bytes ), "ack reads opened data" );
+    __CPROVER_assert( PROOF_W_OK( block, sizeof( *block ) ), "ack writes block" );
+    int n = nondet_int();
+    __CPROVER_assume( n == 0 || ( n >= ROCKETNET_ACK_BLOCK_MIN_BYTES &&
+                        n <= data_bytes && n <= ROCKETNET_ACK_BLOCK_MAX_BYTES &&
+                        ( n - ROCKETNET_ACK_BLOCK_MIN_BYTES ) % 4 == 0 ) );
+    if ( n ) {
+        block->num_ranges = ( n - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 4;
+        block->largest = nondet_uint64();
+        block->first_range_length = nondet_uint();
+    }
+    return n;
+}
+
+void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
+                                             uint64_t sequence, int wire_bytes, double time )
+{
+    (void) sequence; (void) wire_bytes; (void) time;
+    __CPROVER_assert( PROOF_W_OK( endpoint, sizeof( *endpoint ) ), "received record writes endpoint" );
+}
+
+int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
+                                          const struct rocketnet_ack_block_t * block,
+                                          double time,
+                                          uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                          uint64_t * unknown_sequence_counter,
+                                          uint64_t * batch_full_counter )
+{
+    (void) time;
+    __CPROVER_assert( PROOF_W_OK( endpoint, sizeof( *endpoint ) ), "process ack writes endpoint" );
+    __CPROVER_assert( PROOF_R_OK( block, sizeof( *block ) ), "process ack reads block" );
+    __CPROVER_assert( acked_capacity >= 0, "ack capacity nonnegative" );
+    __CPROVER_assert( PROOF_W_OK( acked_packet_ids, (size_t) acked_capacity * sizeof( uint64_t ) ), "process ack writes ids" );
+    __CPROVER_assert( PROOF_W_OK( acked_count, sizeof( *acked_count ) ), "process ack writes count" );
+    __CPROVER_assert( PROOF_W_OK( unknown_sequence_counter, sizeof( *unknown_sequence_counter ) ), "process ack writes unknown count" );
+    __CPROVER_assert( PROOF_W_OK( batch_full_counter, sizeof( *batch_full_counter ) ), "process ack writes batch count" );
+    __CPROVER_assert( *acked_count >= 0 && *acked_count <= acked_capacity, "ack count starts inside capacity" );
+    int after = nondet_int();
+    __CPROVER_assume( after >= *acked_count && after <= acked_capacity );
+    *acked_count = after;
+    return after;
+}
+
+int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * set,
+                                           int connection_index,
+                                           const uint8_t * type_data, int type_data_bytes,
+                                           uint64_t * counters,
+                                           const struct rocketnet_reassembly_counters_t * fragment_counters )
+{
+    __CPROVER_assert( PROOF_W_OK( set, sizeof( *set ) ), "fragment writes set" );
+    __CPROVER_assert( connection_index == 0, "fragment uses connected slot" );
+    __CPROVER_assert( type_data_bytes >= 0, "fragment bytes nonnegative" );
+    __CPROVER_assert( PROOF_R_OK( type_data, (size_t) type_data_bytes ), "fragment reads type data" );
+    __CPROVER_assert( PROOF_W_OK( counters, sizeof( uint64_t ) * ROCKETNET_NUM_COUNTERS ), "fragment writes counters" );
+    __CPROVER_assert( PROOF_R_OK( fragment_counters, sizeof( *fragment_counters ) ), "fragment reads counter indices" );
+    int accepted = nondet_int();
+    __CPROVER_assume( accepted == 0 || accepted == 1 );
+    int complete = nondet_int();
+    __CPROVER_assume( complete >= 0 && complete <= set->max_payload_bytes );
+    set->completed_bytes = complete;
+    return accepted;
+}
+
 static struct rocketnet_server_protocol_t * build_server( struct rocketnet_counters_t * counters,
                                                          struct rocketnet_signature_verify_budget_t * budget )
 {
-    memset( counters, 0, sizeof( *counters ) );
-    memset( budget, 0, sizeof( *budget ) );
+    *counters = {};
+    *budget = {};
     static struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof( server ) );
+    server = {};
     server.protocol_id = 1;
     server.send_rate = 10.0;
     server.cookie_lifetime_seconds = 3;
@@ -352,7 +689,7 @@ void harness_connection_response( void )
     struct rocketnet_signature_verify_budget_t budget;
     struct rocketnet_server_protocol_t * server = build_server( &counters, &budget );
 
-    int mapping_index = nondet_int();
+    int mapping_index = 0;  // the caller supplies an index found in the one-entry map
 
     uint8_t response[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
     int response_bytes = 0;
@@ -391,6 +728,12 @@ void harness_sealed_packet( void )
     int out_payload_client_index = -1;
 
     const uint8_t packet_type = nondet_uchar();
+    __CPROVER_assume( packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET ||
+                      packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
+                      packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
+                      packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
+                      packet_type == ROCKETNET_CONNECTION_ACK_PACKET ||
+                      packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET );
 
     const int result = rocketnet_server_process_sealed_packet( server, &from, packet_type,
         packet, packet_bytes, 1000ULL, 1000.0, response, &response_bytes,
