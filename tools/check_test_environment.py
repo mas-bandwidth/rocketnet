@@ -8,6 +8,11 @@ test compiled out of a platform's build is named the moment it vanishes rather
 than silently shrinking the printed count. With the functional binary
 (bin/functional) it runs the suite the way its CI job does and asserts the
 same name-set equality against functional/'s registry.
+
+The witness, corpus and reassembly tests report the reversed rule or corpus
+they just exercised; those lines are their own record and are listed in
+KNOWN_DIAGNOSTIC_RE. Every other line of a passing run must be a test name or
+a named skip.
 """
 import os
 from pathlib import Path
@@ -25,6 +30,14 @@ IF_RE = re.compile(r"^\s*#\s*if(?:def|ndef)?\b")
 ELIF_RE = re.compile(r"^\s*#\s*elif\b")
 ELSE_RE = re.compile(r"^\s*#\s*else\b")
 ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
+KNOWN_DIAGNOSTIC_RE = re.compile(
+    r"^(?:"
+    r"wycheproof \S+ tcId [0-9]+ .*"
+    r"|pcapng (?:coverage|corpus|witness): .*"
+    r"|reassembly_[a-z0-9_]+(?: \([0-9]+ ahead\))?: "
+    r"[0-9]+ of [0-9]+ payloads delivered, FRAGMENT_STALE [0-9]+, abandoned [0-9]+"
+    r")$"
+)
 
 
 def _table_names(path):
@@ -213,7 +226,11 @@ def main():
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
     lines = result.stdout.splitlines()
-    if not lines or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line) for line in lines):
+    if not lines or any(
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]+(?: [^\r\n]*\[SKIPPED[^\r\n]*\])?", line)
+        and not KNOWN_DIAGNOSTIC_RE.fullmatch(line)
+        for line in lines
+    ):
         sys.exit("Passing SDK suite emitted output other than test names or named skips")
     if "test_suite_environment" not in lines:
         sys.exit("SDK suite did not execute its environment restoration test")
