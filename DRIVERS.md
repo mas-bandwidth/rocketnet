@@ -233,8 +233,9 @@ vng --run ~/vm-kernels/vmlinuz-$(uname -r) --cpus 2 --append "irqaffinity=0 isol
 
 A reply frame's destination MAC is the source MAC of the newest packet from
 that peer address that the transport accepted for a connection on this
-interface, else the source MAC of the frame a direct response answers, else
-the gateway's MAC. With no default route the server still starts, and a reply
+interface, and the gateway's MAC for an address with none learned. With no
+default route the server still starts, a direct response to an unlearned
+address goes to the source MAC of the frame it answers, and any other reply
 that resolves to no MAC is refused at start and counted as
 `SEND_NO_LINK_ADDRESS`, never sent and never counted as sent.
 

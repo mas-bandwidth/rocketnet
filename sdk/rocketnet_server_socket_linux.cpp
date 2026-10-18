@@ -1891,8 +1891,9 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     // the reply-MAC rule (rocketnet_xdp_frame.h), before a send slot is
     // taken: a response the transport reserves while processing a receive
     // view passes that view's own from[] entry, which names the frame it
-    // answers. no MAC (no gateway, nothing learned, no frame answered) is a
-    // refusal the transport counts (ROCKETNET_DRIVER_PACKET_UNREACHABLE)
+    // answers, used only with no gateway. no MAC (no gateway, nothing
+    // learned, no frame answered) is a refusal the transport counts
+    // (ROCKETNET_DRIVER_PACKET_UNREACHABLE)
 
     const uint8_t * answered_mac = NULL;
     const uintptr_t view_begin = (uintptr_t) &server_socket->process_packets.from[0];

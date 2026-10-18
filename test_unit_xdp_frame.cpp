@@ -297,6 +297,13 @@ static void xdp_reply_mac_follows_the_peer()
     mac = rocketnet_xdp_reply_mac( table, &peer6, NULL, &refused );
     rocketnet_unit_check( mac && memcmp( mac, peer_mac, 6 ) == 0 );
 
+    // with a gateway, an unauthenticated frame's MAC never wins over it
+    {
+        static const uint8_t spoofer_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0d };
+        mac = rocketnet_xdp_reply_mac( table, &stranger, spoofer_mac, &refused );
+        rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+    }
+
     // a forgotten peer falls back to the gateway
     rocketnet_xdp_reply_macs_forget( table, &peer );
     mac = rocketnet_xdp_reply_mac( table, &peer, NULL, &refused );
@@ -316,10 +323,11 @@ static void xdp_reply_mac_follows_the_peer()
     rocketnet_unit_check( mac == NULL );
     rocketnet_unit_check( refused == 2 );
 
-    // a direct response to an unlearned address goes to the source MAC of
-    // the frame it answers (how a connect handshake on link gets its first
-    // replies), never to a zero or multicast one; a learned peer keeps its
-    // learned MAC whatever an unauthenticated frame from its address carries
+    // with no gateway, a direct response to an unlearned address goes to the
+    // source MAC of the frame it answers (how a connect handshake on link
+    // gets its first replies), never to a zero or multicast one; a learned
+    // peer keeps its learned MAC whatever an unauthenticated frame from its
+    // address carries
     static const uint8_t stranger_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0c };
     mac = rocketnet_xdp_reply_mac( table, &stranger, stranger_mac, &refused );
     rocketnet_unit_check( mac && memcmp( mac, stranger_mac, 6 ) == 0 );
