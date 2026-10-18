@@ -184,6 +184,19 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     RN_PUBLIC_MESSAGE_FIELDS( RN_COPY )
 #undef RN_COPY
 
+    // max_clients sizes the message server as well as the transport, so its
+    // env override applies here, before either is made: the transport's
+    // create reads the same variable again and agrees. every other transport
+    // field takes its override at the transport's create, as before.
+    if ( read_env )
+    {
+        int num_fields = 0;
+        const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+        for ( int i = 0; i < num_fields; i++ )
+            if ( strcmp( fields[i].name, "max_clients" ) == 0 && !rocketnet_config_apply_env( "server", transport, &fields[i], 1 ) )
+                return false;
+    }
+
     int send_kbps = config->per_client_send_kbps;
     if ( read_env && !rn_apply_message_and_budget_env( "server", message, &send_kbps, rn_server_budget_fields ) )
         return false;
@@ -191,6 +204,18 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     *kbps = rn_budget_kbps( send_kbps );
     return true;
+}
+
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
+{
+    return rn_client_split( config, read_env, transport, message, kbps );
+}
+
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
+{
+    return rn_server_split( config, read_env, transport, message, kbps );
 }
 
 // ---------------------------------------------------------------
@@ -542,12 +567,6 @@ uint64_t rocketnet_server_required_memory( const struct rocketnet_server_config_
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
     if ( !rn_server_split( config, true, &transport, &message, &kbps ) )
-        return 0;
-    // max_clients sizes the block, and its env override applies at create,
-    // so it applies here too: the size asked for is the size create needs
-    int num_fields = 0;
-    const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
-    if ( !rocketnet_config_apply_env( "server", &transport, fields, num_fields ) )
         return 0;
     return rocketnet_message_server_required_memory( &transport, &message );
 }

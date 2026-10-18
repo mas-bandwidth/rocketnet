@@ -506,7 +506,7 @@ install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-# rocketnet.h is the whole public C API; rocketnet.hpp is the optional C++ layer over it.
+# rocketnet.h is the whole public C API; rocketnet.hpp is internal now (it wraps the transport layer).
 install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)

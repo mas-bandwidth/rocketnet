@@ -12382,7 +12382,152 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         rocketnet_check( offsets[next] - end < align || ( offsets[next] == end ) );
         end = offsets[next] + sizes[next];
     }
-    rocketnet_check( rocketnet_abi_type_size( type ) - end < 8 );
+    // the two configs have no tail padding, so a field missing from the
+    // descriptors at the end shows here too
+    rocketnet_check( rocketnet_abi_type_size( type ) == end );
+}
+
+
+static void rocketnet_test_resolve_state_change( void * context, int previous_state, int current_state ) { (void) context; (void) previous_state; (void) current_state; }
+static double rocketnet_test_resolve_time( void * context ) { (void) context; return 1000.0; }
+
+// The split create makes: every public field lands in its layer field, the
+// strings are copied, a budget of 0 or less is the ceiling, a string too long
+// for its layer field is refused, and the env overrides displace the struct
+// (DEFAULT < STRUCT < ENV) for the fields the split owns. No socket.
+
+void rocketnet_test_public_config_resolve()
+{
+    struct rocketnet_test_env_guard_t channels_guard, kbps_guard, server_channels_guard, max_clients_guard, server_kbps_guard;
+    rocketnet_test_env_save( &channels_guard, "ROCKETNET_CLIENT_NUM_CHANNELS" );
+    rocketnet_test_env_save( &kbps_guard, "ROCKETNET_CLIENT_SEND_KBPS" );
+    rocketnet_test_env_save( &server_channels_guard, "ROCKETNET_SERVER_NUM_CHANNELS" );
+    rocketnet_test_env_save( &max_clients_guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
+    rocketnet_test_env_save( &server_kbps_guard, "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+    unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
+    unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    unsetenv( "ROCKETNET_SERVER_NUM_CHANNELS" );
+    unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
+    unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+
+    struct rocketnet_client_transport_config_t client_transport;
+    struct rocketnet_server_transport_config_t server_transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps = 0;
+
+    // NULL is the defaults
+
+    rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_SEND_KBPS && message.num_channels == 32 && strcmp( client_transport.driver, "auto" ) == 0 );
+    rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_PER_CLIENT_SEND_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+
+    // every client field lands
+
+    struct rocketnet_client_config_t client;
+    rocketnet_client_default_config( &client );
+    const uint8_t filter[4] = { 1, 2, 3, 4 };
+    memcpy( client.filter_value, filter, 4 );
+    client.max_payload_bytes = 2000;
+    client.num_reassembly_slots = 3;
+    client.transport = "portable";
+    client.state_change_callback = rocketnet_test_resolve_state_change;
+    client.time_callback = rocketnet_test_resolve_time;
+    client.send_kbps = 1234;
+    client.num_channels = 7; client.window_messages = 128; client.receive_ring_bytes = 8192; client.max_message_bytes = 4096;
+    client.send_buffer_bytes = 20000; client.send_queue_messages = 32; client.packets_in_flight = 32; client.max_packets_per_update = 2;
+    client.unreliable_deliveries = 17; client.sequenced_holds = 5; client.receipt_ring = 32; client.rto_initial_ms = 200;
+    client.rto_min_ms = 20; client.rto_max_ms = 300; client.reliable_timeout_ms = 5000;
+    rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( memcmp( client_transport.filter_value, filter, 4 ) == 0 );
+    rocketnet_check( client_transport.max_payload_bytes == 2000 && client_transport.num_reassembly_slots == 3 );
+    rocketnet_check( strcmp( client_transport.driver, "portable" ) == 0 );
+    rocketnet_check( client_transport.state_change_callback == rocketnet_test_resolve_state_change && client_transport.time_callback == rocketnet_test_resolve_time );
+    rocketnet_check( kbps == 1234 );
+    rocketnet_check( message.num_channels == 7 && message.window_messages == 128 && message.receive_ring_bytes == 8192 && message.max_message_bytes == 4096 );
+    rocketnet_check( message.send_buffer_bytes == 20000 && message.send_queue_messages == 32 && message.packets_in_flight == 32 && message.max_packets_per_update == 2 );
+    rocketnet_check( message.unreliable_deliveries == 17 && message.sequenced_holds == 5 && message.receipt_ring == 32 && message.rto_initial_ms == 200 );
+    rocketnet_check( message.rto_min_ms == 20 && message.rto_max_ms == 300 && message.reliable_timeout_ms == 5000 );
+
+    // the env displaces the struct
+
+    setenv( "ROCKETNET_CLIENT_NUM_CHANNELS", "9", 1 );
+    setenv( "ROCKETNET_CLIENT_SEND_KBPS", "777", 1 );
+    rocketnet_check( rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    rocketnet_check( message.num_channels == 9 && kbps == 777 );
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    rocketnet_check( message.num_channels == 7 && kbps == 1234 );
+    setenv( "ROCKETNET_CLIENT_SEND_KBPS", "lots", 1 );
+    rocketnet_check( !rocketnet_client_config_resolve( &client, true, &client_transport, &message, &kbps ) );
+    unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
+    unsetenv( "ROCKETNET_CLIENT_NUM_CHANNELS" );
+
+    // 0 or less is the ceiling; past the ceiling is refused, never clamped
+
+    client.send_kbps = 0;
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 10000000 );
+    client.send_kbps = -5;
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && kbps == 10000000 );
+    client.send_kbps = 10000001;
+    rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    client.send_kbps = 1234;
+
+    // a string longer than its layer field is refused, never cut
+
+    char long_list[128];
+    memset( long_list, 'a', sizeof( long_list ) - 1 );
+    long_list[sizeof( long_list ) - 1] = '\0';
+    client.transport = long_list;
+    rocketnet_check( !rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) );
+    client.transport = NULL;
+    rocketnet_check( rocketnet_client_config_resolve( &client, false, &client_transport, &message, &kbps ) && strcmp( client_transport.driver, "auto" ) == 0 );
+
+    // every server field lands
+
+    struct rocketnet_server_config_t server;
+    rocketnet_server_dev_config( &server );
+    server.protocol_id = 0x1122334455667788ULL;
+    server.max_clients = 5;
+    memcpy( server.filter_value, filter, 4 );
+    server.server_secret_key[0] ^= 0x5a;
+    server.num_xdp_queues = 2; server.num_os_cpus = 3; server.max_payload_bytes = 3000; server.num_reassembly_slots = 4;
+    server.max_timeout_seconds = 30; server.handshake_deadline_seconds = 7;
+    server.transport = "gso,portable";
+    server.public_address = "127.0.0.1:40123";
+    server.per_client_send_kbps = 4321;
+    server.num_channels = 6; server.reliable_timeout_ms = 6000;
+    struct rocketnet_server_config_t dev;
+    rocketnet_server_dev_config( &dev );
+    rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( server_transport.protocol_id == 0x1122334455667788ULL && server_transport.max_clients == 5 );
+    rocketnet_check( memcmp( server_transport.filter_value, filter, 4 ) == 0 );
+    rocketnet_check( memcmp( server_transport.backend_public_key, dev.backend_public_key, 32 ) == 0 );
+    rocketnet_check( memcmp( server_transport.server_public_key, dev.server_public_key, 32 ) == 0 );
+    rocketnet_check( server_transport.server_secret_key[0] == (uint8_t) ( dev.server_secret_key[0] ^ 0x5a ) );
+    rocketnet_check( server_transport.num_xdp_queues == 2 && server_transport.num_os_cpus == 3 && server_transport.max_payload_bytes == 3000 && server_transport.num_reassembly_slots == 4 );
+    rocketnet_check( server_transport.max_timeout_seconds == 30 && server_transport.handshake_deadline_seconds == 7 );
+    rocketnet_check( strcmp( server_transport.driver, "gso,portable" ) == 0 && strcmp( server_transport.public_address, "127.0.0.1:40123" ) == 0 );
+    rocketnet_check( kbps == 4321 && message.num_channels == 6 && message.reliable_timeout_ms == 6000 );
+
+    // max_clients sizes both layers, so its override applies in the split
+
+    setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "3", 1 );
+    setenv( "ROCKETNET_SERVER_NUM_CHANNELS", "4", 1 );
+    setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "0", 1 );
+    rocketnet_check( rocketnet_server_config_resolve( &server, true, &server_transport, &message, &kbps ) );
+    rocketnet_check( server_transport.max_clients == 3 && message.num_channels == 4 && kbps == 10000000 );
+
+    char long_address[300];
+    memset( long_address, '1', sizeof( long_address ) - 1 );
+    long_address[sizeof( long_address ) - 1] = '\0';
+    server.public_address = long_address;
+    rocketnet_check( !rocketnet_server_config_resolve( &server, false, &server_transport, &message, &kbps ) );
+
+    rocketnet_test_env_restore( &server_kbps_guard );
+    rocketnet_test_env_restore( &max_clients_guard );
+    rocketnet_test_env_restore( &server_channels_guard );
+    rocketnet_test_env_restore( &kbps_guard );
+    rocketnet_test_env_restore( &channels_guard );
 }
 
 void rocketnet_test_public_config_env_round_trip()
@@ -14233,6 +14378,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait },
     { "test_config_env_round_trip", rocketnet_test_config_env_round_trip },
     { "test_public_config_env_round_trip", rocketnet_test_public_config_env_round_trip },
+    { "test_public_config_resolve", rocketnet_test_public_config_resolve },
     { "test_config_env_names_are_per_endpoint", rocketnet_test_config_env_names_are_per_endpoint },
     { "test_config_bytes_exact", rocketnet_test_config_bytes_exact },
     { "test_handshake_deadline_is_configured", rocketnet_test_handshake_deadline_is_configured },

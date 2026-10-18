@@ -66,6 +66,25 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
 
 const char * rocketnet_abi_field_name( const char * type_name, int index );
 
+// the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
+// the defaults, into the transport config, the message config and the send
+// budget the layers take. read_env applies the message fields', the budget's
+// and the server's max_clients overrides, as create does; the other transport
+// fields take theirs at the transport's create. false, with a log line, for a
+// string too long for its layer field or a budget out of range.
+
+struct rocketnet_client_transport_config_t;
+struct rocketnet_server_transport_config_t;
+struct rocketnet_message_config_t;
+struct rocketnet_client_config_t;
+struct rocketnet_server_config_t;
+
+bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
+                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+
+bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
+                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+
 // the per-endpoint derivation (ruling 11): "server" + "max_payload_bytes" ->
 // "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" and "client" + "max_payload_bytes" ->
 // "ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES". each transport table's field is read
