@@ -25,6 +25,7 @@
 #include <time.h>
 #include <math.h>
 #include <atomic>
+#include <sodium.h>
 
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
@@ -201,6 +202,25 @@ static double rocketnet_client_platform_time( void * context )
 {
     (void) context;
     return rocketnet_platform_time();
+}
+
+void rocketnet_client_io_wipe( void * data, size_t bytes )
+{
+    sodium_memzero( data, bytes );
+}
+
+// tla/RNClientIoDecrypt.tla PublishKeys: the protocol's hook at the challenge
+static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_client_io_publish_keys( (rocketnet_client_io_t *) context, client->keys.session_server_to_client,
+                                      client->signed_fields.protocol_id, client->connection_salt, client->filter_value,
+                                      &client->server_address );
+}
+
+// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state
+static void rocketnet_client_transport_retire_keys( void * context )
+{
+    rocketnet_client_io_retire_keys( (rocketnet_client_io_t *) context );
 }
 
 bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_driver_operations_t * operations )
@@ -654,6 +674,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         rocketnet_client_io_init( &client_transport->client_io, &client_transport->io, &views[0], &views[1], buffers,
                                   client_transport->time_callback, client_transport->context );
 
+        // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
+        // publishes the open copy at the challenge and retires it at every
+        // terminal state; destroy retires it too
+        client_transport->protocol.publish_keys = rocketnet_client_transport_publish_keys;
+        client_transport->protocol.retire_keys = rocketnet_client_transport_retire_keys;
+        client_transport->protocol.keys_context = &client_transport->client_io;
+
         if ( client_transport->step_driven )
             return client_transport;
 
@@ -711,6 +738,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
             rocketnet_assert( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
             (void) result;
         }
+        rocketnet_client_io_retire_keys( io );
         rocketnet_client_io_stop( io );
         if ( client_transport->step_driven )
         {
@@ -743,7 +771,8 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     rocketnet_clear_and_free( allocation_context, client_transport, sizeof(rocketnet_client_transport_t) );
 }
 
-static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time )
+static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time, double receive_time,
+                                             uint8_t verdict, uint64_t sequence )
 {
     // only the dialed server is listened to; everything else is junk
 
@@ -758,7 +787,12 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 
-    rocketnet_client_protocol_process_packet( &client_transport->protocol, packet_data, packet_bytes, current_time,
+    // tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
+    // or refused is consumed with its verdict; a raw one is processed as at
+    // BASE
+
+    rocketnet_client_protocol_process_record( &client_transport->protocol, packet_data, packet_bytes, verdict, sequence,
+                                              current_time,
                                               payload ? payload : overflow,
                                               payload ? ROCKETNET_FRAME_SIZE : ROCKETNET_RECEIVE_CEILING,
                                               &payload_bytes );
@@ -1019,7 +1053,12 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         client_transport->stats_frames[stats_index].packets_received++;
         client_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( receive_buffer->packet_bytes[i] + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 
-        rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time, receive_buffer->receive_time[i] );
+        // only the I/O thread writes verdicts; the BASE receive thread's
+        // records are raw
+        const uint8_t verdict = client_transport->io_thread ? receive_buffer->verdict[i] : (uint8_t) ROCKETNET_CLIENT_IO_VERDICT_RAW;
+        const uint64_t sequence = client_transport->io_thread ? receive_buffer->sequence[i] : 0;
+        rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time, receive_buffer->receive_time[i],
+                                         verdict, sequence );
     }
 
     if ( receive_buffer )
