@@ -186,6 +186,32 @@ static void sized_config_accepts_every_known_size()
     rocketnet_assert_function( saved_assert );
 }
 
+// R6 (docs/CHANNELS.md 11.5) at the ABI boundary (docs/ABI-EVOLUTION.md 4):
+// a revision-1 caller's struct ends at reliable_timeout_ms, so reading it
+// yields the two send budget fields at their defaults, never the bytes past
+// the caller's prefix.
+static void sized_config_message_revision_1_reads_budget_defaults()
+{
+    check( ROCKETNET_MESSAGE_CONFIG_BYTES_1 + 2 * sizeof( int ) == sizeof( struct rocketnet_message_config_t ) );
+
+    struct rocketnet_message_config_t defaults;
+    rocketnet_message_default_config( &defaults );
+    check( defaults.client_send_kbps == 1000 );
+    check( defaults.server_send_kbps == 10000 );
+
+    struct rocketnet_message_config_t old_caller;
+    memset( &old_caller, 0xEE, sizeof( old_caller ) );          // past the old prefix is not the caller's memory
+    memcpy( &old_caller, &defaults, ROCKETNET_MESSAGE_CONFIG_BYTES_1 );
+    old_caller.reliable_timeout_ms = 5000;
+
+    struct rocketnet_message_config_t read;
+    memset( &read, 0xAB, sizeof( read ) );
+    check( rocketnet_config_read_sized( "rocketnet_message_config_t", &read, &defaults, sizeof( defaults ), &old_caller, ROCKETNET_MESSAGE_CONFIG_BYTES_1, message_known_bytes, COUNT( message_known_bytes ) ) == 1 );
+    check( read.reliable_timeout_ms == 5000 );
+    check( read.client_send_kbps == 1000 );
+    check( read.server_send_kbps == 10000 );
+}
+
 static void sized_config_refuses_unknown_size()
 {
     // a caller compiled against a newer, larger struct, an older size this
@@ -298,5 +324,6 @@ static void server_default_config_max_clients_is_1000()
 }
 
 REGISTER_UNIT_TEST( sized_config_accepts_every_known_size );
+REGISTER_UNIT_TEST( sized_config_message_revision_1_reads_budget_defaults );
 REGISTER_UNIT_TEST( sized_config_refuses_unknown_size );
 REGISTER_UNIT_TEST( server_default_config_max_clients_is_1000 );
