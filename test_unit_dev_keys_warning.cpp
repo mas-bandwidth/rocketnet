@@ -118,6 +118,24 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     delete fake;
 }
 
+static int test_set_environment( const char * name, const char * value )
+{
+#if defined( _WIN32 )
+    return _putenv_s( name, value );
+#else
+    return setenv( name, value, 1 );
+#endif
+}
+
+static int test_unset_environment( const char * name )
+{
+#if defined( _WIN32 )
+    return _putenv_s( name, "" );
+#else
+    return unsetenv( name );
+#endif
+}
+
 static void dev_keys_warn_on_every_start()
 {
     // the server, development keys: a warning on create, and in a release
@@ -151,7 +169,7 @@ static void dev_keys_warn_on_every_start()
         memset( config.server_public_key, 0x43, 32 );
         memset( config.server_secret_key, 0x44, 32 );
         config.protocol_id = 1;
-        setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1", 1 );
+        check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
         int status = -1;
         start_capture();
         void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", &config, 1000.0, &status );
@@ -159,7 +177,7 @@ static void dev_keys_warn_on_every_start()
         check( srv == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
         check( g_dev_warn_lines == 0 );
-        unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+        check( test_unset_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
     }
 
     // the client can tell from its token's server key: a development key warns
