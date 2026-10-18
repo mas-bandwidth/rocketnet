@@ -84,7 +84,7 @@ checkout, in PowerShell or cmd.exe:
 loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
 takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an
 internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
-line continuation, so on Windows each command in this file is written on one line.
+line continuation, so on Windows write each command on one line.
 
 The examples are an echo server and a client that connects to it with a
 development token. Run each in its own window:
@@ -92,10 +92,12 @@ development token. Run each in its own window:
     bin\Release\server.exe
     bin\Release\client.exe
 
-The server listens on `127.0.0.1:40000`; either takes another address as its
-argument (`bin\Release\server.exe 192.0.2.10:40000`). The client logs its change
+The server's public address, the one the client dials, is `127.0.0.1:40000`;
+either takes another address as its argument
+(`bin\Release\server.exe 192.0.2.10:40000`). The client logs its change
 to the `connected` state once the handshake completes, then counts the echoed
-payloads. Ctrl+C stops either.
+payloads. Ctrl+C stops either. For a first loopback try from your own project,
+see the development-token note under "Installing and embedding the SDK" below.
 
 Every rocketnet server binds the wildcard address (`0.0.0.0:40000` for the
 example server), so on an interactive desktop the first run of `server.exe`,
@@ -171,7 +173,7 @@ Examples, tests and tools default off when embedded, and the parent's
 
 The installed SDK is the production library, and it has no development token
 minting by design: a client that calls `rocketnet_write_dev_connect_token`
-against it fails to link (`unresolved external symbol
+against it fails to link (on MSVC, `unresolved external symbol
 rocketnet_write_dev_connect_token`). For a first loopback try, embed the
 checkout and link both the server and the client to the development library,
 `rocketnet_dev`, which mints development tokens and accepts the published
