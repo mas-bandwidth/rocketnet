@@ -71,7 +71,17 @@ void harness_replay_already_received( void )
                     "replay lookup returns a boolean for every sequence" );
 }
 
-void harness_replay_advance( void )
+// The near advance clears up to ROCKETNET_REPLAY_WINDOW_BITS - 1 bits one
+// at a time, so its unwinding is the cost of the claim.
+// SEQUENCE_BUFFERS_NEAR_SKIP bounds the near skip for the bounded harness;
+// the full harness leaves it open.
+#ifndef SEQUENCE_BUFFERS_NEAR_SKIP
+#define SEQUENCE_BUFFERS_NEAR_SKIP 256
+#endif
+
+enum { REPLAY_ANY_SKIP, REPLAY_NEAR_BOUNDED, REPLAY_FAR_ONLY };
+
+static void replay_advance_claim( int shape )
 {
     rocketnet_replay_protection_t replay;
     uint64_t sequence = nondet_uint64();
@@ -80,6 +90,13 @@ void harness_replay_advance( void )
         replay.window[i] = nondet_uint64();
     __ESBMC_assume( sequence != 0 );
     __ESBMC_assume( !rocketnet_replay_already_received( &replay, sequence ) );
+    const int ahead = sequence > replay.highest_opened;
+    const uint64_t skipped = ahead ? sequence - replay.highest_opened : 0;
+    if ( shape == REPLAY_NEAR_BOUNDED )
+        __ESBMC_assume( !ahead || skipped <= SEQUENCE_BUFFERS_NEAR_SKIP ||
+                        skipped >= ROCKETNET_REPLAY_WINDOW_BITS );
+    if ( shape == REPLAY_FAR_ONLY )
+        __ESBMC_assume( ahead && skipped >= ROCKETNET_REPLAY_WINDOW_BITS );
 
     rocketnet_replay_advance( &replay, sequence );
     __ESBMC_assert( replay.highest_opened >= sequence,
@@ -87,6 +104,16 @@ void harness_replay_advance( void )
     __ESBMC_assert( rocketnet_replay_already_received( &replay, sequence ) == 1,
                     "advance marks the accepted sequence in the replay window" );
 }
+
+// Full claim: every sequence against every window state.
+void harness_replay_advance( void ) { replay_advance_claim( REPLAY_ANY_SKIP ); }
+
+// Every sequence at or behind the high-water mark, every near skip up to
+// SEQUENCE_BUFFERS_NEAR_SKIP, and every far skip.
+void harness_replay_advance_near_bounded( void ) { replay_advance_claim( REPLAY_NEAR_BOUNDED ); }
+
+// Every far skip (at least the window width): the whole-window clear.
+void harness_replay_advance_far( void ) { replay_advance_claim( REPLAY_FAR_ONLY ); }
 
 void harness_ack_record_received( void )
 {
@@ -116,17 +143,9 @@ void harness_ack_record_sent_classified( void )
     assume_endpoint_preconditions( &endpoint, sequence );
     __ESBMC_assume( !( has_packet_id && aggregate_id != 0 ) );
     endpoint.sent_lock = 0;
-    endpoint.highest_sequence = nondet_uint64();
-    endpoint.largest_acked_sequence = nondet_uint64();
-    const uint64_t selected_slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    uint64_t old_sequence = nondet_uint64();
-    __ESBMC_assume( old_sequence == 0 ||
-                    ( old_sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE == selected_slot &&
-                      old_sequence <= endpoint.highest_sequence ) );
-    endpoint.sent[selected_slot].sequence = old_sequence;
-    endpoint.sent[selected_slot].acked = nondet_uchar();
-    endpoint.sent_held[selected_slot >> 6] = nondet_uint64();
-    endpoint.sent_unacked[selected_slot >> 6] = nondet_uint64();
+    // Every other field, including the selected sent record and both
+    // bitmaps, keeps its arbitrary initial value: a wider state than the
+    // ring invariant allows, so the claim covers every reachable state.
 
     const rocketnet_ack_sent_result_t result =
         rocketnet_ack_endpoint_record_sent_classified( &endpoint, sequence,
@@ -171,17 +190,23 @@ static rn_region_t * symbolic_region( uint32_t window )
     return region;
 }
 
-static uint32_t symbolic_window( void )
+// window_messages is a power of two from 64 to 1 << 20 (rocketnet.h).
+#define SEQUENCE_BUFFERS_FULL_WINDOW ( 1u << 20 )
+#ifndef SEQUENCE_BUFFERS_ACCEPT_WINDOW
+#define SEQUENCE_BUFFERS_ACCEPT_WINDOW 128
+#endif
+
+static uint32_t symbolic_window( uint32_t max_window )
 {
     uint32_t window = nondet_uint();
-    __ESBMC_assume( window >= 64 && window <= ( 1u << 20 ) );
+    __ESBMC_assume( window >= 64 && window <= max_window );
     __ESBMC_assume( ( window & ( window - 1 ) ) == 0 );
     return window;
 }
 
 void harness_window_receive_init( void )
 {
-    const uint32_t window = symbolic_window();
+    const uint32_t window = symbolic_window( SEQUENCE_BUFFERS_FULL_WINDOW );
     rn_region_t * region = symbolic_region( window );
     rn_window_receive_t receive;
     uint64_t first_number = nondet_uint64();
@@ -191,9 +216,9 @@ void harness_window_receive_init( void )
     __ESBMC_assert( receive.R == first_number, "init retains the first message number" );
 }
 
-void harness_window_receive_accept( void )
+static void window_accept_claim( uint32_t max_window )
 {
-    const uint32_t window = symbolic_window();
+    const uint32_t window = symbolic_window( max_window );
     rn_region_t * region = symbolic_region( window );
     rn_window_receive_t receive;
     rocketnet_message_record_t record;
@@ -212,9 +237,16 @@ void harness_window_receive_accept( void )
                     "an accepted message slot is inside the configured window" );
 }
 
+// Full claim: every power-of-two window up to 1 << 20. The advance loop
+// runs up to W times, so its unwinding is the cost of the claim.
+void harness_window_receive_accept( void ) { window_accept_claim( SEQUENCE_BUFFERS_FULL_WINDOW ); }
+
+// Every power-of-two window up to SEQUENCE_BUFFERS_ACCEPT_WINDOW.
+void harness_window_receive_accept_bounded( void ) { window_accept_claim( SEQUENCE_BUFFERS_ACCEPT_WINDOW ); }
+
 void harness_window_receive_release( void )
 {
-    const uint32_t window = symbolic_window();
+    const uint32_t window = symbolic_window( SEQUENCE_BUFFERS_FULL_WINDOW );
     rn_region_t * region = symbolic_region( window );
     rn_window_receive_t receive;
     uint64_t number = nondet_uint64();
