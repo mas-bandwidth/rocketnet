@@ -2,6 +2,8 @@
 
 Status: incomplete. `proofs-ack_block` is a nightly-only target, but the full receive ceiling and accepted-block apply path are not proved. Do not describe this target as a successful full-bound proof.
 
+The shared shim imports `std::isfinite` into global lookup because this checker's C++ math header exposes only the namespaced form while the actual `sdk/rocketnet_ack.cpp:241` calls the global form. This is a compiler compatibility mapping, not an SDK rewrite.
+
 The checker is ESBMC 8.5.0 on Linux, with `--std c++17 --z3 --overflow-check` and its default pointer, bounds, division-by-zero, and unwinding checks enabled. Each run includes the actual `sdk/rocketnet_protocol.cpp` and `sdk/rocketnet_ack.cpp`, uses the shared shim, and compiles a temporary `.cpp` copy of the required `.c` harness because this ESBMC release chooses C from the `.c` extension even when `--std c++17` is passed. Runs use a single CPU, `nice -n 19`, `prlimit --as=8589934592`, and an outer timeout. The harness bounds fixed-size `memset` objects itself; no `--memset-limit` option is present in this checker.
 
 | Harness | Domain and unwind | Result |
