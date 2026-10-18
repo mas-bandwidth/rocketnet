@@ -185,10 +185,12 @@ C2S == INSTANCE Link WITH wire <- c2sWire, sent <- c2sSent, pulse <- c2sPulse,
 S2C == INSTANCE Link WITH wire <- s2cWire, sent <- s2cSent, pulse <- s2cPulse,
                           Packets <- ServerPackets, Pattern <- S2CPattern
 
-NoMap == [live |-> FALSE, est |-> FALSE, salt |-> NoSalt, nonce |-> 0, tok |-> 0, slot |-> 0,
+NoMap == [live |-> FALSE, est |-> FALSE, salt |-> NoSalt, nonce |-> 0,
+          csalt |-> NoSalt, cnonce |-> 0, tok |-> 0, slot |-> 0,
           age |-> 0, sinceRecv |-> 0, sinceKA |-> 0, acked |-> FALSE]
 
 Mapping == [live : BOOLEAN, est : BOOLEAN, salt : Salts \cup {NoSalt}, nonce : Nonce \cup {0},
+            csalt : Salts \cup {NoSalt}, cnonce : Nonce \cup {0},
             tok : Tokens \cup {0}, slot : Slots \cup {0},
             age : 0..HandshakeDeadline, sinceRecv : 0..Timeout, sinceKA : 0..SendInterval,
             acked : BOOLEAN]
@@ -390,8 +392,8 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 
 \* rocketnet_server_protocol_process_connection_request, the ladder in the
 \* standard's order as far as this model sees it: a connected address is
-\* silent; a half-open mapping resends its stored challenge to the same
-\* salt and is silent to another; no cookie (or a cookie issued to another
+\* silent; a half-open mapping resends its stored challenge whatever salt
+\* the request carries; no cookie (or a cookie issued to another
 \* address) -> a cookie; the token bound elsewhere in the history, a
 \* connected client id, or an admitted token -> silent; then the history
 \* records the binding; no slot -> a denied under fresh keys (no mapping);
@@ -404,9 +406,7 @@ ServerRecvRequest(p) ==
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound>>
             [] m.live ->
-                 /\ IF p.salt = m.salt
-                      THEN ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
-                      ELSE ServerSilent
+                 ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
                  /\ UNCHANGED <<smap, bound>>
             [] ~p.cookie ->
                  ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt]) /\ UNCHANGED <<smap, bound>>
@@ -422,7 +422,8 @@ ServerRecvRequest(p) ==
                       [] OTHER ->
                            \E n \in FreshNonce :
                              /\ smap' = [smap EXCEPT ![p.from] = [NoMap EXCEPT !.live = TRUE, !.salt = p.salt,
-                                                                                 !.nonce = n, !.tok = p.tok]]
+                                                                                 !.nonce = n, !.csalt = p.salt,
+                                                                                 !.cnonce = n, !.tok = p.tok]]
                              /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> p.salt, nonce |-> n])
     /\ UNCHANGED <<slot, admitted, admits>>
     /\ UNCHANGED serverRecvUnchanged
@@ -670,6 +671,15 @@ OneConnectionPerToken == \A t \in Tokens : admits[t] <= 1
 
 \* no two live mappings share keys: the nonce is fresh per mapping
 NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
+
+\* every live mapping stores the one challenge it was created with: its
+\* salt and nonce equal the challenge fields fixed at creation, and a
+\* request never replaces them
+StoredChallengeNeverReplaced ==
+    \A a \in LiveAddrs :
+        /\ smap[a].csalt = smap[a].salt
+        /\ smap[a].cnonce = smap[a].nonce
+        /\ smap[a].csalt # NoSalt
 
 \* the timeouts fire when they are due
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout

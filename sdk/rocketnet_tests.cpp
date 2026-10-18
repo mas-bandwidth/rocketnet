@@ -2558,14 +2558,18 @@ void rocketnet_test_challenge_resend_checks_salt()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    uint8_t stored[ROCKETNET_RECEIVE_CEILING];
+    memcpy( stored, response, (size_t) response_bytes );
+    const int stored_bytes = response_bytes;
 
     const uint8_t different_salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 8, 7, 6, 5, 4, 3, 2, 1 };
     memcpy( request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, different_salt, sizeof(different_salt) );
     response_bytes = 0;
     const struct rocketnet_counters_t before = test.counters;
-    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( response_bytes == 0 );
-    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_MAPPING_SALT_MISMATCH );
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    rocketnet_check( response_bytes == stored_bytes );
+    rocketnet_check( memcmp( response, stored, (size_t) stored_bytes ) == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT );
 
     rocketnet_test_server_teardown( &test );
 }
