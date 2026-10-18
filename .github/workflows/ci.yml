@@ -214,6 +214,17 @@ jobs:
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
+      - name: Replay the fuzz corpora without libFuzzer
+        if: runner.os == 'macOS'
+        run: |
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+            cmake --build build --target "fuzz_replay_${harness}" --parallel 2
+          done
+          ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
+          ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
+          ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
+          ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+
       - name: Run unit tests
         if: contains(matrix.leg, 'b')
         run: ./bin/test
@@ -416,6 +427,17 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel
+
+      - name: Replay the fuzz corpora without libFuzzer
+        shell: bash
+        run: |
+          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured; do
+            cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
+          done
+          ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
+          ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
 
       # ---- leg (a): the suite as the runner executes it ----
 
