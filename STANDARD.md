@@ -303,6 +303,8 @@ section, and this table exists so an implementer never hunts for a number.
 | Sequence | 4 bytes wire, 64-bit value, starts at 1, zero invalid | _Sequence numbers_ |
 | Send rate | 10 Hz default | _Timing_ |
 | Handshake deadline | 5 s default | _Timing_ |
+| Handshake work budget | 1024 post-cookie requests per update, default | _Processing Connection Requests_ |
+| Failed-signature budget | 90 failures per 10 s window, default | _Processing Connection Requests_ |
 | Cookie lifetime / key rotation | 3 s / 60 s defaults | _Timing_ |
 | Redundant disconnects | 10 | _Timing_ |
 | Cookie key | 32 bytes | _Keys_ |
@@ -2734,6 +2736,14 @@ In this exact order, on a _connection request packet_:
   and a system call on every piece of it. Everything below it is expensive — the
   used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
   so nothing below may run for an address that has not answered.
+* **A server SHOULD bound the post-cookie handshake work it performs in one
+  update: at most 1024 connection requests whose cookie validated, per server,
+  per update by default.** This check sits after the cookie validates and before
+  the used-token lookup and the signature verify, so a request past the budget
+  spends no asymmetric work. A refused request sees no answer, and the server
+  increments `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. The budget is local
+  policy, reset at the start of each update; an implementation MAY choose
+  another value.
 * If the token identifier already appears in the used-token history bound to a
   different source address and port, ignore it. This is also the cheap
   refusal of a token a connected client holds, before any signature verify or
@@ -2748,6 +2758,12 @@ In this exact order, on a _connection request packet_:
   new one, and an attacker could mint unbounded distinct identifiers from one
   captured request. Hashing the signed data has no such freedom, and is smaller
   per entry.)* Comparisons MUST be constant time.
+* **A server SHOULD apply a failed-signature budget before the verify: at most
+  90 failed signature verifications per 10-second window by default.** Once the
+  budget is spent, a request from a source that has already failed this window
+  is refused before the verify. A refused request sees no answer, and the
+  server increments `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. The budget and
+  its window are local policy; an implementation MAY choose other values.
 * **Verify the signature over the 576-byte signed connect data against the
   backend public key (`crypto_sign_verify_detached`). If it fails, ignore the
   packet.** This is the authenticity check and it comes before the seal is
