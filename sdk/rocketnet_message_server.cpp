@@ -163,7 +163,12 @@ bool rn_message_object_send_kbps_env_valid( int is_server )
     if ( !value || value[0] == '\0' )
         return true;
     int parsed = 0;
-    return rocketnet_config_parse_int_value( value, &parsed ) && parsed <= ROCKETNET_SEND_BUDGET_MAX_KBPS;
+    if ( !rocketnet_config_parse_int_value( value, &parsed ) || parsed > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
+        rocketnet_error( "message config refuses %s=\"%s\": an integer of at most %d kbps (0 or lower uncaps)", name, value, ROCKETNET_SEND_BUDGET_MAX_KBPS );
+        return false;
+    }
+    return true;
 }
 
 static bool rn_message_object_send_kbps_from_env( int is_server, int32_t * kbps )

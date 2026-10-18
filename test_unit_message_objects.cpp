@@ -2194,6 +2194,29 @@ static void send_budget_env_overrides_config()
     }
 }
 
+// the pre-check rocketnet_message_client_create and rocketnet_message_server_create
+// run before their transport opens a socket: a budget variable that does not
+// parse or is above the maximum is refused, per direction; 0 or lower is valid
+// (uncapped). The creates themselves are not called here, so a regression can
+// never open a socket in the unit suite.
+static void send_budget_env_refused_before_the_socket()
+{
+    check( rn_message_object_send_kbps_env_valid( 0 ) );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );
+
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
+    check( !rn_message_object_send_kbps_env_valid( 0 ) );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );                // each direction its own variable
+    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "-5" );
+    check( rn_message_object_send_kbps_env_valid( 0 ) );                // 0 or lower uncaps: valid
+    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
+
+    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "10000001" );
+    check( !rn_message_object_send_kbps_env_valid( 1 ) );
+    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
+    check( rn_message_object_send_kbps_env_valid( 1 ) );
+}
+
 REGISTER_UNIT_TEST( ordered_and_unreliable_end_to_end_in_memory );
 REGISTER_UNIT_TEST( server_kicks_exhausted_client_others_unaffected );
 REGISTER_UNIT_TEST( client_disconnects_itself_on_exhaustion );
@@ -2205,6 +2228,7 @@ REGISTER_UNIT_TEST( send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( set_send_kbps_zero_or_negative_uncaps );
 REGISTER_UNIT_TEST( send_budget_env_overrides_config );
+REGISTER_UNIT_TEST( send_budget_env_refused_before_the_socket );
 REGISTER_UNIT_TEST( message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( rnslots_witness_replays );
 REGISTER_UNIT_TEST( message_objects_client_clock_starts_at_first_update );

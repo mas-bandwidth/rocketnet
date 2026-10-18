@@ -167,9 +167,10 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 
 // R6 (docs/CHANNELS.md 11.5): false when ROCKETNET_MESSAGE_CLIENT_SEND_KBPS
 // (is_server 0) or ROCKETNET_MESSAGE_SERVER_SEND_KBPS (1) is set to a value
-// that does not parse or is above ROCKETNET_SEND_BUDGET_MAX_KBPS. Silent: the
-// public creates refuse on it before the transport opens a socket, and
-// rn_message_object_create applies the value, logged.
+// that does not parse or is above ROCKETNET_SEND_BUDGET_MAX_KBPS, logged with
+// the variable and its value. The public creates refuse on it before the
+// transport opens a socket; rn_message_object_create applies a valid value,
+// logged with the value it displaces.
 bool rn_message_object_send_kbps_env_valid( int is_server );
 
 void rn_message_object_destroy( struct rn_message_object_t * object );
