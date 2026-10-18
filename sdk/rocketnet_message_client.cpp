@@ -225,7 +225,7 @@ int rocketnet_message_client_receipts( struct rocketnet_message_client_t * clien
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( out ) || capacity < 1 )
         return 0;
-    return rn_window_ack_receipts( &client->object.connections[0].ordered.ack, out, capacity );
+    return rn_endpoint_take_receipts( &client->object.connections[0], out, capacity );
 }
 
 void rocketnet_message_client_release( struct rocketnet_message_client_t * client, const uint8_t * data )

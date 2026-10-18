@@ -183,6 +183,33 @@ application memory are outside this count. Provision room for those costs; a
 plan is not an available-RAM check or a whole-host peak estimate. Existing
 component budgets, queue defaults and history limits are unchanged.
 
+`rocketnet_server_transport_host_memory_estimate(config, driver, &estimate)` adds
+the kernel-facing memory a driver requests to that plan, under the same config
+and driver rules, with no allocation, socket or thread. Each field is a
+request, never what the kernel grants: `allocator_bytes` (the plan without
+UMEM), `umem_bytes` (XDP frame memory, the plan's UMEM), `socket_send_buffer_bytes`
+and `socket_receive_buffer_bytes` (the `SO_SNDBUF` and `SO_RCVBUF` sizes asked of
+every socket the driver opens), `xdp_ring_bytes` (the AF_XDP RX and TX
+descriptor rings of every queue) and `thread_stack_bytes` (`worker_threads` x
+`thread_stack_bytes_per_thread`; drivers create threads with the platform
+default stack, so on POSIX this is the default thread attribute's stack size,
+set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
+reserve). `total_bytes` is their sum and is never below `required_memory`.
+`exclusions` names what is not counted: kernel socket accounting beyond the
+requests (Linux doubles each buffer request), the AF_XDP fill and completion
+rings libxdp sizes, libbpf/libxdp and the XDP program's maps, the io_uring
+submission, completion and provided buffer rings, thread guard pages
+and TLS, kernel page tables, loader memory, libc bookkeeping outside the SDK
+allocator, and application memory. Stacks count reserved address space, not
+resident pages. With default configuration and an 8 MiB default stack, on Linux:
+
+| driver | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
+| --- | --- | --- | --- | --- | --- | --- |
+| portable | 96,898,813 | 1 | 2,000,000 | 0 | 0 | 98,898,813 |
+| gso | 239,106,628 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 280,661,060 |
+| io_uring | 207,940,412 | 4 | 8,000,000 | 0 | 0 | 215,940,412 |
+| xdp | 3,882,322,006 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 3,944,712,278 |
+
 Build tools normally, then use the resource probe:
 
 ```

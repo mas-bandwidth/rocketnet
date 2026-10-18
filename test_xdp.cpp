@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 bool rocketnet_server_socket_test_inactive_generation();
+bool rocketnet_server_socket_test_replay_marks();
 
 int main()
 {
@@ -13,6 +14,7 @@ int main()
     if (!rocketnet_init()) return 1;
     rocketnet_server_socket_forbid_commit();
     const bool passed = rocketnet_server_socket_test_inactive_generation();
+    const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     rocketnet_term();
     if (!passed)
     {
@@ -20,6 +22,13 @@ int main()
         return 1;
     }
     printf("test_xdp_inactive_generation\n");
+
+    if (!replay_passed)
+    {
+        fprintf(stderr, "native XDP replay-marks buffer/commit check failed\n");
+        return 1;
+    }
+    printf("test_xdp_replay_marks_buffered_and_committed\n");
 
     // a umem frame holds the largest datagram a receiver accepts, with the
     // ethernet header and the larger (IPv6) IP header in front of it

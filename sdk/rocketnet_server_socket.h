@@ -73,6 +73,21 @@ void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_
 
 void rocketnet_server_socket_update( struct rocketnet_server_socket_t * server_socket );
 
+// The replay high-water writer: the server socket is the only writer of the
+// pinned server_xdp_replay_map. These calls are main thread only. Forget and
+// mark append to the socket's pending buffer; a full buffer counts in the
+// buffer's refused count. Commit deletes every forget, then updates every
+// mark, then resets the buffer. A failed syscall adds to the commit failure
+// count and logs one debug line naming the call, never a key.
+
+void rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address );
+
+void rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * address, uint32_t high_water );
+
+void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket );
+
+uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket );
+
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 
 int rocketnet_server_socket_state( struct rocketnet_server_socket_t * server_socket );
