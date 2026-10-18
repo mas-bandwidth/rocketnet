@@ -675,7 +675,9 @@ one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
 elapsed value produces no sample. The sample measures local elapsed time and
 does not subtract peer processing or acknowledgement aggregation delay. The
-reported RTT is the minimum strictly positive retained first-ack sample, in milliseconds; if no strictly positive first-ack sample is retained, it is zero.
+The reported RTT MUST be the minimum strictly positive retained first-ack
+sample, in milliseconds. If no strictly positive first-ack sample is retained,
+the reported RTT MUST be zero.
 
 <a id="t15.6"></a>
 ### t15.6. Vectors
