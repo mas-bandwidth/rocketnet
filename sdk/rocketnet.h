@@ -920,7 +920,7 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // The handshake deadline is fixed at the challenge, never refreshed, and discharged on connect.
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
-    INT_FIELD(    max_clients,          64,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
+    INT_FIELD(    max_clients,        1000,                              1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  filter_value,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
     BYTES_FIELD(  backend_public_key,   32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \
     BYTES_FIELD(  server_public_key,    32,                              ROCKETNET_CONFIG_ZERO_BYTES,                          0 )                          \

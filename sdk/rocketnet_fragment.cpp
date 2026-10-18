@@ -129,7 +129,8 @@ bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_
 // tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
 // packets one update drains, a payload begun earlier completes on one and
 // a payload begun in the update on two, and at most connections x slots
-// payloads are begun earlier
+// payloads are begun earlier. At the 1000-client, 8-slot server defaults,
+// this gives a 12,000-completion bound for the 16,000-packet drain.
 
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots )
 {

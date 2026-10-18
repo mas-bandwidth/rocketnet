@@ -224,7 +224,7 @@ Oversized geometry is refused with required and permitted byte counts before
 allocation. These bounds are not an available-RAM check: reserve additional
 memory for ACK history, other transport objects, allocator overhead, stacks,
 kernel buffers and your application. The default seven-queue XDP geometry alone
-still requires roughly 3.5 GiB; select fewer queues or provision that explicitly.
+still requires roughly 4.2 GiB; select fewer queues or provision that explicitly.
 
 ## Pre-allocation server resource plans
 
@@ -270,10 +270,10 @@ resident pages. With default configuration and an 8 MiB default stack, on Linux:
 
 | driver | required_memory | sockets | socket buffers | XDP rings | threads x stack | estimate total |
 | --- | --- | --- | --- | --- | --- | --- |
-| portable | 96,898,813 | 1 | 2,000,000 | 0 | 0 | 98,898,813 |
-| gso | 239,106,628 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 280,661,060 |
-| io_uring | 207,940,412 | 4 | 8,000,000 | 0 | 0 | 215,940,412 |
-| xdp | 3,882,322,006 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 3,944,712,278 |
+| portable | 688,206,108 | 1 | 2,000,000 | 0 | 0 | 690,206,108 |
+| gso | 830,413,923 | 4 | 8,000,000 | 0 | 4 x 8 MiB | 871,968,355 |
+| io_uring | 799,247,707 | 4 | 8,000,000 | 0 | 0 | 807,247,707 |
+| xdp | 4,473,629,517 (UMEM 1,879,048,192) | 7 | 0 | 3,670,016 | 7 x 8 MiB | 4,536,019,789 |
 
 Build tools normally, then use the resource probe:
 
