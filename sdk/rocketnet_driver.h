@@ -73,6 +73,11 @@ struct rocketnet_server_driver_operations_t
     // ROCKETNET_SERVER_XDP_COUNTER_* order (sdk/rocketnet_wire.h), cumulative
     // since its filter was loaded; called on the main thread only.
     void (*prefilter_counters)( void * driver, uint64_t * values );
+    // optional, all three or none; main thread only. A driver with a kernel
+    // replay map writes it from these and nothing else does.
+    void (*replay_forget)( void * driver, const rocketnet_address_t * address );
+    void (*replay_mark)( void * driver, const rocketnet_address_t * address, uint32_t high_water );
+    void (*replay_commit)( void * driver );
 };
 
 struct rocketnet_client_driver_config_t

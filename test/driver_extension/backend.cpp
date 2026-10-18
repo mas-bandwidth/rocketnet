@@ -6,6 +6,13 @@
 // through the public transport API; it has no transport implementation access.
 int external_test_creates = 0;
 int external_test_destroys = 0;
+int external_test_replay_forgets = 0;
+int external_test_replay_marks = 0;
+uint32_t external_test_replay_max_high_water = 0;
+rocketnet_address_t external_test_replay_last_address;
+rocketnet_address_t external_test_replay_forgotten_address;
+bool external_test_replay_has_address = false;
+bool external_test_replay_has_forgotten = false;
 
 static void * socket_create( void * context, rocketnet_address_t * bind )
 {
@@ -34,10 +41,27 @@ static void send( void * socket, const rocketnet_address_t * to, const uint8_t *
 static int receive( void * socket, rocketnet_address_t * from, uint8_t * data, int bytes )
 { return rocketnet_platform_socket_receive_packet((rocketnet_platform_socket_t*)socket, from, data, bytes); }
 
+static void replay_forget( void *, const rocketnet_address_t * address )
+{
+    ++external_test_replay_forgets;
+    external_test_replay_forgotten_address = *address;
+    external_test_replay_has_forgotten = true;
+}
+static void replay_mark( void *, const rocketnet_address_t * address, uint32_t high_water )
+{
+    external_test_replay_last_address = *address;
+    if ( high_water > external_test_replay_max_high_water )
+        external_test_replay_max_high_water = high_water;
+    external_test_replay_has_address = true;
+    ++external_test_replay_marks;
+}
+static void replay_commit( void * ) {}
+
 static const rocketnet_server_driver_operations_t server_operations =
 {
     ROCKETNET_DRIVER_FLUSH_ON_UPDATE, server_create, destroy, stop,
-    NULL, NULL, NULL, NULL, NULL, send_batch, receive_batch
+    NULL, NULL, NULL, NULL, NULL, send_batch, receive_batch,
+    NULL, replay_forget, replay_mark, replay_commit
 };
 static const rocketnet_client_driver_operations_t client_operations = { client_create, destroy, send, receive };
 extern const rocketnet_driver_backend_t external_test_driver = { &server_operations, &client_operations };

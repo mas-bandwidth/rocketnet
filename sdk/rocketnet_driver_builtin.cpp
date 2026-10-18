@@ -28,6 +28,76 @@ static const rocketnet_server_driver_operations_t portable_server_operations =
     ROCKETNET_DRIVER_FLUSH_ON_UPDATE, portable_create, portable_destroy, synchronous_stop,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive
 };
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+// The portable client on a platform with the client I/O wake: an eight-callback
+// table over the socket and its wake, so the transport runs the I/O thread of
+// docs/CLIENT-IO.md (RNClientIo) instead of the BASE receive thread.
+struct portable_io_client_t
+{
+    rocketnet_platform_socket_t * socket;
+    rocketnet_platform_wake_t * wake;
+    void * context;
+};
+// RNClientIo initial / Stop and destroy order (docs/CLIENT-IO.md): create owns
+// the socket and the wake beside it; any failure releases what it opened.
+static void * portable_io_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
+{
+    struct portable_io_client_t * client = (struct portable_io_client_t*) rocketnet_malloc( context, sizeof( *client ) );
+    if ( !client )
+        return NULL;
+    client->socket = (rocketnet_platform_socket_t*) portable_socket_create( context, config->name, bind );
+    if ( !client->socket )
+    {
+        rocketnet_free( context, client );
+        return NULL;
+    }
+    client->wake = rocketnet_platform_wake_create( context, client->socket );
+    if ( !client->wake )
+    {
+        rocketnet_platform_socket_destroy( client->socket );
+        rocketnet_free( context, client );
+        return NULL;
+    }
+    client->context = context;
+    return client;
+}
+// RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
+// the I/O thread before closing the driver, so the wake goes, then the socket.
+static void portable_io_client_destroy( void * driver )
+{
+    struct portable_io_client_t * client = (struct portable_io_client_t*) driver;
+    if ( !client )
+        return;
+    rocketnet_platform_wake_destroy( client->wake );
+    rocketnet_platform_socket_destroy( client->socket );
+    rocketnet_free( client->context, client );
+}
+// RNClientIo IoSend / IoReceive (docs/CLIENT-IO.md The I/O step): the
+// per-packet platform functions on the instance's socket.
+static void portable_io_client_send( void * driver, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_socket_send_packet( client->socket, to, data, bytes ); }
+static int portable_io_client_receive( void * driver, rocketnet_address_t * from, uint8_t * data, int capacity )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity ); }
+// RNClientIo IoSend / IoReceive batches (docs/CLIENT-IO.md The I/O step): the
+// batch pump seam, which loops per packet on this platform; still off the
+// main thread.
+static void portable_io_client_send_batch( void * driver, const rocketnet_platform_send_t * sends, int num_packets )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_socket_send_packets( client->socket, sends, num_packets ); }
+static int portable_io_client_receive_batch( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_socket_receive_packets( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets ); }
+// RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake):
+// readable passes through, so with it false the socket is not polled and a
+// full receive buffer waits on the eventfd alone.
+static bool portable_io_client_wait( void * driver, bool readable, double timeout_seconds )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; return rocketnet_platform_wake_wait( client->wake, readable, timeout_seconds ); }
+static void portable_io_client_wake( void * driver )
+{ struct portable_io_client_t * client = (struct portable_io_client_t*) driver; rocketnet_platform_wake_set( client->wake ); }
+static const rocketnet_client_driver_operations_t portable_client_operations =
+{
+    portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
+    portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake
+};
+#else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_driver_config_t * config, rocketnet_address_t * bind )
 { return portable_socket_create( context, config->name, bind ); }
 static void portable_client_send( void * driver, const rocketnet_address_t * to, const uint8_t * data, int bytes )
@@ -36,6 +106,7 @@ static int portable_client_receive( void * driver, rocketnet_address_t * from, u
 { return rocketnet_platform_socket_receive_packet( (rocketnet_platform_socket_t*) driver, from, data, capacity ); }
 static const rocketnet_client_driver_operations_t portable_client_operations =
 { portable_client_create, portable_destroy, portable_client_send, portable_client_receive };
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 extern const rocketnet_driver_backend_t rocketnet_portable_driver = { &portable_server_operations, &portable_client_operations };
 extern const rocketnet_driver_backend_t rocketnet_msgx_driver = { &portable_server_operations, &portable_client_operations };
 
@@ -123,11 +194,24 @@ static void xdp_prefilter_counters( void * driver, uint64_t * values )
 {
     rocketnet_server_socket_xdp_counters( (rocketnet_server_socket_t*) driver, values );
 }
+static void xdp_replay_forget( void * driver, const rocketnet_address_t * address )
+{
+    rocketnet_server_socket_replay_forget( (rocketnet_server_socket_t*) driver, address );
+}
+static void xdp_replay_mark( void * driver, const rocketnet_address_t * address, uint32_t high_water )
+{
+    rocketnet_server_socket_replay_mark( (rocketnet_server_socket_t*) driver, address, high_water );
+}
+static void xdp_replay_commit( void * driver )
+{
+    rocketnet_server_socket_replay_commit( (rocketnet_server_socket_t*) driver );
+}
 static const rocketnet_server_driver_operations_t xdp_operations =
 {
     ROCKETNET_DRIVER_STAGED | ROCKETNET_DRIVER_FINISH_FINAL | ROCKETNET_DRIVER_BINDS_PUBLIC_ADDRESS,
     xdp_create, xdp_destroy, xdp_stop,
-    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters
+    xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit
 };
 extern const rocketnet_driver_backend_t rocketnet_xdp_driver = { &xdp_operations, NULL };
 #endif
