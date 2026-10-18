@@ -428,7 +428,7 @@ product has are tested on the shipped path in `./bin/test`:
 `unreliable_store_full_exhausts_and_kicks`,
 `unreliable_past_limit_promotes_counted_and_not_wedged`,
 `unreliable_promotion_every_mode` (its own `test_unit_unreliable_promotion.cpp`
-case),
+case; `./bin/test_wide` runs it on channel 300, a WIDE channel),
 `unreliable_failed_packet_drops_and_counts_each_record`,
 `unreliable_chunks_freed_when_written` and
 `unreliable_over_a_lossy_link_arrives_intact_at_most_once`

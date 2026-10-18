@@ -3,10 +3,6 @@ project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
-# The promotion unit test exercises the WIDE channel header (a channel index of
-# 256 or more), so the build's channel cap must exceed 256 (RakNet promotion
-# rule: oversize unreliable sends promote to their reliable twin).
-add_compile_definitions(ROCKETNET_MAX_CHANNELS=300)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -328,6 +324,31 @@ if(ROCKETNET_BUILD_TESTS)
         "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
+    # The promotion case exercises the WIDE channel header (an index of 256 or
+    # more) on channel 300, past the default build's cap, so this binary
+    # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
+    # (RakNet promotion rule: oversize unreliable sends promote to their twin).
+    add_executable(test_wide
+        test.cpp test_channels.cpp test_unit_unreliable_promotion.cpp
+        sdk/rocketnet_tests.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+    add_dependencies(test_wide rocketnet_xdp_header)
+    target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
+        ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1
+        $<TARGET_PROPERTY:rocketnet,COMPILE_DEFINITIONS>)
+    target_include_directories(test_wide PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_compile_features(test_wide PRIVATE cxx_std_11)
+    target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
+    rocketnet_use_sodium(test_wide)
+    target_link_libraries(test_wide PRIVATE Threads::Threads)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(test_wide PRIVATE RocketNet::Bpf RocketNet::Xdp)
+        if(TARGET RocketNet::Uring)
+            target_link_libraries(test_wide PRIVATE RocketNet::Uring)
+            target_compile_definitions(test_wide PRIVATE ROCKETNET_IO_URING=1)
+        endif()
+    endif()
     # The endpoint's clock intercept (test_unit_endpoint.cpp): on Linux the
     # linker sends every call to the library's clock, rocketnet_platform_time,
     # from any object file of the test binary, to the test's counting wrapper.

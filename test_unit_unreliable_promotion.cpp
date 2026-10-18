@@ -16,15 +16,18 @@
 #include "sdk/rocketnet_send_budget.h"
 #include "sdk/rocketnet_wire.h"
 #define check rocketnet_unit_check
-#if ROCKETNET_MAX_CHANNELS > 256
-#define BOUNDARY_TEST_NUM_CHANNELS ( ROCKETNET_MAX_CHANNELS < 300 ? ROCKETNET_MAX_CHANNELS : 300 )
-#define BOUNDARY_TEST_CHANNEL_COUNT 3
+#if ROCKETNET_MAX_CHANNELS > 300
+#define BOUNDARY_TEST_NUM_CHANNELS 301
+#define BOUNDARY_TEST_CHANNEL_COUNT 2
+#define BOUNDARY_TEST_CHANNELS { 0, 300 }
 #elif ROCKETNET_MAX_CHANNELS > 31
 #define BOUNDARY_TEST_NUM_CHANNELS 32
 #define BOUNDARY_TEST_CHANNEL_COUNT 2
+#define BOUNDARY_TEST_CHANNELS { 0, 31 }
 #else
 #define BOUNDARY_TEST_NUM_CHANNELS ROCKETNET_MAX_CHANNELS
 #define BOUNDARY_TEST_CHANNEL_COUNT 1
+#define BOUNDARY_TEST_CHANNELS { 0 }
 #endif
 #define BOUNDARY_MAX_FRAMES 64
 #define BOUNDARY_PAYLOAD_INDEX 16
@@ -198,11 +201,7 @@ static void unreliable_promotion_every_mode()
     const int modes[3]={ROCKETNET_UNRELIABLE,ROCKETNET_UNRELIABLE_SEQUENCED,ROCKETNET_UNRELIABLE_WITH_ACK_RECEIPT};
     for(int m=0;m<3;++m) {
         const int reliability=modes[m];
-#if ROCKETNET_MAX_CHANNELS > 256
-        const int channels[3]={0,31,256};
-#else
-        const int channels[2]={0,31};
-#endif
+        static const int channels[]=BOUNDARY_TEST_CHANNELS;
         for(int c=0;c<BOUNDARY_TEST_CHANNEL_COUNT;++c) {
             const int channel=channels[c];
             boundary_pair_t pair; boundary_setup(&pair); std::vector<boundary_received_t> got; boundary_step(&pair,&got);
