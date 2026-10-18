@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "rocketnet_address.h"
+#include "rocketnet_platform.h"
 
 #if defined(__linux__)
 
@@ -127,13 +128,7 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     {
         if ( name_bytes < (int) sizeof( struct sockaddr_in ) )
             return false;
-        const struct sockaddr_in * addr = (const struct sockaddr_in*) input;
-        out->type = ROCKETNET_ADDRESS_IPV4;
-        out->data.ipv4[0] = (uint8_t) ( addr->sin_addr.s_addr & 0x000000FF );
-        out->data.ipv4[1] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
-        out->data.ipv4[2] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
-        out->data.ipv4[3] = (uint8_t) ( ( addr->sin_addr.s_addr & 0xFF000000 ) >> 24 );
-        out->port = ntohs( addr->sin_port );
+        rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in*) input, out );
         return true;
     }
     return false;
