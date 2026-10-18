@@ -4,8 +4,9 @@ Low-level client/server UDP transport library.
 
 ## Building
 
-See [BUILDING.md](BUILDING.md). Binaries land in `bin/`; run the test suite
-with `./bin/test`.
+See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
+`bin\Release\`; run the test suite with `./bin/test`, or with
+`bin\Release\test.exe` on Windows (PowerShell or cmd.exe).
 
 ## Documentation
 

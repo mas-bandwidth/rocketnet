@@ -8,7 +8,8 @@ archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. `ROCKETNET_ABI_VERSION` identifies SDK calling/layout
 compatibility separately from the wire version; see the ABI rules below.
 
-rocketnet builds on Linux, macOS and Windows with CMake 3.20 or later. On Linux and macOS the
+rocketnet builds on Linux and macOS with CMake 3.20 or later, and on Windows with
+CMake 4.2 or later (the Windows block below says why). On Linux and macOS the
 Makefile is the front door:
 
     make
@@ -55,11 +56,52 @@ Dependencies, per platform, as CI installs them:
     # macOS
     brew install cmake
 
-Windows has no Makefile path; CMake is driven directly, and the binaries land under `bin/<config>/`:
+Windows has no Makefile path; CMake is driven directly, and the binaries land
+under `bin\<config>\`. It needs, installed once:
+
+- Visual Studio 18 (Visual Studio 2026) with the **Desktop development with C++**
+  workload, which carries the MSVC x64 toolchain and the Windows SDK.
+- CMake 4.2 or later. 4.2 is the first CMake with the `Visual Studio 18 2026`
+  generator (CMake 4.2 release notes,
+  https://cmake.org/cmake/help/latest/release/4.2.html: "The Visual Studio 18
+  2026 generator was added"), and an older CMake does not generate for Visual
+  Studio 18.
+- Python 3 for `tools/*.py`, from python.org, which also installs the `py`
+  launcher. On a fresh Windows a bare `python` or `python3` is the Microsoft
+  Store stub: it prints `Python was not found; run without arguments to install from the Microsoft Store, ...` and exits 9009. `py -3` runs the installed Python.
+
+libsodium is vendored under `sodium/`; nothing else is installed. From the
+checkout, in PowerShell or cmd.exe:
 
     cmake -B build -A x64
-    cmake --build build --config Release --parallel
-    ./bin/Release/test.exe
+    cmake --build build --config Release --parallel 4
+    bin\Release\test.exe
+    bin\Release\functional.exe
+    py -3 tools\check_xdp_archive.py --committed-only
+
+`bin\Release\test.exe` is the unit suite and `bin\Release\functional.exe` the
+loopback suite; `bin\Release\test.exe <name>` runs one case. PowerShell also
+takes `./bin/Release/test.exe`; cmd.exe does not (`'.' is not recognized as an internal or external command`). Neither PowerShell nor cmd.exe takes bash's `\`
+line continuation, so on Windows write each command on one line.
+
+The examples are an echo server and a client that connects to it with a
+development token. Run each in its own window:
+
+    bin\Release\server.exe
+    bin\Release\client.exe
+
+The server's public address, the one the client dials, is `127.0.0.1:40000`;
+either takes another address as its argument
+(`bin\Release\server.exe 192.0.2.10:40000`). The client logs its change
+to the `connected` state once the handshake completes, then counts the echoed
+payloads. Ctrl+C stops either. For a first loopback try from your own project,
+see the development-token note under "Installing and embedding the SDK" below.
+
+Every rocketnet server binds the wildcard address (`0.0.0.0:40000` for the
+example server), so on an interactive desktop the first run of `server.exe`,
+`functional.exe` or a game server raises the Windows Defender Firewall dialog.
+Loopback traffic works whatever is chosen there; allow access only on the
+networks remote clients connect from.
 
 The embedded XDP program (`server_xdp/`) is packed as a source tarball by the build and
 compiles later on the target kernel, which needs BTF; it is not compiled by `make` here.
@@ -89,6 +131,16 @@ Build and install both libraries without examples, tests or tools:
     cmake --build build-sdk --parallel
     cmake --install build-sdk --prefix /your/sdk/prefix
 
+On Windows, write each command on one line, and pass `--config Release` to the
+build and the install. The Visual Studio generator is multi-config: it ignores
+`CMAKE_BUILD_TYPE`, a build without `--config` makes Debug, and the install then
+fails with `file INSTALL cannot find ".../build-sdk/Release/rocketnet.lib"`. In
+PowerShell or cmd.exe:
+
+    cmake -S . -B build-sdk -A x64 -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+    cmake --build build-sdk --config Release --parallel 4
+    cmake --install build-sdk --config Release --prefix C:\your\sdk\prefix
+
 An independent CMake project (enable CXX for the static library's C++ runtime)
 can then use:
 
@@ -116,6 +168,19 @@ overwrites the libraries; side-by-side Debug/Release installation is not support
 Examples, tests and tools default off when embedded, and the parent's
 `BUILD_SHARED_LIBS` does not change the static target. Explicit
 `ROCKETNET_BUILD_*` options override those defaults.
+
+The installed SDK is the production library, and it has no development token
+minting by design: a client that calls `rocketnet_write_dev_connect_token`
+against it fails to link (on MSVC, `unresolved external symbol rocketnet_write_dev_connect_token`). For a first loopback try, embed the
+checkout and link both the server and the client to the development library,
+`rocketnet_dev`, which mints development tokens and accepts the published
+development keys. It is a build-tree aid, never installed and never shipped:
+
+```cmake
+add_subdirectory(path/to/rocketnet rocketnet)
+target_link_libraries(game_server PRIVATE rocketnet_dev)
+target_link_libraries(game PRIVATE rocketnet_dev)
+```
 
 `python3 tools/check_package.py build --config Release --embedded` installs and
 moves the package, then builds and runs separate C/C++ consumers against both
