@@ -31,6 +31,12 @@
 (* that packet lost, which queues r again as a retransmit.  Losses are     *)
 (* bounded so that liveness is about the budget, not an endless link.      *)
 (*                                                                         *)
+(* An uncapped connection (SetKbps with a value of 0 or lower) holds no    *)
+(* bucket: every item is sent, nothing is dropped or waits by the budget,  *)
+(* and NeverOverspend no longer claims anything about it. A positive value *)
+(* caps it again, a fresh full bucket; a value above MaxKbps is refused    *)
+(* and changes nothing.                                                    *)
+(*                                                                         *)
 (* Two constants flip the guarding rules, one per reversed witness:        *)
 (*   CheckBudget = FALSE   spend without the check: an item is sent        *)
 (*                         whether or not it fits, the bucket saturating   *)
@@ -66,6 +72,14 @@ ASSUME /\ W \in Nat \ {0, 1} /\ Rate \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxRel \in Nat /\ MaxLoss \in Nat
        /\ CheckBudget \in BOOLEAN /\ ReliableFirst \in BOOLEAN
 
+\* the largest capped rate SetKbps accepts. A definition, not a constant, so
+\* the existing witness configurations need no new line.
+MaxKbps == 2
+\* TRUE: an uncapped connection holds no bucket. A definition so the reversed
+\* witness MCRNSendBudgetBrokenUncapped.cfg can replace it with FALSE (an
+\* uncapped connection that still consults the bucket) and no other cfg
+\* needs a new line.
+UncapHonoured == TRUE
 Budget == Rate * W
 DropCap == 2
 Min(a, b) == IF a < b THEN a ELSE b
@@ -90,10 +104,12 @@ VARIABLES
     losses,     \* transport packet losses so far
     drops,      \* unreliable drops counted (capped at DropCap)
     orderBad,   \* ghost: a send took a class while a higher class waited
-    dropBad     \* ghost: an unreliable drop happened although it fit
+    dropBad,    \* ghost: an unreliable drop happened although it fit
+    uncapped,   \* TRUE: this connection's budget does not apply
+    uncapBad    \* ghost: an uncapped connection dropped or waited by the budget
 
 vars == << tokens, hist, cur, phase, rtx, rel, unrel, nextRel, inflight,
-           acked, losses, drops, orderBad, dropBad >>
+           acked, losses, drops, orderBad, dropBad, uncapped, uncapBad >>
 
 Classes == << "rtx", "rel", "unrel" >>
 Order == IF ReliableFirst THEN << "rtx", "rel", "unrel" >>
@@ -116,7 +132,10 @@ ReliableWaiting == rtx # << >> \/ rel # << >>
 \* the bytes the unreliable class may spend: none while a reliable item waits
 AvailUnrel == IF ReliableWaiting THEN 0 ELSE tokens
 
-Fits(c) == ~CheckBudget \/ SizeOf(c) <= tokens
+\* the budget does not apply: uncapped, and the model honours it
+Bypass == uncapped /\ UncapHonoured
+
+Fits(c) == Bypass \/ ~CheckBudget \/ SizeOf(c) <= tokens
 
 \* a class sent while a class ahead of it in the design order was queued
 HigherQueued(c) == \E i, j \in 1..3 : Classes[i] = c /\ j < i /\ Queued(Classes[j])
@@ -132,6 +151,7 @@ TypeOK ==
     /\ inflight \subseteq 1..MaxRel /\ acked \subseteq 1..MaxRel
     /\ losses \in 0..MaxLoss /\ drops \in 0..DropCap
     /\ orderBad \in BOOLEAN /\ dropBad \in BOOLEAN
+    /\ uncapped \in BOOLEAN /\ uncapBad \in BOOLEAN
 
 Init ==
     /\ tokens = Depth
@@ -143,6 +163,7 @@ Init ==
     /\ inflight = {} /\ acked = {}
     /\ losses = 0 /\ drops = 0
     /\ orderBad = FALSE /\ dropBad = FALSE
+    /\ uncapped = FALSE /\ uncapBad = FALSE
 
 (***************************************************************************)
 (* Tick(run): one update.  refill(now): tokens += Rate, capped at Depth.   *)
@@ -163,7 +184,8 @@ Tick(run) ==
                     /\ nextRel' = nextRel + 1
                  \/ UNCHANGED << rel, nextRel >>
          ELSE /\ UNCHANGED << phase, unrel, rel, nextRel >>
-    /\ UNCHANGED << rtx, inflight, acked, losses, drops, orderBad, dropBad >>
+    /\ UNCHANGED << rtx, inflight, acked, losses, drops, orderBad, dropBad,
+                    uncapped, uncapBad >>
 
 (***************************************************************************)
 (* Send: can_send(wire_bytes) then spend(wire_bytes) for the head of the   *)
@@ -175,8 +197,8 @@ Send ==
     /\ LET c == NextClass
            s == SizeOf(c)
        IN /\ Fits(c)
-          /\ tokens' = Max(0, tokens - s)
-          /\ cur' = cur + s
+          /\ tokens' = IF Bypass THEN tokens ELSE Max(0, tokens - s)
+          /\ cur' = IF Bypass THEN cur ELSE cur + s
           /\ orderBad' = (orderBad \/ HigherQueued(c))
           /\ CASE c = "rtx" ->
                     /\ inflight' = inflight \cup {Head(rtx)}
@@ -189,7 +211,8 @@ Send ==
                [] c = "unrel" ->
                     /\ unrel' = unrel - 1
                     /\ UNCHANGED << rtx, rel, inflight >>
-    /\ UNCHANGED << hist, phase, nextRel, acked, losses, drops, dropBad >>
+    /\ UNCHANGED << hist, phase, nextRel, acked, losses, drops, dropBad,
+                    uncapped, uncapBad >>
 
 (***************************************************************************)
 (* Drop: the next class is unreliable and its head does not fit: dropped   *)
@@ -199,12 +222,14 @@ Drop ==
     /\ phase = "send"
     /\ AnyQueued
     /\ NextClass = "unrel"
+    /\ ~Bypass
     /\ ~Fits("unrel")
     /\ unrel' = unrel - 1
     /\ drops' = Min(DropCap, drops + 1)
     /\ dropBad' = (dropBad \/ UnrelSize <= AvailUnrel)
+    /\ uncapBad' = (uncapBad \/ uncapped)
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, nextRel, inflight,
-                    acked, losses, orderBad >>
+                    acked, losses, orderBad, uncapped >>
 
 (***************************************************************************)
 (* EndUpdate: nothing more can be sent: every queue is empty, or the next  *)
@@ -219,8 +244,9 @@ EndUpdate ==
     /\ unrel' = 0
     /\ drops' = IF unrel > 0 THEN Min(DropCap, drops + 1) ELSE drops
     /\ dropBad' = (dropBad \/ (unrel > 0 /\ UnrelSize <= AvailUnrel))
+    /\ uncapBad' = (uncapBad \/ (uncapped /\ AnyQueued))
     /\ UNCHANGED << tokens, hist, cur, rtx, rel, nextRel, inflight, acked,
-                    losses, orderBad >>
+                    losses, orderBad, uncapped >>
 
 (***************************************************************************)
 (* Ack(r): the transport acks the packet that carried r (R1).              *)
@@ -231,7 +257,7 @@ Ack(r) ==
     /\ inflight' = inflight \ {r}
     /\ acked' = acked \cup {r}
     /\ UNCHANGED << tokens, hist, cur, phase, rtx, rel, unrel, nextRel,
-                    losses, drops, orderBad, dropBad >>
+                    losses, drops, orderBad, dropBad, uncapped, uncapBad >>
 
 Lose(r) ==
     /\ r \in inflight
@@ -240,10 +266,31 @@ Lose(r) ==
     /\ rtx' = Append(rtx, r)
     /\ losses' = losses + 1
     /\ UNCHANGED << tokens, hist, cur, phase, rel, unrel, nextRel, acked,
-                    drops, orderBad, dropBad >>
+                    drops, orderBad, dropBad, uncapped, uncapBad >>
+
+(* SetKbps(k): the runtime override. 0 or lower uncaps, a positive value up  *)
+(* to MaxKbps caps (a fresh bucket when it was uncapped), above the maximum  *)
+(* is refused and changes nothing. In the code this is                         *)
+(* rn_endpoint_set_send_kbps.                                                 *)
+SetKbps(k) ==
+    /\ k \in 0..(MaxKbps + 1)
+    /\ \/ /\ k = 0
+          /\ uncapped' = TRUE
+          /\ hist' = [i \in 1..(W - 1) |-> 0]
+          /\ cur' = 0
+          /\ UNCHANGED << tokens >>
+       \/ /\ k >= 1 /\ k <= MaxKbps
+          /\ uncapped' = FALSE
+          /\ tokens' = IF uncapped THEN Depth ELSE tokens
+          /\ UNCHANGED << hist, cur >>
+       \/ /\ k > MaxKbps
+          /\ UNCHANGED << tokens, hist, cur, uncapped >>
+    /\ UNCHANGED << phase, rtx, rel, unrel, nextRel, inflight, acked,
+                    losses, drops, orderBad, dropBad, uncapBad >>
 
 Next ==
     \/ \E run \in BOOLEAN : Tick(run)
+    \/ \E k \in 0..(MaxKbps + 1) : SetKbps(k)
     \/ Send
     \/ Drop
     \/ EndUpdate
@@ -266,8 +313,13 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 (***************************************************************************)
 
 \* bytes sent in any window of W consecutive ticks: at most the budget plus
-\* the bucket depth
-NeverOverspend == SeqSum(hist) + cur <= Budget + Depth
+\* the bucket depth. An uncapped connection holds no bucket, so it claims
+\* nothing here.
+NeverOverspend == uncapped \/ SeqSum(hist) + cur <= Budget + Depth
+
+\* an uncapped connection never drops or waits by the budget: nothing is
+\* dropped and no send phase ends with work queued
+UncappedNeverDropsOrWaits == ~uncapBad
 
 \* a reliable item that arrived is queued, in flight or acked: never dropped
 ReliableNeverDropped ==
