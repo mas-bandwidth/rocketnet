@@ -38,6 +38,16 @@
 #define PROOF_DELIVERED_CAPACITY 64
 #endif
 
+/* PROOF_SLOT_CASE splits harness_process_fragment by the slot's state
+   before the call, so each run is a smaller problem: 0 every reachable
+   state, 1 an empty slot, 2 an occupied slot whose stride is not yet known,
+   3 an occupied slot with its stride fixed. Cases 1, 2 and 3 together are
+   case 0. */
+
+#ifndef PROOF_SLOT_CASE
+#define PROOF_SLOT_CASE 0
+#endif
+
 /* The memcpy model. The reader's copies run up to a whole payload
    (ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES bytes at completion), far past
    what unrolling a byte loop can reach, and no property here depends on
@@ -255,6 +265,13 @@ void harness_process_fragment( void )
     struct rocketnet_reassembly_slot_t * slot = (struct rocketnet_reassembly_slot_t *) malloc( sizeof( struct rocketnet_reassembly_slot_t ) + sizeof( uint32_t ) );
     __CPROVER_assume( slot != NULL );
     nondet_slot( slot, max_payload );
+#if PROOF_SLOT_CASE == 1
+    __CPROVER_assume( slot->payload_id == 0 );
+#elif PROOF_SLOT_CASE == 2
+    __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride == 0 );
+#elif PROOF_SLOT_CASE == 3
+    __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride != 0 );
+#endif
     uint32_t * newest_completed = (uint32_t *) ( (uint8_t *) slot + sizeof( struct rocketnet_reassembly_slot_t ) );
     *newest_completed = nondet_uint();
 
