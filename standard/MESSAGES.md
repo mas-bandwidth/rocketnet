@@ -144,11 +144,152 @@ up, each naming one violation; duplicates.
 <a id="m5"></a>
 ## m5. Message numbering and the reliable window
 
-Status: pending
+The message layer gives a number to each reliable record it sends and to no
+other record. A number is a 24-bit counter that wraps. The receiver recovers
+the 64-bit value of the counter from the wire value against a reference. This
+section states the sender's numbering, the two bounds on it, the receiver's
+reconstruction and window check, and the connection layer preconditions that
+make the reconstruction unambiguous.
 
-Scope: 24-bit numbers, sequencing and ordering indexes; reconstruction by
-signed half range; the window; the no-alias bound from the replay window
-depth that [m1.4 What RN-2 requires of RN-1](#m1.4) requires.
+### m5.1. Sender numbering
+
+1. A sender MUST assign the next number to a reliable record only when it
+   first writes that record into a packet, and MUST NOT assign a number when
+   the application queues the message. A record of code 0 or 1 MUST NOT take
+   a number.
+2. A sender MUST assign consecutive numbers, one per record, in the order it
+   writes the records. A block MUST take one consecutive number for each of
+   its fragments at the moment its first fragment is written.
+3. Let `next` be the next number the sender assigns, `U` the lowest number it
+   has not yet seen acknowledged, and `U'` the window base: `U` when no
+   unacknowledged block contains `U`, and the first number of the lowest such
+   block otherwise. A sender MUST number a record with number `n` only while
+   `n < U' + W`, where `W` is the connection's `window_messages` field and
+   the row `window messages default` below gives its default.
+4. A holdable record is a record with code 3, code 4, or a block. For a
+   holdable record a sender MUST place the record in the receive ring of `B`
+   bytes, where `B` is the connection's `receive_ring_bytes` field, at the
+   ring span `[p, p + len16)`. `len16` is the record's length rounded up to a
+   multiple of the row `ring unit`. `p` is `ring_next` when the span does not
+   cross a multiple of `B`; otherwise `p` is the next multiple of `B`, and the
+   bytes between `ring_next` and `p` are padding. The sender MUST admit the
+   span only when `p + len16 - floor <= B`, where `floor` is the ring start of
+   `U'` when `U' < next` and `p` otherwise. A block MUST reserve the span of
+   all its fragments at once. A code 2 record that is not a block MUST take a
+   number and no ring bytes.
+5. When a record cannot be numbered under the count bound or the byte bound,
+   a sender MUST NOT number new reliable records until an acknowledgement
+   moves `U'`. It MAY keep resending unacknowledged records and MAY keep
+   writing unreliable records. A sender MUST count the first refusal of a
+   stall in `MESSAGE_WINDOW_STALL` and MUST NOT count further refusals until
+   numbering succeeds or `U'` moves.
+6. A sender MUST keep every number it sends inside `[U', U' + W)` and every
+   holdable span inside `B`. A receiver MUST police both claims as the checks
+   of [m4 Receiver checks](#m4) describe.
+
+### m5.2. Receiver reconstruction and window check
+
+For each reliable record, in wire order, the receiver reconstructs the 64-bit
+number `n` from the wire value `w` and its reference `R`, the lowest number it
+has not yet received:
+
+```
+d     = ( w - ( R mod 2^24 ) ) mod 2^24
+delta = d          when d < 2^23
+delta = d - 2^24   otherwise
+n     = R + delta
+```
+
+7. A receiver MUST use the half range exactly as stated: a difference at or
+   above the row `half range` is negative. A receiver MUST reconstruct against
+   the current `R` for each record.
+8. A receiver MUST apply these outcomes in this order:
+   1. When `delta < 0`, the record is a duplicate: the receiver MUST drop it,
+      MUST count `MESSAGE_DUPLICATE`, and MUST NOT treat it as a violation.
+   2. When `delta >= W` or `R + delta` exceeds the largest `u64`, the record is
+      a violation and the receiver MUST refuse the connection with
+      `MESSAGE_NUMBER_OUTSIDE_WINDOW`.
+   3. When the descriptor at `n mod W` is live for a number other than `n`, the
+      record is a violation and the receiver MUST refuse the connection with
+      `MESSAGE_SLOT_COLLISION`.
+   4. Otherwise the record is accepted: the receiver MUST mark `n` received,
+      and while the number at `R` is marked received, MUST clear that mark and
+      MUST increment `R`.
+9. A duplicate is a normal outcome of a resend and carries no reliable
+   delivery. The receiver MUST NOT report the message to the application a
+   second time.
+
+### m5.3. Precondition on the connection layer
+
+10. The reconstruction is unambiguous only while both of these hold. The
+    connection layer's replay window depth MUST be no larger than the row
+    `replay window depth maximum`. Transport sequences MUST rise in the order
+    in which the message layer writes the packets' payloads.
+11. A stale copy that the replay window still opens is then at most the row
+    `stale copy bound` numbers behind `R`, and that value is below the row
+    `half range`. A receiver MUST refuse a stale copy as a duplicate under
+    rule 8.1 rather than read it as a fresh number.
+
+### m5.4. Constants and configuration
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| first number | `0` | number | the first reliable number of each direction |
+| number bits | `24` | bits | the width of the wire number |
+| number range | `16777216` | numbers | one more than the largest wire number |
+| number mask | `0xFFFFFF` | mask | the 24-bit wire value |
+| half range | `8388608` | numbers | the signed half range of the 24-bit counter |
+| ring unit | `16` | bytes | the unit of the ring offset and of `len16` |
+| fragment bytes | `1152` | bytes | the block stride |
+| window messages default | `1024` | records | the default of `window_messages` |
+| receive ring bytes default | `262144` | bytes | the default of `receive_ring_bytes` |
+| window messages limit | `1048576` | records | the largest valid `window_messages` |
+| replay window depth minimum | `4096` | sequences | the smallest valid connection layer replay depth |
+| replay window depth maximum | `32768` | sequences | the largest valid connection layer replay depth |
+| minimum numbered record | `7` | bytes | a code 2 header and one data byte |
+| numbered records per packet maximum | `202` | records | a payload's capacity divided by the minimum record |
+| block fragments maximum | `911` | records | the largest block that the largest message makes |
+| stale copy bound | `7668421` | numbers | the most a stale copy can lie behind `R` |
+
+### m5.5. Vectors
+
+The bytes of a reconstruction vector are one outcome byte followed, for an
+accepted record only, by the reconstructed number as a `u64` little-endian:
+`0x00` accepted, `0x01` duplicate, `0x02` violation. A conforming
+implementation produces the same outcome and the same number from the same
+inputs.
+
+```vector m5.reconstruct-at-wrap
+reference: 16777215
+wire number: 0
+outcome: accepted
+00 00 00 00 01 00 00 00 00
+```
+
+```vector m5.reconstruct-at-half-range
+reference: 8388608
+wire number: 0
+outcome: duplicate
+01
+```
+
+```vector m5.reconstruct-duplicate
+reference: 100
+wire number: 99
+outcome: duplicate
+01
+```
+
+```vector m5.reconstruct-stale-copy-at-depth
+reference: 7668421
+wire number: 0
+replay window depth maximum: 32768
+window messages limit: 1048576
+numbered records per packet maximum: 202
+block fragments maximum: 911
+outcome: duplicate
+01
+```
 
 <a id="m6"></a>
 ## m6. Delivery: unreliable codes 0 and 1
@@ -381,6 +522,10 @@ It is generated; the bytes are in the sections.
 <!-- vector-index:begin -->
 | Section | Vector |
 |---|---|
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-half-range` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-at-wrap` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-duplicate` |
+| [m5 Message numbering and the reliable window](#m5) | `m5.reconstruct-stale-copy-at-depth` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-loss-reorder` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-ordered-hold-drain` |
 | [m7 Delivery: reliable codes 2, 3 and 4](#m7) | `m7.reliable-sequenced-hold-drain` |

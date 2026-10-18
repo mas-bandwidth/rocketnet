@@ -674,8 +674,7 @@ When a valid block newly acknowledges a sent sequence, the sender MUST take
 one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
 elapsed value produces no sample. The sample measures local elapsed time and
-does not subtract peer processing or acknowledgement aggregation delay. The
-The reported RTT MUST be the minimum strictly positive retained first-ack
+does not subtract peer processing or acknowledgement aggregation delay. The reported RTT MUST be the minimum strictly positive retained first-ack
 sample, in milliseconds. If no strictly positive first-ack sample is retained,
 the reported RTT MUST be zero.
 
@@ -790,10 +789,166 @@ input: replay state received 1-5, 7-8 and 10-11; block capacity = 11 bytes
 <a id="t16"></a>
 ## t16. Fragmentation and reassembly
 
-Status: pending
+A payload larger than one type 5 packet's payload capacity is split into
+fragments, each carried in its own sealed session packet, and reassembled per
+connection by payload id. A payload that fits one packet is never a fragment.
 
-Scope: the fragment header, fragment count limits, reassembly slots,
-staleness and abandonment; vectors.
+<a id="t16.1"></a>
+### t16.1. Sending
+
+1. A sender MUST send a payload whose size is at most the payload capacity
+   row of [t3 Constants and registries](#t3) as a type 5 packet
+   ([t8 Packet formats](#t8)). A sender MUST split a payload larger than that
+   capacity into fragments carried in type 9 packets. The fragments per
+   payload maximum row of [t3 Constants and registries](#t3) bounds the
+   fragment count.
+2. A sender MUST assign each fragmented payload a payload id, per direction:
+   an unsigned 32-bit counter that starts at 1, increments by 1 for each
+   fragmented payload, and wraps to 1 instead of zero. A sender MUST NOT
+   assign zero.
+3. A sender MUST use the smallest fragment count of two or more that carries
+   the payload with no fragment longer than the fragment stride row of
+   [t3 Constants and registries](#t3). The stride is the payload size divided
+   by that count, rounded up; every fragment except the last MUST be exactly
+   the stride long, and the last MUST carry the remainder, which is between 1
+   and the stride.
+4. A sender MUST transmit each fragment in its own sealed type 9 packet with
+   its own sequence, and MUST NOT retain a fragment for resending. A lost
+   fragment loses the whole payload.
+
+<a id="t16.2"></a>
+### t16.2. Receiving
+
+Reassembly is per connection, keyed by payload id in a configured number of
+reassembly slots, the num_reassembly_slots field of
+[t2.3 Configuration surface](#t2.3); the slot of a payload id is that id
+modulo the slot count.
+
+A receiver MUST accept a fragment only on a connected slot; a fragment that
+arrives in any other state is dropped and counted before it reaches
+reassembly ([t10 Receive processing](#t10),
+[t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)).
+
+A receiver MUST apply the following checks in order and refuse the fragment
+at the first that fails, incrementing the counter named in its row. A refused
+fragment leaves its slot unchanged, except that a refusal at check 7 for a
+staged final, or at check 8, clears the slot when the slot holds this payload
+id.
+
+| # | Check | Counter |
+|---|---|---|
+| 1 | the type data is shorter than the fragment header plus one byte, or longer than the fragment header plus the received fragment stride maximum row of [t3 Constants and registries](#t3) | size mismatch |
+| 2 | the payload id is zero | zero payload id |
+| 3 | the stale test of the table below refuses the payload id | stale |
+| 4 | the fragment count is one | count invalid |
+| 5 | the fragment index is not less than the fragment count | index out of range |
+| 6 | the fragment count differs from the count pinned by this payload id | count mismatch |
+| 7 | a non-final fragment is not the pinned stride; a final fragment is larger than the pinned stride; or a staged final is larger than the stride the first non-final fragment pins | size mismatch |
+| 8 | the reconstructed payload size, the stride times one less than the fragment count plus the known final size, where an absent final contributes one byte, exceeds the configured maximum payload | payload too large |
+| 9 | the fragment index is already received for this payload id | duplicate index |
+
+The first fragment of a payload id pins its count, and the first non-final
+fragment pins its stride. The final fragment MAY arrive before the stride is
+pinned; a receiver MUST stage it and apply check 7 to it when the first
+non-final fragment pins the stride. When every fragment of a payload id is
+present, the receiver MUST deliver the assembled payload once, at the moment
+it completes, and clear the slot. The assembled payload is the first count
+minus one fragments of stride bytes each, followed by the final fragment. A
+receiver MUST NOT keep a completed payload id beyond the newest completed
+payload id that the stale test uses, so a repeated fragment of a completed
+payload id starts a new reassembly.
+
+The stale test uses two references.
+
+| Reference | Guard | Outcome |
+|---|---|---|
+| the connection's newest completed payload id | the payload id differs from it by more than the reassembly reach row of the table below in either direction, compared as unsigned 32-bit differences | refuse, count stale |
+| the payload id of the slot's occupant | the payload id is a different id not more than the reassembly behind row of the table below behind the occupant, compared as an unsigned 32-bit difference | refuse, count stale |
+| the payload id of the slot's occupant | any other different id | accept the fragment; count the occupant abandoned if it is incomplete; the slot then holds the new payload id |
+
+Only a completed payload advances the newest completed payload id.
+
+| Name | Value | Unit |
+|---|---|---|
+| reassembly reach | `1073741824` | payload ids |
+| reassembly behind | `256` | payload ids |
+
+A reassembly slot MUST own one buffer of the configured maximum payload plus
+one staging buffer of the received fragment stride maximum row of
+[t3 Constants and registries](#t3), allocated once when the connection is
+created, and MUST NOT grow, resize or share either. A connection MUST own one
+newest completed payload id. A completed payload is copied out once at
+completion.
+
+<a id="t16.3"></a>
+### t16.3. Fragment header
+
+The fragment header lies inside the seal after the acknowledgement block of
+[t15 Acknowledgement](#t15). The packet type distinguishes a fragment from an
+unfragmented payload, and the type is part of the associated data
+([t9 Packet protection](#t9)).
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                       payload id (u32)                        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | fragment index | fragment count - 1 |      fragment data ...
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| payload id | 0 | 4 | u32 | identifies the fragmented payload, per direction | any nonzero value |
+| fragment index | 4 | 1 | u8 | index of this fragment | less than the fragment count |
+| fragment count minus 1 | 5 | 1 | u8 | one less than the fragment count | at least 1 |
+
+The fragment header is the fragment header row of
+[t3 Constants and registries](#t3), the fragment count is between 2 and the
+fragments per payload maximum row of [t3 Constants and registries](#t3), and
+the stride MUST NOT exceed the fragment stride row of
+[t3 Constants and registries](#t3). A receiver MUST refuse a fragment longer
+than the received fragment stride maximum row of
+[t3 Constants and registries](#t3), as check 1 of the receiving table states.
+
+<a id="t16.4"></a>
+### t16.4. Slot states
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| empty | a fragment passes every check | — | place its bytes; pin the count and, for a non-final fragment, the stride | partial |
+| partial | a fragment of the same payload id passes every check | — | place its bytes | partial |
+| partial | the fragment that completes the payload passes every check | every fragment is present | deliver the assembled payload, clear the slot | empty |
+| partial | a fragment of a different payload id passes every check | the stale test accepts the payload id | count the occupant abandoned if it is incomplete, clear the slot, start the new payload | partial |
+| partial | any check fails | — | refuse; leave the slot as the receiving rule states | partial |
+
+<a id="t16.5"></a>
+### t16.5. Vectors
+
+The vector is a reassembly trace on one connection with three slots, a
+2000-byte maximum payload and a delivered arena of four payloads. Each
+fragment line names the payload id, the fragment count, the fragment index
+and the fragment bytes. The twelve bytes of the vector are the reassembly
+counters in counter-table order, one byte each: zero payload id, stale, count
+invalid, index out of range, count mismatch, size mismatch, payload too large,
+duplicate index, accepted, reassembled, abandoned, batch full.
+
+```vector t16.reassembly-trace
+set: 1 connection, 3 reassembly slots, 2000-byte maximum payload, 4-capacity delivered arena
+frag: payload 7 count 3, fragment 2 (final) first, five 0x41 bytes
+frag: payload 7 count 3, fragment 0, eight 0x42 bytes
+frag: payload 7 count 3, fragment 1, eight 0x43 bytes
+frag: payload 9 count 3, fragment 0, eight 0x44 bytes
+frag: payload 9 count 3, fragment 0 again, eight 0x45 bytes
+frag: payload 10 count 4, fragment 0, eight 0x46 bytes
+frag: payload 10 count 3, fragment 1, eight 0x47 bytes
+frag: payload 16 count 2, fragment 0, eight 0x48 bytes
+00 00 00 00 01 00 00 01 06 01 01 00
+```
+
+The trace stages the final fragment of payload 7 before its stride is known,
+completes payload 7, refuses a repeated fragment of payload 9, refuses a
+changed count for payload 10, and abandons incomplete payload 10 when payload
+16 claims its slot.
 
 <a id="t17"></a>
 ## t17. Timing and defaults
@@ -861,6 +1016,7 @@ It is generated; the bytes are in the sections.
 | [t15 Acknowledgement](#t15) | `t15.sequence-wrap` |
 | [t15 Acknowledgement](#t15) | `t15.truncated-oldest` |
 | [t15 Acknowledgement](#t15) | `t15.two-losses` |
+| [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
