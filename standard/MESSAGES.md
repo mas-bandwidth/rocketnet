@@ -192,10 +192,38 @@ unreliable record that does not fit is dropped and counted.
 <a id="m10"></a>
 ## m10. Channels and priorities
 
-Status: pending
+A connection has a runtime number of channels, each an independent ordering and
+sequencing stream. This section fixes what of channels is wire-visible: the
+numbering, the runtime count bound, and which records carry a channel and how
+it is encoded. How the streams are scheduled is not wire-visible and binds no
+implementation.
 
-Scope: per-channel state, the four priority levels, round robin across
-channels, FIFO within a channel, and the packet writer's order.
+1. **Channel numbering.** A message layer connection has `num_channels`
+   channels, numbered 0 through `num_channels - 1`. An application chooses a
+   channel by this number for every send that uses one. `num_channels` is a
+   per-connection value from configuration and MUST NOT exceed the compile-time
+   maximum row `num channels maximum`.
+2. **Which records carry a channel.** A record of code 1, code 3 or code 4,
+   and the receipt twin of each ([m1.3 Reliability types](#m1.3)), carries the
+   channel field of [m3 Record format](#m3). A record of code 0 or code 2
+   carries no channel.
+3. **Channel encoding.** A channel below 256 is encoded as a u8. A channel of
+   256 or more is encoded as a u16. A sender MUST set the WIDE flag when and
+   only when the channel is 256 or more, so a record has exactly one encoding.
+
+| Name | Value | Meaning |
+|---|---|---|
+| num channels maximum | `32` | the compile-time maximum runtime channel count |
+
+```vector m10.narrow-channel
+record: RELIABLE_ORDERED, channel 3, number 5, ring 0, ordering 0, data "hi"
+03 02 00 05 00 00 00 00 00 00 00 03 68 69 01
+```
+
+```vector m10.wide-channel
+record: RELIABLE_ORDERED, channel 300 (WIDE), number 5, ring 0, ordering 0, data "hi"
+13 02 00 05 00 00 00 00 00 00 00 2c 01 68 69 01
+```
 
 <a id="m11"></a>
 ## m11. CONFIG control record
@@ -208,18 +236,55 @@ fields compared, mismatch handling; the defaults of the wire fields; vectors.
 <a id="m12"></a>
 ## m12. Receipts
 
-Status: pending
+Types 5, 6 and 7 request a receipt. They are application-level types: the wire
+carries only their base codes, and nothing else about a receipt is wire-visible.
+The report of an outcome to the application is an API action.
 
-Scope: the receipt outcomes, when each is reported, and the receipt of a
-promoted message.
+1. **Wire code.** A sender MUST NOT put a receipt type on the wire. Type 5
+   travels as code 0, type 6 as code 2 and type 7 as code 3
+   ([m1.3 Reliability types](#m1.3)).
+2. **Promotion.** A type-5 send whose data is larger than one packet's record
+   can carry, above the 1411 bytes of the code-0 form, MUST be sent under its
+   reliable twin ([m2 Payload forms and sender size rules](#m2)), as code 2, as
+   a record or a block as its size needs, and MUST keep its receipt. The
+   receiver sees code 2 on the wire. An implementation MUST count every
+   promotion once, per send, in a counter for the source mode.
+3. **Outcomes.** A send reports exactly one outcome, `ACKED` or `LOSS`, named
+   in the API. A reliable send, and a promoted type-5 block, reports `ACKED`
+   when its numbers are acknowledged; an unreliable receipt-bearing send reports
+   `ACKED` when the carrying packet is acknowledged and `LOSS` when it is lost
+   or dropped. These outcomes are API semantics; none of them is on the wire.
+
+```vector m12.promotion
+record: code 2 block, fragment 1 of 2, number 0, ring 72, data "A"
+0a 01 00 00 00 00 48 00 01 00 01 00 41 01
+```
 
 <a id="m13"></a>
 ## m13. Security considerations
 
-Status: pending
+The transport seals every payload; this section bounds what a peer can do
+within the message layer of a sealed connection.
 
-Scope: violations end the connection; memory bounds from configuration; what
-a hostile peer can and cannot make a receiver hold.
+1. **Violations end the connection.** A payload that breaks a rule of RN-2 is
+   a violation. A receiver MUST refuse the whole payload, MUST NOT hand up any
+   record of it, and MUST end the connection. A correct sender never sends a
+   violation, so one is evidence of a faulty or hostile peer. Each violation has
+   its own counter.
+2. **No live growth.** Every table a peer can influence is fixed at connection
+   creation from configuration. A receiver MUST NOT allocate memory after
+   connection creation, so a peer MUST NOT be able to make a receiver hold more
+   than the configured region. The checks of [m4 Receiver checks](#m4) run
+   before a record is held or delivered.
+3. **Bounds.** A record whose channel, number, span or size falls outside the
+   configured values, the window or the ring is refused by
+   [m4 Receiver checks](#m4), [m5 Message numbering and the reliable window](#m5)
+   and [m8 Blocks](#m8), never stored. A receiver MUST NOT read outside the byte
+   range the transport delivers.
+4. **Amplification.** The checks run over a payload once. A receiver MUST
+   complete them in time bounded by the payload's own length, with no
+   allocation, so a peer MUST NOT be able to grow a receiver's work or memory
+   with a small payload.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
@@ -228,5 +293,9 @@ This appendix indexes every vector of RN-2 by the section that defines it.
 It is generated; the bytes are in the sections.
 
 <!-- vector-index:begin -->
-No vectors yet.
+| Section | Vector |
+|---|---|
+| [m10 Channels and priorities](#m10) | `m10.narrow-channel` |
+| [m10 Channels and priorities](#m10) | `m10.wide-channel` |
+| [m12 Receipts](#m12) | `m12.promotion` |
 <!-- vector-index:end -->
