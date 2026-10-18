@@ -36,6 +36,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Windows has no setenv or unsetenv: the same shim as functional/harness.inc
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+static int setenv( const char * name, const char * value, int overwrite )
+{
+    if ( !overwrite && getenv( name ) != NULL )
+        return 0;
+    return _putenv_s( name, value );
+}
+
+static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
+#endif
+
+
 #define check rocketnet_unit_check
 
 struct allocator_state
