@@ -309,7 +309,6 @@ section, and this table exists so an implementer never hunts for a number.
 | Replay buffer | explicit packet-count memory budget, at least 4096 | _Replay window sizing_ |
 | Kernel replay prefilter | optional; read-only high-water, drops 16 or more behind | _Replay window sizing_ |
 | Used-token history | >= 8 entries per slot | _Processing Connection Requests_ |
-| Token rung | none: a token a connected client holds is refused | _Processing Connection Requests_ |
 
 ## Addresses and dual stack
 
@@ -1658,7 +1657,6 @@ because the per-packet rows multiply by the aggregate packet rate:
 | address to client slot | every received packet, and both handshake steps | constant time |
 | client id to client slot | connection request and response | constant time |
 | token identifier to history entry | every connection request | constant time |
-| token identifier to connected client | connection request and response | bounded by the mapping table |
 | free client slot | every completed connection | constant time |
 
 The per-connection rows are less severe than the per-packet ones, but they are
@@ -2727,10 +2725,9 @@ In this exact order, on a _connection request packet_:
   used-token lookup hashes 576 bytes, and the three asymmetric operations follow —
   so nothing below may run for an address that has not answered.
 * If the token identifier already appears in the used-token history bound to a
-  different source address and port, ignore it. Then, if a connected client
-  holds this token now, ignore it and count `TOKEN_ALREADY_CONNECTED` — **one
-  token, one live connection** — before any signature verify or open, so a
-  replay of a live token costs a hash and a compare. **The token identifier is the
+  different source address and port, ignore it. This is also the cheap
+  refusal of a token a connected client holds, before any signature verify or
+  open. **The token identifier is the
   output of `crypto_generichash` invoked with a 16-byte output length and no
   key, over the 576-byte signed connect data** — a content-determined value.
   BLAKE2b binds its output length into the hash, so a 16-byte invocation is not
@@ -2892,27 +2889,33 @@ can flush a victim's entry and then replay the victim's captured request from a
 different address, so capacity should exceed the plausible rate of legitimate
 connections within a token lifetime.
 
-**One token, one live connection.** A connect token is meant to be used once,
-soon after it is minted. The server refuses a token that a connected client
-holds now — at the request, before any asymmetric work, and again at the
-response, where two addresses may each hold a mapping for one token — and
-counts `TOKEN_ALREADY_CONNECTED`. A slot is freed when its connection closes,
-and nothing outlives it: a fresh token at a server with a free slot always
-connects, however many players have come and gone before it. **A token whose
-connection has closed MAY connect again until it expires.** That is the
-accepted residual risk of this design, and the short expiry bounds it: a
-deployment SHOULD mint tokens that expire 30 seconds after they are created,
-as a netcode.io token does by default. The expire timestamp is signed and sits
-at a fixed offset in the clear, so an expired token is the cheapest refusal on
-the request path, before the cookie gate.
+**One token, one live connection, and no structure of its own.** A connect
+token is meant to be used once, soon after it is minted. Three existing rungs
+keep a token to one live connection: the used-token history refuses it from
+any address but the one it is bound to, before any asymmetric work; a
+connected address provokes nothing from the request path; and a token carries
+one client id, so the client-id check refuses a second connection while the
+first lives, at the request after the open and at the response, where two
+addresses may each hold a mapping for one token. A slot is freed when its
+connection closes, and nothing outlives it: a fresh token at a server with a
+free slot always connects, however many players have come and gone before it.
+**A token whose connection has closed MAY connect again until it expires**,
+from the address it is bound to, or from any address once the history has
+dropped its entry. That is the accepted residual risk of this design, and the
+token's expiry bounds it: a deployment SHOULD mint tokens that expire 30
+seconds after they are created, as a netcode.io token does by default, or
+hold a server maximum token lifetime that enforces it. The expire timestamp is
+signed and sits at a fixed offset in the clear, so an expired token is the
+cheapest refusal on the request path, before the cookie gate.
 
 An earlier revision of this standard kept an admitted-token set: every token
 that admitted a connection, held until it expired, never evicted, and sized at
 twice the slot count. It denied ordinary churn. With one slot and 300-second
 tokens, the third of three sequential clean connect/disconnect cycles was
 denied with the slot free, and the denial looked exactly like a full server.
-The set is gone, and so is its counter's only cause: `ADMITTED_SET_FULL` keeps
-its index and always reads zero.
+The set is gone, and so are its counters' only causes: `ADMITTED_SET_FULL`
+and both `TOKEN_ALREADY_CONNECTED` counters keep their indices and always read
+zero.
 
 **Rate limiting.** A deployment SHOULD rate limit connection requests per source
 address, and MUST NOT treat that as sufficient: connection requests are
@@ -2934,13 +2937,11 @@ only data already verified.
   a replayed request from another address, which never opens a response, binds
   nothing.
 * If a client from the source address and port is already connected, ignore it.
-* If a connected client holds this token now, ignore it and count
-  `CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED`. The request path checks the
-  same rule, but before any address has proven the token, so two addresses can
-  each hold a mapping for one token; this check keeps **one token, one live
-  connection** true when the second of them responds while the first is
-  connected.
-* If a client with that client id is already connected, ignore it.
+* If a client with that client id is already connected, ignore it. Before
+  any address has proven the token, two addresses can each hold a mapping for
+  one token, and a token carries one client id, so this check keeps **one
+  token, one live connection** true when the second of them responds while
+  the first is connected.
 * If no slots are available, respond with a _connection denied packet_ under
   the handshake keys, carrying the mapping's session nonce, and stop. The
   mapping is left in place, so a retransmitted response is denied again. A
@@ -3374,7 +3375,7 @@ order:
 | `..._COULD_NOT_OPEN_SEALED_BLOCK` | seal open failed |
 | `..._SEALED_MISMATCH` | inner protocol id or expire disagrees with signed |
 | `..._CLIENT_ID_ALREADY_CONNECTED` | that client id already holds a slot |
-| `..._TOKEN_ALREADY_CONNECTED` | a connected client holds this token now |
+| `..._TOKEN_ALREADY_CONNECTED` | retired with the admitted-token set; always zero |
 | `..._ADMITTED_SET_FULL` | retired with the admitted-token set; always zero |
 | `..._SMALL_ORDER_KEY` | `crypto_scalarmult` refused the peer key |
 | `..._NO_SLOTS` | slot table full; a denied packet was sent |
@@ -3718,8 +3719,7 @@ work.** A protocol can push a problem upstream and leave the
 upstream party holding a lever connected to nothing. This one does not: **a
 connect token buys one live connection, for its short lifetime.** The used-token
 history binds a token to the first source address that opens a response under
-it, a token a connected client holds is refused, and a client id already
-connected is refused. An attacker who wants a thousand concurrent
+it, and a client id already connected is refused. An attacker who wants a thousand concurrent
 connections therefore needs a thousand genuinely issued tokens, and their cost
 scales linearly with the number of times they can authenticate to the backend.
 That is what makes issuance limiting an effective control rather than a hopeful

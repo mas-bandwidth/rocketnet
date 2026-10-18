@@ -114,6 +114,8 @@
     X( CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     X( CONNECTION_REQUEST_SEALED_MISMATCH, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     X( CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    /* retired with the admitted-token set (docs/SESSION.md 1.6): keeps its */ \
+    /* index, always zero. */ \
     X( CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     X( CONNECTION_REQUEST_SMALL_ORDER_KEY, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
     X( CONNECTION_REQUEST_NO_SLOTS, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
@@ -131,6 +133,8 @@
     /* EXPECTED: a response duplicate arriving after the first has connected. */ \
     X( CONNECTION_RESPONSE_ALREADY_CONNECTED, EXPECTED, CONNECTION_RESPONSE_RECEIVED ) \
     X( CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
+    /* retired with the admitted-token set (docs/SESSION.md 1.6): keeps its */ \
+    /* index, always zero. */ \
     X( CONNECTION_RESPONSE_ADMITTED_SET_FULL, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     X( CONNECTION_RESPONSE_NO_SLOTS, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     X( CONNECTION_RESPONSE_CONNECTED, EXPECTED, CONNECTION_RESPONSE_RECEIVED ) \
@@ -544,11 +548,11 @@
     X( XDP_KERNEL_DROPPED_WRONG_EPOCH, REFUSAL, NONE ) \
     X( XDP_KERNEL_PASSED_IPV6_EXTENSION, EXPECTED, NONE ) \
     \
-    /* A connection response that opened for a token a connected client */ \
-    /* holds now: the token is bound at response open, so two addresses */ \
-    /* can each hold a mapping for one token, and the second to respond */ \
-    /* while the first is connected is refused (STANDARD.md, Processing */ \
-    /* Connection Response Packets). appended: indices are the contract. */ \
+    /* A connection response that opened for a token already in the */ \
+    /* admitted-token set. Retired with the set (docs/SESSION.md 1.6): the */ \
+    /* client-id check refuses the second of two addresses holding one */ \
+    /* token while the first is connected. appended: indices are the */ \
+    /* contract, so it keeps its index and always reads zero. */ \
     X( CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED, REFUSAL, CONNECTION_RESPONSE_RECEIVED ) \
     \
     /* A client hand-off deferred because the other send ring is still */ \

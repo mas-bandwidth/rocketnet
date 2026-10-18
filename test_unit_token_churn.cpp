@@ -80,9 +80,8 @@ static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
 }
 
-// a server protocol with the transport's own table sizing for max_clients:
-// the used-token history at eight per client, the mapping table at twice
-// the slots
+// a server protocol for max_clients slots, with a used-token history of
+// history_capacity entries and a mapping table of twice the slots plus two
 
 static void tc_server_setup( struct tc_server_t * t, int max_clients, int history_capacity )
 {
@@ -245,11 +244,12 @@ static void server_admits_sequential_fresh_tokens_past_twice_max_clients()
 
 REGISTER_UNIT_TEST( server_admits_sequential_fresh_tokens_past_twice_max_clients );
 
-// One token, one live connection: a token a connected client holds now is
-// refused, before the signature verify or the open, even from an address the
-// used-token history no longer binds it away from. The history here holds one
-// entry, so a second client's binding evicts the first's -- the flush the
-// history's capacity allows -- and the token rung alone refuses the replay.
+// One token, one live connection. A token a connected client holds is
+// refused from any other address by the used-token history, before the
+// signature verify or the open: a hash and a lookup. With the history flushed
+// -- it holds one entry here, so a second client's binding evicts the first's
+// -- the replay passes the history and the open, and the client-id check
+// refuses it: never a second seat.
 
 static void server_refuses_a_token_connected_now()
 {
@@ -264,6 +264,22 @@ static void server_refuses_a_token_connected_now()
     check( rocketnet_client_protocol_connect( &a.client, token_data, t.time, TC_NOW ) );
     check( tc_drive( &t, &a, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
+    // the same token from a second address while the history binds it: no
+    // verify, no open, no seat
+    {
+        struct tc_client_t b;
+        tc_client_init( &b, "198.51.100.22:56789" );
+        check( rocketnet_client_protocol_connect( &b.client, token_data, t.time, TC_NOW ) );
+        const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
+        check( tc_drive( &t, &b, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] > 0 );
+        check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
+        check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
+        check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 1 );
+        tc_client_destroy( &b );
+    }
+
+    // a second client's binding flushes the history's one entry
     struct tc_client_t c;
     tc_client_init( &c, "198.51.100.21:56789" );
     uint8_t other_token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -271,22 +287,23 @@ static void server_refuses_a_token_connected_now()
     check( rocketnet_client_protocol_connect( &c.client, other_token, t.time, TC_NOW ) );
     check( tc_drive( &t, &c, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    // the same token from a third address: past the cookie gate and the
-    // history, refused at the token rung with no verify and no open
-    struct tc_client_t b;
-    tc_client_init( &b, "198.51.100.22:56789" );
-    check( rocketnet_client_protocol_connect( &b.client, token_data, t.time, TC_NOW ) );
-    const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
-    const uint64_t verified_before = t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
-    check( tc_drive( &t, &b, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] > 0 );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
-    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == verified_before );
-    check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
-    check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
-    check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 2 );
+    // the same token from a third address now passes the history and the
+    // open, and the client id it carries is connected: refused, never seated
+    {
+        struct tc_client_t d;
+        tc_client_init( &d, "198.51.100.23:56789" );
+        check( rocketnet_client_protocol_connect( &d.client, token_data, t.time, TC_NOW ) );
+        const uint64_t used_before = t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
+        check( tc_drive( &t, &d, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == used_before );
+        check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] > 0 );
+        check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 2 );
+        tc_client_destroy( &d );
+    }
 
-    tc_client_destroy( &b );
+    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] == 0 );      // retired with the set
+    check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == 0 );     // retired with the set
+
     tc_client_destroy( &c );
     tc_client_destroy( &a );
     tc_server_teardown( &t );

@@ -18,10 +18,10 @@
 //       state (-7..-1); disconnect() from one leaves it alone (S:2042-2047).
 //       Reversed: disconnect rewrites every non-zero state to 0.
 //   OneTokenOneLiveConnection with History "none" (RNSecurityTables,
-//       ServerConnection F9): with the history flushed, the token rung alone
-//       carries "one token, one live connection". Reversed:
-//       RefuseAdmittedAtResponse = FALSE with CheckCidAtResponse = FALSE
-//       seats the second response while the first connection lives.
+//       ServerConnection F9): with the history flushed, the client-id check
+//       at the response alone carries "one token, one live connection".
+//       Reversed: CheckCidAtResponse = FALSE seats the second response while
+//       the first connection lives.
 //   RepeatKeepAlive = FALSE and KeepAliveClock = "anysend"
 //       (ClientConnection, ServerConnection): the establishing keep-alive is
 //       repeated on its own clock, and ordinary traffic does not suppress it.
@@ -577,12 +577,12 @@ static void TestDisconnectAbsorbsTerminalState()
 // ---------------------------------------------------------------------------
 // OneTokenOneLiveConnection with History "none" (RNSecurityTables.tla;
 // ServerConnection.tla, item 8, F9): two clients at two addresses present
-// one token; the used-token history is flushed between their requests, so
-// the token rung at the response (rocketnet_server_token_connected in
-// sdk/rocketnet_server_protocol.cpp) alone refuses the second admission while
-// the first connection lives. once it closes, the token may connect again
-// inside its expiry: the accepted residual risk (docs/SESSION.md, Token
-// reuse).
+// one client id (each handshake here mints its own token for that id); the
+// used-token history is flushed between their requests, so the client-id
+// check at the response alone refuses the second admission while the first
+// connection lives. once it closes, the second may connect: a slot is freed
+// when its connection closes, and the accepted residual risk is reuse inside
+// the short expiry (docs/SESSION.md 1.6).
 // ---------------------------------------------------------------------------
 
 static void TestOneConnectionPerTokenAfterHistoryFlush()
@@ -611,7 +611,7 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     }
 
     // the second client's request, from another address, passes the history
-    // and the token rung (nobody has connected yet) and gets a mapping
+    // (nobody has connected yet) and gets a mapping
     rocketnet_handshake_to_challenge( &test, &test.second_address, 0x5A0CULL, &keys_b );
 
     // the first client's response is seated
@@ -629,7 +629,7 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     }
 
     // the second client's response arrives while the first connection lives:
-    // the token is connected now, so the token rung refuses it
+    // its client id is connected now, so the client-id check refuses it
     {
         uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         rocketnet_handshake_client_build_response( response, &keys_b );
@@ -638,11 +638,11 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
         int payload_client_index = -1;
-        const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED];
+        const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
         int result = rocketnet_handshake_process_at( &test, &test.second_address, response, sizeof(response),
                                                      out, &out_bytes, payload, &payload_bytes, &payload_client_index );
         rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == refused_before + 1 );
+        rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
         rocketnet_unit_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
     }
 
@@ -656,8 +656,8 @@ static void TestOneConnectionPerTokenAfterHistoryFlush()
     }
 
     // the second client's retransmitted response arrives within its mapping's
-    // handshake deadline. no connection holds the token now, so it is seated:
-    // a slot is freed when its connection closes
+    // handshake deadline. no connection holds the client id now, so it is
+    // seated: a slot is freed when its connection closes
     {
         uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         rocketnet_handshake_client_build_response( response, &keys_b );
@@ -849,6 +849,6 @@ REGISTER_UNIT_TEST( token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( token_created_within_skew_passes_the_rung );
 REGISTER_UNIT_TEST( token_create_skew_unchecked_without_lifetime_cap );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestDisconnectAbsorbsTerminalState, "rnfix-client-terminal-state-absorbing" );
-REGISTER_UNIT_TEST_EXPECTED_FAIL( TestOneConnectionPerTokenAfterHistoryFlush, "rnfix-refuse-admitted-token-at-response" );
+REGISTER_UNIT_TEST( TestOneConnectionPerTokenAfterHistoryFlush );
 REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );
 REGISTER_UNIT_TEST( TestKeepAliveClockCountsOnlyKeepAlives );

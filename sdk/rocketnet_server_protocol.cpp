@@ -180,30 +180,6 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
-// One token, one live connection: returns 1 when a connected client holds
-// this token now. A slot is freed when its connection closes, so a token
-// whose connection has closed may connect again inside its short expiry --
-// the accepted residual risk (docs/SESSION.md, Token reuse). There is no
-// admitted-token set: it held each token until expiry and denied ordinary
-// churn (tla/RNSecurityTables.tla, OneTokenOneLiveConnection and
-// ChurnNeverDenied, reversed witness HoldUntilExpire). The walk is over the
-// live mappings, bounded by the mapping table, and runs only behind the
-// cookie gate and the handshake budget.
-
-static int rocketnet_server_token_connected( const struct rocketnet_server_protocol_t * server, const uint8_t * token_identifier )
-{
-    struct rocketnet_encryption_map_t * map = server->encryption_map;
-    int index = -1;
-    while ( rocketnet_encryption_map_next( map, &index ) )
-    {
-        const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( map, index );
-        if ( mapping->client_index != -1 &&
-             sodium_memcmp( mapping->token_identifier, token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 )
-            return 1;
-    }
-    return 0;
-}
-
 // tla/ReceiveOrder.tla Next
 // tla/ServerConnection.tla ServerRecvRequest
 // tla/RNSecurityTables.tla Request
@@ -507,17 +483,6 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // one token, one live connection: a token a connected client holds now
-    // is refused here, before any signature verify or open
-    // (tla/RNSecurityTables.tla, OneTokenOneLiveConnection)
-
-    if ( rocketnet_server_token_connected( server, token_identifier ) )
-    {
-        rocketnet_debug( "server ignored connection request. connect token is connected now" );
-        counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
-
     // the authenticity check: the signature, and only the signature. the
     // per-source failed-verify budget gates it, so one valid cookie cannot
     // buy unlimited Ed25519 verifies from one address.
@@ -758,19 +723,13 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // with the binding at the response, two addresses can each hold a mapping
-    // for one token; the first to be admitted connects, and the second is
-    // refused here while that connection lives (tla/RNSecurityTables.tla,
-    // OneTokenOneLiveConnection with RefuseAdmittedAtResponse). once the
-    // connection closes, its slot is free and the token may connect again
-    // inside its expiry.
-
-    if ( rocketnet_server_token_connected( server, mapping->token_identifier ) )
-    {
-        rocketnet_debug( "server ignored connection response. connect token is connected now" );
-        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED]++;
-        return ROCKETNET_SERVER_PROCESS_IGNORED;
-    }
+    // one token, one live connection (tla/RNSecurityTables.tla,
+    // OneTokenOneLiveConnection; docs/SESSION.md 1.6). a token carries one
+    // client id, so with the binding at the response, when two addresses each
+    // hold a mapping for one token, the first to be admitted connects and the
+    // second is refused here while that connection lives. no admitted-token
+    // set: once the connection closes, its slot is free and the token may
+    // connect again inside its expiry.
 
     if ( rocketnet_client_slots_find( server->client_slots, mapping->client_id ) != -1 )
     {

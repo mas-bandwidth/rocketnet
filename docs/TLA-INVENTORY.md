@@ -35,7 +35,7 @@ not a code change on this card.
 | F6 | question | `sdk/rocketnet_server_transport.cpp:866-870, 945-951` | STOPPED is not absorbing. `update` after STOPPED runs the full receive/answer/keep-alive path, and `stop` from STOPPED moves the state back to STOPPING. |
 | F7 | question | `sdk/rocketnet_server_protocol.cpp:758-783` | A byte-identical replay of a captured connection response refreshes an established slot's `last_receive_time`. S:2873-2876 intends this for the client's own retransmissions; an on-path attacker who can spoof the client's address can use it to keep a departed client's slot alive. |
 | F8 | question | `sdk/rocketnet_client_protocol.cpp:1332-1333` | `disconnect()` rewrites a terminal failure state (-7..-1) to 0, and no state callback fires for that change. |
-| F9 | observation | `sdk/rocketnet_token_tables.cpp:277-278` | `admitted_token_set_add` returns success when the token is already admitted. "A token admits one connection" therefore rests on the request-time `contains` check and the client-id check, not on the set's add. |
+| F9 | superseded 2026-10-18 (the set is removed, `docs/SESSION.md` 1.6) | `sdk/rocketnet_token_tables.cpp:277-278` at the time | `admitted_token_set_add` returns success when the token is already admitted. "A token admits one connection" therefore rests on the request-time `contains` check and the client-id check, not on the set's add. |
 | F10 | observation | `sdk/rocketnet_fragment.cpp:181-184, 253, 456` | A slot cleared on delivery forgets its payload id. A late fragment of an older, already-abandoned id then re-occupies the empty slot and is counted abandoned a second time. Bytes never alias. |
 | F11 | observation | `sdk/rocketnet_server_transport.cpp:1158-1159` | The maintenance loop reads the mapping address without the `mapping_index < 0` guard that `rocketnet_server_connected_mapping` (`sdk/rocketnet_server_protocol.cpp:1062-1090`) applies. It cannot be reached in the shipped protocol. The `SlotMappingBijection` invariant covers it. |
 
@@ -192,10 +192,10 @@ readable").
 
 ### F9
 
-Superseded 2026-10-18: the admitted-token set is removed (`docs/SESSION.md` 1.6). A token a
-connected client holds now is refused at the request and the response
-(`rocketnet_server_token_connected`), and a token whose connection has closed may connect
-again inside its expiry; `tla/RNSecurityTables.tla` carries `OneTokenOneLiveConnection` and
+Superseded 2026-10-18: the admitted-token set is removed (`docs/SESSION.md` 1.6). One
+token is kept to one live connection by the used-token history, the connected-address check
+and the client-id check, and a token whose connection has closed may connect again inside
+its expiry; `tla/RNSecurityTables.tla` carries `OneTokenOneLiveConnection` and
 `ChurnNeverDenied`. The finding below is the record of the set as it was.
 
 `rocketnet_admitted_token_set_add` returns 1 when the identifier is already present
@@ -479,6 +479,13 @@ checks `RotationWindow`, `PreviousBoundedToOnePeriod` and `InFlightCookieSurvive
 with reversed witnesses `AcceptPrevious = FALSE` and `PreviousOutlivesWindow = TRUE`.
 
 ## M6. The token tables: used-token history and admitted-token set
+
+*Superseded in part 2026-10-18: the admitted-token set is removed
+(`docs/SESSION.md` 1.6). One token is kept to one live connection by the
+history, the connected-address check and the client-id check, and
+`tla/RNSecurityTables.tla` carries `OneTokenOneLiveConnection` and
+`ChurnNeverDenied`. The set's rows below are the record of the code as it
+was.*
 
 **Files.** `sdk/rocketnet_token_tables.{h,cpp}`; uses at
 `sdk/rocketnet_server_protocol.cpp:283, 352, 359, 521`.

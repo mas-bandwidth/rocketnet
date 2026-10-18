@@ -23,9 +23,10 @@
 (* the code before 2026-10-18: an admitted-token set of AdmittedCap       *)
 (* entries, each held until its token expires, which denies ordinary      *)
 (* churn (ChurnNeverDenied); FALSE is the code now: no set, and a token   *)
-(* is refused only while a slot holds it (OneTokenOneLiveConnection).     *)
-(* CheckCidAtResponse FALSE drops the client-id rung, so the token rung   *)
-(* alone carries OneTokenOneLiveConnection.  Rotation, AcceptPrevious     *)
+(* is refused only while a connection holds it: by the history from      *)
+(* another address and by the client id it carries at the response       *)
+(* (OneTokenOneLiveConnection).  CheckCidAtResponse FALSE drops the       *)
+(* client-id rung, the witness for that invariant.  Rotation, AcceptPrevious *)
 (* and PreviousOutlivesWindow state the cookie-key rotation window and     *)
 (* its stall bound.  BindAtRequest TRUE is the code before 2026-10-17:    *)
 (* the request records the history entry, so a replay from an address     *)
@@ -77,11 +78,11 @@ AdmLive(tk) == admitted[tk] # 0 /\ admitted[tk] > clock
 HistCount == Cardinality({tk \in Tokens : history[tk] # None})
 AdmCount == Cardinality({tk \in Tokens : admitted[tk] # 0})
 NumFree == MaxClients - Cardinality(slots) - others
-\* The rule that a token admits one connection: with HoldUntilExpire, an
-\* entry in the admitted set until the token expires; without it, a
-\* client slot that holds the token now (rocketnet_server_token_connected).
-TokConnected(tk) == \E s \in slots : s.tok = tk
-Used(tk) == IF HoldUntilExpire THEN AdmLive(tk) ELSE TokConnected(tk)
+\* The admitted-token set's rule, with HoldUntilExpire only: a token in
+\* the set until it expires is refused.  The code now has no such rung:
+\* one live connection per token rests on the history (another address),
+\* the connected-address check and the client-id check.
+Used(tk) == HoldUntilExpire /\ AdmLive(tk)
 \* A fresh, unexpired, never-admitted token whose client id holds no slot,
 \* at a server with a free slot: ordinary churn, never to be denied.
 Fresh(tk) == ~TokExpired(tk) /\ NumFree > 0 /\ admits[tk] = 0 /\ ~(\E s \in slots : s.cid = Cid[tk])
@@ -138,6 +139,9 @@ Bind(tk, a, op) ==
 \* is the only thing that has run before it.
 Request(a, tok, g) ==
     /\ ~Live(a)
+    \* a connected address provokes nothing from the request path
+    \* (CONNECTION_REQUEST_ALREADY_CONNECTED)
+    /\ ~(\E s \in slots : s.addr = a)
     /\ IF g \notin LiveGens \/ TokExpired(tok) THEN FALSE
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
        ELSE IF Used(tok) THEN FALSE
@@ -152,11 +156,10 @@ Request(a, tok, g) ==
 \* The response rung: the packet opened under the mapping, so only an
 \* address in Holds[tok] takes this step.  The record runs first (unless
 \* BindAtRequest, where the request made it).  The code then checks the
-\* token rung (RefuseAdmittedAtResponse: the admitted set with
-\* HoldUntilExpire, a slot holding the token now without it) and the client
-\* id (CheckCidAtResponse), both silent refusals, then the expiry, then the
-\* slots, then, with HoldUntilExpire, the add, which succeeds when the
-\* token is present.
+\* admitted set (RefuseAdmittedAtResponse, with HoldUntilExpire only) and
+\* the client id (CheckCidAtResponse), both silent refusals, then the
+\* expiry, then the slots, then, with HoldUntilExpire, the add, which
+\* succeeds when the token is present.
 AdmittedAddOk(tk) == AdmLive(tk) \/ AdmCount < AdmittedCap \/ admitted[tk] # 0
                     \/ \E u \in Tokens : admitted[u] # 0 /\ admitted[u] <= clock
 AdmittedAfterAdd(tk) ==

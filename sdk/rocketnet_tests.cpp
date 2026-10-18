@@ -3145,14 +3145,15 @@ void rocketnet_test_request_path_state_refusals()
     // the second address still holds the mapping its replay created. here
     // the token keys are the test constants, so it can open its challenge --
     // the client that moved, or a shared token. while the first connection
-    // lives, its response is refused: one token, one live connection
+    // lives, its response is refused: one token, one live connection, by the
+    // client id the token carries
     rocketnet_test_client_derive_from_challenge( second_challenge, sizeof(second_challenge), &keys );
     rocketnet_test_client_build_response( client_response, &keys );
-    const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED];
+    const uint64_t refused_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED];
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &second_address, client_response, sizeof(client_response),
                                                                ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
                                                                payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == refused_before + 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
 
     // once the first connection has closed, its slot is free and the token
@@ -3167,7 +3168,7 @@ void rocketnet_test_request_path_state_refusals()
     rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &second_address, client_response, sizeof(client_response),
                                                                ROCKETNET_TEST_CREATE_TS, 100.0, response, &response_bytes,
                                                                payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_TOKEN_ALREADY_CONNECTED] == refused_before + 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED] == refused_before + 1 );
     rocketnet_check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
 
     rocketnet_test_server_teardown( &test );
@@ -3461,29 +3462,6 @@ void rocketnet_test_request_path_uncovered_rungs()
         before = test.counters;
         rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK );
-    }
-
-    // TOKEN_ALREADY_CONNECTED: a connected client at another address holds
-    // this token now, seeded by hand as its mapping with a slot -- refused
-    // before the signature verify and the open
-    {
-        rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.7:56789" ) );
-        rocketnet_test_build_request( request, 0x0E0E, rocketnet_test_salt );
-        rocketnet_test_pass_cookie_gate( &test, request );
-        struct rocketnet_address_t holder_address;
-        rocketnet_check( rocketnet_address_parse( &holder_address, "198.51.100.99:56789" ) );
-        int holder = rocketnet_encryption_map_add( test.server.encryption_map, &holder_address, 1000.0 );
-        rocketnet_check( holder != -1 );
-        struct rocketnet_encryption_mapping_t * holder_mapping = rocketnet_encryption_map_entry( test.server.encryption_map, holder );
-        rocketnet_connect_token_identifier( holder_mapping->token_identifier, request + signed_offset );
-        holder_mapping->client_index = 3;
-        const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
-        before = test.counters;
-        rocketnet_check( rocketnet_test_process( &test, request, sizeof(request), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED );
-        rocketnet_check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
-        rocketnet_check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
-        rocketnet_encryption_map_remove( test.server.encryption_map, holder );
     }
 
     rocketnet_test_server_teardown( &test );
