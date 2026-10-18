@@ -12,10 +12,16 @@ payloads of 200 bytes with `rocketnet_client_transport_start_packet` and
 - `rocketnet_client_transport_send_packets`, the driver send walk;
 - `rocketnet_client_transport_update`, the per-frame receive and protocol work.
 
-The payload writes are outside both timers. After the timed calls, the server
-updates, drains what arrived, sends one 200-byte reply per received payload and
-flushes; the client drains its receive cursor to count `received`. All of that
-server and drain work is outside the timed windows. The first 200 frames are
+The payload writes are outside both timers. After the timed calls, each frame
+runs in lockstep: the server loops, each pass updating, draining what arrived,
+sending one 200-byte reply per received payload and flushing, until the frame's
+P payloads have arrived or a 0.5 s deadline passes, sleeping 0.1 ms between
+passes. The pacing exists because on a driver with the client I/O thread,
+`send_packets` is a hand-off and the I/O thread sends asynchronously; an
+unpaced loop refills the Filling ring faster than one ring can be sent, and
+`start_packet` then refuses on a full ring, as designed. The client then drains
+its receive cursor to count `received`. All of that server, pacing and drain
+work is outside both timed windows. The first 200 frames are
 discarded. Each row below reports the median of three process runs of 2000
 measured frames, with nearest-rank percentiles from the sorted per-frame
 samples. `total` is the per-frame send plus update time.
@@ -35,6 +41,9 @@ P = 32, where the send walk itself is near 100 us.
   runs, and treat overlapping ranges as tied.
 - Received count is diagnostic. UDP may drop in the OS or receiver, so it is
   not the denominator.
+- On a driver with the I/O thread, the meter waits for each frame's payloads
+  to reach the server, so it measures per-frame cost, not a producer running
+  faster than the I/O thread drains.
 - The driver argument selects the server and client driver. The BASE numbers
   use `portable`.
 
