@@ -15,20 +15,43 @@ This card proves the fragment readers on the real sdk code
 
 ## Result
 
-No harness verified. The installed CBMC (5.95.1 on this bench, not the 6.6.0
-the card expects) cannot parse `sdk/rocketnet_fragment.cpp`: it transitively
-includes `sdk/rocketnet_memory.h`, which uses C++ constructs the CBMC 5.95 C++
-frontend rejects:
+No harness verified, on CBMC 6.6.0 as on 5.95.1. Every harness includes
+`sdk/rocketnet_fragment.cpp`, which is C++, and CBMC parses it in neither
+language mode:
 
-- `#include <initializer_list>` and `std::initializer_list<uint64_t>` in
-  `rocketnet_memory_allocations` (`sdk/rocketnet_memory.h:30`).
-- a range-based `for (uint64_t bytes : sizes)` loop
-  (`sdk/rocketnet_memory.h:34`).
+- As C (the `.c` harness, the mode the other proofs use): `sdk/rocketnet_memory.h:5`
+  includes `<initializer_list>` (fatal: no such file in C mode),
+  `sdk/rocketnet_memory.h:21` takes `uint64_t & total` by reference,
+  `sdk/rocketnet_memory.h:34` is a range-based for, and
+  `sdk/rocketnet_fragment.cpp:93` and `:95` name `rocketnet_reassembly_set_t`
+  and `rocketnet_reassembly_slot_t` without `struct`.
+- As C++ (`goto-cc -x c++ -std=c++11`, with the libstdc++ initializer_list
+  header bypassed): the CBMC C++ parser rejects the range-based for at
+  `sdk/rocketnet_memory.h:34` (`parse error before 'v : x )'`, reproduced on a
+  three-line file), and it reads a chain of the form
+  `a < 1 || a > 256 || b < 1416` as a template argument list:
+  `sdk/rocketnet_fragment.cpp:89` fails with
+  `parse error before '|| max_payload_bytes < 1416'`. With line 89
+  parenthesized in a scratch copy (never committed), line 90 and then
+  `sdk/rocketnet_fragment.cpp:170` fail the same way, so the pattern runs
+  through the file.
 
-Both fail to parse (`parse error before 'x : l'` for range-for; the header
-include itself fails in C mode). This is a toolchain limitation, not a defect at
-BASE. The message reader proof (`proof_message_read.c`) works only because
-`sdk/rocketnet_message.cpp` does not include `rocketnet_memory.h`.
+This is a checker front-end limit, not a defect at BASE: g++ compiles the same
+file. The message reader proof works because `sdk/rocketnet_message.cpp` does
+not include `rocketnet_memory.h`.
+
+Gate output on the bench (CBMC 6.6.0):
+
+    make -C proofs/cbmc proofs-fragment_reassembly
+    ../../sdk/rocketnet_memory.h:5:10: fatal error: initializer_list: No such file or directory
+    PARSING ERROR
+    harness_header_and_plan FAILED (exit 6)
+
+| harness | properties passed | bound | result |
+|---|---|---|---|
+| harness_header_and_plan | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
+| harness_process_fragment | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
+| harness_memory_sizing | 0 of 0 (not reached) | none run | parse error, sdk/rocketnet_memory.h:5 |
 
 ## Supersedes `proof_fragment_bounds.c`
 
@@ -47,9 +70,12 @@ function). The copy's divergences from the real function:
 
 ## Not done
 
-All three harnesses, because the real `.cpp` cannot be parsed by the installed
-CBMC. A fully-working run would need CBMC 6.x (which parses these C++
-constructs) or a C-compatible memory header.
+All three harnesses. A run on the real code needs one of: the sdk readers made
+parseable by CBMC (parenthesized comparison chains in
+`sdk/rocketnet_fragment.cpp`, an index loop at `sdk/rocketnet_memory.h:34`, and
+the C++-only parts of `rocketnet_memory.h` kept out of the reassembly
+translation unit), which is an sdk change outside this card; or a checker with
+a full C++ front end, which is not installed.
 
 ## Bounds used
 
