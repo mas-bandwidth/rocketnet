@@ -39,10 +39,12 @@
 #endif
 
 /* PROOF_SLOT_CASE splits harness_process_fragment by the slot's state
-   before the call, so each run is a smaller problem: 0 every reachable
-   state, 1 an empty slot, 2 an occupied slot whose stride is not yet known,
-   3 an occupied slot with its stride fixed. Cases 1, 2 and 3 together are
-   case 0. */
+   before the call and the fragment that arrives, so each run is a smaller
+   problem. 0 is every reachable state and every fragment. 1 an empty slot;
+   2 an occupied slot whose stride is not yet known; with the stride fixed,
+   3 a fragment of illegal size or another payload id, 4 a non-final
+   fragment of the slot's payload, 5 the final fragment of the slot's
+   payload. Cases 1 to 5 together are case 0. */
 
 #ifndef PROOF_SLOT_CASE
 #define PROOF_SLOT_CASE 0
@@ -269,7 +271,7 @@ void harness_process_fragment( void )
     __CPROVER_assume( slot->payload_id == 0 );
 #elif PROOF_SLOT_CASE == 2
     __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride == 0 );
-#elif PROOF_SLOT_CASE == 3
+#elif PROOF_SLOT_CASE >= 3
     __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride != 0 );
 #endif
     uint32_t * newest_completed = (uint32_t *) ( (uint8_t *) slot + sizeof( struct rocketnet_reassembly_slot_t ) );
@@ -351,6 +353,13 @@ void harness_process_fragment( void )
         fragment_bytes = type_data_bytes - ROCKETNET_FRAGMENT_HEADER_BYTES;
     }
     const int is_final = fragment_index == fragment_count - 1;
+#if PROOF_SLOT_CASE == 3
+    __CPROVER_assume( !in_size || payload_id != before.payload_id );
+#elif PROOF_SLOT_CASE == 4
+    __CPROVER_assume( in_size && payload_id == before.payload_id && !is_final );
+#elif PROOF_SLOT_CASE == 5
+    __CPROVER_assume( in_size && payload_id == before.payload_id && is_final );
+#endif
 
     int rc = rocketnet_reassembly_process_fragment( &set, 0, type_data, type_data_bytes, counters, &table );
 
