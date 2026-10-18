@@ -2898,10 +2898,13 @@ one client id, so the client-id check refuses a second connection while the
 first lives, at the request after the open and at the response, where two
 addresses may each hold a mapping for one token. A slot is freed when its
 connection closes, and nothing outlives it: a fresh token at a server with a
-free slot always connects, however many players have come and gone before it.
-**A token whose connection has closed MAY connect again until it expires**,
-from the address it is bound to, or from any address once the history has
-dropped its entry. That is the accepted residual risk of this design, and the
+free slot always connects, however many players have come and gone before it,
+unless its client id still holds a slot (a player rejoining before the old
+connection times out is refused by the client-id check until it does).
+**A token whose connection has closed MAY connect again until it expires**:
+from the address it is bound to; from a second address that held a mapping
+for it before the first response bound it; or from any address once the
+history has dropped its entry. That is the accepted residual risk of this design, and the
 token's expiry bounds it: a deployment SHOULD mint tokens that expire 30
 seconds after they are created, as a netcode.io token does by default, or
 hold a server maximum token lifetime that enforces it. The expire timestamp is

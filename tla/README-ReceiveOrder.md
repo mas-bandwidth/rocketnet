@@ -17,7 +17,7 @@ STANDARD step in _Processing Connection Requests_:
 | compares | cheap | address flags, advertised address, server key compares | address flags; advertised address; server public key |
 | cookie | cheap | cookie MAC and budget gate | recompute the cookie MAC |
 | used | cheap | used-token history lookup | token identifier in used-token history |
-| admitted | cheap | removed with the admitted-token set (`docs/SESSION.md` 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds; the model keeps the position | (none) |
+| admitted | cheap | removed with the admitted-token set (`docs/SESSION.md` 1.6): the used-token history rung is now the cheap refusal of a token a connected client holds, from any other address; the model keeps the position | (none) |
 | restart | cheap | already-connected and mapping lookups | already connected; resend stored challenge |
 | signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
 | seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block |

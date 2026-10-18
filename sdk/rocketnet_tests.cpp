@@ -4218,7 +4218,6 @@ void rocketnet_test_server_full_connect()
     rocketnet_check( mapping->established );
     rocketnet_check( mapping->client_index == 0 );
 
-
     // the client opens the keep-alive -- the sealed plaintext begins with
     // the server's fresh ack block -- and learns its index behind it
     {

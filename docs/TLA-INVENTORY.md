@@ -149,8 +149,9 @@ Here is a trace where it does not:
    it opens with its held keys and goes to -1 (`client_protocol.cpp:581-614`). K1 then
    arrives and is ignored (`:670-676`).
 
-The server now holds a slot, an established mapping and an admitted token for a client
-that has given up, until the idle timeout (`server_protocol.cpp:1049-1058`, tens of
+*(Superseded in part 2026-10-18: there is no admitted-token set, so the last sentence
+below no longer holds; `docs/SESSION.md` 1.6.)* The server now holds a slot, an
+established mapping and an admitted token for a client that has given up, until the idle timeout (`server_protocol.cpp:1049-1058`, tens of
 seconds). During that time a reconnect from the same address is refused before any
 answer, as already connected (`:91-101`). Even after it, a retry with the same token is
 refused as already admitted (`:352-357`).
@@ -321,14 +322,14 @@ clock.
 | None | zero / unverifiable / expired cookie | None, a fresh cookie sent under the current key | `:213-275` |
 | None | token bound to another address in the history | None, silent | `:283-288` |
 | None | signature, seal or consistency fails | None, silent | `:292-305, 338-343` |
-| None | client id connected / token admitted | None, silent | `:345-357` |
+| None | client id connected / token admitted (the admitted check is removed 2026-10-18) | None, silent | `:345-357` |
 | None | (past those) history records (token, address) | None | `:359` |
 | None | client ephemeral small-order | None, silent | `:373-387` |
 | None | no free slot | None, denied at handshake sequence 1 under a fresh nonce | `:395-413` |
 | None | mapping table full | None, silent | `:415-423` |
 | None | otherwise | Half: challenge built and stored, deadline = now + 5 s, `last_receive = now` | `:415-470`; `encryption_map.cpp:122-154` |
 | Half | _Recv(response)_ opens, padding zero, client id free, slot free, admitted add ok | Est: slot assigned, acks and reassembly reset, first keep-alive sent | `:478-576` |
-| Half | _Recv(response)_ with no slot or admitted set full | Half, denied (handshake seq++) | `:512-544` |
+| Half | _Recv(response)_ with no slot (admitted set full until 2026-10-18) | Half, denied (handshake seq++) | `:512-544` |
 | Est | _Recv(response)_ opens | Est, **`last_receive_time` refreshed**, ignored (F7) | `:778-783, 491-496` |
 | Half | _Recv(session type)_ opens | Half: replay advanced, ignored as NOT_CONNECTED | `:791-801` |
 | Est | _Recv(session type)_ accepted | Est: `last_receive_time` refreshed, slot confirmed | `:843-846` |

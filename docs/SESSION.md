@@ -138,7 +138,10 @@ own.
 - **Slot accounting.** A slot is freed when its connection closes, and
   nothing outlives it. A fresh, valid token at a server with a free slot
   always connects, however many players have come and gone before it
-  (`tla/RNSecurityTables.tla`, `ChurnNeverDenied`).
+  (`tla/RNSecurityTables.tla`, `ChurnNeverDenied`). The one exception is a
+  token whose client id still holds a slot: a player rejoining before the
+  old connection times out is refused by the client-id check until it does,
+  as before.
 - **One live connection.** Three existing rungs carry it
   (`OneTokenOneLiveConnection` in the model). The used-token history refuses
   a bound token from any other address before the signature verify, at the
@@ -149,7 +152,8 @@ own.
   after the open at the request and at the response
   (`CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED`,
   `CONNECTION_RESPONSE_CLIENT_ID_ALREADY_CONNECTED`), which is what holds when
-  the history has dropped the token's entry. Every lookup is constant time.
+  the history has dropped the token's entry. The rule adds no lookup of its
+  own: each rung was already on the path.
 - **Expiry is the bound.** Development tokens expire 30 seconds after they
   are created (`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, formerly 300). A
   production backend sets its own expiry in the signed fields; STANDARD.md
@@ -161,8 +165,10 @@ own.
   the cookie gate, before any MAC, verify or open.
 
 **Accepted residual risk.** A token whose connection has closed may connect
-again until it expires: from the address it is bound to, or from any address
-once the history has dropped its entry. Its holder can reconnect with it
+again until it expires: from the address it is bound to; from a second address
+that held a mapping for it before the first response bound it (pinned by
+`test_request_path_state_refusals`); or from any address once the history has
+dropped its entry. Its holder can reconnect with it
 inside its lifetime; it can never hold two live connections with it. The
 owner accepts this as the cost of not denying ordinary churn. The unit test
 `server_admits_a_token_again_after_its_connection_closes` pins it.

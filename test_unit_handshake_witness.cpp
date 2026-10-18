@@ -17,11 +17,11 @@
 //   F8  TerminalAbsorbing (ClientConnection): only connect leaves a terminal
 //       state (-7..-1); disconnect() from one leaves it alone (S:2042-2047).
 //       Reversed: disconnect rewrites every non-zero state to 0.
-//   OneTokenOneLiveConnection with History "none" (RNSecurityTables,
-//       ServerConnection F9): with the history flushed, the client-id check
-//       at the response alone carries "one token, one live connection".
-//       Reversed: CheckCidAtResponse = FALSE seats the second response while
-//       the first connection lives.
+//   One client id, one live connection (ServerConnection F9, History
+//       "none"): two handshakes, each with its own token for one client id;
+//       the client-id check at the response refuses the second while the
+//       first lives, and seats it once the first closes. The same-token case
+//       is server_refuses_a_token_connected_now (test_unit_token_churn.cpp).
 //   RepeatKeepAlive = FALSE and KeepAliveClock = "anysend"
 //       (ClientConnection, ServerConnection): the establishing keep-alive is
 //       repeated on its own clock, and ordinary traffic does not suppress it.
