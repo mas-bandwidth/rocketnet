@@ -4598,13 +4598,7 @@ static void rocketnet_test_server_gso_wire_exchange( const char * test_name, con
         }
 
         struct sockaddr_in to;
-        memset( &to, 0, sizeof(to) );
-        to.sin_family = AF_INET;
-        to.sin_addr.s_addr = ( ( (uint32_t) server_address.data.ipv4[0] ) )       |
-                             ( ( (uint32_t) server_address.data.ipv4[1] ) << 8 )  |
-                             ( ( (uint32_t) server_address.data.ipv4[2] ) << 16 ) |
-                             ( ( (uint32_t) server_address.data.ipv4[3] ) << 24 );
-        to.sin_port = rocketnet_platform_htons( server_address.port );
+        rocketnet_platform_address_to_sockaddr_in( &server_address, &to );
 
         struct iovec iov = { super, sizeof(super) };
         char control[CMSG_SPACE(sizeof(uint16_t))];
