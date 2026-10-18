@@ -448,10 +448,94 @@ redundant disconnect, slot reset and what a reset clears.
 <a id="t14"></a>
 ## t14. Replay protection
 
-Status: pending
+Each endpoint keeps one replay window per direction and key phase. A replay
+window is a high-water mark and a ring of received bits, one bit per sequence.
+The window depth is at least the `replay window depth minimum` and at most the
+`replay window depth maximum` (both rows of
+[t3 Constants and registries](#t3)). The depth is a count of sequences, never a
+time span or a packet rate. The message layer reconstructs 24-bit numbers
+against a reference and stays unambiguous only while a stale copy is bounded
+by this window.
 
-Scope: the replay window, its minimum depth and configured depth, the check
-placement against decryption, the optional kernel prefilter.
+A receiver MUST perform these steps on every session packet, in this order:
+
+1. Reconstruct the packet's 64-bit sequence from the 32-bit wire value and the
+   window's high-water mark.
+2. Refuse the packet without opening it when the high-water mark is at least
+   one window depth and the sequence is at or below the high-water mark minus
+   the window depth.
+3. Refuse the packet without opening it when the sequence is at or below the
+   high-water mark and its received bit is set.
+4. Open the sealed packet.
+5. Mark the sequence received only after the open succeeds; a packet that does
+   not open MUST NOT change the window.
+
+Marking a sequence ahead of the high-water mark clears every received bit
+between the old high-water mark and the sequence, then sets the sequence's bit
+and raises the high-water mark to it. When that forward jump is at least one
+window depth, the receiver MUST clear the whole ring.
+
+A receiver MUST apply the replay window to the five session packet types:
+connection keep-alive, connection payload, connection disconnect, connection
+ack and connection payload fragment. Handshake packet types are outside the
+window. A server MUST NOT move the window of a session packet whose source
+address has no assigned client slot: it opens the packet, ignores it, and does
+not mark it.
+
+Each endpoint MUST count, per connection and across all of that connection's
+keys, every sealed packet that fails to open, and MUST disconnect the
+connection on reaching the `integrity limit`.
+
+An implementation MAY drop session packets before decryption in a kernel
+prefilter that holds, per source address and port, a high-water mark written
+only by the endpoint after a packet opens. Such a prefilter MUST NOT drop a
+packet fewer than the `kernel replay window` sequences behind that high-water
+mark, and it MAY drop any packet at or beyond that distance. The prefilter
+never advances the mark and never accepts a packet the window would refuse.
+
+| Name | Value | Unit | Kind | Meaning |
+|---|---|---|---|---|
+| integrity limit | `68719476736` | sealed packets | protocol value | failed opens that end a connection |
+| kernel replay window | `16` | sequences | protocol value | distance behind the kernel high-water mark that a prefilter may drop |
+
+| State | Event | Guard | Action | Next state |
+|---|---|---|---|---|
+| fresh | sequence received | none | open; set the bit; high-water mark = sequence | tracking |
+| tracking | sequence received | high-water mark at least one depth and sequence at or below high-water mark minus depth | refuse; no change | tracking |
+| tracking | sequence received | received bit set | refuse; no change | tracking |
+| tracking | sequence received | received bit clear and sequence at or below high-water mark | set the bit; no change to the high-water mark | tracking |
+| tracking | sequence received | sequence above high-water mark | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
+| any | open fails | none | no mark; count one integrity failure | unchanged |
+
+A replay vector's bytes are the window depth as a 4-byte little-endian
+unsigned integer, the final high-water mark as an 8-byte little-endian
+unsigned integer, then one byte per probe in input order: `01` when the probe
+is accepted, `00` when it is refused. A probe is accepted when its sequence is
+not behind the high-water mark and its received bit is clear.
+
+```vector t14.in-window-duplicate
+input: from an empty window, mark sequences 1000 and 1010 received
+input: probe sequences 1000, 1005, 1010 and 1011 in that order
+00 10 00 00 f2 03 00 00 00 00 00 00 00 01 00 01
+```
+
+```vector t14.behind-window
+input: from an empty window, mark sequence 4140 received
+input: probe sequences 44, 45 and 4140 in that order
+00 10 00 00 2c 10 00 00 00 00 00 00 00 01 00
+```
+
+```vector t14.forward-jump-clears
+input: from an empty window, mark sequences 1 and 4097 received
+input: probe sequences 4097, 1 and 2 in that order
+00 10 00 00 01 10 00 00 00 00 00 00 00 00 01
+```
+
+```vector t14.window-maximum
+input: a window of depth 32768, from empty, mark sequences 1 and 32769 received
+input: probe sequences 32769, 1 and 2 in that order
+00 80 00 00 01 80 00 00 00 00 00 00 00 00 01
+```
 
 <a id="t15"></a>
 ## t15. Acknowledgement
@@ -513,6 +597,10 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t14 Replay protection](#t14) | `t14.behind-window` |
+| [t14 Replay protection](#t14) | `t14.forward-jump-clears` |
+| [t14 Replay protection](#t14) | `t14.in-window-duplicate` |
+| [t14 Replay protection](#t14) | `t14.window-maximum` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
