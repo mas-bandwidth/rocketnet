@@ -229,14 +229,7 @@ static socklen_t rocketnet_server_gso_address_to_sockaddr( const rocketnet_addre
         if ( to.type != ROCKETNET_ADDRESS_IPV4 )
             return 0;
 
-        struct sockaddr_in * addr = (struct sockaddr_in*) out;
-        memset( addr, 0, sizeof(struct sockaddr_in) );
-        addr->sin_family = AF_INET;
-        addr->sin_addr.s_addr = ( ( (uint32_t) to.data.ipv4[0] ) )       |
-                                ( ( (uint32_t) to.data.ipv4[1] ) << 8 )  |
-                                ( ( (uint32_t) to.data.ipv4[2] ) << 16 ) |
-                                ( ( (uint32_t) to.data.ipv4[3] ) << 24 );
-        addr->sin_port = rocketnet_platform_htons( to.port );
+        rocketnet_platform_address_to_sockaddr_in( &to, (struct sockaddr_in*) out );
         return sizeof(struct sockaddr_in);
     }
 }
@@ -261,13 +254,7 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
     }
     else if ( input->ss_family == AF_INET )
     {
-        const struct sockaddr_in * addr = (const struct sockaddr_in*) input;
-        out->type = ROCKETNET_ADDRESS_IPV4;
-        out->data.ipv4[0] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x000000FF ) );
-        out->data.ipv4[1] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x0000FF00 ) >> 8 );
-        out->data.ipv4[2] = (uint8_t) ( ( addr->sin_addr.s_addr & 0x00FF0000 ) >> 16 );
-        out->data.ipv4[3] = (uint8_t) ( ( addr->sin_addr.s_addr & 0xFF000000 ) >> 24 );
-        out->port = rocketnet_platform_ntohs( addr->sin_port );
+        rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in*) input, out );
         return true;
     }
 

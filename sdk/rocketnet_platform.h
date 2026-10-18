@@ -11,6 +11,7 @@
 #define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
 struct rocketnet_address_t;
+struct sockaddr_in;
 
 typedef void (*rocketnet_platform_thread_func_t)(void*);
 
@@ -35,6 +36,10 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_getenv( const char * var )
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_ntohs( uint16_t in );
 
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_platform_htons( uint16_t in );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t * address, struct sockaddr_in * out );
+
+ROCKETNET_EXPORT_FUNC void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, struct rocketnet_address_t * address );
 
 ROCKETNET_EXPORT_FUNC bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
 
