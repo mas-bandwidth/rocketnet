@@ -28,13 +28,16 @@ language mode:
 - As C++ (`goto-cc -x c++ -std=c++11`, with the libstdc++ initializer_list
   header bypassed): the CBMC C++ parser rejects the range-based for at
   `sdk/rocketnet_memory.h:34` (`parse error before 'v : x )'`, reproduced on a
-  three-line file), and it reads a chain of the form
-  `a < 1 || a > 256 || b < 1416` as a template argument list:
-  `sdk/rocketnet_fragment.cpp:89` fails with
-  `parse error before '|| max_payload_bytes < 1416'`. With line 89
-  parenthesized in a scratch copy (never committed), line 90 and then
-  `sdk/rocketnet_fragment.cpp:170` fail the same way, so the pattern runs
-  through the file.
+  three-line file); it fails on the real comparison chain at
+  `sdk/rocketnet_fragment.cpp:89`, after preprocessing
+  `num_connections < 1 || num_slots < 1 || num_slots > 256 ||
+  max_payload_bytes < 1416 || max_payload_bytes > ( ... ) || ...`, with
+  `parse error before '|| max_payload_bytes < 1416'` (a short chain of
+  literals parses; the line as written does not); and the `static_assert`
+  lines in `sdk/rocketnet_wire.h:150-151` and `:181-182` that use
+  `__builtin_offsetof` do not parse. With line 89 parenthesized in a scratch
+  copy (never committed), line 90 and then `sdk/rocketnet_fragment.cpp:170`
+  fail the same way, so the pattern runs through the file.
 
 This is a checker front-end limit, not a defect at BASE: g++ compiles the same
 file. The message reader proof works because `sdk/rocketnet_message.cpp` does
@@ -58,10 +61,13 @@ Gate output on the bench (CBMC 6.6.0):
 The new harness supersedes `proof_fragment_bounds.c` (which copies the reassembly
 function). The copy's divergences from the real function:
 
-- stale check: the copy refuses `payload_id - slot->payload_id > MAX_FRAGMENTS`
-  (a plain half-space serial comparison); the real code (lines 387-393) refuses
-  `slot->payload_id - payload_id <= REASSEMBLY_BEHIND`, a signed
-  newest-completed reference and a full rollover-safe comparison.
+- stale check: the copy refuses an unsigned
+  `payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS`
+  (proofs/cbmc/proof_fragment_bounds.c:154-160); the real code keeps a
+  `uint32_t` newest-completed reference
+  (`sdk/rocketnet_fragment.cpp:378`) and applies a reach-window test
+  (lines 380-385) and a behind test against `ROCKETNET_REASSEMBLY_BEHIND`
+  (lines 387-393).
 - delivery: the copy writes delivered bytes at
   `delivered + num_delivered * max_payload_bytes` (line 348); the real code
   packs at a 16-byte stride (`ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED`, lines
