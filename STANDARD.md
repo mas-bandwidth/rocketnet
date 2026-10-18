@@ -295,6 +295,7 @@ section, and this table exists so an implementer never hunts for a number.
 | CONFIG control body | 28 bytes | _Messages_ |
 | Packet size | 1500-byte link MTU; 1472 bytes of UDP payload over the smaller IP header, 1452 over the larger | _Packet sizes_ |
 | Send budget | 1452 default, 1472 maximum | _Packet sizes_ |
+| Send bandwidth budget | 1000 kbps client, 10000 kbps server per client | _Send bandwidth budget_ |
 | Receive ceiling | 1472, fixed | _Packet sizes_ |
 | Payload capacity | 1416 sent, 1439 received | _Packet sizes_ |
 | SINGLE message | 1415 bytes | _Messages_ |
@@ -1900,7 +1901,9 @@ inbound outruns outbound, which is what removes the coupling between ack
 capacity and return-traffic cadence. **There is no structural
 packets-per-second cap anywhere in this design**: the block widens with loss,
 not with rate, and the standalone ack supplies return capacity whenever the
-traffic itself does not.
+traffic itself does not. The only bound on how fast a connection sends is the
+configured send bandwidth budget (_Send bandwidth budget_), which is
+configuration and may be disabled.
 
 ### Processing
 
@@ -2309,6 +2312,7 @@ application update.
 |---|---|---|
 | Send rate | 10 Hz | handshake retransmission, and keep-alives on an established connection (traffic suppresses them only once one has been acknowledged — _Keep-alive generation_) |
 | Handshake deadline | 5 s | server: mapping created but connection not established |
+| Half-open idle deadline | 10 s | server: half-open mapping with no request from its address since the last one (refreshed by traffic) |
 | Total connect deadline | token lifetime | client: whole handshake, from the start of the attempt |
 | Connection timeout | token `timeout seconds` | either end: no traffic received on an established connection |
 | Cookie lifetime | 3 s | server: how long an issued cookie is accepted |
@@ -2341,6 +2345,29 @@ client's next scheduled request, the server reissues one and the client uses it
 on the request after that. A cookie lifetime shorter than two send intervals
 makes that race likely and wastes a round trip; a few seconds against a 10 Hz
 send rate leaves ample margin.
+
+### Send bandwidth budget
+
+Every connection has a send bandwidth budget, in kbps (1 kbps = 1000 bit/s)
+of the transport's wire bytes: **1000 kbps for the client's one connection,
+10000 kbps for each server client slot**, per direction. It is configuration,
+not a wire constant: the message config fields `client_send_kbps` and
+`server_send_kbps` carry those defaults, a positive value is at most
+10000000 kbps (10 Gbit/s) and a larger one is refused, and an application changes one
+connection with `rocketnet_message_client_set_send_kbps` or
+`rocketnet_message_server_set_send_kbps`. An operator overrides either field
+with the environment variable `ROCKETNET_MESSAGE_CLIENT_SEND_KBPS` or
+`ROCKETNET_MESSAGE_SERVER_SEND_KBPS`, read at create over the config field and
+the create argument (default < struct < environment) and logged with the value
+it displaces; a value that does not parse, or one above the maximum, refuses
+the create.
+
+An unreliable send over the budget is dropped and counted as
+`MESSAGE_UNRELIABLE_OVER_BUDGET`; a reliable send over the budget waits and is
+never dropped. **A value of 0 or lower in either config field, or passed to
+either setter, disables that direction's budget.** Disabling it is NOT
+RECOMMENDED (RFC 2119): without a budget there is no defined behaviour when a
+sender outruns its path or its peer.
 
 ## Client State Machine
 

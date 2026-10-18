@@ -245,6 +245,16 @@ def main():
     if cell is not None:
         compare("receive ceiling", ints(cell)[0], code["ROCKETNET_RECEIVE_CEILING"])
 
+    # R6: the send bandwidth budget's configured defaults, per direction, from
+    # the message config table (dump_constants prints CFG_MESSAGE_DEFAULT_<field>)
+    cell = row("Send bandwidth budget")
+    if cell is not None:
+        published = ints(cell)
+        compare("message config client_send_kbps default", published[0],
+                code["CFG_MESSAGE_DEFAULT_client_send_kbps"])
+        compare("message config server_send_kbps default", published[1],
+                code["CFG_MESSAGE_DEFAULT_server_send_kbps"])
+
     # the packet size and its derivations: the document's numbers against the
     # compiler's, and each document number against the arithmetic the
     # standard states for it, so neither side can drift from the one MTU
@@ -447,6 +457,12 @@ def main():
         implemented = require("DEFAULT_HANDSHAKE_DEADLINE_SECONDS")
         if implemented is not None:
             compare("handshake deadline (timing table)", ints(cell)[0], implemented)
+
+    cell = timing_row("Half-open idle deadline")
+    if cell is not None:
+        implemented = require("HALF_OPEN_IDLE_TIMEOUT_SECONDS")
+        if implemented is not None:
+            compare("half-open idle deadline (timing table)", ints(cell)[0], implemented)
 
     cell = timing_row("Cookie lifetime")
     if cell is not None:
