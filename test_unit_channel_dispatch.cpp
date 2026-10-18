@@ -530,6 +530,35 @@ static void ordered_dispatch_refuses_collisions_and_bad_rings()
     rn_region_reset( region );
 }
 
+// The first version's mask enables all eight types; a caller's narrower mask
+// leaves out what it does not enable, counted once per refused send (7.5).
+
+static void default_mask_enables_all_eight_types()
+{
+    rn_region_t * region = dispatch_region();
+    rocketnet_unit_check( region != NULL );
+
+    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    rocketnet_unit_check( channels.enabled_types == (uint32_t) 0xFF );
+
+    for ( int type = 0; type < ROCKETNET_CHANNEL_NUM_TYPES; type++ )
+        rocketnet_unit_check( rn_channels_send_check( &channels, type, 0 ) ==
+                              ROCKETNET_CHANNEL_SEND_OK );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == 0 );
+
+    rn_channels_t narrow;
+    rocketnet_unit_check( rn_channels_init( &narrow, region, region->num_channels,
+                                           1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) );
+    rocketnet_unit_check( rn_channels_send_check( &narrow, ROCKETNET_CHANNEL_TYPE_RELIABLE, 0 ) ==
+                          ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == 1 );
+
+    rn_region_reset( region );
+}
+
 REGISTER_UNIT_TEST( dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( unreliable_delivered_as_a_view );
@@ -537,4 +566,5 @@ REGISTER_UNIT_TEST( unreliable_never_takes_a_number );
 REGISTER_UNIT_TEST( ack_feed_marks_only_carried_numbers );
 REGISTER_UNIT_TEST( rnchannel_witness_replays );
 REGISTER_UNIT_TEST( unreliable_delivery_budget_drops_and_counts );
+REGISTER_UNIT_TEST( default_mask_enables_all_eight_types );
 REGISTER_UNIT_TEST( ordered_dispatch_refuses_collisions_and_bad_rings );
