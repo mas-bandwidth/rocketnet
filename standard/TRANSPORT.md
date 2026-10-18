@@ -505,10 +505,273 @@ and the maximum packet size rule for senders; assembled vectors.
 <a id="t9"></a>
 ## t9. Packet protection
 
-Status: pending
+Every sealed packet carries its per-packet data and its tag encrypted and
+authenticated with ChaCha20-Poly1305 (IETF) under one key of the connection.
+The associated data binds the version, the application protocol id, the
+packet type and the connection salt, and, for the two handshake types that
+carry the ephemeral exchange, the client's ephemeral public key. It never
+travels on the wire; both ends construct it. The sealed types are the
+connection denied, connection challenge, connection response, connection
+keep-alive, connection payload, connection disconnect, connection ack and
+connection payload fragment packets of [t8 Packet formats](#t8); the
+connection request and connection cookie are not sealed.
 
-Scope: the AEAD, nonce formation from the sequence, associated data for each
-packet type, which key seals which type; sealed vectors.
+1. A sender MUST seal the per-packet data of every sealed type with
+   `crypto_aead_chacha20poly1305_ietf_encrypt` under the type's key of the
+   sender's direction and key phase, the nonce below, and the associated data
+   below. The sealed output is the per-packet data followed by the AEAD tag.
+2. A receiver MUST open the sealed data with
+   `crypto_aead_chacha20poly1305_ietf_decrypt`, the same key, nonce and
+   associated data. A receiver MUST reject a packet whose tag does not verify,
+   before using any plaintext byte.
+3. A sender MUST NOT seal with sequence zero. A receiver MUST reject sequence
+   zero before opening the packet.
+4. The nonce MUST be the AEAD nonce size of [t3 Constants and registries](#t3):
+   four zero bytes followed by the 64-bit sequence as a little-endian integer.
+5. The associated data MUST be exactly the fields and length of the table
+   below. Its length MUST be the associated data row of
+   [t3 Constants and registries](#t3) for types 1, 4, 5, 6, 8 and 9, and the
+   associated data with ephemeral key row for types 2 and 3.
+6. A sender MUST set the version field to the version row of
+   [t3 Constants and registries](#t3), the protocol id to the connection's
+   application protocol id, the packet type to the type being sealed, and the
+   connection salt to the connection's salt. For types 2 and 3, and only those
+   types, the sender MUST append the client's ephemeral public key. A receiver
+   MUST construct the same bytes.
+7. A receiver MUST reject a sealed packet whose associated data length does not
+   match its type.
+8. A sender and a receiver MUST each count, per connection and across all of
+   that connection's keys, every sealed packet whose AEAD open fails. The count
+   MUST NOT include a packet refused before the open for its wire size, its
+   state, its sequence or its replay mark, and MUST NOT include a packet that
+   opens and then fails a later structural check. On reaching the AEAD
+   integrity limit below, the endpoint MUST end the connection and MUST
+   increment the `INTEGRITY_LIMIT_REACHED` counter; the client enters the
+   disconnected state, and the server removes the mapping and releases the
+   slot it holds for it, if any.
+
+The key that seals a sealed type:
+
+| Packet type | Name | Key phase | Direction | Key |
+|---|---|---|---|---|
+| 1 | connection denied | handshake | server to client | handshake server-to-client |
+| 2 | connection challenge | handshake | server to client | handshake server-to-client |
+| 3 | connection response | handshake | client to server | handshake client-to-server |
+| 4 | connection keep-alive | session | either; the sender's direction | session key of that direction |
+| 5 | connection payload | session | either; the sender's direction | session key of that direction |
+| 6 | connection disconnect | session | either; the sender's direction | session key of that direction |
+| 8 | connection ack | session | either; the sender's direction | session key of that direction |
+| 9 | connection payload fragment | session | either; the sender's direction | session key of that direction |
+
+The four keys are derived as [t7 Key schedule](#t7) specifies.
+
+<a id="t9.1"></a>
+### t9.1. Associated data
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                          version                              |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                        protocol id                            |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  packet type  |            connection salt                    |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               connection salt (continued)                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                                                               |
+   |             client ephemeral public key (32 bytes)            |
+   |                  types 2 and 3 only                           |
+   |                                                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| version | 0 | 4 | u32 | the protocol version | the version row of [t3 Constants and registries](#t3) |
+| protocol id | 4 | 8 | u64 | the application protocol id | any; equal at both ends |
+| packet type | 12 | 1 | u8 | the type of the sealed data | 1 to 6, 8 and 9 |
+| connection salt | 13 | 8 | bytes[8] | the connection's salt | the connection's salt |
+| client ephemeral public key | 21 | 32 | bytes[32] | the client's ephemeral public key | present for types 2 and 3; absent otherwise |
+
+<a id="t9.2"></a>
+### t9.2. Nonce
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| zero | 0 | 4 | zero[4] | four zero bytes | zero |
+| sequence | 4 | 8 | u64 | the packet's sequence | not zero |
+
+<a id="t9.3"></a>
+### t9.3. Constants
+
+| Name | Value | Unit | Kind | Defined in |
+|---|---|---|---|---|
+| AEAD integrity limit | `68719476736` | sealed open failures | protocol value | [t9 Packet protection](#t9) |
+
+<a id="t9.4"></a>
+### t9.4. Vectors
+
+The vectors use these fixed inputs. The application protocol id is
+`0x1122334455667788`. The connection salt is
+`53 41 4c 54 30 30 30 31` and the session nonce is
+`4e 4f 4e 43 45 30 30 31`. The client ephemeral public key is
+`3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c be 24`
+and the server ephemeral public key is
+`48 9c eb ba 7a 16 6c 61 98 35 fe 12 ee dc 58 1d bf c1 b3 6d e1 0c 83 0e 4f 0b c1 c4 87 34 86 4b`.
+The handshake client-to-server key is
+`4b 4d 63 0c db 00 c8 7b 73 d4 6b 34 21 d8 91 c2 4c fd 0a b9 28 c9 87 51 5a ab bb d7 8b e2 73 50`;
+the handshake server-to-client key is
+`86 04 5b 5f 8e 2d a9 4d bf 44 5a 65 80 86 d6 3d 50 b7 3b 1e 66 6c 76 c4 95 2f ab f9 98 c0 c0 e0`;
+the session client-to-server key is
+`ae dc 46 56 e3 f8 2b 7e 87 91 27 95 88 c7 f6 20 4e d2 c1 bc 0c 17 ba 97 79 c0 4e 3b 1c 9e f4 3c`;
+the session server-to-client key is
+`3c 63 7e 37 b1 01 b8 2c 9e da a9 a3 b5 5a 31 a8 a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0`.
+
+```vector t9.challenge-ad
+input: the fixed inputs, packet type 2, with the client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.challenge-sealed
+input: the challenge associated data, the handshake server-to-client key, sequence 1, plaintext the server ephemeral public key (32 bytes)
+68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
+20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
+3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
+```
+
+```vector t9.denied-ad
+input: the fixed inputs and packet type 1, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 01 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.denied-sealed
+input: the denied associated data, the handshake server-to-client key, sequence 2, empty plaintext
+e7 12 b8 8e e2 36 cf d9 05 38 7c bc 0f 9d ee 13
+```
+
+```vector t9.response-ad
+input: the fixed inputs, packet type 3, with the client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.response-sealed
+input: the response associated data, the handshake client-to-server key, sequence 1, plaintext 24 zero bytes
+9c 08 60 98 96 b9 d4 05 d5 14 9e 1e d9 da e4 dc
+2b d2 4a e4 cd a1 93 10 5c bf a9 ce 74 61 b3 97
+ce 4b 50 c0 1b 2f 8f 7e
+```
+
+```vector t9.keepalive-ad
+input: the fixed inputs and packet type 4, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 04 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.keepalive-sealed
+input: the keep-alive associated data, the session server-to-client key, sequence 1, plaintext the keep-alive block and fields
+d2 48 d8 10 b0 69 78 85 27 a0 51 d0 6e bc ea da
+25 a6 66 38 35 c4 71 ac 21 66 38 3b a8 42 1c
+```
+
+```vector t9.payload-ad
+input: the fixed inputs and packet type 5, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.payload-sealed
+input: the payload associated data, the session client-to-server key, sequence 3, plaintext the ack block and the five bytes 68 65 6c 6c 6f
+e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 af 0d f9 49
+ae 6d 5e bc aa df f1 94 89 74 4c b4
+```
+
+```vector t9.disconnect-ad
+input: the fixed inputs and packet type 6, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 06 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.disconnect-sealed
+input: the disconnect associated data, the session client-to-server key, sequence 4, plaintext seven zero bytes
+e4 db 4c 3d 2d 40 30 39 31 ba 13 55 32 5b fd 8f
+2f 3a 2b 31 75 bd a2
+```
+
+```vector t9.ack-ad
+input: the fixed inputs and packet type 8, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 08 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.ack-sealed
+input: the ack associated data, the session client-to-server key, sequence 5, plaintext the ack block
+cb ac a3 98 67 d9 e7 2a 0e 3f b6 04 85 51 28 e1
+5b d4 b1 18 bd d5 96 38 f7 9a e2
+```
+
+```vector t9.fragment-ad
+input: the fixed inputs and packet type 9, with no client ephemeral public key
+93 1a 7c 4e 88 77 66 55 44 33 22 11 09 53 41 4c
+54 30 30 30 31
+```
+
+```vector t9.fragment-sealed
+input: the fragment associated data, the session client-to-server key, sequence 6, plaintext the ack block and fragment header and data
+4d 11 93 54 55 cd 7b df e3 97 35 05 ee 20 42 14
+33 37 a0 b1 eb a2 ce d3 53 f8 dd b3 78 a4 e5 ed
+ff 7f
+```
+
+The tamper vectors below are the challenge associated data with one field
+altered. No sealed vector opens under any of them.
+
+```vector t9.version-tampered
+input: the challenge associated data with the version low byte changed from 93 to 92
+92 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.protocol-id-tampered
+input: the challenge associated data with the protocol id low byte changed from 88 to 89
+93 1a 7c 4e 89 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.packet-type-tampered
+input: the challenge associated data with the packet type changed from 2 to 3
+93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.connection-salt-tampered
+input: the challenge associated data with the connection salt first byte changed from 53 to 52
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 52 41 4c
+54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
+
+```vector t9.client-ephemeral-tampered
+input: the challenge associated data with the client ephemeral public key first byte changed from 3a to 3b
+93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+54 30 30 30 31 3b 55 3d 74 79 2d 72 7e fa 9b 9a
+4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
+fd a1 4c be 24
+```
 
 <a id="t10"></a>
 ## t10. Receive processing
@@ -618,6 +881,27 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t9 Packet protection](#t9) | `t9.ack-ad` |
+| [t9 Packet protection](#t9) | `t9.ack-sealed` |
+| [t9 Packet protection](#t9) | `t9.challenge-ad` |
+| [t9 Packet protection](#t9) | `t9.challenge-sealed` |
+| [t9 Packet protection](#t9) | `t9.client-ephemeral-tampered` |
+| [t9 Packet protection](#t9) | `t9.connection-salt-tampered` |
+| [t9 Packet protection](#t9) | `t9.denied-ad` |
+| [t9 Packet protection](#t9) | `t9.denied-sealed` |
+| [t9 Packet protection](#t9) | `t9.disconnect-ad` |
+| [t9 Packet protection](#t9) | `t9.disconnect-sealed` |
+| [t9 Packet protection](#t9) | `t9.fragment-ad` |
+| [t9 Packet protection](#t9) | `t9.fragment-sealed` |
+| [t9 Packet protection](#t9) | `t9.keepalive-ad` |
+| [t9 Packet protection](#t9) | `t9.keepalive-sealed` |
+| [t9 Packet protection](#t9) | `t9.packet-type-tampered` |
+| [t9 Packet protection](#t9) | `t9.payload-ad` |
+| [t9 Packet protection](#t9) | `t9.payload-sealed` |
+| [t9 Packet protection](#t9) | `t9.protocol-id-tampered` |
+| [t9 Packet protection](#t9) | `t9.response-ad` |
+| [t9 Packet protection](#t9) | `t9.response-sealed` |
+| [t9 Packet protection](#t9) | `t9.version-tampered` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>
