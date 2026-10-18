@@ -199,7 +199,9 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
    exceed B. A fragment's ring field is (p + i × F) modulo B divided by 16. A
    receiver MUST compute the block's base as ring − fragment × (F / 16) and
    MUST refuse the payload when the base is negative or when the base in bytes
-   plus the span exceeds B ([m4 Receiver checks](#m4)).
+   plus the span exceeds B ([m4 Receiver checks](#m4)). A receiver that has
+   not seen the last fragment MUST use 16 bytes as the last fragment's rounded
+   length for that check, the shortest block the fragment could belong to.
 5. **Receive, completion and delivery.** A receiver MUST copy each fragment's
    data to ring + fragment × F, by index and not by arrival. When all k
    fragments have arrived, a receiver MUST deliver the block exactly once and
