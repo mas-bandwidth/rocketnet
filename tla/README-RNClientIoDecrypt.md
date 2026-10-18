@@ -88,6 +88,9 @@ and the zeroing of `client->keys`) and `rocketnet_client_process_challenge`
 - The counters are one count of verdicts counted; integrity failures are
   `integrity`. Handshake integrity failures are not modelled (the challenge is
   genuine).
+- `update` holds no key variable, so the design's order inside a retire
+  (the epoch stored retired, seq_cst, before `update` zeroes its own keys) is
+  not checked; the retire is one atomic step.
 
 ## Invariants
 
@@ -97,7 +100,10 @@ and the zeroing of `client->keys`) and `rocketnet_client_process_challenge`
   opened record after the session has ended is not a rung before the AEAD:
   the open ran while the session was live.
 - **`NoOpenWithoutKeys`**: `IoOpen` never runs without a live copy, and the
-  I/O thread holds no copy once it has read retired.
+  I/O thread holds no copy once it has read retired. The first half holds by
+  construction (a record is checked only while the copy is held, and the copy
+  is dropped only between datagrams), so the NoRetire witness fails on the
+  second half.
 - **`MirrorAgrees`**: while the session has not ended, `mainWin` advanced by
   the sequences the I/O thread opened and `update` has not consumed yet, in
   order, equals `ioWin`. The two windows are one function of one sequence
@@ -118,7 +124,8 @@ Checked under weak fairness (`SpecFair`) of the I/O thread's `IoReceive`,
 `IoPublish`, `IoOwe`, `IoWake`, `IoClearWake`, `IoTakeKeys`, `IoDropKeys`,
 `IoKeepKeys`, `IoCheck` and `IoOpen`, and of `update`'s `Expose`, `Return`,
 `UpdateConsume` and `PublishKeys`: RNClientIo's fairness on the receive half,
-and the same for the steps this model adds. `Arrive`, `RetireKeys` and
+and the same for the steps this model adds. `IoClearWake` carries no fairness in
+RNClientIo; here it does, which makes this fairness stronger than RNClientIo's. `Arrive`, `RetireKeys` and
 `FillAckBuild` carry none. The fairness subscript leaves out the writer tags,
 which `Next` sets after the step.
 
