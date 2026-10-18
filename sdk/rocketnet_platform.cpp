@@ -3482,9 +3482,9 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 // the client I/O wake's portable fallback: a platform that does not define
 // ROCKETNET_PLATFORM_HAS_WAKE and has no platform wake of its own (macOS and
-// iOS build the kqueue wake above, Windows the event wake above, before the
-// client turns it on) has no wake. create returns NULL, destroy asserts its
-// argument is NULL, wait returns false and set does nothing.
+// iOS build the kqueue wake above, Windows the event wake above) has no wake.
+// create returns NULL, destroy asserts its argument is NULL, wait returns
+// false and set does nothing.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 

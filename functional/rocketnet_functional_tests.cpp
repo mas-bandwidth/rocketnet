@@ -1013,8 +1013,10 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
     // receive_packet, so the cursor has not been touched. The batch is valid
     // until the next update, and with the client I/O thread the two datagrams
     // can be published in two batches (docs/CLIENT-IO.md "The receive path:
-    // the handoff", RNClientIo IoPublish), so the pair is sent again, after
-    // the last round has drained, until one batch holds both.
+    // the handoff", RNClientIo IoPublish), so the pair is sent again until
+    // one batch holds exactly this round's two, in order (read by index, so
+    // the cursor stays untouched and a late payload of an earlier round is
+    // never taken for this one).
 
     bool queued = false;
     start = rocketnet_platform_time();
@@ -1029,7 +1031,12 @@ void rocketnet_test_client_receive_keeps_payloads_on_bad_capacity()
         {
             rocketnet_client_transport_update( client, rocketnet_platform_time() );
             rocketnet_server_transport_update( server, rocketnet_platform_time() );
-            if ( rocketnet_client_transport_num_payloads( client ) >= 2 )
+            int first_bytes = 0;
+            int second_bytes = 0;
+            const uint8_t * first = rocketnet_client_transport_num_payloads( client ) == 2 ? rocketnet_client_transport_payload( client, 0, &first_bytes ) : NULL;
+            const uint8_t * second = first ? rocketnet_client_transport_payload( client, 1, &second_bytes ) : NULL;
+            if ( first && second && first_bytes == 8 && memcmp( first, "capacity", 8 ) == 0 &&
+                 second_bytes == 6 && memcmp( second, "second", 6 ) == 0 )
                 queued = true;
             else
                 rocketnet_platform_sleep( 0.001 );
