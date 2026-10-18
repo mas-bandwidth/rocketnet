@@ -261,11 +261,13 @@ void rocketnet_test_client_disconnect_reports_state_change()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
-void rocketnet_test_client_io_linux_handoff_round_trip()
+// the hand-off round trip on one client driver; name is the case's name for
+// its report line
+static void rocketnet_test_client_io_handoff_round_trip( const char * driver, const char * name )
 {
-    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-linux: the
-    // portable client on a platform with the wake runs the I/O thread, so the
-    // main thread never walks the send ring. A deferred hand-off loses
+    // docs/CLIENT-IO.md Per-platform cards: a client driver on a platform
+    // with the wake runs the I/O thread, so the main thread never walks the
+    // send ring. A deferred hand-off loses
     // nothing: the committed slots stay in the Filling ring and leave with the
     // next hand-off (RNClientIo HandOff and Defer), so every payload arrives.
 
@@ -284,7 +286,7 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.driver, "portable" );
+    snprintf( client_config.driver, sizeof(client_config.driver), "%s", driver );
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
@@ -419,8 +421,8 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
     // nothing, so the count is reported and every payload above still arrived
     const uint64_t deferred = rocketnet_counter_value( rocketnet_client_transport_counters( client ),
         ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED );
-    printf( "client_io_linux_handoff_round_trip frames=%d packets_per_frame=%d received=%d/%d deferred=%llu\n",
-        FRAMES, PACKETS_PER_FRAME, received, TOTAL, (unsigned long long) deferred );
+    printf( "%s frames=%d packets_per_frame=%d received=%d/%d deferred=%llu\n",
+        name, FRAMES, PACKETS_PER_FRAME, received, TOTAL, (unsigned long long) deferred );
 
     // disconnect, then destroy while a ring is handed off: the disconnect
     // burst is committed to the Filling ring and handed off (or handed off by
@@ -441,6 +443,21 @@ void rocketnet_test_client_io_linux_handoff_round_trip()
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+void rocketnet_test_client_io_linux_handoff_round_trip()
+{
+    rocketnet_test_client_io_handoff_round_trip( "portable", "client_io_linux_handoff_round_trip" );
+}
+
+void rocketnet_test_client_io_apple_handoff_round_trip()
+{
+    // docs/CLIENT-IO.md Per-platform cards, rocketnet-client-io-apple: on
+    // macOS and iOS the msgx client has the kqueue wake, so it runs the I/O
+    // thread (RNClientIo HandOff, Defer, IoSend, IoReceive, IoWait) with its
+    // batches through the sendmsg_x/recvmsg_x pump; the same round trip as
+    // the Linux case, every payload byte-exact and none lost to a deferral.
+    rocketnet_test_client_io_handoff_round_trip( "msgx", "client_io_apple_handoff_round_trip" );
 }
 
 static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * server, int completion_capacity )
@@ -3247,6 +3264,226 @@ void rocketnet_test_server_driver_pin_iocp()
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
 }
 
+// the rio driver (sdk/rocketnet_server_rio_windows.cpp, tla/RNRioDriver.tla)
+// against a plain UDP peer on loopback
+
+#include "rocketnet_server_rio.h"
+
+void rocketnet_test_server_rio_probe()
+{
+    rocketnet_check( rocketnet_server_rio_available() );
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+    rocketnet_check( bind_address.port != 0 );
+
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; i++ )
+        rocketnet_check( counters[i] == 0 );
+
+    // nothing but the receive slices is outstanding, and a flush with
+    // nothing staged posts nothing and commits nothing
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+    rocketnet_server_rio_send_packets( rio );
+    rocketnet_server_rio_receive_packets( rio );
+    rocketnet_check( rocketnet_server_rio_process_packets( rio )->num_packets == 0 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
+
+    // a reserved slot that is aborted is never posted
+    rocketnet_address_t to;
+    rocketnet_check( rocketnet_address_parse( &to, "127.0.0.1:9" ) );
+    uint64_t packet_id = 0;
+    uint8_t * frame = rocketnet_server_rio_start_packet( rio, &to, &packet_id );
+    rocketnet_check( frame );
+    rocketnet_server_rio_abort_packet( rio, packet_id, frame );
+    rocketnet_server_rio_send_packets( rio );
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+
+    // destroy with nothing but receives outstanding: closesocket completes
+    // them, the drain accounts for every one, then the region is freed
+    rocketnet_server_rio_destroy( rio );
+
+    // each constructor stage refuses cleanly and unwinds what it built
+    for ( int stage = 1; stage <= 6; stage++ )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+        rocketnet_check( rocketnet_server_rio_create( NULL, &address, stage ) == NULL );
+    }
+
+    // and a create after the refusals still works
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+    rocketnet_server_rio_destroy( rio );
+
+    // every destroy, the refused stages' included, drained before it freed
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
+}
+
+// every size the wire allows, each packet tagged by its index in its first
+// two bytes, in chunks so neither socket buffer overflows on loopback
+
+#define ROCKETNET_RIO_TEST_PACKETS ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 )
+#define ROCKETNET_RIO_TEST_CHUNK 128
+
+static_assert( ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES >= 2, "the tag is two bytes" );
+
+void rocketnet_test_server_rio_wire_ipv4()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+    rocketnet_check( peer_address.port != 0 );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    server_address.port = bind_address.port;
+
+    static bool seen[ROCKETNET_RIO_TEST_PACKETS];
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
+    // peer -> driver: each datagram surfaces byte-exact, from the peer
+
+    memset( seen, 0, sizeof(seen) );
+    int num_seen = 0;
+    for ( int first = 0; first < ROCKETNET_RIO_TEST_PACKETS; first += ROCKETNET_RIO_TEST_CHUNK )
+    {
+        const int last = first + ROCKETNET_RIO_TEST_CHUNK < ROCKETNET_RIO_TEST_PACKETS ? first + ROCKETNET_RIO_TEST_CHUNK : ROCKETNET_RIO_TEST_PACKETS;
+        for ( int i = first; i < last; i++ )
+        {
+            const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
+            packet[0] = (uint8_t) i;
+            packet[1] = (uint8_t) ( i >> 8 );
+            for ( int j = 2; j < packet_bytes; j++ )
+                packet[j] = (uint8_t) ( i * 31 + j );
+            rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+        }
+        double start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 5.0 && num_seen < last )
+        {
+            rocketnet_server_rio_receive_packets( rio );
+            rocketnet_server_socket_process_packets_t * received = rocketnet_server_rio_process_packets( rio );
+            for ( int k = 0; k < received->num_packets; k++ )
+            {
+                const uint8_t * data = received->packet_data[k];
+                const int tag = data[0] | ( data[1] << 8 );
+                rocketnet_check( tag >= first && tag < last );
+                rocketnet_check( !seen[tag] );
+                rocketnet_check( received->packet_bytes[k] == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + tag );
+                rocketnet_check( received->from[k].type == ROCKETNET_ADDRESS_IPV4 );
+                rocketnet_check( received->from[k].port == peer_address.port );
+                rocketnet_check( received->from[k].data.ipv4[0] == 127 && received->from[k].data.ipv4[3] == 1 );
+                for ( int j = 2; j < received->packet_bytes[k]; j++ )
+                    rocketnet_check( data[j] == (uint8_t) ( tag * 31 + j ) );
+                seen[tag] = true;
+                num_seen++;
+            }
+            rocketnet_platform_sleep( 0.0005 );
+        }
+        rocketnet_check( num_seen == last );
+    }
+
+    // driver -> peer: one send_packets per chunk, so the chunks alternate
+    // between the two send phases; each reply arrives byte-exact
+
+    memset( seen, 0, sizeof(seen) );
+    num_seen = 0;
+    int flushes_with_packets = 0;
+    bool used_phase[2] = { false, false };
+    for ( int first = 0; first < ROCKETNET_RIO_TEST_PACKETS; first += ROCKETNET_RIO_TEST_CHUNK )
+    {
+        const int last = first + ROCKETNET_RIO_TEST_CHUNK < ROCKETNET_RIO_TEST_PACKETS ? first + ROCKETNET_RIO_TEST_CHUNK : ROCKETNET_RIO_TEST_PACKETS;
+        for ( int i = first; i < last; i++ )
+        {
+            uint64_t packet_id = 0;
+            uint8_t * frame = rocketnet_server_rio_start_packet( rio, &peer_address, &packet_id );
+            rocketnet_check( frame );
+            used_phase[packet_id >= ROCKETNET_RIO_SEND_QUEUE_SIZE ? 1 : 0] = true;
+            const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
+            uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+            wire[0] = (uint8_t) i;
+            wire[1] = (uint8_t) ( i >> 8 );
+            for ( int j = 2; j < packet_bytes; j++ )
+                wire[j] = (uint8_t) ( i * 47 + j );
+            rocketnet_server_rio_finish_packet( rio, packet_id, frame, packet_bytes );
+        }
+        rocketnet_server_rio_send_packets( rio );
+        flushes_with_packets++;
+
+        double start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 5.0 && num_seen < last )
+        {
+            rocketnet_address_t from;
+            const int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+            if ( packet_bytes <= 0 )
+            {
+                rocketnet_platform_sleep( 0.0005 );
+                continue;
+            }
+            rocketnet_check( from.port == bind_address.port );
+            const int tag = packet[0] | ( packet[1] << 8 );
+            rocketnet_check( tag >= first && tag < last );
+            rocketnet_check( !seen[tag] );
+            rocketnet_check( packet_bytes == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + tag );
+            for ( int j = 2; j < packet_bytes; j++ )
+                rocketnet_check( packet[j] == (uint8_t) ( tag * 47 + j ) );
+            seen[tag] = true;
+            num_seen++;
+        }
+        rocketnet_check( num_seen == last );
+    }
+    rocketnet_check( used_phase[0] && used_phase[1] );
+
+    // the last phase's completions retire on the next flushes
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    double start = rocketnet_platform_time();
+    do
+    {
+        rocketnet_server_rio_send_packets( rio );
+        rocketnet_server_rio_counters( rio, counters );
+        if ( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] >= ROCKETNET_RIO_TEST_PACKETS )
+            break;
+        rocketnet_platform_sleep( 0.0005 );
+    } while ( rocketnet_platform_time() - start < 5.0 );
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_rio_wire_ipv4: %d packets each way, %d flushes, COMMITS %llu, SEND_WAITS %llu",
+                      ROCKETNET_RIO_TEST_PACKETS, flushes_with_packets,
+                      (unsigned long long) counters[ROCKETNET_RIO_COUNTER_COMMITS], (unsigned long long) counters[ROCKETNET_RIO_COUNTER_SEND_WAITS] );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == ROCKETNET_RIO_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] == ROCKETNET_RIO_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == counters[ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] >= (uint64_t) flushes_with_packets );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FULL] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED] == 0 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+
+    rocketnet_platform_socket_destroy( peer );
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
+    rocketnet_server_rio_destroy( rio );
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
+}
+
 // the iocp driver's USO/URO tier against a plain UDP peer on loopback: the
 // peer sends tagged packets in, the driver must surface each byte-exact from
 // the peer's address; the driver then sends replies, deliberately in
@@ -5687,6 +5924,86 @@ void rocketnet_test_platform_wake_apple_wakes_and_reads()
     rocketnet_platform_socket_destroy( sender );
 }
 
+// The level-triggered wake beside a real socket on Windows: the manual-reset
+// wake event is set and consumed, the socket's FD_READ event is seen only when
+// readable is true, and with readable false an unread datagram waits on the
+// wake alone (docs/CLIENT-IO.md "The wake" and rocketnet-client-io-windows;
+// tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
+// this case lives in the functional tier.
+
+void rocketnet_test_platform_wake_windows_wakes_and_reads()
+{
+    // a non-blocking socket on 127.0.0.1 port 0
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+
+    // create returns non-NULL; create with a NULL socket returns NULL
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
+
+    // wait(true, 0) is false: no wake set and nothing readable
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // a wait with a 0.01 s timeout and nothing pending returns false (no
+    // elapsed-time check: a Windows wait deadline rounds to the clock tick)
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.01 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
+
+    // set, then wait(true, 0) is true and the next wait(true, 0) is false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set twice, one wait(true, 0) true then false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // send a datagram from a second socket to the first
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    uint8_t packet[8];
+    memset( packet, 0xAB, sizeof(packet) );
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+
+    // the datagram makes the socket readable: wait(true, 1.0) is true, and
+    // returns as soon as it lands
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+
+    // the drain to a would-block re-arms FD_READ
+    uint8_t received[64];
+    rocketnet_address_t from;
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == (int) sizeof(packet) );
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == 0 );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // a second datagram, left unread: wait(false, 0) is false (socket ignored)
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.01 ) );
+
+    // then set and wait(false, 0) is true
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    // and the following wait(true) sees the datagram (a 1.0 s bound, as the
+    // first datagram above: loopback delivery and the FD_READ post are not
+    // synchronous with the send; the wait returns as soon as it lands)
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+    rocketnet_check( rocketnet_platform_socket_receive_packet( socket, &from, received, sizeof(received) ) == (int) sizeof(packet) );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+    rocketnet_platform_socket_destroy( sender );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 // a test a platform's build compiles out still registers its name, printing a
@@ -5702,6 +6019,8 @@ extern void rocketnet_test_lifecycle_driver();
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv4, "test_server_rio_wire_ipv4", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_wire, "test_server_iocp_uso_wire", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_gso, "test_server_driver_pin_gso", "linux only: the gso driver is not built on this platform" )
@@ -5726,6 +6045,8 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_a
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip, "client_io_linux_mmsg_batch_round_trip", "linux only: the mmsg batch pump is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_apple_handoff_round_trip, "client_io_apple_handoff_round_trip", "mac and ios only: the msgx client I/O wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_windows_wakes_and_reads, "platform_wake_windows_wakes_and_reads", "windows only: the event wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5934,6 +6255,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "client_io_linux_handoff_round_trip", rocketnet_functional_skip_client_io_linux_handoff_round_trip },
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "client_io_apple_handoff_round_trip", rocketnet_test_client_io_apple_handoff_round_trip },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
+    { "client_io_apple_handoff_round_trip", rocketnet_functional_skip_client_io_apple_handoff_round_trip },
+#endif
     { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion },
     { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill },
     { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill },
@@ -5964,6 +6290,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "platform_wake_apple_wakes_and_reads", rocketnet_functional_skip_platform_wake_apple_wakes_and_reads },
 #endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "platform_wake_windows_wakes_and_reads", rocketnet_test_platform_wake_windows_wakes_and_reads },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "platform_wake_windows_wakes_and_reads", rocketnet_functional_skip_platform_wake_windows_wakes_and_reads },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
@@ -5987,10 +6318,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+    { "test_server_rio_probe", rocketnet_test_server_rio_probe },
+    { "test_server_rio_wire_ipv4", rocketnet_test_server_rio_wire_ipv4 },
     { "test_server_iocp_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe },
     { "test_server_iocp_uso_wire", rocketnet_test_server_iocp_uso_wire },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_functional_skip_server_driver_pin_iocp },
+    { "test_server_rio_probe", rocketnet_functional_skip_server_rio_probe },
+    { "test_server_rio_wire_ipv4", rocketnet_functional_skip_server_rio_wire_ipv4 },
     { "test_server_iocp_uso_uro_probe", rocketnet_functional_skip_server_iocp_uso_uro_probe },
     { "test_server_iocp_uso_wire", rocketnet_functional_skip_server_iocp_uso_wire },
 #endif

@@ -882,10 +882,10 @@ double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
     const rn_region_t * region = endpoint->region;
     double deadline = RN_ENDPOINT_NO_DEADLINE;
 
-    const double small = rn_endpoint_fifo_deadline( region, ack->resend_head, rn_window_ack_resend_delay( ack ) );
+    const double resend = rn_endpoint_fifo_deadline( region, ack->resend_head, rn_window_ack_resend_delay( ack ) );
     const double chunk = rn_endpoint_fifo_deadline( region, ack->chunk_head, rn_window_ack_chunk_resend_delay( ack ) );
-    if ( small < deadline )
-        deadline = small;
+    if ( resend < deadline )
+        deadline = resend;
     if ( chunk < deadline )
         deadline = chunk;
 

@@ -130,6 +130,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_server_gso_linux.cpp
     sdk/rocketnet_server_uring_linux.cpp
     sdk/rocketnet_server_iocp_windows.cpp
+    sdk/rocketnet_server_rio_windows.cpp
     sdk/rocketnet_server_protocol.cpp
     sdk/rocketnet_server_socket_linux.cpp
     sdk/rocketnet_server_transport.cpp
@@ -274,7 +275,7 @@ if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
     add_executable(server server.c)
-    target_link_libraries(server PRIVATE rocketnet)
+    target_link_libraries(server PRIVATE rocketnet_dev)
 endif()
 if(ROCKETNET_BUILD_TESTS)
     add_executable(test_sodium test_sodium.c)
