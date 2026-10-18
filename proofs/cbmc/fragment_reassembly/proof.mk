@@ -19,11 +19,15 @@ FRAG_REASSEMBLY_FLAGS = --std c++17 --overflow-check --ub-shift-check \
                         -DNDEBUG -I$(SDK) --include-file $(FRAG_REASSEMBLY_SHIM)
 FRAG_REASSEMBLY_TIMEOUT = 1800
 
-# harness:unwind:extra flags (comma for space)
+# harness:unwind:extra flags (comma for space). Unwind 33 covers the
+# harness's loops over the 32-byte received bitmap; the library memset loop
+# gets 64, past the 56-byte slot record the reader clears. The memory
+# sizing harness adds the unsigned overflow check: its claim is that no
+# sizing sum or product wraps.
 FRAG_REASSEMBLY_HARNESSES = \
     harness_header_and_plan:16:--z3 \
-    harness_process_fragment:33: \
-    harness_memory_sizing:16:--unsigned-overflow-check,--z3
+    harness_process_fragment:33:--unwindsetname,__memset_impl:0:64 \
+    harness_memory_sizing:16:--unsigned-overflow-check
 
 .PHONY: proofs-fragment_reassembly
 
