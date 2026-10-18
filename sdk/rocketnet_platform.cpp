@@ -2770,10 +2770,69 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 // time
 
+// Sleep() rounds up to the system timer tick (15.6 ms by default) and the
+// old millisecond cast truncated a sub-millisecond request to Sleep(0), so the
+// sleep waits on a per-thread high-resolution waitable timer instead (Windows
+// 10 1803 and later), which keeps the system-wide timer resolution untouched.
+// Where that timer cannot be created, the fallback raises the timer to 1 ms
+// only for the duration of a rounded-up Sleep.
+
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif // #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+
+#include <timeapi.h>
+
+#pragma comment( lib, "winmm.lib" )
+
+struct rocketnet_platform_sleep_timer_t
+{
+    HANDLE handle;
+    bool tried;
+    ~rocketnet_platform_sleep_timer_t()
+    {
+        if ( handle )
+            CloseHandle( handle );
+    }
+};
+
+static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = { NULL, false };
+
 void rocketnet_platform_sleep( double time )
 {
-    const int milliseconds = (int) ( time * 1000 );
-    Sleep( milliseconds );
+    if ( !( time > 0.0 ) )
+    {
+        Sleep( 0 );
+        return;
+    }
+
+    if ( !rocketnet_platform_sleep_timer.tried )
+    {
+        rocketnet_platform_sleep_timer.tried = true;
+        rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+    }
+
+    if ( rocketnet_platform_sleep_timer.handle )
+    {
+        // relative due time in 100 ns units, rounded up so a positive request never becomes zero
+        double ticks = ceil( time * 10000000.0 );
+        if ( ticks > 9.0e18 )
+            ticks = 9.0e18;
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG) ticks;
+        if ( SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) )
+        {
+            WaitForSingleObject( rocketnet_platform_sleep_timer.handle, INFINITE );
+            return;
+        }
+    }
+
+    double milliseconds = ceil( time * 1000.0 );
+    if ( milliseconds > (double) ( INFINITE - 1 ) )
+        milliseconds = (double) ( INFINITE - 1 );
+    timeBeginPeriod( 1 );
+    Sleep( (DWORD) milliseconds );
+    timeEndPeriod( 1 );
 }
 
 double rocketnet_platform_time()
