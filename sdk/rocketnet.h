@@ -2114,7 +2114,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_message_server_release( struct rocketnet_me
  * @brief Set the send budget for one client slot.
  * The rate uses decimal kilobits per second of wire bytes. The new rate takes effect at the next budget refill; zero is invalid here (it means default only during create).
  * @param server Message object returned by rocketnet_message_server_create; NULL is a counted no-op.
- * @param client_index Connected client slot from 0 through the server transport's configured max_clients - 1; invalid or disconnected slots refuse operations.
+ * @param client_index Server slot from 0 through the server transport's configured max_clients - 1; a valid slot accepts a budget change while connected or disconnected.
  * @param kbps Wire rate in kilobits per second (1000 bits/s); must be 1 through 10,000,000. Zero is refused.
  * @return 1 when the rate is accepted; 0 for a NULL server, invalid slot, or invalid rate.
  */
