@@ -656,6 +656,182 @@ counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
 04 00 b7 59 01 00
 ```
 
+```vector t10.prefilter-too-large
+input: a connection payload packet one byte above the receive ceiling
+counter: PREFILTER_TOO_LARGE
+05 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00
+```
+
+```vector t10.client-wrong-direction
+input: a connection request packet arriving at a client
+counter: WRONG_DIRECTION
+00 00 b7 59 01 00
+```
+
+```vector t10.client-wrong-state
+input: a connection keep-alive packet at a client not in a session state
+counter: CLIENT_KEEP_ALIVE_WRONG_STATE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.server-no-mapping
+input: a connection keep-alive packet from an address with no mapping
+counter: KEEP_ALIVE_NO_MAPPING
+04 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00
+```
+
+```vector t10.server-not-connected
+input: a connection keep-alive packet for a mapping with no assigned slot
+counter: KEEP_ALIVE_NOT_CONNECTED
+04 00 b7 59 01 00 e8 03 00 00 2e 73 ac 3a 5d df
+e7 a5 8a f0 4a f3 97 9d f3 b7 56 9c a5 e6 86 63
+30 2e d1 bf d8 4e f9 ac 23
+```
+
+```vector t10.zero-sequence
+input: a connection keep-alive packet whose reconstructed sequence is zero
+counter: CLIENT_KEEP_ALIVE_ZERO_SEQUENCE
+04 00 b7 59 01 00 00 00 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.already-received
+input: a connection keep-alive packet whose sequence is already marked received
+counter: CLIENT_KEEP_ALIVE_ALREADY_RECEIVED
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
+f2 cd e8 36 13 03 f3 45 c3
+```
+
+```vector t10.did-not-open
+input: a connection keep-alive packet sealed under a key the receiver does not hold
+counter: CLIENT_KEEP_ALIVE_DID_NOT_OPEN
+04 00 b7 59 01 00 e8 03 00 00 f8 c3 ad 9b 05 4e
+a2 d3 b5 79 df 29 48 34 2f ad 2d ca b4 05 1d 60
+e7 be f3 17 65 04 cf 34 2a
+```
+
+```vector t10.bad-ack-block
+input: a connection keep-alive packet whose ack block is malformed
+counter: CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK
+04 00 b7 59 01 00 e8 03 00 00 1b 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c1 26 ae 3c ae 1b d1
+78 c4 a3 c6 ca 6f 48 a0 17
+```
+
+```vector t10.wrong-opened-size
+input: a connection keep-alive packet with nine type bytes after the ack block
+counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
+04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
+4f 6f 62 77 03 4b 30 f3 49 2a
+```
+
+```vector t10.fragment-zero-payload-id
+input: a connection payload fragment packet naming payload id zero
+counter: FRAGMENT_ZERO_PAYLOAD_ID
+09 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
+a0 8f 69 ab 93 03 a4 d2 ec a3 b0 d7 eb 0e af 4b
+9b b6 e3 94 bd 3b 5d 2c
+```
+
 <a id="t11"></a>
 ## t11. Handshake: client
 
@@ -912,12 +1088,23 @@ It is generated; the bytes are in the sections.
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
 | [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
+| [t10 Receive processing](#t10) | `t10.already-received` |
+| [t10 Receive processing](#t10) | `t10.bad-ack-block` |
 | [t10 Receive processing](#t10) | `t10.client-session-wrong-size` |
+| [t10 Receive processing](#t10) | `t10.client-wrong-direction` |
+| [t10 Receive processing](#t10) | `t10.client-wrong-state` |
+| [t10 Receive processing](#t10) | `t10.did-not-open` |
+| [t10 Receive processing](#t10) | `t10.fragment-zero-payload-id` |
+| [t10 Receive processing](#t10) | `t10.prefilter-too-large` |
 | [t10 Receive processing](#t10) | `t10.prefilter-too-short` |
 | [t10 Receive processing](#t10) | `t10.prefilter-wrong-epoch` |
 | [t10 Receive processing](#t10) | `t10.prefilter-wrong-value` |
 | [t10 Receive processing](#t10) | `t10.reserved-type` |
+| [t10 Receive processing](#t10) | `t10.server-no-mapping` |
+| [t10 Receive processing](#t10) | `t10.server-not-connected` |
 | [t10 Receive processing](#t10) | `t10.server-wrong-direction` |
+| [t10 Receive processing](#t10) | `t10.wrong-opened-size` |
+| [t10 Receive processing](#t10) | `t10.zero-sequence` |
 | [t16 Fragmentation and reassembly](#t16) | `t16.reassembly-trace` |
 <!-- vector-index:end -->
 
