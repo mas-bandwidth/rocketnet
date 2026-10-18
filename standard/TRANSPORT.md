@@ -391,10 +391,214 @@ identifier, the frozen connect token vector.
 <a id="t7"></a>
 ## t7. Key schedule
 
-Status: pending
+The token keys of [t6 Connect token](#t6) never seal a packet. Every
+connection attempt derives four working keys, two for the handshake phase and
+two for the session phase, one per direction. The labels separate the phases
+and the directions by derivation, so one key never serves two roles.
 
-Scope: the connection salt, the session nonce, the ephemeral exchange, the
-four derived keys and their labels, erasure; vectors.
+Rules:
+
+1. Both endpoints MUST derive the four keys of a connection from the same
+   fixed-length inputs in the same order: the two token keys, the client's
+   connection salt, the server's session nonce, the ephemeral exchange and the
+   key derivation labels of [t3 Constants and registries](#t3).
+2. The client MUST choose a fresh connection salt for every connection
+   attempt, from a cryptographically secure random source, and MUST send it in
+   the clear in the connection request. The salt is the connection salt row of
+   [t3 Constants and registries](#t3).
+3. The server MUST choose a fresh session nonce for every encryption mapping
+   it creates, from a cryptographically secure random source, and MUST send it
+   in the clear in the connection challenge. The nonce is the session nonce row
+   of [t3 Constants and registries](#t3). A server MUST NOT reuse a session
+   nonce across mappings.
+4. Each endpoint MUST use one X25519 keypair for the attempt: the client MUST
+   generate a fresh keypair for every attempt, and the server MUST generate one
+   for every mapping or take the current keypair of a bounded rotation window.
+   The client MUST send its ephemeral public key in the clear in the connection
+   request. The server MUST send its ephemeral public key inside the sealed
+   connection challenge. Both keys are X25519 public keys of
+   [t3 Constants and registries](#t3).
+5. Each endpoint MUST compute the shared secret with X25519 from its own
+   ephemeral secret key and the peer's ephemeral public key. When the scalar
+   multiplication reports a small-order peer public key, the endpoint MUST
+   abandon the attempt, MUST NOT derive a session key, and MUST NOT create a
+   mapping.
+6. An endpoint MUST derive the handshake client-to-server key by keyed BLAKE2b
+   (RFC 7693), with the token client-to-server key as the key and the handshake
+   input of [t7.1 Handshake key input](#t7.1) as the message, and MUST derive
+   the handshake server-to-client key by keyed BLAKE2b with the token
+   server-to-client key as the key and the same input as the message.
+7. An endpoint MUST derive the session client-to-server key by keyed BLAKE2b,
+   with the token client-to-server key as the key and the session input of
+   [t7.2 Session key input](#t7.2) as the message, and MUST derive the session
+   server-to-client key by keyed BLAKE2b with the token server-to-client key as
+   the key and the same input as the message.
+8. The output length of every derivation is the derived key row of
+   [t7.3 Derived key sizes](#t7.3), and the key length is the BLAKE2b key row
+   of [t3 Constants and registries](#t3).
+9. A verifier of a connect token MUST use strict Ed25519 verification
+   (RFC 8032) over the signed connect data of
+   [t3 Constants and registries](#t3) against the backend public key. It MUST
+   reject a signature
+   whose S component is not reduced modulo the group order, MUST reject an R
+   component or public key that is not a canonical encoding or is of small
+   order, MUST reject a public key that does not decode to a curve point, and
+   MUST NOT accept two distinct signature byte strings for one message.
+10. Both endpoints MUST erase the shared secret as soon as the four keys are
+    derived, MUST erase an ephemeral secret key when no handshake that needs it
+    remains, and MUST erase the four keys and the token keys when the attempt
+    or connection that owns them ends.
+
+<a id="t7.1"></a>
+### t7.1. Handshake key input
+
+The handshake input is the concatenation below, with the key derivation label
+of the direction appended last. It holds no ephemeral key material.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       connection salt                         +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       session nonce                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                    key derivation label                       +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| connection salt | 0 | 8 | bytes[8] | the client's salt for this attempt | any |
+| session nonce | 8 | 8 | bytes[8] | the server's nonce for this mapping | any |
+| key derivation label | 16 | 8 | bytes[8] | the direction's label row of [t3 Constants and registries](#t3) | `"RKTNHNDC"` or `"RKTNHNDS"` |
+
+<a id="t7.2"></a>
+### t7.2. Session key input
+
+The session input is the concatenation below, with the key derivation label of
+the direction appended last. The shared secret comes first; the two ephemeral
+public keys follow in client then server order, whichever endpoint computes
+the input.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                        shared secret                          +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                 client ephemeral public key                   +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                 server ephemeral public key                   +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       connection salt                         +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       session nonce                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                    key derivation label                       +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| shared secret | 0 | 32 | bytes[32] | the X25519 output of rule 5 | any |
+| client ephemeral public key | 32 | 32 | bytes[32] | the client's ephemeral public key | a canonical X25519 public key |
+| server ephemeral public key | 64 | 32 | bytes[32] | the server's ephemeral public key | a canonical X25519 public key |
+| connection salt | 96 | 8 | bytes[8] | the client's salt for this attempt | any |
+| session nonce | 104 | 8 | bytes[8] | the server's nonce for this mapping | any |
+| key derivation label | 112 | 8 | bytes[8] | the direction's label row of [t3 Constants and registries](#t3) | `"RKTNSESC"` or `"RKTNSESS"` |
+
+<a id="t7.3"></a>
+### t7.3. Derived key sizes
+
+| Name | Value | Unit |
+|---|---|---|
+| derived key | `32` | bytes |
+| shared secret | `32` | bytes |
+
+<a id="t7.4"></a>
+### t7.4. Vectors
+
+The inputs are the same in every vector below: the token keys, salt, session
+nonce and ephemeral keys of the frozen inputs, with the direction's label
+appended. The small-order vector's single byte is the value the derivation
+returns, zero for a refused derivation.
+
+```vector t7.handshake-client-to-server
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: key derivation label = "RKTNHNDC"
+4b 4d 63 0c db 00 c8 7b 73 d4 6b 34 21 d8 91 c2
+4c fd 0a b9 28 c9 87 51 5a ab bb d7 8b e2 73 50
+```
+
+```vector t7.handshake-server-to-client
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: key derivation label = "RKTNHNDS"
+86 04 5b 5f 8e 2d a9 4d bf 44 5a 65 80 86 d6 3d
+50 b7 3b 1e 66 6c 76 c4 95 2f ab f9 98 c0 c0 e0
+```
+
+```vector t7.session-client-to-server
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: key derivation label = "RKTNSESC"
+ae dc 46 56 e3 f8 2b 7e 87 91 27 95 88 c7 f6 20
+4e d2 c1 bc 0c 17 ba 97 79 c0 4e 3b 1c 9e f4 3c
+```
+
+```vector t7.session-server-to-client
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 489cebba7a166c619835fe12eedc581dbfc1b36de10c830e4f0bc1c48734864b
+input: key derivation label = "RKTNSESS"
+3c 63 7e 37 b1 01 b8 2c 9e da a9 a3 b5 5a 31 a8
+a3 bc 10 8f 13 3b a0 5e 8a 41 6b 3c fb 73 0e f0
+```
+
+```vector t7.small-order-peer-refused
+input: token client-to-server key = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+input: token server-to-client key = a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+input: connection salt = 53414c5430303031
+input: session nonce = 4e4f4e4345303031
+input: client ephemeral secret key = c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0
+input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24
+input: server ephemeral public key = 0000000000000000000000000000000000000000000000000000000000000000
+input: key derivation label = "RKTNSESC"
+00
+```
 
 <a id="t8"></a>
 ## t8. Packet formats
@@ -513,6 +717,11 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t7 Key schedule](#t7) | `t7.handshake-client-to-server` |
+| [t7 Key schedule](#t7) | `t7.handshake-server-to-client` |
+| [t7 Key schedule](#t7) | `t7.session-client-to-server` |
+| [t7 Key schedule](#t7) | `t7.session-server-to-client` |
+| [t7 Key schedule](#t7) | `t7.small-order-peer-refused` |
 <!-- vector-index:end -->
 
 <a id="tb"></a>

@@ -1,0 +1,4 @@
+# The rows of RN-1 t7 (TRANSPORT.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+derived key	crypto_generichash_BYTES	32
+shared secret	crypto_scalarmult_BYTES	32
