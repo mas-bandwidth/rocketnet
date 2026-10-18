@@ -6504,6 +6504,302 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
     rocketnet_test_max_size_packet_crosses( "ROCKETNET_TEST_MTU_SERVER_IPV6", "[::1]", true );
 }
 
+
+// Cumulative wire totals over the in-process loopback driver: no socket is
+// opened, and every datagram the driver carries is counted on both ends,
+// handshake and keep-alives included. Because the loopback client driver uses
+// the transport's polling receive thread (loopback_client_operations has no
+// wait/wake hooks and rocketnet_client_transport_config_t has no calling-thread
+// receive mode), these two cases belong in the functional tier where pumping
+// yields to the receive thread.
+
+struct wire_totals_t
+{
+    uint64_t packets_sent;
+    uint64_t packets_received;
+    uint64_t bytes_sent;
+    uint64_t bytes_received;
+};
+
+static void wire_totals_client( struct rocketnet_client_transport_t * client, wire_totals_t * totals )
+{
+    struct rocketnet_client_transport_stats_t stats;
+    memset( &stats, 0, sizeof( stats ) );
+    rocketnet_client_transport_stats( client, &stats );
+    totals->packets_sent = stats.packets_sent;
+    totals->packets_received = stats.packets_received;
+    totals->bytes_sent = stats.bytes_sent;
+    totals->bytes_received = stats.bytes_received;
+}
+
+static void wire_totals_server( struct rocketnet_server_transport_t * server, wire_totals_t * totals )
+{
+    struct rocketnet_server_transport_stats_t stats;
+    memset( &stats, 0, sizeof( stats ) );
+    rocketnet_server_transport_stats( server, &stats );
+    totals->packets_sent = stats.packets_sent;
+    totals->packets_received = stats.packets_received;
+    totals->bytes_sent = stats.bytes_sent;
+    totals->bytes_received = stats.bytes_received;
+}
+
+static void wire_totals_slot( struct rocketnet_server_transport_t * server, int slot, wire_totals_t * totals )
+{
+    struct rocketnet_server_transport_client_stats_t stats;
+    memset( &stats, 0, sizeof( stats ) );
+    rocketnet_server_transport_client_stats( server, slot, &stats );
+    totals->packets_sent = stats.packets_sent;
+    totals->packets_received = stats.packets_received;
+    totals->bytes_sent = stats.bytes_sent;
+    totals->bytes_received = stats.bytes_received;
+}
+
+static void wire_totals_pump( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time, int steps )
+{
+    for ( int i = 0; i < steps; i++ )
+    {
+        rocketnet_client_transport_update( client, *time );
+        rocketnet_server_transport_update( server, *time );
+        rocketnet_platform_sleep( 0.001 );
+        *time += 0.001;
+    }
+}
+
+static bool wire_totals_connect( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
+{
+    for ( int i = 0; i < 5000; i++ )
+    {
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
+            wire_totals_pump( client, server, time, 4 );
+            return true;
+        }
+        wire_totals_pump( client, server, time, 1 );
+    }
+    return false;
+}
+
+// drain until both directions' totals match: the server's receive is
+// synchronous in its update, but the client's loopback receive runs on the
+// transport's polling thread, so the client's received totals lag the
+// server's sent totals until that thread has run. pumping with a 1 ms sleep
+// per step lets the receive thread catch up, then the cross-side checks hold.
+
+static bool wire_totals_drain( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
+{
+    for ( int i = 0; i < 5000; i++ )
+    {
+        wire_totals_pump( client, server, time, 1 );
+        wire_totals_t c, s;
+        wire_totals_client( client, &c );
+        wire_totals_server( server, &s );
+        if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
+            return true;
+    }
+    return false;
+}
+
+// the slot-scoped drain: for a later connection into an already-used slot,
+// the server's lifetime totals are larger than this client's, so convergence
+// is judged against the slot's current-connection totals instead.
+
+static bool wire_totals_drain_slot( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
+{
+    for ( int i = 0; i < 5000; i++ )
+    {
+        wire_totals_pump( client, server, time, 1 );
+        wire_totals_t c, slot;
+        wire_totals_client( client, &c );
+        wire_totals_slot( server, 0, &slot );
+        if ( slot.packets_sent == c.packets_received && slot.packets_received == c.packets_sent )
+            return true;
+    }
+    return false;
+}
+
+static struct rocketnet_server_transport_t * wire_totals_server_create( const char * public_address, double time )
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1;
+    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+
+    int status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &config, time, &status );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
+    return server;
+}
+
+static struct rocketnet_client_transport_t * wire_totals_client_create( const char * address, uint64_t client_id, double time )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    if ( !rocketnet_write_dev_connect_token( address, client_id, (uint64_t) ::time( NULL ), token ) )
+        return NULL;
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.driver, sizeof( config.driver ), "%s", "loopback" );
+    return rocketnet_client_transport_create( NULL, token, &config, time );
+}
+
+static void wire_totals_send_payloads( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
+{
+    uint8_t payload[32];
+    for ( int round = 0; round < 3; round++ )
+    {
+        memset( payload, round + 1, sizeof( payload ) );
+        for ( int i = 0; i < 4; i++ )
+        {
+            rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
+            rocketnet_server_transport_send_packet( server, 0, payload, (int) sizeof( payload ) );
+        }
+        rocketnet_server_transport_send_packets( server );
+        wire_totals_pump( client, server, time, 4 );
+    }
+
+    const int num_payloads = rocketnet_server_transport_num_payloads( server );
+    for ( int i = 0; i < num_payloads; i++ )
+    {
+        int payload_client_index = -1;
+        int payload_bytes = 0;
+        rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+    }
+    uint8_t received[64];
+    while ( rocketnet_client_transport_receive_packet( client, received, (int) sizeof( received ) ) > 0 ) {}
+}
+
+void wire_totals_count_every_packet_and_byte()
+{
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
+    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0 );
+    rocketnet_check( server != NULL );
+
+    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    const int server_port = rocketnet_server_transport_port( server );
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
+
+    double time = 1000.0;
+    struct rocketnet_client_transport_t * client = wire_totals_client_create( address, 0x5701ULL, time );
+    rocketnet_check( client != NULL );
+    rocketnet_check( wire_totals_connect( client, server, &time ) );
+
+    wire_totals_t client_totals, server_totals, slot_totals;
+    wire_totals_client( client, &client_totals );
+    wire_totals_server( server, &server_totals );
+    wire_totals_slot( server, 0, &slot_totals );
+
+    rocketnet_check( client_totals.packets_sent > 0 );
+    rocketnet_check( client_totals.packets_received > 0 );
+
+    wire_totals_send_payloads( client, server, &time );
+    rocketnet_check( wire_totals_drain( client, server, &time ) );
+    wire_totals_client( client, &client_totals );
+    wire_totals_server( server, &server_totals );
+    wire_totals_slot( server, 0, &slot_totals );
+
+    rocketnet_check( client_totals.packets_sent == server_totals.packets_received );
+    rocketnet_check( client_totals.bytes_sent == server_totals.bytes_received );
+    rocketnet_check( server_totals.packets_sent == client_totals.packets_received );
+    rocketnet_check( server_totals.bytes_sent == client_totals.bytes_received );
+    rocketnet_check( client_totals.packets_sent == slot_totals.packets_received );
+    rocketnet_check( client_totals.bytes_sent == slot_totals.bytes_received );
+    rocketnet_check( server_totals.packets_sent == slot_totals.packets_sent );
+    rocketnet_check( server_totals.bytes_sent == slot_totals.bytes_sent );
+    rocketnet_check( server_totals.packets_received == slot_totals.packets_received );
+    rocketnet_check( server_totals.bytes_received == slot_totals.bytes_received );
+
+    const uint64_t packets_before_disconnect = client_totals.packets_sent;
+    rocketnet_client_transport_disconnect( client );
+    rocketnet_check( wire_totals_drain( client, server, &time ) );
+    wire_totals_client( client, &client_totals );
+    wire_totals_server( server, &server_totals );
+
+    rocketnet_check( client_totals.packets_sent > packets_before_disconnect );
+    rocketnet_check( client_totals.packets_sent == server_totals.packets_received );
+    rocketnet_check( client_totals.bytes_sent == server_totals.bytes_received );
+    rocketnet_check( server_totals.packets_sent == client_totals.packets_received );
+    rocketnet_check( server_totals.bytes_sent == client_totals.bytes_received );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
+}
+
+void wire_totals_reset_per_connection_not_per_server()
+{
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
+    struct rocketnet_server_transport_t * server = wire_totals_server_create( "127.0.0.1:0", 1000.0 );
+    rocketnet_check( server != NULL );
+
+    char address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    const int server_port = rocketnet_server_transport_port( server );
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", server_port );
+
+    double time = 1000.0;
+    struct rocketnet_client_transport_t * first = wire_totals_client_create( address, 0x5702ULL, time );
+    rocketnet_check( first != NULL );
+    rocketnet_check( wire_totals_connect( first, server, &time ) );
+    wire_totals_send_payloads( first, server, &time );
+
+    wire_totals_t first_slot, first_server;
+    wire_totals_slot( server, 0, &first_slot );
+    wire_totals_server( server, &first_server );
+    rocketnet_check( first_slot.packets_sent > 0 );
+    rocketnet_check( first_slot.packets_received > 0 );
+
+    rocketnet_client_transport_disconnect( first );
+    for ( int i = 0; i < 200 && rocketnet_server_transport_num_connected_clients( server ) > 0; i++ )
+        wire_totals_pump( first, server, &time, 1 );
+
+    wire_totals_t free_slot;
+    wire_totals_slot( server, 0, &free_slot );
+    rocketnet_check( free_slot.packets_sent == 0 );
+    rocketnet_check( free_slot.packets_received == 0 );
+    rocketnet_check( free_slot.bytes_sent == 0 );
+    rocketnet_check( free_slot.bytes_received == 0 );
+
+    struct rocketnet_client_transport_t * second = wire_totals_client_create( address, 0x5703ULL, time );
+    rocketnet_check( second != NULL );
+    rocketnet_check( wire_totals_connect( second, server, &time ) );
+    rocketnet_check( wire_totals_drain_slot( second, server, &time ) );
+
+    wire_totals_t second_slot, second_server, second_client;
+    wire_totals_slot( server, 0, &second_slot );
+    wire_totals_server( server, &second_server );
+    wire_totals_client( second, &second_client );
+
+    rocketnet_check( second_slot.packets_sent == second_client.packets_received );
+    rocketnet_check( second_slot.packets_received == second_client.packets_sent );
+    rocketnet_check( second_slot.bytes_sent == second_client.bytes_received );
+    rocketnet_check( second_slot.bytes_received == second_client.bytes_sent );
+    rocketnet_check( second_server.packets_sent > first_server.packets_sent );
+    rocketnet_check( second_server.packets_received > first_server.packets_received );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( second );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( first );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
+}
+
 struct rocketnet_functional_test_t
 {
     const char * name;
@@ -6720,6 +7016,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full },
     { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },
     { "block_resend_cost_over_long_path", block_resend_cost_over_long_path },
+    { "wire_totals_count_every_packet_and_byte", wire_totals_count_every_packet_and_byte },
+    { "wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server },
 };
 
 static rocketnet_test_environment_t * rocketnet_functional_environment = NULL;

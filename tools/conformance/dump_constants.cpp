@@ -196,6 +196,9 @@ int main()
     print_client_config_table( "CLIENT" );
     print_message_config_table( "MESSAGE" );
 
+    // the published replay depth bounds, not only the chosen default
+    print_int( "ROCKETNET_HISTORY_PACKETS_MIN", ROCKETNET_HISTORY_PACKETS_MIN );
+    print_int( "ROCKETNET_HISTORY_PACKETS_MAX", ROCKETNET_HISTORY_PACKETS_MAX );
     print_int( "ROCKETNET_HISTORY_PACKETS", ROCKETNET_HISTORY_PACKETS );
     print_int( "ROCKETNET_REPLAY_WINDOW_BITS", ROCKETNET_REPLAY_WINDOW_BITS );
     print_int( "ROCKETNET_DEFAULT_REASSEMBLY_SLOTS", ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
@@ -207,6 +210,12 @@ int main()
 
     // Timing defaults and sizing ratios: the macros rocketnet_server_transport_create
     // assigns.
+
+    // The two server handshake budgets: local policy STANDARD.md states with
+    // these defaults and the implementation applies.
+    print_int( "ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE", ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET", ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+    print_int( "ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS", ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS );
 
     print_real( "DEFAULT_SEND_RATE", ROCKETNET_DEFAULT_SEND_RATE );
     print_real( "DEFAULT_HANDSHAKE_DEADLINE_SECONDS", ROCKETNET_DEFAULT_HANDSHAKE_DEADLINE_SECONDS );

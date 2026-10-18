@@ -524,6 +524,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         return NULL;
     }
 
+    // The published development keys are public and not for production: an
+    // implementation must warn on every start that uses them, at each end that
+    // can tell. The client can tell from its token's server key.
+    if ( memcmp( client_transport->protocol.signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 )
+        rocketnet_warn( "development keys are public and not for production" );
+
     char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 

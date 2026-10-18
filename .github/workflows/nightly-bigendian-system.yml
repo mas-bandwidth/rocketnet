@@ -37,17 +37,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nightly-bigendian-system-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   bigendian-system:
     name: s390x full system
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 180
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-bigendian-system-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install qemu-system-s390x when the runner does not have it
         run: |

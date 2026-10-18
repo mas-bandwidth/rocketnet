@@ -368,10 +368,12 @@ if(ROCKETNET_BUILD_TESTS)
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
-    # test_dev_token_minting_absent_in_release probes the shared release
-    # library, so the test target must build it: CI legs build `test` alone,
-    # and without this the shared library is missing and the probe goes red.
-    add_dependencies(test rocketnet_shared)
+    # Two probes load a shared library at run time, so the test target must
+    # build both: CI legs build `test` alone, and without this the library is
+    # missing and the probe goes red. test_dev_token_minting_absent_in_release
+    # probes the release library; the connect-token vectors load the dev
+    # library's token writer through dev_connect_token_timeout_is_the_named_constant.
+    add_dependencies(test rocketnet_shared rocketnet_shared_dev)
     foreach(test_target test_lifecycle test_driver)
         add_executable(${test_target} ${test_target}.cpp)
         target_include_directories(${test_target} PRIVATE test)
@@ -481,6 +483,23 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(lease_cost PRIVATE Threads::Threads)
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
+    # The corpus replay drivers: fuzz/replay_main.cpp provides the main the
+    # libFuzzer runtime would provide, reading each named file whole and
+    # calling the harness's LLVMFuzzerTestOneInput once, so the committed
+    # corpora replay on platforms with no libFuzzer runtime. Built against
+    # the development library with the same includes as the NDEBUG fuzz
+    # build in ci.yml.
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured)
+        add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+        target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEVELOPMENT=1)
+        target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
+        target_include_directories(fuzz_replay_${harness} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test")
+        rocketnet_use_sodium(fuzz_replay_${harness})
+        target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
+    endforeach()
 endif()
 
 install(TARGETS rocketnet rocketnet_shared EXPORT RocketNetTargets

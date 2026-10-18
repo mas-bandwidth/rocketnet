@@ -291,8 +291,9 @@ static void client_reassembled_batch_holds_half_received_load()
     const uint64_t reassembled = client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] - reassembled_before;
     const uint64_t batch_full = client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL] - batch_full_before;
 
-    printf( "client_reassembled_batch_holds_half_received_load: drained %d reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
-            drained, (unsigned long long) reassembled, delivered, (unsigned long long) batch_full, client.reassembly->delivered_capacity );
+    if ( drained != ROCKETNET_NUM_CLIENT_PACKETS || reassembled != CRB_TOTAL_PAYLOADS || batch_full != 0 || delivered != CRB_TOTAL_PAYLOADS )
+        printf( "client_reassembled_batch_holds_half_received_load: drained %d reassembled %llu delivered %d BATCH_FULL %llu (delivered capacity %d)\n",
+                drained, (unsigned long long) reassembled, delivered, (unsigned long long) batch_full, client.reassembly->delivered_capacity );
 
     check( drained == ROCKETNET_NUM_CLIENT_PACKETS );
     check( reassembled == CRB_TOTAL_PAYLOADS );

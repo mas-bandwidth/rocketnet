@@ -184,39 +184,39 @@ extern "C" {
 // before ROCKETNET_NUM_STATUS_CODES.
 enum rocketnet_status_t
 {
-    ROCKETNET_STATUS_OK                                 = 0,
+    ROCKETNET_STATUS_OK                                 = 0,   // success
 
     // lifecycle and allocator state (rocketnet_init, rocketnet_term, rocketnet_allocator)
-    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,
-    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,
-    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,
-    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,
-    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,
+    ROCKETNET_STATUS_ALREADY_INITIALIZED                = 1,   // rocketnet_init, or an allocator change, after the library was initialized
+    ROCKETNET_STATUS_NOT_INITIALIZED                    = 2,   // a call that needs rocketnet_init came before it, or a term with nothing to terminate
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = 3,   // term or an allocator change refused: the library still holds allocations
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = 4,   // the platform's socket layer did not start
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = 5,   // the crypto library did not start
 
     // caller arguments and configuration (client, server, message)
-    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,
-    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,
-    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,
-    ROCKETNET_STATUS_MISSING_KEYS                       = 10,
-    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,
-    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,
-    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,
-    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,
+    ROCKETNET_STATUS_INVALID_ARGUMENT                   = 6,   // an argument is NULL, out of range, or inconsistent with another
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = 7,   // an environment override did not parse
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = 8,   // a config field, from the struct or the environment, is out of its range
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = 9,   // the memory the config needs is past the operator's memory budget
+    ROCKETNET_STATUS_MISSING_KEYS                       = 10,   // a server config has no keys
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = 11,   // the protocol id is 0, or a development id in a release build
+    ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE                = 12,   // the published development keys in a release build
+    ROCKETNET_STATUS_INVALID_ADDRESS                    = 13,   // an address string did not parse
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = 14,   // the transport candidate list did not parse
 
     // client connect token pre-send checks
-    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,
-    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = 15,   // the connect token did not parse, or is not for this protocol
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = 16,   // the connect token expired before the first packet was sent
 
     // transport candidate list and OS resources
-    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,
-    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,
-    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,
-    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = 17,   // a pinned transport cannot take port 0 (an ephemeral port)
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = 18,   // every transport in the candidate list refused to start
+    ROCKETNET_STATUS_OUT_OF_MEMORY                      = 19,   // an allocation failed
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = 20,   // the platform refused a mutex
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = 21,   // the platform refused a thread
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = 22,   // the platform refused a timer
 
-    ROCKETNET_NUM_STATUS_CODES                          = 23
+    ROCKETNET_NUM_STATUS_CODES                          = 23     // the count of codes, OK included
 };
 
 // -----------------------------------------
@@ -511,21 +511,21 @@ struct rocketnet_client_config_t
     void (*state_change_callback)( void * context, int previous_state, int current_state );   // no env form; NULL is none
     double (*time_callback)( void * context );      // no env form: the receive stamp clock, read once at create; NULL is the platform clock
     int send_kbps;                                  // ROCKETNET_CLIENT_SEND_KBPS: the send budget, kbps; default 1000; 0 or less removes the budget, NOT RECOMMENDED
-    int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
-    int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: WIRE, power of two; 64 .. 1 << 20; default 1024
-    int receive_ring_bytes;                         // ROCKETNET_CLIENT_RECEIVE_RING_BYTES: WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    int max_message_bytes;                          // ROCKETNET_CLIENT_MAX_MESSAGE_BYTES: WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
-    int send_buffer_bytes;                          // ROCKETNET_CLIENT_SEND_BUFFER_BYTES: 12288 .. 1 << 28; default 800000
-    int send_queue_messages;                        // ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: 16 .. 1 << 20; default 1024
-    int packets_in_flight;                          // ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: 1 .. 256; default 4
-    int unreliable_deliveries;                      // ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: per update; 1 .. 1 << 16; default 256
-    int sequenced_holds;                            // ROCKETNET_CLIENT_SEQUENCED_HOLDS: 0 .. 4096; default 16
-    int receipt_ring;                               // ROCKETNET_CLIENT_RECEIPT_RING: 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             // ROCKETNET_CLIENT_RTO_INITIAL_MS: 10 .. 60000; default 100
-    int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: 1 .. 60000; default 10
-    int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: 10 .. 60000; default 250
-    int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: 1000 .. 600000; default 10000
+    int num_channels;                               // ROCKETNET_CLIENT_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
+    int window_messages;                            // ROCKETNET_CLIENT_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
+    int receive_ring_bytes;                         // ROCKETNET_CLIENT_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    int max_message_bytes;                          // ROCKETNET_CLIENT_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    int send_buffer_bytes;                          // ROCKETNET_CLIENT_SEND_BUFFER_BYTES: queued message bytes; 12288 .. 1 << 28; default 800000
+    int send_queue_messages;                        // ROCKETNET_CLIENT_SEND_QUEUE_MESSAGES: queued messages; 16 .. 1 << 20; default 1024
+    int packets_in_flight;                          // ROCKETNET_CLIENT_PACKETS_IN_FLIGHT: unacknowledged packets tracked; 16 .. 1 << 16; default 256
+    int max_packets_per_update;                     // ROCKETNET_CLIENT_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; 1 .. 256; default 4
+    int unreliable_deliveries;                      // ROCKETNET_CLIENT_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per update; 1 .. 1 << 16; default 256
+    int sequenced_holds;                            // ROCKETNET_CLIENT_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    int receipt_ring;                               // ROCKETNET_CLIENT_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
+    int rto_initial_ms;                             // ROCKETNET_CLIENT_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
+    int rto_min_ms;                                 // ROCKETNET_CLIENT_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
+    int rto_max_ms;                                 // ROCKETNET_CLIENT_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int reliable_timeout_ms;                        // ROCKETNET_CLIENT_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
 };
 
 // The server is configured explicitly: rocketnet_server_default_config gives
@@ -558,21 +558,21 @@ struct rocketnet_server_config_t
     const char * transport;                         // ROCKETNET_SERVER_TRANSPORT: the candidate list; NULL is "auto"
     const char * public_address;                    // ROCKETNET_SERVER_PUBLIC_ADDRESS: "a.b.c.d:port" or "[v6]:port"; NULL is the create call's address
     int per_client_send_kbps;                       // ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS: each client's send budget, kbps; default 10000; 0 or less removes the budget, NOT RECOMMENDED
-    int num_channels;                               // ROCKETNET_SERVER_NUM_CHANNELS: WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
-    int window_messages;                            // ROCKETNET_SERVER_WINDOW_MESSAGES: WIRE, power of two; 64 .. 1 << 20; default 1024
-    int receive_ring_bytes;                         // ROCKETNET_SERVER_RECEIVE_RING_BYTES: WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
-    int max_message_bytes;                          // ROCKETNET_SERVER_MAX_MESSAGE_BYTES: WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
-    int send_buffer_bytes;                          // ROCKETNET_SERVER_SEND_BUFFER_BYTES: per client; 12288 .. 1 << 28; default 800000
-    int send_queue_messages;                        // ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: per client; 16 .. 1 << 20; default 1024
-    int packets_in_flight;                          // ROCKETNET_SERVER_PACKETS_IN_FLIGHT: per client; 16 .. 1 << 16; default 256
-    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: per client; 1 .. 256; default 4
-    int unreliable_deliveries;                      // ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: per client per update; 1 .. 1 << 16; default 256
-    int sequenced_holds;                            // ROCKETNET_SERVER_SEQUENCED_HOLDS: 0 .. 4096; default 16
-    int receipt_ring;                               // ROCKETNET_SERVER_RECEIPT_RING: 16 .. 1 << 16; default 256
-    int rto_initial_ms;                             // ROCKETNET_SERVER_RTO_INITIAL_MS: 10 .. 60000; default 100
-    int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: 1 .. 60000; default 10
-    int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: 10 .. 60000; default 250
-    int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: 1000 .. 600000; default 10000
+    int num_channels;                               // ROCKETNET_SERVER_NUM_CHANNELS: the channels messages are sent and received on; WIRE; 1 .. ROCKETNET_MAX_CHANNELS; default 32
+    int window_messages;                            // ROCKETNET_SERVER_WINDOW_MESSAGES: reliable messages in flight per channel set; WIRE, power of two; 64 .. 1 << 20; default 1024
+    int receive_ring_bytes;                         // ROCKETNET_SERVER_RECEIVE_RING_BYTES: the receive ring for reassembled messages; WIRE, multiple of 16; 4096 .. 1 << 20; default 262144
+    int max_message_bytes;                          // ROCKETNET_SERVER_MAX_MESSAGE_BYTES: the largest message; WIRE, <= receive_ring_bytes; ROCKETNET_MESSAGE_SINGLE_BYTES .. 1 << 20; default 262144
+    int send_buffer_bytes;                          // ROCKETNET_SERVER_SEND_BUFFER_BYTES: queued message bytes; per client; 12288 .. 1 << 28; default 800000
+    int send_queue_messages;                        // ROCKETNET_SERVER_SEND_QUEUE_MESSAGES: queued messages; per client; 16 .. 1 << 20; default 1024
+    int packets_in_flight;                          // ROCKETNET_SERVER_PACKETS_IN_FLIGHT: unacknowledged packets tracked; per client; 16 .. 1 << 16; default 256
+    int max_packets_per_update;                     // ROCKETNET_SERVER_MAX_PACKETS_PER_UPDATE: packets send_packets sends per update; per client; 1 .. 256; default 4
+    int unreliable_deliveries;                      // ROCKETNET_SERVER_UNRELIABLE_DELIVERIES: unreliable messages delivered per update; per client per update; 1 .. 1 << 16; default 256
+    int sequenced_holds;                            // ROCKETNET_SERVER_SEQUENCED_HOLDS: sequenced messages held for order; 0 .. 4096; default 16
+    int receipt_ring;                               // ROCKETNET_SERVER_RECEIPT_RING: send receipts kept until read; a full ring drops its oldest; 16 .. 1 << 16; default 256
+    int rto_initial_ms;                             // ROCKETNET_SERVER_RTO_INITIAL_MS: the retransmit timeout before an rtt sample, milliseconds; 10 .. 60000; default 100
+    int rto_min_ms;                                 // ROCKETNET_SERVER_RTO_MIN_MS: the least retransmit timeout, milliseconds; 1 .. 60000; default 10
+    int rto_max_ms;                                 // ROCKETNET_SERVER_RTO_MAX_MS: the most retransmit timeout, milliseconds; 10 .. 60000; default 250
+    int reliable_timeout_ms;                        // ROCKETNET_SERVER_RELIABLE_TIMEOUT_MS: a reliable message unacknowledged this long ends the connection, milliseconds; 1000 .. 600000; default 10000
 };
 
 // -----------------------------------------
