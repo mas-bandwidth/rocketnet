@@ -3573,6 +3573,172 @@ void rocketnet_test_server_rio_wire_ipv4()
     rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
 }
 
+// one exact packet in each direction, with the peer and destination families
+// selected by the caller; source normalization stays observable on receive
+static void rocketnet_test_server_rio_wire_exchange( rocketnet_server_rio_t * rio,
+    struct rocketnet_platform_socket_t * peer, const rocketnet_address_t * peer_address,
+    const rocketnet_address_t * server_address )
+{
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+    for ( int i = 0; i < packet_bytes; ++i )
+        packet[i] = (uint8_t) ( 0x40 + i );
+
+    rocketnet_platform_socket_send_packet( peer, server_address, packet, packet_bytes );
+
+    bool received_peer = false;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && !received_peer )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+        rocketnet_server_socket_process_packets_t * received = rocketnet_server_rio_process_packets( rio );
+        for ( int i = 0; i < received->num_packets; ++i )
+        {
+            rocketnet_check( !received_peer );
+            rocketnet_check( received->packet_bytes[i] == packet_bytes );
+            rocketnet_check( memcmp( received->packet_data[i], packet, packet_bytes ) == 0 );
+            rocketnet_check( rocketnet_address_equal( &received->from[i], peer_address ) );
+            received_peer = true;
+        }
+        if ( !received_peer )
+            rocketnet_platform_sleep( 0.0005 );
+    }
+    rocketnet_check( received_peer );
+
+    uint64_t packet_id = 0;
+    uint8_t * frame = rocketnet_server_rio_start_packet( rio, peer_address, &packet_id );
+    rocketnet_check( frame );
+    uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+    for ( int i = 0; i < packet_bytes; ++i )
+        wire[i] = (uint8_t) ( 0x70 + i );
+    rocketnet_server_rio_finish_packet( rio, packet_id, frame, packet_bytes );
+    rocketnet_server_rio_send_packets( rio );
+
+    bool received_reply = false;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && !received_reply )
+    {
+        rocketnet_address_t from;
+        const int bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, sizeof(packet) );
+        if ( bytes > 0 )
+        {
+            rocketnet_check( bytes == packet_bytes );
+            for ( int i = 0; i < packet_bytes; ++i )
+                rocketnet_check( packet[i] == (uint8_t) ( 0x70 + i ) );
+            rocketnet_check( from.port == server_address->port );
+            received_reply = true;
+        }
+        else
+            rocketnet_platform_sleep( 0.0005 );
+    }
+    rocketnet_check( received_reply );
+}
+
+static struct rocketnet_platform_socket_t * rocketnet_test_server_rio_peer( const char * address_string,
+    rocketnet_address_t * peer_address )
+{
+    rocketnet_check( rocketnet_address_parse( peer_address, address_string ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, peer_address,
+        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+    rocketnet_check( peer_address->port != 0 );
+    return peer;
+}
+
+void rocketnet_test_server_rio_wire_ipv6()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "[::1]:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+
+    rocketnet_address_t peer_address;
+    struct rocketnet_platform_socket_t * peer = rocketnet_test_server_rio_peer( "[::1]:0", &peer_address );
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "[::1]:0" ) );
+    server_address.port = bind_address.port;
+
+    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
+
+    rocketnet_platform_socket_destroy( peer );
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
+    rocketnet_server_rio_destroy( rio );
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
+}
+
+void rocketnet_test_server_rio_wire_dual_stack()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+
+    rocketnet_address_t peer_address;
+    struct rocketnet_platform_socket_t * peer = rocketnet_test_server_rio_peer( "127.0.0.1:0", &peer_address );
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    server_address.port = bind_address.port;
+    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
+    rocketnet_platform_socket_destroy( peer );
+
+    peer = rocketnet_test_server_rio_peer( "[::1]:0", &peer_address );
+    rocketnet_check( rocketnet_address_parse( &server_address, "[::1]:0" ) );
+    server_address.port = bind_address.port;
+    rocketnet_test_server_rio_wire_exchange( rio, peer, &peer_address, &server_address );
+    rocketnet_platform_socket_destroy( peer );
+
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
+    rocketnet_server_rio_destroy( rio );
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
+}
+
+void rocketnet_test_server_rio_send_full()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address );
+    rocketnet_check( rio );
+
+    rocketnet_address_t destination;
+    rocketnet_check( rocketnet_address_parse( &destination, "127.0.0.1:9" ) );
+    uint8_t * frame = NULL;
+    for ( int i = 0; i < ROCKETNET_RIO_SEND_QUEUE_SIZE; ++i )
+    {
+        uint64_t packet_id = 0;
+        frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
+        rocketnet_check( frame );
+        rocketnet_server_rio_abort_packet( rio, packet_id, frame );
+    }
+
+    uint64_t packet_id = 0;
+    rocketnet_check( rocketnet_server_rio_start_packet( rio, &destination, &packet_id ) == NULL );
+    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FULL] == 1 );
+
+    rocketnet_server_rio_send_packets( rio );
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+
+    frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
+    rocketnet_check( frame );
+    rocketnet_server_rio_abort_packet( rio, packet_id, frame );
+    rocketnet_server_rio_send_packets( rio );
+    rocketnet_server_rio_counters( rio, counters );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FULL] == 1 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
+    rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == ROCKETNET_RIO_RECEIVES );
+
+    const uint64_t leaked = rocketnet_server_rio_leaked_regions();
+    rocketnet_server_rio_destroy( rio );
+    rocketnet_check( rocketnet_server_rio_leaked_regions() == leaked );
+}
+
 // the iocp driver's USO/URO tier against a plain UDP peer on loopback: the
 // peer sends tagged packets in, the driver must surface each byte-exact from
 // the peer's address; the driver then sends replies, deliberately in
@@ -6150,6 +6316,9 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "te
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_rio, "test_server_driver_pin_rio", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_probe, "test_server_rio_probe", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv4, "test_server_rio_wire_ipv4", "not on windows: the rio driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_ipv6, "test_server_rio_wire_ipv6", "not on windows: the rio driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_wire_dual_stack, "test_server_rio_wire_dual_stack", "not on windows: the rio driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_rio_send_full, "test_server_rio_send_full", "not on windows: the rio driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_wire, "test_server_iocp_uso_wire", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_gso, "test_server_driver_pin_gso", "linux only: the gso driver is not built on this platform" )
@@ -6457,6 +6626,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_driver_pin_rio", rocketnet_test_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_test_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_test_server_rio_wire_ipv4 },
+    { "test_server_rio_wire_ipv6", rocketnet_test_server_rio_wire_ipv6 },
+    { "test_server_rio_wire_dual_stack", rocketnet_test_server_rio_wire_dual_stack },
+    { "test_server_rio_send_full", rocketnet_test_server_rio_send_full },
     { "test_server_iocp_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe },
     { "test_server_iocp_uso_wire", rocketnet_test_server_iocp_uso_wire },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -6464,6 +6636,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_driver_pin_rio", rocketnet_functional_skip_server_driver_pin_rio },
     { "test_server_rio_probe", rocketnet_functional_skip_server_rio_probe },
     { "test_server_rio_wire_ipv4", rocketnet_functional_skip_server_rio_wire_ipv4 },
+    { "test_server_rio_wire_ipv6", rocketnet_functional_skip_server_rio_wire_ipv6 },
+    { "test_server_rio_wire_dual_stack", rocketnet_functional_skip_server_rio_wire_dual_stack },
+    { "test_server_rio_send_full", rocketnet_functional_skip_server_rio_send_full },
     { "test_server_iocp_uso_uro_probe", rocketnet_functional_skip_server_iocp_uso_uro_probe },
     { "test_server_iocp_uso_wire", rocketnet_functional_skip_server_iocp_uso_wire },
 #endif
