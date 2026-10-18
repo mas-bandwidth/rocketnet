@@ -2451,7 +2451,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 // The client I/O wake on macOS and iOS: one kqueue holding the socket's
 // EVFILT_READ and an EVFILT_USER trigger (docs/CLIENT-IO.md "The wake" and
-// rocketnet-client-io-apple). The trigger is EV_CLEAR, so it is
+// its macOS and iOS card). The trigger is EV_CLEAR, so it is
 // level-triggered until a wait returns it: a set made while no wait runs
 // makes the next wait return at once, and that wait consumes it.
 
@@ -2465,7 +2465,8 @@ struct rocketnet_platform_wake_t
     bool read_enabled;
 };
 
-// tla/RNClientIo.tla Init: no wake set, the read filter enabled.
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla Init: no wake set, the
+// read filter enabled.
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -2494,6 +2495,9 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     }
     return wake;
 }
+
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoExit and Free: the
+// kqueue, and with it both filters, goes with the I/O thread.
 
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
 {
@@ -2550,8 +2554,9 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return woken;
 }
 
-// tla/RNClientIo.tla HandOff and Stop (wake' = TRUE): any thread triggers the
-// EVFILT_USER event; it stays set until a wait returns it.
+// docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla HandOff, Return and Stop
+// (the actions that set wake'): any thread triggers the EVFILT_USER event; it
+// stays set until a wait returns it.
 
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
