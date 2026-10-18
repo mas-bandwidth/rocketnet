@@ -825,7 +825,8 @@ ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_client_trans
 // acks -- the first block acknowledging each sent sequence yields a
 // sample; jitter is inter-arrival jitter over the session sequence; packet
 // loss is receive-side, from gaps in the session sequence. These numbers
-// feed time synchronization.
+// feed time synchronization. The cumulative totals count every wire datagram
+// and byte over the client's current connection, handshake included.
 
 struct rocketnet_client_transport_stats_t
 {
@@ -836,6 +837,10 @@ struct rocketnet_client_transport_stats_t
     int packets_received_per_second;
     int bandwidth_sent_kbps;
     int bandwidth_received_kbps;
+    uint64_t packets_sent;                          // wire datagrams sent on this connection
+    uint64_t packets_received;                      // wire datagrams received on this connection
+    uint64_t bytes_sent;                            // wire bytes sent on this connection
+    uint64_t bytes_received;                        // wire bytes received on this connection
 };
 
 // a NULL client_transport or stats is a counted no-op.
@@ -1261,7 +1266,8 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_max_payload_bytes( struct r
 // younger than one second (about 4 ms boundary resolution), at bounded cost:
 // no per-client sweep, no extra pass over any buffer. At 1000 clients the
 // update pays the same fixed bucket sum it pays at one. These numbers feed
-// time synchronization.
+// time synchronization. The cumulative totals count every wire datagram and
+// byte over the server transport's lifetime.
 
 struct rocketnet_server_transport_stats_t
 {
@@ -1269,6 +1275,10 @@ struct rocketnet_server_transport_stats_t
     uint64_t packets_received_per_second;
     float bandwidth_sent_kbps;
     float bandwidth_received_kbps;
+    uint64_t packets_sent;                          // wire datagrams sent over the server's lifetime
+    uint64_t packets_received;                      // wire datagrams received over the server's lifetime
+    uint64_t bytes_sent;                            // wire bytes sent over the server's lifetime
+    uint64_t bytes_received;                        // wire bytes received over the server's lifetime
 };
 
 // a NULL server_transport or stats is a counted no-op.
@@ -1279,7 +1289,9 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stats( struct rocketnet_se
 // acknowledged, and the trailing bandwidth sent, received and acknowledged.
 // Fed by the ack blocks every session packet carries; recomputed round-robin,
 // a sixth of the slots per update, every slot covered, so the per-update
-// cost is flat at any client count.
+// cost is flat at any client count. The cumulative totals count every wire
+// datagram and byte over the slot's current connection, zeroed when a new
+// connection takes the slot.
 
 struct rocketnet_server_transport_client_stats_t
 {
@@ -1289,6 +1301,10 @@ struct rocketnet_server_transport_client_stats_t
     float bandwidth_sent_kbps;
     float bandwidth_received_kbps;
     float bandwidth_acked_kbps;
+    uint64_t packets_sent;                          // wire datagrams sent on the slot's current connection
+    uint64_t packets_received;                      // wire datagrams received on the slot's current connection
+    uint64_t bytes_sent;                            // wire bytes sent on the slot's current connection
+    uint64_t bytes_received;                        // wire bytes received on the slot's current connection
 };
 
 // a NULL server_transport or stats is a counted no-op.
