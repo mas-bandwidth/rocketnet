@@ -58,7 +58,7 @@
                                   scripts/soak-sim-selftest runs both.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"

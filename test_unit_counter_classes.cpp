@@ -18,7 +18,7 @@
 #include "test_unit_registry.h"
 #include "test/resource_file.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check

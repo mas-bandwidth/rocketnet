@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_tests.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
 #include "rocketnet_platform.h"
@@ -7321,7 +7321,7 @@ void rocketnet_test_create_before_init_is_refused()
 
     // restore the default allocator, then the library, for the worker's term
     rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_check( rocketnet_init() );
+    rocketnet_check( rocketnet_init( NULL ) );
 }
 
 void rocketnet_test_allocator_refusal_is_returned()
@@ -7341,7 +7341,7 @@ void rocketnet_test_allocator_refusal_is_returned()
 
     // restore the default allocator, then the library, for the worker's term
     rocketnet_check( rocketnet_allocator( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
-    rocketnet_check( rocketnet_init() );
+    rocketnet_check( rocketnet_init( NULL ) );
 }
 
 static int rocketnet_test_null_asserts = 0;
@@ -7362,7 +7362,7 @@ static void rocketnet_test_null_assert_hook( const char * condition, const char 
 // checks both the return and the misuse count's rise. A NULL handle is refused
 // before any I/O, so no socket opens.
 
-// The export audit: a mirror of every ROCKETNET_EXPORT_FUNC entry point compiled
+// The export audit: a mirror of every ROCKETNET_EXPORT entry point compiled
 // into the non-development library, in header order. Every name is either
 // exercised here (a NULL case above) or exempt (no NULL-able pointer, or NULL
 // is a valid value), each exactly once. tools/check_exports.py derives the set
@@ -8150,7 +8150,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_api_misuse_count() == before );
     }
 
-    // the export audit: every ROCKETNET_EXPORT_FUNC entry point is either
+    // the export audit: every ROCKETNET_EXPORT entry point is either
     // exercised in this suite with a NULL case or exempt (no NULL-able pointer, or NULL
     // is a valid value), each exactly once, and nothing else is claimed. the
     // static lists mirror sdk/rocketnet.h and the static_assert above pins their

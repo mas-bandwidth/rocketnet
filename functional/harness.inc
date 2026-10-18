@@ -8,7 +8,7 @@
     sdk/rocketnet_tests.cpp.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"
 #include "rocketnet_config.h"

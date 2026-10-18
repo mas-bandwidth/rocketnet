@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_address.h"

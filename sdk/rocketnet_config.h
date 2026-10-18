@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_CONFIG_H
 #define ROCKETNET_CONFIG_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
 
 // The config engine (#106): the machinery behind the per-transport config

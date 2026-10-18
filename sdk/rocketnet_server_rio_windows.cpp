@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 

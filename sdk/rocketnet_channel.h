@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_message.h"

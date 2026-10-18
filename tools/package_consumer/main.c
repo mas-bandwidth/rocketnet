@@ -1,8 +1,4 @@
 #include <rocketnet.h>
-#include <rocketnet_address.h>
-#include <rocketnet_connect_token.h>
-#include <rocketnet_platform.h>
-#include <rocketnet_counters.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +7,12 @@
 #endif
 #if !defined(EXPECT_SHARED) && defined(ROCKETNET_SHARED)
 #error Static consumer inherited the DLL import contract
+#endif
+/* The library asserts exactly when this build does: NDEBUG off. */
+#ifdef NDEBUG
+#define EXPECTED_NULL_ASSERTIONS 0
+#else
+#define EXPECTED_NULL_ASSERTIONS 2
 #endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "consumer failed: %s\n", #c); return 1; } } while (0)
 
@@ -41,15 +43,12 @@ int main(void)
     CHECK(rocketnet_abi_field_size("missing", NULL) == SIZE_MAX);
     rocketnet_assert_function(NULL);
     CHECK(rocketnet_api_misuse_count() == misuse_before + 2);
-    CHECK(expected_null_assertions == (ROCKETNET_ASSERTS ? 2 : 0));
+    CHECK(expected_null_assertions == EXPECTED_NULL_ASSERTIONS);
     CHECK(rocketnet_assert_function_pointer != NULL);
-    CHECK(rocketnet_num_counters() >= ROCKETNET_NUM_COUNTERS);
+    CHECK(rocketnet_num_counters() > 0);
     CHECK(rocketnet_init(NULL));
     rocketnet_forbid_xdp_commit();
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_ERROR);
-    struct rocketnet_address_t address;
-    CHECK(rocketnet_address_parse(&address, "127.0.0.1:40000"));
-    CHECK(address.port == 40000);
     struct rocketnet_server_transport_config_t config;
     /* Public TEST VECTORS, never production credentials. This consumer only
        creates and destroys a loopback server; it sends no authenticated traffic.
@@ -83,6 +82,7 @@ int main(void)
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create(NULL, "127.0.0.1:0", &config);
     CHECK(server != NULL);
     CHECK(strcmp(rocketnet_server_transport_driver(server), "portable") == 0);
+    CHECK(rocketnet_server_transport_port(server) != 0);
     rocketnet_server_transport_destroy(server);
     rocketnet_term();
     puts("installed SDK consumer passed");

@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_MEMORY_CHECKS_H
 #define ROCKETNET_MEMORY_CHECKS_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_ENABLE_MEMORY_CHECKS
 

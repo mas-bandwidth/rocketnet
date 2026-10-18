@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_platform.h"

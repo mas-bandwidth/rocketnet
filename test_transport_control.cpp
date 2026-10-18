@@ -475,7 +475,7 @@ static void test_entries_carry_connection_id(bool staged)
 int main(int argc, char ** argv)
 {
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     if (argc == 2)
     {

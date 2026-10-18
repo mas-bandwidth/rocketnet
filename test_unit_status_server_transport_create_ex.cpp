@@ -17,7 +17,7 @@
 
 #include "test_unit_registry.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>

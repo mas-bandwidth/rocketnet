@@ -9,7 +9,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_fragment.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 
 #include <sodium.h>

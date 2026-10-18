@@ -89,6 +89,61 @@ static const struct rocketnet_config_field_t rocketnet_message_config_field_tabl
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
 
+// the layout check: rocketnet.h writes each config struct out field by field,
+// for a reader; the tables are the declarations everything above derives
+// from. Each struct is built again from its table here, and every table row
+// must name a public field at the same offset with the same size, and the two
+// structs must have the same size, so the header and the tables cannot drift.
+
+struct rocketnet_client_transport_config_table_t
+{
+    ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    void (*state_change_callback)( void * context, int previous_state, int current_state );
+    double (*time_callback)( void * context );
+};
+
+struct rocketnet_server_transport_config_table_t
+{
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+};
+
+struct rocketnet_message_config_table_t
+{
+    ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+};
+
+#define ROCKETNET_CONFIG_LAYOUT_FIELD( name )                                                                                       \
+    static_assert( offsetof( ROCKETNET_CONFIG_LAYOUT_PUBLIC, name ) == offsetof( ROCKETNET_CONFIG_LAYOUT_TABLE, name ) &&            \
+                   sizeof( ( (ROCKETNET_CONFIG_LAYOUT_PUBLIC *) 0 )->name ) == sizeof( ( (ROCKETNET_CONFIG_LAYOUT_TABLE *) 0 )->name ), \
+                   "the rocketnet.h config field " #name " matches its table row" );
+#define ROCKETNET_CONFIG_LAYOUT_INT( name, def, min, max, flags )       ROCKETNET_CONFIG_LAYOUT_FIELD( name )
+#define ROCKETNET_CONFIG_LAYOUT_UINT64( name, def, flags )              ROCKETNET_CONFIG_LAYOUT_FIELD( name )
+#define ROCKETNET_CONFIG_LAYOUT_BYTES( name, size, def, flags )         ROCKETNET_CONFIG_LAYOUT_FIELD( name )
+#define ROCKETNET_CONFIG_LAYOUT_STRING( name, capacity, def, flags )    ROCKETNET_CONFIG_LAYOUT_FIELD( name )
+
+#define ROCKETNET_CONFIG_LAYOUT_PUBLIC struct rocketnet_client_transport_config_t
+#define ROCKETNET_CONFIG_LAYOUT_TABLE struct rocketnet_client_transport_config_table_t
+ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
+ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
+ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
+static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
+#undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
+#undef ROCKETNET_CONFIG_LAYOUT_TABLE
+
+#define ROCKETNET_CONFIG_LAYOUT_PUBLIC struct rocketnet_server_transport_config_t
+#define ROCKETNET_CONFIG_LAYOUT_TABLE struct rocketnet_server_transport_config_table_t
+ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
+static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h server transport config matches its table" );
+#undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
+#undef ROCKETNET_CONFIG_LAYOUT_TABLE
+
+#define ROCKETNET_CONFIG_LAYOUT_PUBLIC struct rocketnet_message_config_t
+#define ROCKETNET_CONFIG_LAYOUT_TABLE struct rocketnet_message_config_table_t
+ROCKETNET_MESSAGE_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
+static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h message config matches its table" );
+#undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
+#undef ROCKETNET_CONFIG_LAYOUT_TABLE
+
 const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * num_fields )
 {
     rocketnet_assert( num_fields );

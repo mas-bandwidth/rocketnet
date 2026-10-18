@@ -4,7 +4,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 #if ROCKETNET_XDP
 

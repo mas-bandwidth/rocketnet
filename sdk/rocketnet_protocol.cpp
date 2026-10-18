@@ -8,7 +8,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_connect_token.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
 

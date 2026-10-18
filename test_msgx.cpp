@@ -50,7 +50,7 @@ int main()
 {
     unsetenv("ROCKETNET_PUMP");
     rocketnet_log_level(ROCKETNET_LOG_LEVEL_NONE);
-    CHECK(rocketnet_init());
+    CHECK(rocketnet_init( NULL ));
     rocketnet_forbid_xdp_commit();
     real_send = rocketnet_sendmsg_x; real_receive = rocketnet_recvmsg_x;
     CHECK(real_send && real_receive);

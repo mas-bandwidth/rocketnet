@@ -12,7 +12,7 @@
 #include "test_unit_registry.h"
 #include "test/resource_file.h"
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_wire.h"
 

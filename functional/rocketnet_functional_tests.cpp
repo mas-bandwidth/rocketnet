@@ -8,7 +8,7 @@
     through the state machines and the in-memory simulator.
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
 // The shared harness carries one call with the retired create-time argument.
 // The harness itself is outside this card's paths, so the call is routed to the

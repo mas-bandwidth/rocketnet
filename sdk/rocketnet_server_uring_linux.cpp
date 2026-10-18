@@ -4,7 +4,7 @@
 */
 
 #include "rocketnet_memory.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_server_uring.h"
 
 #include <new>

@@ -255,6 +255,13 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
 
+      # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
+      # extern "C" block, and a C and a C++ client and server built from only
+      # the header and the prebuilt static library (seconds)
+      - name: Check the public header is clean and self-contained
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        run: python3 tools/check_public_header.py --build build
+
       - name: Check larger history budget and reject undersized history
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: |

@@ -10,7 +10,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_driver_loopback.h"
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
 #include "sodium/sodium.h"
 

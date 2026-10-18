@@ -1,5 +1,5 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include <string.h>
 
 struct abi_field_t { const char * name; size_t offset; size_t size; };

@@ -599,6 +599,6 @@ struct rocketnet_counters_t
 // totals are cumulative) to its transport counter; nothing else moves.
 void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter );
 
-#include "rocketnet.h"                  // rocketnet_counter_name lives in the forest header
+#include "rocketnet_internal.h"                  // rocketnet_counter_name lives in the forest header
 
 #endif // #ifndef ROCKETNET_COUNTERS_H

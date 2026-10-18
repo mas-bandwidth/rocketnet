@@ -8,8 +8,16 @@
 #ifndef ROCKETNET_TESTS_H
 #define ROCKETNET_TESTS_H
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 
-ROCKETNET_EXPORT_FUNC void rocketnet_run_tests();
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+ROCKETNET_EXPORT void rocketnet_run_tests( void );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // #ifndef ROCKETNET_TESTS_H

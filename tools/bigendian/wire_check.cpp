@@ -33,7 +33,7 @@
 //
 // It exits nonzero, loudly, naming the first check that failed.
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
 #include "rocketnet_base64.h"
@@ -367,7 +367,7 @@ int main()
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    if ( !rocketnet_init() )
+    if ( !rocketnet_init( NULL ) )
     {
         printf( "error: failed to initialize rocketnet\n" );
         return 1;

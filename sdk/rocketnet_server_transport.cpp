@@ -26,7 +26,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet.h"
+#include "rocketnet_internal.h"
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_slots.h"
 #include "rocketnet_server_replay_marks.h"
