@@ -107,7 +107,10 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_platform_socket_pump( struct rocket
 // readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
 // runs makes the next wait return at once. Platforms that define
 // ROCKETNET_PLATFORM_HAS_WAKE implement it; elsewhere create returns NULL.
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__)
+// Linux builds the eventfd wake; macOS and iOS build the kqueue wake
+// (docs/CLIENT-IO.md "The wake" and its macOS and iOS card), so the msgx
+// client runs on the I/O thread there.
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
 struct rocketnet_platform_wake_t;
