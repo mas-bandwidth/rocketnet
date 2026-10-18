@@ -16,8 +16,8 @@ checks, and fails with one line per fault naming the section id:
   pins        every pin row's sdk expression, compiled through the real
               headers in one generated translation unit, equals the pin
               file's value and the value cell of the document row it names;
-              every document row with a value has a pin or an #unpinned
-              declaration; every pin lies in a section its file owns
+              every document row with a value has a pin, and an
+              #unpinned line fails; every pin lies in a section its file owns
   vectors     every 'vector <id>' block is well formed, sits in the section
               its id names, and equals the RN_STANDARD_VECTOR twin of that id
               in a test file; every twin has a block; a twin counts only
@@ -126,7 +126,7 @@ FENCE_RE = re.compile(r"^```(.*)$")
 HEX_ROW_RE = re.compile(r"^[0-9a-f]{2}( [0-9a-f]{2}){0,15}$")
 VECTOR_ID_RE = re.compile(r"^(" + SECTION_ID + r")\.[a-z0-9-]+$")
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]*)\)")
-TWIN_RE = re.compile(r'RN_STANDARD_VECTOR\(\s*"([^"]+)"\s*,\s*((?:"[0-9a-fA-F ]*"\s*)+)\)')
+TWIN_RE = re.compile(r'(?<![A-Za-z0-9_])RN_STANDARD_VECTOR\(\s*"([^"]+)"\s*,\s*((?:"[0-9a-fA-F ]*"\s*)+)\)')
 BARE_ID_RE = re.compile(r"(?<![\w.#/`-])(" + SECTION_ID + r")(?:\.\d+)*(?![\w-])")
 KEYWORDS_RE = re.compile(r"\b(MUST NOT|MUST|REQUIRED|SHALL NOT|SHALL|SHOULD NOT|SHOULD|NOT RECOMMENDED|RECOMMENDED|MAY|OPTIONAL)\b")
 LOWER_RE = re.compile(r"\b(must|shall|should|required)\b")
@@ -445,28 +445,20 @@ def check_pins(docs, pins, includes, unpinned, faults, only):
                            "%s:%d two table rows are named %r" % (docs[tag].name, number, name)))
     selected = []
     pinned_names = {(pin["doc"], pin["name"]) for pin in pins}
-    declared = {(entry["doc"], entry["name"]) for entry in unpinned}
     for entry in unpinned:
         row = rows[entry["doc"]].get(entry["name"])
         section = row[2] if row else None
         if only and section != only:
             continue
-        if row is None:
-            faults.append((None, "pins/%s:%d #unpinned %r is not a Name of any table row in %s"
-                           % (entry["file"], entry["line"], entry["name"], DOCUMENTS[entry["doc"]])))
-        elif (entry["doc"], entry["name"]) in pinned_names:
-            faults.append((section, "pins/%s:%d #unpinned %r also has a pin; drop the declaration"
-                           % (entry["file"], entry["line"], entry["name"])))
-        elif section not in owned_sections(entry["file"]):
-            faults.append((section, "pins/%s:%d #unpinned %r lies in section %s, which this pin file does not own"
-                           % (entry["file"], entry["line"], entry["name"], section)))
+        faults.append((section, "pins/%s:%d #unpinned %r: every row with a value is pinned; a declaration is not a pin"
+                       % (entry["file"], entry["line"], entry["name"])))
     for tag in ("RN-1", "RN-2"):
         for name, (cell, number, section) in rows[tag].items():
             if only and section != only:
                 continue
             if parse_value(cell)[0] == "none":
                 continue
-            if (tag, name) not in pinned_names and (tag, name) not in declared:
+            if (tag, name) not in pinned_names:
                 faults.append((section, "%s:%d row %r has a value and no pin; add it to pins/%s.tsv"
                                % (DOCUMENTS[tag], number, name, section)))
     for pin in pins:
@@ -761,7 +753,6 @@ def main():
     pending = [s.id for tag in ("RN-1", "RN-2") for s in docs[tag].sections if s.pending
                and (not only or s.id == only)]
     rationale_pending = [s.id for s in docs["RN-R"].sections if s.pending and (not only or s.id == only)]
-    unpinned = len(unpinned_rows)
 
     if faults:
         print("rn standard FAILED: %d fault(s)" % len(faults))
@@ -769,8 +760,8 @@ def main():
             print("  %s: %s" % (section or "-", message))
         return 1
 
-    print("rn standard: %d pins, %d vectors, %d pending sections (%s), %d pending rationale sections, %d declared unpinned rows; green"
-          % (pin_count, vector_count, len(pending), " ".join(pending) or "none", len(rationale_pending), unpinned))
+    print("rn standard: %d pins, %d vectors, %d pending sections (%s), %d pending rationale sections; green"
+          % (pin_count, vector_count, len(pending), " ".join(pending) or "none", len(rationale_pending)))
     return 0
 
 

@@ -214,14 +214,14 @@ field's default.
 | server server_secret_key | `none` | bytes[32] | `ROCKETNET_SERVER_SERVER_SECRET_KEY` | an X25519 secret key; secret |
 | server max_payload_bytes | `1416` | integer | `ROCKETNET_SERVER_MAX_PAYLOAD_BYTES` | 0 (the default), or the payload capacity row of [t3 Constants and registries](#t3) to the fragmented payload maximum |
 | server num_reassembly_slots | `8` | integer | `ROCKETNET_SERVER_NUM_REASSEMBLY_SLOTS` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
-| server driver | `"auto"` | string | `ROCKETNET_SERVER_DRIVER` | [t2.4 Transport selection](#t2.4) |
+| server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server public_address | `""` | string | `ROCKETNET_SERVER_PUBLIC_ADDRESS` | an address and port, or empty |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
 | client filter_value | `none` | bytes[4] | `ROCKETNET_CLIENT_FILTER_VALUE` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | client max_payload_bytes | `1416` | integer | `ROCKETNET_CLIENT_MAX_PAYLOAD_BYTES` | as the server field |
 | client num_reassembly_slots | `8` | integer | `ROCKETNET_CLIENT_NUM_REASSEMBLY_SLOTS` | as the server field |
-| client driver | `"auto"` | string | `ROCKETNET_CLIENT_DRIVER` | [t2.4 Transport selection](#t2.4) |
+| client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
 
 An implementation MAY add fields of its own (for example a count of kernel
@@ -230,37 +230,39 @@ queues for one transport); each one keeps rules 1 to 5.
 <a id="t2.4"></a>
 ### t2.4. Transport selection
 
-The field `driver` selects the transport driver that carries the endpoint's
-packets. A driver never changes a byte on the wire. A driver is applicable to
-an endpoint when the implementation offers it for that endpoint's role
-(client or server) on the platform it runs on. A driver that the
-implementation documents as pin-only (for example an in-process
+The field `transport` selects the transport that carries the endpoint's
+packets. A transport never changes a byte on the wire. A transport is
+applicable to an endpoint when the implementation offers it for that
+endpoint's role (client or server) on the platform it runs on. A transport
+that the implementation documents as pin-only (for example an in-process
 loopback for tests) is never part of an `auto` order and is applicable only
-as the sole name of a list. An implementation with exactly one driver MAY
+as the sole name of a list. An implementation with exactly one transport MAY
 ignore rules 1 to 5 and keeps rule 6.
 
-1. The value is an ordered, comma-separated list of driver names, or
-   `auto`, or empty. `auto` and the empty value MUST expand to the
+1. The value is `auto`, or empty, or an ordered, comma-separated list of
+   transport names. `auto` and the empty value MUST expand to the
    implementation's documented order for that endpoint's role on that
-   platform.
+   platform. `auto` is valid only as the whole value: a list that holds
+   `auto` beside any other name, or holds an empty name, MUST fail the
+   create, naming the fault.
 2. A name the implementation does not know MUST fail the create, listing the
-   valid driver names, whatever the length of the list.
-3. A list of one name is a pin. The endpoint MUST create on that driver or
-   fail the create naming the driver and why it refused or is not
+   valid transport names, whatever the length of the list.
+3. A list of one name is a pin. The endpoint MUST create on that transport or
+   fail the create naming the transport and why it refused or is not
    applicable. A pin never falls to another transport.
-4. A list of two or more driver names MUST be tried left to right, nothing
-   appended and nothing reordered; the first applicable driver that succeeds
-   carries the endpoint. A name that is not applicable MUST be skipped with
-   one log line. When no name in the list is applicable, the endpoint MUST
-   fall to its `auto` order, with one log line saying so. When at least one
-   name is applicable and every applicable name refuses, the endpoint MUST
-   fail the create, naming each refusal apart from each skip.
+4. A list of two or more transport names MUST be tried left to right, nothing
+   appended and nothing reordered; the first applicable transport that
+   succeeds carries the endpoint. A name that is not applicable MUST be
+   skipped with one log line. When no name in the list is applicable, the
+   endpoint MUST fall to its `auto` order, with one log line saying so. When
+   at least one name is applicable and every applicable name refuses, the
+   endpoint MUST fail the create, naming each refusal apart from each skip.
 5. A transport MUST NOT change machine state (kernel parameters, queue
    configuration, interrupt affinity) at create. It checks its conditions,
    and refuses by name when one is unmet.
-6. An endpoint MUST report the name of the driver that carries it, and MUST
-   log at create the chosen driver and the reason each earlier candidate
-   was skipped or refused.
+6. An endpoint MUST report the name of the transport that carries it, and
+   MUST log at create the chosen transport and the reason each earlier
+   candidate was skipped or refused.
 
 <a id="t3"></a>
 ## t3. Constants and registries

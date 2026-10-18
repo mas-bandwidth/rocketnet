@@ -25,10 +25,9 @@ One word for one thing, everywhere:
 
 | Word | Means | Never |
 |---|---|---|
-| transport | the RN-1 packet-carrying layer | driver |
-| driver | one selectable transport backend: `xdp`, `gso`, `msgx`, `portable`, `iocp` | transport |
-| `driver` (config field) | the ordered candidate list of drivers for one endpoint; environment `ROCKETNET_SERVER_DRIVER` and `ROCKETNET_CLIENT_DRIVER` | transport list |
-| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | client driver, server driver |
+| transport | one selectable packet carrier below the connection layer, chosen by name: `xdp`, `gso`, `msgx`, `portable`, `iocp` | driver, backend |
+| `transport` (config field) | the ordered candidate list of transports for one endpoint; environment `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT` | driver, transport list |
+| client, server | the two endpoints of a connection, by wire role; each is configured by one config struct | peer, host |
 | connection layer | what RN-1 specifies | transport tier |
 | message layer | what RN-2 specifies | channels tier |
 | maximum packet size | the largest UDP payload a sender emits (RN-1, bytes) | send budget |
@@ -38,8 +37,8 @@ One word for one thing, everywhere:
 | number | the RN-2 reliable message counter | sequence |
 | vector | a known-answer byte string a conforming implementation reproduces | test case |
 
-A driver is selected by its name in the config string, and it never changes a
-byte on the wire; neither RN-1 nor RN-2 varies by driver.
+A transport is selected by its name in the config string, and it never
+changes a byte on the wire; neither RN-1 nor RN-2 varies by transport.
 
 ## 3. Section ids, headings and the outline
 
@@ -243,7 +242,6 @@ Every row with a value is pinned in a pin file `standard/pins/<name>.tsv`:
 
     # comment lines start with '#'
     #include "rocketnet_wire.h"
-    #unpinned	<document name>	<why no sdk expression exists>
     <document name>	<sdk expression>	<value>
 
 A pin row is three tab-separated fields: the row's `Name` cell, a C or C++
@@ -258,11 +256,10 @@ compiler's value, the pin file's value and the document's cell are not all
 equal, when a pinned row is missing from its document, and when a document
 row with a value has no pin.
 
-A number with no sdk expression is a finding, never a pinned literal: the
-writer declares the row with an `#unpinned` line naming the reason, reports
-it, and replaces the declaration with a pin once the sdk names the value. The
-checker counts the declarations and fails a declaration whose row has a pin
-or does not exist.
+A number with no sdk expression is a finding, never a pinned literal and
+never a declaration: the writer reports it, names the sdk constant it needs,
+and leaves the section pending until the sdk names the value. There is no
+unpinned row; the checker fails every `#unpinned` line in a pin file.
 
 Pin files are owned by sections. `transport.tsv` holds rows of RN-1 t1 to t3
 and `messages.tsv` rows of RN-2 m1, the sections this skeleton wrote. A
