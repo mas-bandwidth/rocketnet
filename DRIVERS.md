@@ -221,11 +221,21 @@ through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
 returns the program's verdict and transmits nothing. It swaps the XSKMAP for a
 DEVMAP before load so a redirect can succeed without an AF_XDP socket, and it
 reads the stats map back after each frame. It needs root, or CAP_BPF and
-CAP_NET_ADMIN; `-v` prints the verifier's last log line:
+CAP_NET_ADMIN; `-v` prints the verifier's last log line. One case,
+`xdp_on_link_reply_reaches_the_peer`, attaches the program to a veth pair and
+runs the example server and client across it, so it refuses outside a
+virtme-ng guest; the guest boots with the boot tier the xdp pre-flight
+verifies:
 
 ```sh
-sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
+
+A reply frame's destination MAC is the source MAC of the newest packet the
+transport answered from that peer address on the interface, and the gateway's
+MAC for an address with none learned. With no default route the server still
+starts, and a reply to an address with no learned MAC is refused and counted,
+never sent.
 
 ## Embedded XDP source maintenance
 

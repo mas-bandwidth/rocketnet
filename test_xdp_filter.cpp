@@ -5,7 +5,9 @@
 // Loads server_xdp/server_xdp.c through the verifier and runs crafted frames
 // through it with BPF_PROG_TEST_RUN: the kernel returns the program's verdict
 // on each frame and transmits nothing. No socket, no interface and no packet
-// traffic is involved, and no XDP program is attached anywhere.
+// traffic is involved, and no XDP program is attached anywhere -- except in
+// xdp_on_link_reply_reaches_the_peer, which runs only inside a virtme-ng
+// guest and attaches the server to a veth pair it creates and removes.
 //
 // bpf_redirect_map only returns XDP_REDIRECT when the map slot is populated,
 // and an XSKMAP slot needs an AF_XDP socket. This test changes the program's
@@ -34,6 +36,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <vector>
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
+#include <poll.h>
+#include <sched.h>
+#include <signal.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/statfs.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 #ifndef ROCKETNET_XDP_FILTER_OBJECT
 #define ROCKETNET_XDP_FILTER_OBJECT "server_xdp.o"
@@ -906,6 +923,326 @@ static bool replay_key_layout_matches_header( filter_t * filter )
     return ok;
 }
 
+// ON-LINK REPLY: the one case that attaches a program and moves traffic, so it
+// runs only inside a virtme-ng guest (it refuses on a host). A veth pair has
+// its peer end in a network namespace with no default route; the example
+// server runs with the xdp driver on the near end, the example client runs in
+// the namespace, and every frame the server sends must carry the peer end's
+// MAC as its destination. The namespace and the veth pair are removed on
+// every exit path.
+
+#define ONLINK_NAMESPACE "rnonlink"
+#define ONLINK_NEAR "rnonlink0"
+#define ONLINK_PEER "rnonlink1"
+#define ONLINK_SERVER_ADDRESS "10.77.1.1:40000"
+#define ONLINK_WANT_FRAMES 150
+#define ONLINK_SECONDS 20.0
+
+#ifndef BPF_FS_MAGIC
+#define BPF_FS_MAGIC 0xcafe4a11
+#endif
+
+static bool onlink_run( const char * command )
+{
+    const int status = system( command );
+    if ( status != 0 )
+        printf( "  FAIL `%s` exited %d\n", command, status );
+    return status == 0;
+}
+
+static double onlink_now()
+{
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static bool onlink_inside_vm()
+{
+    char line[4096] = { 0 };
+    FILE * file = fopen( "/proc/cmdline", "r" );
+    if ( !file )
+        return false;
+    const bool read = fgets( line, sizeof(line), file ) != NULL;
+    fclose( file );
+    return read && strstr( line, "virtme" ) != NULL;
+}
+
+static pid_t onlink_spawn( const char * program, const char * argument, const char * log_path, int netns_fd, bool xdp_server )
+{
+    const pid_t pid = fork();
+    if ( pid != 0 )
+        return pid;
+    if ( netns_fd >= 0 && setns( netns_fd, CLONE_NEWNET ) != 0 )
+        _exit( 126 );
+    const int log_fd = open( log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600 );
+    if ( log_fd >= 0 )
+    {
+        dup2( log_fd, 1 );
+        dup2( log_fd, 2 );
+        close( log_fd );
+    }
+    if ( xdp_server )
+    {
+        setenv( "ROCKETNET_SERVER_DRIVER", "xdp", 1 );
+        setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 );
+        setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 );
+    }
+    execl( program, program, argument, (char*) NULL );
+    _exit( 127 );
+}
+
+static void onlink_stop( pid_t pid )
+{
+    if ( pid <= 0 )
+        return;
+    kill( pid, SIGINT );
+    const double deadline = onlink_now() + 5.0;
+    while ( onlink_now() < deadline )
+    {
+        if ( waitpid( pid, NULL, WNOHANG ) == pid )
+            return;
+        usleep( 10000 );
+    }
+    kill( pid, SIGKILL );
+    waitpid( pid, NULL, 0 );
+}
+
+static bool onlink_log_has( const char * path, const char * text )
+{
+    FILE * file = fopen( path, "r" );
+    if ( !file )
+        return false;
+    char line[1024];
+    bool found = false;
+    while ( !found && fgets( line, sizeof(line), file ) )
+        found = strstr( line, text ) != NULL;
+    fclose( file );
+    return found;
+}
+
+static void onlink_print_tail( const char * label, const char * path )
+{
+    char command[512];
+    snprintf( command, sizeof(command), "tail -5 %s | sed 's/^/    %s: /'", path, label );
+    if ( system( command ) != 0 )
+        printf( "    %s: no log\n", label );
+}
+
+struct onlink_environment_t
+{
+    int home_netns_fd = -1;
+    int peer_netns_fd = -1;
+    int capture_fd = -1;
+    pid_t server = -1;
+    pid_t client = -1;
+    char server_log[64] = "/tmp/rocketnet_onlink_server_XXXXXX";
+    char client_log[64] = "/tmp/rocketnet_onlink_client_XXXXXX";
+
+    ~onlink_environment_t()
+    {
+        onlink_stop( client );
+        onlink_stop( server );
+        if ( capture_fd >= 0 )
+            close( capture_fd );
+        if ( home_netns_fd >= 0 )
+        {
+            setns( home_netns_fd, CLONE_NEWNET );
+            close( home_netns_fd );
+        }
+        if ( peer_netns_fd >= 0 )
+            close( peer_netns_fd );
+        if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
+        {
+            // already gone: the namespace takes its veth end with it
+        }
+        unlink( server_log );
+        unlink( client_log );
+    }
+};
+
+static bool xdp_on_link_reply_reaches_the_peer( filter_t * )
+{
+    if ( !onlink_inside_vm() )
+    {
+        printf( "  FAIL this case attaches XDP to a veth pair and runs only inside a virtme-ng guest\n" );
+        return false;
+    }
+
+    char exe[4096];
+    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof(exe) - 1 );
+    if ( exe_bytes <= 0 )
+        return false;
+    exe[exe_bytes] = '\0';
+    char * slash = strrchr( exe, '/' );
+    if ( !slash )
+        return false;
+    *slash = '\0';
+    char server_path[4200], client_path[4200];
+    snprintf( server_path, sizeof(server_path), "%s/server", exe );
+    snprintf( client_path, sizeof(client_path), "%s/client", exe );
+
+    onlink_environment_t environment;
+
+    {
+        const int server_log_fd = mkstemp( environment.server_log );
+        const int client_log_fd = mkstemp( environment.client_log );
+        if ( server_log_fd < 0 || client_log_fd < 0 )
+            return false;
+        close( server_log_fd );
+        close( client_log_fd );
+    }
+
+    // the boot tier the xdp pre-flight verifies; a guest boots with an empty
+    // bpffs mount point
+
+    struct statfs bpffs;
+    if ( statfs( "/sys/fs/bpf", &bpffs ) != 0 || (uint64_t) bpffs.f_type != (uint64_t) BPF_FS_MAGIC )
+    {
+        if ( !onlink_run( "mount -t bpf bpf /sys/fs/bpf" ) )
+            return false;
+    }
+
+    if ( system( "ip netns del " ONLINK_NAMESPACE " 2>/dev/null; ip link del " ONLINK_NEAR " 2>/dev/null" ) != 0 )
+    {
+        // nothing left from an earlier run
+    }
+
+    if ( !onlink_run( "ip netns add " ONLINK_NAMESPACE ) ||
+         !onlink_run( "ip link add " ONLINK_NEAR " type veth peer name " ONLINK_PEER ) ||
+         !onlink_run( "ip link set " ONLINK_PEER " netns " ONLINK_NAMESPACE ) ||
+         !onlink_run( "ip addr add 10.77.1.1/24 dev " ONLINK_NEAR ) ||
+         !onlink_run( "ip link set " ONLINK_NEAR " up" ) ||
+         !onlink_run( "echo 2 > /sys/class/net/" ONLINK_NEAR "/napi_defer_hard_irqs" ) ||
+         !onlink_run( "echo 200000 > /sys/class/net/" ONLINK_NEAR "/gro_flush_timeout" ) ||
+         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip addr add 10.77.1.2/24 dev " ONLINK_PEER ) ||
+         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set " ONLINK_PEER " up" ) ||
+         !onlink_run( "ip netns exec " ONLINK_NAMESPACE " ip link set lo up" ) )
+        return false;
+
+    environment.home_netns_fd = open( "/proc/self/ns/net", O_RDONLY );
+    environment.peer_netns_fd = open( "/var/run/netns/" ONLINK_NAMESPACE, O_RDONLY );
+    if ( environment.home_netns_fd < 0 || environment.peer_netns_fd < 0 )
+    {
+        printf( "  FAIL could not open the network namespaces\n" );
+        return false;
+    }
+
+    // the peer end's MAC and a packet socket on it, opened inside the namespace
+
+    uint8_t peer_mac[6];
+    int peer_index = 0;
+    {
+        if ( setns( environment.peer_netns_fd, CLONE_NEWNET ) != 0 )
+            return false;
+        const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
+        struct ifreq ifr;
+        memset( &ifr, 0, sizeof(ifr) );
+        strncpy( ifr.ifr_name, ONLINK_PEER, sizeof(ifr.ifr_name) - 1 );
+        const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
+        if ( have_mac )
+            memcpy( peer_mac, ifr.ifr_hwaddr.sa_data, 6 );
+        if ( probe >= 0 )
+            close( probe );
+        peer_index = (int) if_nametoindex( ONLINK_PEER );
+        environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
+        if ( environment.capture_fd >= 0 )
+        {
+            struct sockaddr_ll bind_address;
+            memset( &bind_address, 0, sizeof(bind_address) );
+            bind_address.sll_family = AF_PACKET;
+            bind_address.sll_protocol = htons( ETH_P_IP );
+            bind_address.sll_ifindex = peer_index;
+            if ( bind( environment.capture_fd, (struct sockaddr*) &bind_address, sizeof(bind_address) ) != 0 )
+            {
+                close( environment.capture_fd );
+                environment.capture_fd = -1;
+            }
+        }
+        if ( setns( environment.home_netns_fd, CLONE_NEWNET ) != 0 )
+            return false;
+        if ( !have_mac || peer_index == 0 || environment.capture_fd < 0 )
+        {
+            printf( "  FAIL could not read the peer end's MAC or open a packet socket on it\n" );
+            return false;
+        }
+    }
+
+    environment.server = onlink_spawn( server_path, ONLINK_SERVER_ADDRESS, environment.server_log, -1, true );
+    environment.client = onlink_spawn( client_path, ONLINK_SERVER_ADDRESS, environment.client_log, environment.peer_netns_fd, false );
+
+    // every frame from the server's address and port, judged by its
+    // destination MAC
+
+    int frames_to_peer = 0;
+    int frames_elsewhere = 0;
+    const double deadline = onlink_now() + ONLINK_SECONDS;
+    while ( frames_to_peer < ONLINK_WANT_FRAMES && onlink_now() < deadline )
+    {
+        struct pollfd fds;
+        fds.fd = environment.capture_fd;
+        fds.events = POLLIN;
+        fds.revents = 0;
+        if ( poll( &fds, 1, 100 ) <= 0 )
+            continue;
+        uint8_t frame[2048];
+        const ssize_t bytes = recv( environment.capture_fd, frame, sizeof(frame), 0 );
+        if ( bytes < 14 + 20 + 8 )
+            continue;
+        if ( frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != IP_UDP )
+            continue;
+        static const uint8_t server_ipv4[4] = { 10, 77, 1, 1 };
+        const int ihl = ( frame[14] & 0x0F ) * 4;
+        const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
+        if ( memcmp( frame + 26, server_ipv4, 4 ) != 0 || source_port != 40000 )
+            continue;
+        if ( memcmp( frame, peer_mac, 6 ) == 0 )
+        {
+            frames_to_peer++;
+        }
+        else
+        {
+            if ( frames_elsewhere == 0 )
+                printf( "  FAIL a reply went to %02x:%02x:%02x:%02x:%02x:%02x, not the peer's %02x:%02x:%02x:%02x:%02x:%02x\n",
+                    frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
+                    peer_mac[0], peer_mac[1], peer_mac[2], peer_mac[3], peer_mac[4], peer_mac[5] );
+            frames_elsewhere++;
+        }
+    }
+
+    onlink_stop( environment.client );
+    environment.client = -1;
+    onlink_stop( environment.server );
+    environment.server = -1;
+
+    const bool server_was_xdp = onlink_log_has( environment.server_log, "server transport started on " ONLINK_SERVER_ADDRESS " [xdp]" );
+    const bool client_connected = onlink_log_has( environment.client_log, "client state: connected" );
+    const bool exchanged = onlink_log_has( environment.client_log, "client sent " );
+
+    bool ok = true;
+    if ( !server_was_xdp )
+    {
+        printf( "  FAIL the server did not start with the xdp driver on " ONLINK_NEAR "\n" );
+        ok = false;
+    }
+    if ( !client_connected || !exchanged )
+    {
+        printf( "  FAIL the client did not connect and exchange payloads (connected %d, exchanged %d)\n", client_connected ? 1 : 0, exchanged ? 1 : 0 );
+        ok = false;
+    }
+    if ( frames_to_peer < ONLINK_WANT_FRAMES || frames_elsewhere != 0 )
+    {
+        printf( "  FAIL %d frames reached the peer's MAC (want %d) and %d went elsewhere (want 0)\n", frames_to_peer, ONLINK_WANT_FRAMES, frames_elsewhere );
+        ok = false;
+    }
+    if ( !ok )
+    {
+        onlink_print_tail( "server", environment.server_log );
+        onlink_print_tail( "client", environment.client_log );
+    }
+    return ok;
+}
+
 struct case_t
 {
     const char * name;
@@ -927,6 +1264,7 @@ static const case_t cases[] =
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },
     { "replay_key_layout_matches_header", replay_key_layout_matches_header },
+    { "xdp_on_link_reply_reaches_the_peer", xdp_on_link_reply_reaches_the_peer },
 };
 
 int main( int argc, char ** argv )
