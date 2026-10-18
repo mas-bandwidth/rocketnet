@@ -187,6 +187,30 @@ static void rocketnet_handshake_build_request( uint8_t * request, uint64_t clien
                                                token.signed_connect_data, token.signature );
 }
 
+// builds the same request around a freshly minted token with a chosen create
+// timestamp, for the create-skew rung
+
+static void rocketnet_handshake_build_request_with_create( uint8_t * request, uint64_t client_id,
+                                                           const uint8_t * salt, uint64_t create )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    struct rocketnet_connect_token_private_t private_fields;
+    rocketnet_handshake_fill_vector_fields( &signed_fields, &private_fields );
+    private_fields.client_id = client_id;
+    signed_fields.create_timestamp = create;
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_connect_token_t token;
+    rocketnet_read_connect_token( &token, token_data );
+
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    rocketnet_write_connection_request_packet( request, tag, NULL, salt,
+                                               rocketnet_test_client_eph_public,
+                                               token.signed_connect_data, token.signature );
+}
+
 // the client's half of the handshake, from wire bytes alone: opens the
 // challenge and derives the four keys
 
@@ -723,7 +747,91 @@ static void TestKeepAliveClockCountsOnlyKeepAlives()
     rocketnet_handshake_server_teardown( &test );
 }
 
+// ---------------------------------------------------------------------------
+// Create-skew refusal: a connect token created more than five seconds in the
+// future is refused as CONNECTION_REQUEST_TOKEN_EXPIRED, and only while
+// max_token_lifetime_seconds > 0
+// (sdk/rocketnet_server_protocol.cpp,
+// rocketnet_server_protocol_process_connection_request)
+// ---------------------------------------------------------------------------
+
+static void token_created_past_skew_is_refused()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before + 1 );
+    rocketnet_unit_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
+static void token_created_within_skew_passes_the_rung()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 5 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
+static void token_create_skew_unchecked_without_lifetime_cap()
+{
+    struct rocketnet_handshake_server_t test;
+    rocketnet_handshake_server_setup( &test );
+    test.server.max_token_lifetime_seconds = 0;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    rocketnet_handshake_build_request_with_create( request, 0x5A0CULL, rocketnet_test_salt,
+                                                   ROCKETNET_TEST_CREATE_TS + 6 );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    uint64_t before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED];
+
+    int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                        request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                        response, &response_bytes );
+    rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == before );
+
+    rocketnet_handshake_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( TestClientEphemeralErasedOutsideHandshake );
+REGISTER_UNIT_TEST( token_created_past_skew_is_refused );
+REGISTER_UNIT_TEST( token_created_within_skew_passes_the_rung );
+REGISTER_UNIT_TEST( token_create_skew_unchecked_without_lifetime_cap );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestDisconnectAbsorbsTerminalState, "rnfix-client-terminal-state-absorbing" );
 REGISTER_UNIT_TEST_EXPECTED_FAIL( TestOneConnectionPerTokenAfterHistoryFlush, "rnfix-refuse-admitted-token-at-response" );
 REGISTER_UNIT_TEST( TestServerRepeatsKeepAliveWhileIdle );

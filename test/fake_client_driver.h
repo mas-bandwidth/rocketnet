@@ -7,8 +7,9 @@
 // CLIENT-IO.md "The I/O step", tla/RNClientIo.tla): no socket, no thread, no
 // time; wait never blocks. Unit tests drive the step with this driver on the
 // test's thread. Four callbacks are required (create/destroy/send/receive);
-// wait, wake, send_batch and receive_batch are optional and the three tables
-// expose the three subsets.
+// wait, wake, send_batch and receive_batch are optional, and the three
+// static const rocketnet_client_driver_operations_t tables expose the three
+// subsets in the driver struct's member order.
 
 #pragma once
 
@@ -43,22 +44,7 @@ struct rocketnet_fake_client_driver_t
     int send_calls, receive_calls, send_batch_calls, receive_batch_calls, wait_calls, wake_calls, destroy_calls;
     bool wake;
     double last_wait_timeout;
-};
-
-// The eight callbacks in one layout whose leading four members match
-// rocketnet_client_driver_operations_t, so a table opens through
-// rocketnet_client_driver_open (docs/CLIENT-IO.md "The I/O step").
-
-struct rocketnet_fake_client_driver_operations_t
-{
-    void * (*create)( void *, const rocketnet_client_driver_config_t *, rocketnet_address_t * );
-    void (*destroy)( void * );
-    void (*send)( void *, const rocketnet_address_t *, const uint8_t *, int );
-    int (*receive)( void *, rocketnet_address_t *, uint8_t *, int );
-    bool (*wait)( void *, double );
-    void (*wake)( void * );
-    void (*send_batch)( void *, const rocketnet_platform_send_t *, int );
-    int (*receive_batch)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
+    bool last_wait_readable;
 };
 
 // create returns its context argument (the test passes the fake as the
@@ -142,14 +128,16 @@ static int rocketnet_fake_client_receive_batch( void * driver, rocketnet_address
     return got;
 }
 
-// wait counts, records the timeout, returns wake || inbound_count > 0, and
-// clears wake; it never blocks.
-static bool rocketnet_fake_client_wait( void * driver, double timeout_seconds )
+// wait counts, records the timeout and readable, returns
+// wake || ( readable && inbound_count > 0 ) (a datagram counts only when
+// readable is true), and clears wake; it never blocks.
+static bool rocketnet_fake_client_wait( void * driver, bool readable, double timeout_seconds )
 {
     rocketnet_fake_client_driver_t * fake = (rocketnet_fake_client_driver_t *) driver;
     fake->wait_calls++;
     fake->last_wait_timeout = timeout_seconds;
-    bool ready = fake->wake || fake->inbound_count > 0;
+    fake->last_wait_readable = readable;
+    bool ready = fake->wake || ( readable && fake->inbound_count > 0 );
     fake->wake = false;
     return ready;
 }
@@ -163,29 +151,28 @@ static void rocketnet_fake_client_wake( void * driver )
 }
 
 // The three tables: base (four required), io (four plus wait and wake), batch
-// (all eight).
+// (all eight), each in rocketnet_client_driver_operations_t member order.
 
-static const rocketnet_fake_client_driver_operations_t rocketnet_fake_client_operations_base =
+static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_base =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, NULL, NULL
 };
 
-static const rocketnet_fake_client_driver_operations_t rocketnet_fake_client_operations_io =
+static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_io =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    rocketnet_fake_client_wait, rocketnet_fake_client_wake,
-    NULL, NULL
+    NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake
 };
 
-static const rocketnet_fake_client_driver_operations_t rocketnet_fake_client_operations_batch =
+static const rocketnet_client_driver_operations_t rocketnet_fake_client_operations_batch =
 {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
-    rocketnet_fake_client_wait, rocketnet_fake_client_wake,
-    rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch
+    rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch,
+    rocketnet_fake_client_wait, rocketnet_fake_client_wake
 };
 
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past

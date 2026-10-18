@@ -322,6 +322,11 @@ struct rn_ordered_t
     struct rn_packet_builder_t builder;
     struct rocketnet_send_budget_t * budget;        // R6, or NULL
     struct rocketnet_message_limits_t limits;       // what layer 2's reader checks a payload against
+
+    // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
+    struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
+    int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
+    int config_received;                            // the peer's CONFIG was taken and equals this end's (RNEndpoint peerCfg # NoCfg)
 };
 
 // Binds the whole path to one connection's carved region. `config` is the
@@ -361,6 +366,28 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 // Deliveries are appended to the region's delivery table.
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
+
+// tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
+// end's one CONFIG control record, code 2 with CONTROL set and the 28-byte
+// body of 13.4 written from `config` (NULL: the defaults) and the enabled
+// mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
+// first reliable number and is resent until acked like any reliable record.
+// Called once per connection, before anything else is queued. False when it
+// was already queued, or the region has no room (the region is then
+// exhausted and the owner kicks the connection).
+
+bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
+
+// tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
+// the peer's CONFIG record, already accepted by layer 3, read and compared
+// field by field with this end's body. Equal: config_received is set. A
+// different field, or a version this end does not know, logs one error line
+// naming the first differing field and both values and sets the sticky error
+// ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH (rn_ordered_decide). A body layer 2
+// refuses (MESSAGE_BAD_CONTROL) is a wire violation. rn_ordered_receive calls
+// it for each new control record; returns the error it set, or NONE.
+
+int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record );
 
 // The update's deliveries, in order: region->deliveries[0 .. count).
 

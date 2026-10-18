@@ -22,6 +22,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Model coverage rows are true
+        shell: bash
+        run: python3 tools/check_tla_coverage.py --all
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
@@ -56,3 +59,7 @@ jobs:
                   assert case['gate'] == 'bench' and case['debt'] != '-' and row['exit'] == '124', row['config'] + ': failure without declared timeout debt'
           print('Required outcomes match; any unfinished cases are explicit timeout debt.')
           PY
+      - name: TLA ledgers merge clean
+        shell: bash
+        run: |
+          python3 tools/check_tla_ledger_merge.py

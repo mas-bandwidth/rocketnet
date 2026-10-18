@@ -36,7 +36,7 @@ for driver in drivers:
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
-assert large['planned_bytes'] > 100 * 1024**3
+assert large['reassembly_bytes'] > 512 * 1024**2
 if sys.platform.startswith('linux'):
     xdp, = run(1000, 1416, 1, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.

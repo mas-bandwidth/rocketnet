@@ -125,6 +125,7 @@ set(ROCKETNET_SOURCE
     sdk/rocketnet_platform.cpp
     sdk/rocketnet_protocol.cpp
     sdk/rocketnet_replay.cpp
+    sdk/rocketnet_server_replay_marks.cpp
     sdk/rocketnet_server_gso_linux.cpp
     sdk/rocketnet_server_uring_linux.cpp
     sdk/rocketnet_server_iocp_windows.cpp

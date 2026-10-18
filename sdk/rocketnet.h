@@ -121,14 +121,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
     #define ROCKETNET_EXPORT_DATA extern ROCKETNET_SYMBOL
 #endif
 
-// The number of unique ROCKETNET_EXPORT_FUNC entry points compiled into the
-// non-development library (ROCKETNET_DEVELOPMENT=0). The public-API NULL audit
-// in sdk/rocketnet_tests.cpp holds a mirror of these names and fails when the
-// two drift, so a new exported entry point without a NULL case is caught at
-// test time. rocketnet_init is declared once for C and once for C++ and counts
-// once; the development-only rocketnet_write_dev_connect_token is not in this
-// count (its NULL behaviour is covered by the development library's own tests).
-#define ROCKETNET_NUM_EXPORTED_FUNCTIONS 148
+// tools/check_exports.py derives the set of exported entry points from these
+// ROCKETNET_EXPORT_FUNC declarations and refuses any name missing from the
+// rocketnet_test_exports mirror in sdk/rocketnet_tests.cpp, any table name this
+// header does not declare, and any duplicate. rocketnet_init is declared once
+// for C and once for C++ and counts once; the development-only
+// rocketnet_write_dev_connect_token is excluded, its behaviour covered by the
+// development library's own tests.
 
 #if defined(_WIN32)
     #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
@@ -715,6 +714,10 @@ ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server
 // the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
+// The _ex form: same contract, and when status is not NULL it is written with
+// ROCKETNET_STATUS_OK on success and the section-2.1 code of the refusal on
+// every failure exit. The non-_ex form is a thin wrapper passing NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
 // returns NULL before any other check. a NULL config is the default shape,
@@ -959,6 +962,11 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_required_memory( const
 // config is the default shape.
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
 
+// As rocketnet_server_transport_create, with the exact section-2.1 code
+// written to *status on every return path when status is not NULL
+// (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
+// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
 // returns NULL before any other check. a NULL config is the default shape,
@@ -1057,6 +1065,15 @@ ROCKETNET_EXPORT_FUNC uint8_t * rocketnet_server_transport_payload( struct rocke
 
 // a NULL server_transport, client_index, payload_data or payload_bytes is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * server_transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
+
+// The connection id of each payload in the batch, parallel to the client
+// index array of rocketnet_server_transport_payloads and valid until the next
+// update: the connection the payload was received for, which differs from
+// rocketnet_server_transport_client_connection_id when the slot was released
+// and reassigned later in the same update. Returns the number of payloads.
+
+// a NULL server_transport or connection_id is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
 // -----------------------------------------
 //                        sending packets
@@ -1177,6 +1194,15 @@ ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_is_client_connected( struct
 // a NULL server_transport is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// The connection that holds the slot now: nonzero and unique for each
+// connection over the transport's life, 0 while the slot is free (and for an
+// index out of range). A reconnect into the same slot, even inside one
+// update, has a new id; compare it with the per-entry ids of the payload and
+// acked batches to tell whose an entry is.
+
+// a NULL server_transport is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index );
+
 // a NULL server_transport is a counted no-op that returns NULL.
 ROCKETNET_EXPORT_FUNC const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
@@ -1239,6 +1265,14 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_client_stats( struct rocke
 
 // a NULL server_transport, client_index or packet_ids is a counted no-op that returns 0.
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids );
+
+// The connection id of each acked packet id, parallel to the client index
+// array of rocketnet_server_transport_acked_packets and valid until the next
+// update: the connection whose ack block acknowledged it. Returns the number
+// of acked packet ids.
+
+// a NULL server_transport or connection_id is a counted no-op that returns 0.
+ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
 // -----------------------------------------
 //                              frame sync

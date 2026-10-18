@@ -29,6 +29,8 @@
 
 #include <unordered_map>
 
+extern unsigned long long g_client_ack_stats_count;
+
 // every transport a test ends with is balanced before it is destroyed: the
 // server's counters and each client's, RECEIVED == the sum of its outcomes.
 // A macro, so a failure names the test that ended the transport.
@@ -1116,6 +1118,93 @@ void rocketnet_test_transport_stats()
     rocketnet_check( server_stats.packets_received_per_second == 0 );
     rocketnet_check( server_stats.bandwidth_sent_kbps == 0.0f );
     rocketnet_check( server_stats.bandwidth_received_kbps == 0.0f );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, game_time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+}
+
+void rocketnet_test_client_ack_stats_computed_on_read()
+{
+    // the ack statistics are computed when they are read, not on every
+    // update: update must not touch the counter, and one stats getter call
+    // advances it by exactly one
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.max_clients = 16;
+
+    double game_time = 1000.0;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config);
+    rocketnet_check( server );
+
+    char server_address[64];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, game_time );
+    rocketnet_check( client );
+
+    // connect on the synthetic clock, bounded by the wall clock
+
+    double wall_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wall_start < 5.0 )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+        rocketnet_server_transport_update( server, game_time );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    // sixty frames of traffic, one payload each way, acks flowing
+
+    uint8_t payload_data[64];
+    memset( payload_data, 0x5A, sizeof(payload_data) );
+
+    for ( int i = 0; i < 60; i++ )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+        rocketnet_server_transport_update( server, game_time );
+
+        rocketnet_client_transport_send_packet( client, payload_data, sizeof(payload_data) );
+        rocketnet_server_transport_send_packet( server, 0, payload_data, sizeof(payload_data) );
+        rocketnet_server_transport_send_packets( server );
+
+        uint8_t scratch[ROCKETNET_RECEIVE_CEILING];
+        while ( rocketnet_client_transport_receive_packet( client, scratch, (int) sizeof(scratch) ) > 0 ) {}
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // (a) client-only updates must not recompute the ack statistics
+
+    const unsigned long long before = g_client_ack_stats_count;
+    for ( int i = 0; i < 30; i++ )
+    {
+        game_time += 1.0 / 60.0;
+        rocketnet_client_transport_update( client, game_time );
+    }
+    rocketnet_check( g_client_ack_stats_count == before );
+
+    // (b) one stats read recomputes them exactly once
+
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( client, &stats );
+    rocketnet_check( g_client_ack_stats_count == before + 1 );
+
+    // (c) sane rtt and zero loss on the clean loopback
+
+    rocketnet_check( stats.rtt > 0.0f && stats.rtt < 1000.0f );
+    rocketnet_check( stats.packet_loss == 0.0f );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
@@ -2789,10 +2878,369 @@ void rocketnet_test_server_driver_pin_portable()
     rocketnet_test_driver_pin_exchange( "portable", "portable" );
 }
 
+void rocketnet_test_server_driver_pin_loopback()
+{
+    // the loopback rung is pin-only and carries datagrams in process, with
+    // no socket. both ends pin it here: auto never selects it, so a
+    // server-only pin would leave the client on a socket path.
+
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_DRIVER" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    snprintf( server_config.driver, sizeof(server_config.driver), "loopback" );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "loopback" ) == 0 );
+    rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    snprintf( client_config.driver, sizeof(client_config.driver), "loopback" );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "loopback" ) == 0 );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    int server_received = 0;
+    int client_received = 0;
+    int sent = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        if ( sent < 5 )
+        {
+            rocketnet_client_transport_send_packet( client, (const uint8_t*) "rung!", 5 );
+            rocketnet_server_transport_send_packet( server, 0, (const uint8_t*) "rung!", 5 );
+            sent++;
+        }
+
+        rocketnet_server_transport_send_packets( server );
+
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload && payload_bytes == 5 && memcmp( payload, "rung!", 5 ) == 0 );
+            server_received++;
+        }
+
+        uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof(packet) ) ) > 0 )
+        {
+            rocketnet_check( packet_bytes == 5 && memcmp( packet, "rung!", 5 ) == 0 );
+            client_received++;
+        }
+
+        if ( server_received >= 5 && client_received >= 5 )
+            break;
+
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( server_received >= 5 );
+    rocketnet_check( client_received >= 5 );
+
+    // a second client on a socket driver must never reach the same
+    // address: the loopback server holds no socket, so only an in-process
+    // endpoint can answer. this is what proves the traffic never left.
+
+    struct rocketnet_client_transport_config_t portable_config;
+    rocketnet_client_transport_default_config( &portable_config );
+    snprintf( portable_config.driver, sizeof(portable_config.driver), "portable" );
+
+    struct rocketnet_client_transport_t * portable = rocketnet_client_transport_create( NULL, connect_token, &portable_config, rocketnet_platform_time() );
+    rocketnet_check( portable );
+    rocketnet_check( strcmp( rocketnet_client_transport_driver( portable ), "portable" ) == 0 );
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 1.0 )
+    {
+        rocketnet_client_transport_update( portable, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( portable ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( portable );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
+}
+
+void rocketnet_test_driver_env_pins_loopback()
+{
+    // the per-endpoint env names win over the struct: both configs keep
+    // their default "auto" and the environment still selects loopback on
+    // both ends. the process-wide spelling stays cleared.
+
+    struct rocketnet_test_env_guard_t process_guard, server_guard, client_guard;
+    rocketnet_test_env_clear( &process_guard, "ROCKETNET_DRIVER" );
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_DRIVER" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_DRIVER" );
+    setenv( "ROCKETNET_SERVER_DRIVER", "loopback", 1 );
+    setenv( "ROCKETNET_CLIENT_DRIVER", "loopback", 1 );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_check( strcmp( server_config.driver, "auto" ) == 0 );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config);
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_driver( server ), "loopback" ) == 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    snprintf( server_address, sizeof(server_address), "127.0.0.1:%d", rocketnet_server_transport_port( server ) );
+
+    uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_dev_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token ) );
+
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_check( strcmp( client_config.driver, "auto" ) == 0 );
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    rocketnet_check( client );
+    rocketnet_check( strcmp( rocketnet_client_transport_driver( client ), "loopback" ) == 0 );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, rocketnet_platform_time() );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+    rocketnet_test_env_restore( &process_guard );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 void rocketnet_test_server_driver_pin_iocp()
 {
     rocketnet_test_driver_pin_exchange( "iocp", "iocp" );
+}
+
+// the iocp driver's USO/URO tier against a plain UDP peer on loopback: the
+// peer sends tagged packets in, the driver must surface each byte-exact from
+// the peer's address; the driver then sends replies, deliberately in
+// equal-size same-destination runs (the shape USO coalesces), and the peer
+// must receive each as its own datagram, byte-exact and in order
+
+#define ROCKETNET_IOCP_TEST_PACKETS 200
+
+static int rocketnet_test_iocp_reply_bytes( int tag )
+{
+    return tag < ROCKETNET_IOCP_TEST_PACKETS / 2 ? 400
+         : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + ( tag * 53 ) % ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 1 );
+}
+
+static void rocketnet_test_iocp_exchange( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * bind_address )
+{
+    rocketnet_address_t peer_address;
+    rocketnet_check( rocketnet_address_parse( &peer_address, "127.0.0.1:0" ) );
+    struct rocketnet_platform_socket_t * peer = rocketnet_platform_socket_create( NULL, &peer_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                  ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( peer );
+    rocketnet_check( peer_address.port != 0 );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    server_address.port = bind_address->port;
+
+    // peer -> driver: equal-size bursts first (the shape URO may coalesce),
+    // then every size the wire allows
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < ROCKETNET_IOCP_TEST_PACKETS; i++ )
+    {
+        const int packet_bytes = rocketnet_test_iocp_reply_bytes( i );
+        packet[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            packet[j] = (uint8_t) ( i * 31 + j );
+        rocketnet_platform_socket_send_packet( peer, &server_address, packet, packet_bytes );
+    }
+
+    bool seen[ROCKETNET_IOCP_TEST_PACKETS];
+    memset( seen, 0, sizeof(seen) );
+    int num_seen = 0;
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < ROCKETNET_IOCP_TEST_PACKETS )
+    {
+        rocketnet_server_iocp_receive_packets( iocp );
+        rocketnet_server_socket_process_packets_t * received = rocketnet_server_iocp_process_packets( iocp );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            const int tag = received->packet_data[i][0];
+            rocketnet_check( tag < ROCKETNET_IOCP_TEST_PACKETS );
+            rocketnet_check( !seen[tag] );
+            rocketnet_check( received->packet_bytes[i] == rocketnet_test_iocp_reply_bytes( tag ) );
+            rocketnet_check( received->from[i].type == ROCKETNET_ADDRESS_IPV4 && received->from[i].port == peer_address.port );
+            for ( int j = 1; j < received->packet_bytes[i]; j++ )
+                rocketnet_check( received->packet_data[i][j] == (uint8_t) ( tag * 31 + j ) );
+            seen[tag] = true;
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == ROCKETNET_IOCP_TEST_PACKETS );
+
+    // driver -> peer, in one flush
+
+    for ( int i = 0; i < ROCKETNET_IOCP_TEST_PACKETS; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * frame = rocketnet_server_iocp_start_packet( iocp, &peer_address, &packet_id );
+        rocketnet_check( frame );
+        const int packet_bytes = rocketnet_test_iocp_reply_bytes( i );
+        uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
+        wire[0] = (uint8_t) i;
+        for ( int j = 1; j < packet_bytes; j++ )
+            wire[j] = (uint8_t) ( i * 47 + j );
+        rocketnet_server_iocp_finish_packet( iocp, packet_id, frame, packet_bytes );
+    }
+    rocketnet_server_iocp_send_packets( iocp );
+
+    int next_tag = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && next_tag < ROCKETNET_IOCP_TEST_PACKETS )
+    {
+        rocketnet_address_t from;
+        const int packet_bytes = rocketnet_platform_socket_receive_packet( peer, &from, packet, (int) sizeof(packet) );
+        if ( packet_bytes <= 0 )
+        {
+            rocketnet_platform_sleep( 0.001 );
+            continue;
+        }
+        rocketnet_check( from.port == bind_address->port );
+        const int tag = packet[0];
+        rocketnet_check( tag == next_tag );                 // in order, each its own datagram
+        rocketnet_check( packet_bytes == rocketnet_test_iocp_reply_bytes( tag ) );
+        for ( int j = 1; j < packet_bytes; j++ )
+            rocketnet_check( packet[j] == (uint8_t) ( tag * 47 + j ) );
+        next_tag++;
+    }
+    rocketnet_check( next_tag == ROCKETNET_IOCP_TEST_PACKETS );
+
+    // every frame comes back to the pool once the completions retire
+    start = rocketnet_platform_time();
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    do
+    {
+        rocketnet_server_iocp_counters( iocp, counters );
+        if ( counters[ROCKETNET_IOCP_SEND_COMPLETED] >= ROCKETNET_IOCP_TEST_PACKETS )
+            break;
+        rocketnet_platform_sleep( 0.001 );
+    } while ( rocketnet_platform_time() - start < 5.0 );
+    rocketnet_check( counters[ROCKETNET_IOCP_SEND_COMPLETED] == ROCKETNET_IOCP_TEST_PACKETS );
+    rocketnet_check( counters[ROCKETNET_IOCP_SEND_FAILED] == 0 );
+
+    rocketnet_platform_socket_destroy( peer );
+}
+
+void rocketnet_test_server_iocp_uso_uro_probe()
+{
+    // the features are probes whose result belongs to the host; the disable
+    // flags force the per-datagram path, and an exchange works on each
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( NULL, &bind_address, 2 );
+    rocketnet_check( iocp );
+    rocketnet_check( bind_address.port != 0 );
+    const int features = rocketnet_server_iocp_features( iocp );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_iocp_uso_uro_probe: this host reports USO %s, URO %s",
+                      ( features & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no",
+                      ( features & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no" );
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( iocp, counters );
+    rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] == 0 );
+    rocketnet_check( counters[ROCKETNET_IOCP_URO_BATCHES] == 0 );
+    rocketnet_check( counters[ROCKETNET_IOCP_USO_FALLBACKS] == 0 );
+    rocketnet_test_iocp_exchange( iocp, &bind_address );
+    rocketnet_server_iocp_destroy( iocp );
+
+    rocketnet_address_t plain_address;
+    rocketnet_check( rocketnet_address_parse( &plain_address, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * plain = rocketnet_server_iocp_create( NULL, &plain_address, 2, 0,
+                                                                    ROCKETNET_IOCP_DISABLE_USO | ROCKETNET_IOCP_DISABLE_URO );
+    rocketnet_check( plain );
+    rocketnet_check( ( rocketnet_server_iocp_features( plain ) & ROCKETNET_IOCP_FEATURE_USO ) == 0 );
+    rocketnet_check( ( rocketnet_server_iocp_features( plain ) & ROCKETNET_IOCP_FEATURE_URO ) == 0 );
+    rocketnet_test_iocp_exchange( plain, &plain_address );
+    rocketnet_server_iocp_counters( plain, counters );
+    rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] == 0 );
+    rocketnet_check( counters[ROCKETNET_IOCP_URO_BATCHES] == 0 );
+    rocketnet_server_iocp_destroy( plain );
+}
+
+void rocketnet_test_server_iocp_uso_wire()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( NULL, &bind_address, 2 );
+    rocketnet_check( iocp );
+    const int features = rocketnet_server_iocp_features( iocp );
+    rocketnet_test_iocp_exchange( iocp, &bind_address );
+
+    // on the USO tier the equal-size runs must actually have gone out as
+    // segmented sends: the counter is the proof the fast path ran
+
+    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( iocp, counters );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_iocp_uso_wire: USO_SENDS %llu, USO_FALLBACKS %llu, URO_BATCHES %llu",
+                      (unsigned long long) counters[ROCKETNET_IOCP_USO_SENDS], (unsigned long long) counters[ROCKETNET_IOCP_USO_FALLBACKS],
+                      (unsigned long long) counters[ROCKETNET_IOCP_URO_BATCHES] );
+    if ( ( features & ROCKETNET_IOCP_FEATURE_USO ) && ( rocketnet_server_iocp_features( iocp ) & ROCKETNET_IOCP_FEATURE_USO ) )
+        rocketnet_check( counters[ROCKETNET_IOCP_USO_SENDS] > 0 );
+    else if ( features & ROCKETNET_IOCP_FEATURE_USO )
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_iocp_uso_wire [SKIPPED USO_SENDS assertion: this host accepted the UDP_SEND_MSG_SIZE probe but refused a live USO send; the run was resent per datagram]" );
+    else
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_iocp_uso_wire [SKIPPED USO_SENDS assertion: this host has no USO feature (UDP_SEND_MSG_SIZE refused); the segmented-send counter cannot be observed]" );
+    rocketnet_server_iocp_destroy( iocp );
 }
 #endif
 
@@ -2947,6 +3395,48 @@ void rocketnet_test_server_driver_pin_gso()
     rocketnet_server_transport_dev_config( &config );
     snprintf( config.driver, sizeof(config.driver), "gso" );
     config.num_xdp_queues = ROCKETNET_GSO_MAX_QUEUES + 1;
+
+    rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
+
+    rocketnet_test_env_restore( &driver_guard );
+}
+
+#include "rocketnet_driver.h"
+#include "rocketnet_server_uring.h"
+
+void rocketnet_test_server_driver_pin_io_uring()
+{
+    // a build without liburing has an io_uring row with no backend: the row
+    // is unavailable, and a pin of it is skipped softly by the ladder, so
+    // a ladder that names it falls to the next rung
+
+    const rocketnet_driver_definition_t * definition = rocketnet_driver_definition( ROCKETNET_DRIVER_IO_URING );
+    rocketnet_check( definition );
+    if ( !definition->backend )
+    {
+        rocketnet_test_driver_pin_exchange( "io_uring,portable", "portable" );
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_driver_pin_io_uring [SKIPPED built without liburing: the io_uring row has no backend]" );
+        return;
+    }
+    if ( !rocketnet_server_uring_available() )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "test_server_driver_pin_io_uring [SKIPPED this kernel refuses the io_uring ring the driver needs]" );
+        return;
+    }
+
+    rocketnet_test_driver_pin_exchange( "io_uring", "io_uring" );
+
+    // per-driver bounds: a queue count past the io_uring geometry refuses
+    // the pinned rung, and with nothing left to fall to, the create, loudly,
+    // never clamped
+
+    struct rocketnet_test_env_guard_t driver_guard;
+    rocketnet_test_env_clear( &driver_guard, "ROCKETNET_DRIVER" );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    snprintf( config.driver, sizeof(config.driver), "io_uring" );
+    config.num_xdp_queues = ROCKETNET_URING_MAX_QUEUES + 1;
 
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config) == NULL );
 
@@ -4808,6 +5298,64 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     rocketnet_message_server_destroy( server );
 }
 
+// The level-triggered wake beside a real socket on Linux: the eventfd is set
+// and consumed, a socket's readiness is seen only when readable is true, and
+// with readable false a full receive buffer waits on the wake alone
+// (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and IoWake). A
+// real socket and a real eventfd, so this case lives in the functional tier.
+
+void rocketnet_test_platform_wake_linux_wakes_and_reads()
+{
+    // a non-blocking socket on 127.0.0.1 port 0
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "127.0.0.1" );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( socket );
+
+    // create returns non-NULL; create with a NULL socket returns NULL
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, socket );
+    rocketnet_check( wake );
+    rocketnet_check( rocketnet_platform_wake_create( NULL, NULL ) == NULL );
+
+    // wait(true, 0) is false: no wake set and nothing readable
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set, then wait(true, 1.0) is true and the next wait(true, 0) is false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // set twice, one wait(true, 0) true then false
+    rocketnet_platform_wake_set( wake );
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, true, 0.0 ) );
+
+    // send a datagram from a second socket to the first
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    uint8_t packet[8];
+    memset( packet, 0xAB, sizeof(packet) );
+    rocketnet_platform_socket_send_packet( sender, &bind_address, packet, sizeof(packet) );
+
+    // the socket is readable now, so wait(true, 1.0) is true
+    rocketnet_check( rocketnet_platform_wake_wait( wake, true, 1.0 ) );
+
+    // with that datagram still unread, wait(false, 0) is false (socket ignored)
+    rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    // then set and wait(false, 0) is true
+    rocketnet_platform_wake_set( wake );
+    rocketnet_check( rocketnet_platform_wake_wait( wake, false, 0.0 ) );
+
+    rocketnet_platform_wake_destroy( wake );
+    rocketnet_platform_socket_destroy( socket );
+    rocketnet_platform_socket_destroy( sender );
+}
+
 extern void rocketnet_test_lifecycle_driver();
 
 // a test a platform's build compiles out still registers its name, printing a
@@ -4823,7 +5371,10 @@ extern void rocketnet_test_lifecycle_driver();
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_batch_pump_refused_destination, "test_platform_batch_pump_refused_destination", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_pump_zero_length_chaff, "test_platform_pump_zero_length_chaff", "on windows: posix raw-socket injector" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_iocp, "test_server_driver_pin_iocp", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_uro_probe, "test_server_iocp_uso_uro_probe", "not on windows: the iocp driver is windows-only" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_iocp_uso_wire, "test_server_iocp_uso_wire", "not on windows: the iocp driver is windows-only" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_gso, "test_server_driver_pin_gso", "linux only: the gso driver is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_io_uring, "test_server_driver_pin_io_uring", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_xdp, "test_server_driver_pin_xdp", "linux only: the xdp driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_ladder_fall, "test_server_driver_ladder_fall", "linux only: the gso/xdp ladder is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_gso_probe, "test_server_gso_probe", "linux only: the gso driver is not built on this platform" )
@@ -4840,6 +5391,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_send_overflow,
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_uring_receive_rearms_after_no_buffers, "test_server_uring_receive_rearms_after_no_buffers", "linux only: the io_uring driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_server_driver_pin_msgx, "test_server_driver_pin_msgx", "mac only: the msgx driver is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_driver_pump_alias", "mac only: the msgx pump is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5021,11 +5573,17 @@ extern void reliable_sequenced_held_record_released();
 extern void large_unreliable_sequenced_uses_transport_fragments();
 extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
+extern void config_mismatch_over_loopback();
+extern void config_equal_over_lossy_loopback();
 extern void reliable_mixed_sizes_over_lossy_link();
 extern void reliable_duplicate_after_gap_delivered_once();
 extern void unreliable_at_most_once_over_duplicating_link();
 extern void unreliable_dropped_while_reliable_waits_never_arrives();
 extern void unreliable_dropped_when_builder_out_of_budget_never_arrives();
+extern void control_disconnect_burst_each_end();
+extern void control_standalone_ack_each_end();
+extern void control_fragment_packets_each_end();
+extern void control_denied_when_server_full();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
@@ -5045,12 +5603,18 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "cpp_transports_connect_over_loopback", rocketnet_test_cpp_transports_connect_over_loopback },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity },
     { "test_transport_stats", rocketnet_test_transport_stats },
+    { "test_client_ack_stats_computed_on_read", rocketnet_test_client_ack_stats_computed_on_read },
     { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped },
     { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats },
     { "test_platform_socket", rocketnet_test_platform_socket },
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "platform_wake_linux_wakes_and_reads", rocketnet_test_platform_wake_linux_wakes_and_reads },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "platform_wake_linux_wakes_and_reads", rocketnet_functional_skip_platform_wake_linux_wakes_and_reads },
+#endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff },
@@ -5070,14 +5634,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config },
     { "test_config_precedence", rocketnet_test_config_precedence },
     { "test_server_driver_pin_portable", rocketnet_test_server_driver_pin_portable },
+    { "test_server_driver_pin_loopback", rocketnet_test_server_driver_pin_loopback },
+    { "test_driver_env_pins_loopback", rocketnet_test_driver_env_pins_loopback },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_test_server_driver_pin_iocp },
+    { "test_server_iocp_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe },
+    { "test_server_iocp_uso_wire", rocketnet_test_server_iocp_uso_wire },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_driver_pin_iocp", rocketnet_functional_skip_server_driver_pin_iocp },
+    { "test_server_iocp_uso_uro_probe", rocketnet_functional_skip_server_iocp_uso_uro_probe },
+    { "test_server_iocp_uso_wire", rocketnet_functional_skip_server_iocp_uso_wire },
 #endif
     { "test_server_port_zero_driver", rocketnet_test_server_port_zero_driver },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_test_server_driver_pin_gso },
+    { "test_server_driver_pin_io_uring", rocketnet_test_server_driver_pin_io_uring },
     { "test_server_driver_pin_xdp", rocketnet_test_server_driver_pin_xdp },
     { "test_server_driver_ladder_fall", rocketnet_test_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_test_server_gso_probe },
@@ -5094,6 +5665,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_server_uring_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_driver_pin_gso", rocketnet_functional_skip_server_driver_pin_gso },
+    { "test_server_driver_pin_io_uring", rocketnet_functional_skip_server_driver_pin_io_uring },
     { "test_server_driver_pin_xdp", rocketnet_functional_skip_server_driver_pin_xdp },
     { "test_server_driver_ladder_fall", rocketnet_functional_skip_server_driver_ladder_fall },
     { "test_server_gso_probe", rocketnet_functional_skip_server_gso_probe },
@@ -5136,11 +5708,17 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments },
     { "ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link },
     { "ordered_small_and_large_interleaved", ordered_small_and_large_interleaved },
+    { "config_mismatch_over_loopback", config_mismatch_over_loopback },
+    { "config_equal_over_lossy_loopback", config_equal_over_lossy_loopback },
     { "reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link },
     { "reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once },
     { "unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link },
     { "unreliable_dropped_while_reliable_waits_never_arrives", unreliable_dropped_while_reliable_waits_never_arrives },
     { "unreliable_dropped_when_builder_out_of_budget_never_arrives", unreliable_dropped_when_builder_out_of_budget_never_arrives },
+    { "control_disconnect_burst_each_end", control_disconnect_burst_each_end },
+    { "control_standalone_ack_each_end", control_standalone_ack_each_end },
+    { "control_fragment_packets_each_end", control_fragment_packets_each_end },
+    { "control_denied_when_server_full", control_denied_when_server_full },
     { "unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted },
     { "reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full },
     { "resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links },

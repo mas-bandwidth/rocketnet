@@ -119,6 +119,7 @@ static void rocketnet_client_rtt_sample( struct rocketnet_client_protocol_t * cl
         client->rtt_estimate = sample;
 }
 
+// tla/ClientConnection.tla AppConnect
 int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * client,
                               const uint8_t * connect_token,
                               double current_time,
@@ -216,6 +217,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 // after the token's timeout with nothing received, and the whole handshake
 // dies to connect token expired once the token's lifetime has elapsed
 
+// tla/ClientConnection.tla Tick
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
@@ -288,6 +290,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     return bytes;
 }
 
+// tla/ClientConnection.tla ClientSend
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                               double current_time,
                               uint8_t * out_packet,
@@ -377,6 +380,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // the client-side per-type processing: state gate first, then the mechanics,
 // each in its own early-return function
 
+// tla/ClientConnection.tla ClientRecvCookie
 static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t * client,
                                             const uint8_t * packet_data,
                                             int packet_bytes,
@@ -432,6 +436,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     return 1;
 }
 
+// tla/ClientConnection.tla ClientRecvChallenge
 static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_t * client,
                                                const uint8_t * packet_data,
                                                int packet_bytes,
@@ -550,6 +555,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     return 1;
 }
 
+// tla/ClientConnection.tla ClientRecvDenied
 static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t * client,
                                             const uint8_t * packet_data,
                                             int packet_bytes,
@@ -669,6 +675,7 @@ typedef int ( * rocketnet_client_type_data_validator_t )( struct rocketnet_clien
 // offset into opened lands in out_type_data_offset and its length is
 // returned; -1 means refused, the reason counted.
 
+// tla/ClientConnection.tla ClientRecvSession
 static int rocketnet_client_open_session_packet( struct rocketnet_client_protocol_t * client,
                                                  uint8_t packet_type,
                                                  const struct rocketnet_client_session_counters_t * type_counters,
@@ -1376,6 +1383,7 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
     return fragment_count;
 }
 
+// tla/ClientConnection.tla AppDisconnect
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,
                                   uint8_t * out_packets,
                                   int * out_packet_count,

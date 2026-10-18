@@ -236,6 +236,7 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
     return ROCKETNET_CHANNEL_SEND_OK;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -253,6 +254,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
+// tla/RNChannel.tla Enqueue
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -269,6 +271,7 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
     return sequencing;
 }
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -281,6 +284,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
+// tla/RNChannel.tla DeliverMessage
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
     if ( !channels || channel >= channels->num_channels )
@@ -316,6 +320,7 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
+// tla/RNChannel.tla OpenPacket
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out || record->bytes < 1 || !record->data )
@@ -385,6 +390,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //                  RELIABLE_ORDERED, the receive side
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla DeliverMessage
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 {
     // 7.2 Drain: after an ordered delivery on a channel, deliver the held
@@ -425,6 +431,7 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
     }
 }
 
+// tla/RNChannel.tla DeliverMessage
 int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
     if ( !channels || !record || !out )
@@ -533,8 +540,11 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 }
 
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
-// whole message dispatched as one only when every chunk is in.
+// whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
+// RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
+// and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
 
+// tla/RNChannel.tla DeliverMessage
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
 {
     rn_region_t * region = channels->region;
@@ -621,6 +631,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Placed by index, not by arrival: ring + index * F, which is this chunk's
     // own offset (THE COPIES (b): a chunk must outlive the batch).
+    // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
     memcpy( region->receive_ring + (uint64_t) record->ring * 16, record->data, (size_t) record->bytes );
     anchor->block_have++;
 
@@ -654,6 +665,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // Its turn: delivered whole, in place, a view of the ring (no reassembly
     // buffer, no second copy), then the coupling and the drain.
+    // RNBlocks!Deliver (DeliveredEqualsSent, NoPartialDelivery,
+    // OneOrderingSlotPerBlock).
     rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
     if ( !delivery )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -673,6 +686,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
+// tla/RNChannel.tla ReceiveAck
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
     // RNChannel!ReceiveAck, R1's one path: the transport's packet ids into
@@ -710,6 +724,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
+// tla/RNChannel.tla EndUpdate
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
     if ( !channels )
@@ -736,6 +751,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
+// tla/RNChannel.tla Enqueue
 static void rn_ready_push( rn_channels_t * channels, uint32_t channel )
 {
     rn_channel_send_t * send = channels->region->channel_send;
@@ -765,6 +781,20 @@ static void rn_ready_remove( rn_channels_t * channels, uint32_t channel )
     send[channel].ready_next = RN_DESCRIPTOR_NONE;
 }
 
+// tla/RNEndpoint.tla Reset: CONFIG's channel takes the first turn (10.3)
+static void rn_ready_push_front( rn_channels_t * channels, uint32_t channel )
+{
+    rn_channel_send_t * send = channels->region->channel_send;
+    send[channel].ready_prev = RN_DESCRIPTOR_NONE;
+    send[channel].ready_next = channels->ready_head;
+    if ( channels->ready_head != RN_DESCRIPTOR_NONE )
+        send[channels->ready_head].ready_prev = channel;
+    else
+        channels->ready_tail = channel;
+    channels->ready_head = channel;
+}
+
+// tla/RNChannel.tla RefuseSend
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes )
 {
     if ( !channels || channels->pending != RN_DESCRIPTOR_NONE )
@@ -801,6 +831,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     return rn_region_send_write_pointer( region, d );
 }
 
+// tla/RNChannel.tla Enqueue
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
     if ( !channels || channels->pending == RN_DESCRIPTOR_NONE )
@@ -822,7 +853,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     // RNChannelTypes!Enqueue: code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
-    // takes one number; a larger block takes one number per chunk.
+    // takes one number; a larger block takes one number per chunk
+    // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     descriptor->bytes = bytes;
     const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
@@ -860,6 +892,117 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
     rn_region_send_free( channels->region, channels->pending );
     channels->pending = RN_DESCRIPTOR_NONE;
     return true;
+}
+
+// ---------------------------------------------------------------
+//        CONFIG, the one announcement (CHANNELS.md 10.3, 13.4)
+// ---------------------------------------------------------------
+
+// tla/RNEndpoint.tla Reset: relQ = <<CONFIG>>, so CONFIG is the first record
+// numbered (ConfigReliable: it takes the first reliable number and is resent
+// until acked), and WriteOk: the first packet carries it, from the head of
+// IMMEDIATE.
+bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config )
+{
+    if ( !ordered || !ordered->channels.region || ordered->config_announced )
+        return false;
+
+    rocketnet_message_config_t defaults;
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+        config = &defaults;
+    }
+
+    rn_channels_t * channels = &ordered->channels;
+    rn_region_t * region = channels->region;
+
+    // the body of 13.4: the wire-relevant configuration and the enabled mask
+    struct rocketnet_message_config_body_t * body = &ordered->config;
+    memset( body, 0, sizeof( *body ) );
+    body->version = ROCKETNET_MESSAGE_CONFIG_VERSION;
+    body->enabled = channels->enabled_types & 0xFFu;
+    body->num_channels = (uint32_t) config->num_channels;
+    body->window_messages = (uint32_t) config->window_messages;
+    body->receive_ring_bytes = (uint32_t) config->receive_ring_bytes;
+    body->max_message_bytes = (uint32_t) config->max_message_bytes;
+    body->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+
+    if ( rn_region_exhausted( region ) )
+        return false;
+    const uint32_t d = rn_region_send_alloc( region, ROCKETNET_MESSAGE_CONFIG_BYTES );
+    if ( d == RN_DESCRIPTOR_NONE )
+        return false;                                           // no room: the region is exhausted, the owner kicks (R5)
+    rocketnet_message_write_config_body( rn_region_send_write_pointer( region, d ), body );
+
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    descriptor->reliability = ROCKETNET_CHANNEL_TYPE_RELIABLE;  // code 2, CONTROL set at write (rn_ordered_item)
+    descriptor->flags |= RN_SEND_FLAG_CONTROL;
+    descriptor->bytes = ROCKETNET_MESSAGE_CONFIG_BYTES;
+    descriptor->fragments = 1;
+    descriptor->channel = 0;
+    descriptor->priority = ROCKETNET_PRIORITY_IMMEDIATE;
+    descriptor->ordering = 0;
+
+    // the head of channel 0's FIFO, and channel 0 at the head of the turns
+    rn_channel_send_t * send = region->channel_send;
+    const bool was_empty = send->queue_head == RN_DESCRIPTOR_NONE;
+    descriptor->next = send->queue_head;
+    send->queue_head = d;
+    if ( was_empty )
+        send->queue_tail = d;
+    send->queued[descriptor->priority]++;
+    if ( !was_empty )
+        rn_ready_remove( channels, 0 );
+    rn_ready_push_front( channels, 0 );
+
+    ordered->config_announced = 1;
+    return true;
+}
+
+// tla/RNEndpoint.tla OnPayload, the CONFIG half, with ConfigCompare: every
+// field of 13.4 compared; the first that differs ends the connection.
+int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record )
+{
+    if ( !ordered || !record )
+        return ROCKETNET_MESSAGE_ERROR_NONE;
+
+    rn_channels_t * channels = &ordered->channels;
+
+    struct rocketnet_message_config_body_t peer;
+    memset( &peer, 0, sizeof( peer ) );
+    if ( rocketnet_message_read_config_body( record->data, record->bytes, &peer ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        return channels->error;
+    }
+
+    const struct rocketnet_message_config_body_t * own = &ordered->config;
+    struct field_t { const char * name; uint32_t own, peer; };
+    const field_t fields[] =
+    {
+        { "version",            own->version,            peer.version },
+        { "enabled",            own->enabled,            peer.enabled },
+        { "num_channels",       own->num_channels,       peer.num_channels },
+        { "window_messages",    own->window_messages,    peer.window_messages },
+        { "receive_ring_bytes", own->receive_ring_bytes, peer.receive_ring_bytes },
+        { "max_message_bytes",  own->max_message_bytes,  peer.max_message_bytes },
+        { "fragment_bytes",     own->fragment_bytes,     peer.fragment_bytes },
+    };
+    for ( size_t i = 0; i < sizeof( fields ) / sizeof( fields[0] ); i++ )
+    {
+        if ( fields[i].own == fields[i].peer )
+            continue;
+        if ( channels->error == ROCKETNET_MESSAGE_ERROR_NONE )
+        {
+            rocketnet_error( "message CONFIG mismatch: %s is %u here and %u at the peer", fields[i].name, fields[i].own, fields[i].peer );
+            channels->error = ROCKETNET_MESSAGE_ERROR_CONFIG_MISMATCH;
+        }
+        return channels->error;
+    }
+
+    ordered->config_received = 1;
+    return ROCKETNET_MESSAGE_ERROR_NONE;
 }
 
 // ---------------------------------------------------------------
@@ -908,6 +1051,7 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
+// tla/RNChannel.tla WritePacket
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
     const rn_region_t * region = ordered->channels.region;
@@ -932,12 +1076,15 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
     item->descriptor = slot->descriptor;
     item->channel = descriptor->channel;
     item->code = descriptor->reliability;        // RNChannelTypes!WritePacket keeps code 2 on every resend
+    item->control = ( descriptor->flags & RN_SEND_FLAG_CONTROL ) ? 1 : 0;   // RNEndpoint WriteOk: CONFIG keeps CONTROL on every resend
     item->send_class = (uint8_t) send_class;
     item->priority = descriptor->priority < ROCKETNET_PACKET_BUILDER_LEVELS ? descriptor->priority : ROCKETNET_PRIORITY_MEDIUM;
     item->ring = (uint32_t) ( ( slot->ring_start % region->ring_bytes ) / 16 );
 
     if ( descriptor->fragments > 1 )
     {
+        // RNBlocks!SendRecord: the fragment carries its index, k - 1 and its
+        // own ring offset, p + index * F.
         item->block = 1;                                        // one chunk, in its own packet (8)
         item->alone = 1;
         item->fragment = slot->fragment;
@@ -988,7 +1135,7 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
             continue;
         }
 
-        const bool unsent = slot->last_send <= 0.0;
+        const bool unsent = rn_send_number_unsent_due( slot->last_send );
         if ( !unsent && !( now >= slot->last_send + delay ) )
             return true;
 
@@ -1076,6 +1223,8 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
         // RNChannelTypes!WritePacket: code 2 uses the same late, stable
         // reliable number and transport-ACK resend table as code 3.
+        // RNBlocks!NumberMessage: a block's k consecutive numbers and one
+        // contiguous span, fragment i at p + i * F, admitted once.
         if ( descriptor->fragments > 1 )
             numbers = rn_window_send_first_write_block( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start );
         else if ( rn_window_send_first_write( &ordered->send, descriptor->reliability, descriptor->bytes, d, &first, &ring_start ) == RN_WINDOW_SEND_NUMBERED )
@@ -1197,6 +1346,11 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
         // layer 4: the dispatch
         rn_delivery_t delivery;
         rn_channels_dispatch( channels, &record, &delivery );
+
+        // RNEndpoint OnPayload: a new CONFIG is compared with this end's own
+        // (10.3); its number is already released by the dispatch
+        if ( record.control && record.code == ROCKETNET_MESSAGE_CODE_RELIABLE )
+            rn_ordered_take_config( ordered, &record );
         if ( channels->error != ROCKETNET_MESSAGE_ERROR_NONE )
             return ROCKETNET_CHANNEL_VIOLATION;
         if ( rn_region_exhausted( channels->region ) )

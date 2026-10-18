@@ -102,7 +102,7 @@ static void reliable_sequenced_c_api_start_finish()
     {
         memcpy( data, "rs!", 3 );
         check( rocketnet_message_client_finish( client, 3 ) != 0 );
-        const uint32_t d = object->connections[0].region->channel_send[0].queue_head;
+        const uint32_t d = object->connections[0].region->channel_send[0].queue_tail;    // the head is the connection's CONFIG (CHANNELS.md 10.3)
         check( d != RN_DESCRIPTOR_NONE );
         check( object->connections[0].region->send_descriptors[d].reliability == ROCKETNET_RELIABLE_SEQUENCED );
     }
@@ -451,3 +451,125 @@ static void reliable_sequenced_no_allocation_after_create()
 }
 
 REGISTER_UNIT_TEST( reliable_sequenced_no_allocation_after_create );
+
+// A refused record dispatches nothing, raises its own refusal counter by one,
+// sets the sticky protocol violation and counts it once for the channel set.
+static void rs_check_refused( rs_node_t * node, const rocketnet_message_record_t * record, int counter )
+{
+    const uint64_t before = node->counters.values[counter];
+    const uint64_t violations_before = node->counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
+    rn_delivery_t out;
+    check( rn_channels_dispatch( &node->ordered.channels, record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( node->counters.values[counter] == before + 1 );
+    if ( counter != ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION )
+        check( node->counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == violations_before + 1 );
+    check( node->ordered.channels.deliveries == 0 );
+    check( node->ordered.channels.error == ROCKETNET_MESSAGE_ERROR_PROTOCOL_VIOLATION );
+}
+
+// RNChannelTypes!Dispatch: a sequenced record that names a channel the set
+// does not have, an ordering epoch at or beyond the window, a reliable number
+// the window never accepted, a ring span outside the receive ring, or a block
+// chunk of the wrong size is a wire violation (17.3 item 11). Implemented by
+// rn_channels_dispatch_sequenced and rn_sequenced_block in
+// sdk/rocketnet_channel_sequenced.cpp; each case uses a fresh node because the
+// violation is counted once per channel set.
+static void hostile_sequenced_records_are_refused()
+{
+    const uint8_t payload = 7;
+    uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES] = {};
+    uint32_t slot;
+
+    // (a) BAD_CHANNEL: code 1 on a channel past num_channels.
+    {
+        rs_node_t node;
+        rs_init( &node );
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &payload );
+        record.channel = node.ordered.channels.num_channels;
+        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL );
+        rn_arena_destroy( node.arena );
+    }
+
+    // (b) ORDERING_AHEAD: code 1 whose ordering is window epochs ahead.
+    {
+        rs_node_t node;
+        rs_init( &node );
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &payload );
+        record.ordering = node.region->window;
+        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD );
+        rn_arena_destroy( node.arena );
+    }
+
+    // (c) PROTOCOL_VIOLATION: code 4 number 5 that the window never accepted.
+    {
+        rs_node_t node;
+        rs_init( &node );
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 5, 0, 0, &payload );
+        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        rn_arena_destroy( node.arena );
+    }
+
+    // (d) BAD_RING: a future code-4 state whose ring offset is the ring's end.
+    {
+        rs_node_t node;
+        rs_init( &node );
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0, &payload );
+        record.ring = (uint32_t) ( node.region->ring_bytes / 16 );
+        check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
+        rn_arena_destroy( node.arena );
+    }
+
+    // (e) BAD_BLOCK: a non-last chunk shorter than ROCKETNET_MESSAGE_FRAGMENT_BYTES.
+    {
+        rs_node_t node;
+        rs_init( &node );
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 0, chunk );
+        record.block = 1;
+        record.fragment = 0;
+        record.fragments = 1;
+        record.bytes = 100;
+        record.ring = 0;
+        check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        rn_arena_destroy( node.arena );
+    }
+}
+
+REGISTER_UNIT_TEST( hostile_sequenced_records_are_refused );
+
+// RNChannelTypes!Dispatch: an in-turn code-4 state whose sequencing equals the
+// held block's is not newer, so it is superseded: discarded, its number
+// released, and the held block kept. Implemented by the delta == 0 branch of
+// rn_channels_dispatch_sequenced in sdk/rocketnet_channel_sequenced.cpp.
+static void equal_sequencing_at_a_held_block_is_superseded()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+    uint8_t chunk[ROCKETNET_MESSAGE_FRAGMENT_BYTES] = {};
+    const uint8_t equal = 9;
+    rn_delivery_t out;
+    uint32_t slot;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 0, chunk );
+    record.bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    record.block = 1;
+    record.fragment = 0;
+    record.fragments = 1;
+    record.ring = 0;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->receive_descriptors[0].live != 0 );
+
+    const uint64_t superseded_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 2, 0, 0, &equal );
+    record.ring = 200;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded_before + 1 );
+    check( receiver.region->receive_descriptors[slot].live == 0 );
+    check( receiver.region->receive_descriptors[0].live != 0 );
+    check( receiver.ordered.channels.deliveries == 0 );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( equal_sequencing_at_a_held_block_is_superseded );

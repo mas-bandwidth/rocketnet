@@ -7,6 +7,11 @@
 // Native implementation interface. None of these symbols is a public C export.
 struct rocketnet_platform_send_t;
 
+// A preference rank this large keeps a driver out of every auto order; a pin
+// still selects it. The loopback driver is pin-only: it is chosen only by an
+// explicit name, never by auto.
+#define ROCKETNET_DRIVER_PIN_ONLY 1000
+
 enum
 {
 #define ROCKETNET_DRIVER(symbol, name, discovers, operations, platforms, server, client) ROCKETNET_DRIVER_##symbol,
@@ -92,10 +97,11 @@ struct rocketnet_client_driver_operations_t
     // storage at packet_data + i * packet_stride, writing from[i] and
     // packet_bytes[i]; returns the count, zero when drained.
     int (*receive_batch)( void * driver, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
-    // optional, with wake; I/O thread only. Blocks until the socket is
-    // readable, a wake is set, or timeout_seconds pass; consumes the wake.
-    // Returns true when readable or woken.
-    bool (*wait)( void * driver, double timeout_seconds );
+    // optional, with wake; I/O thread only. Blocks until a wake is set,
+    // the socket is readable (only when readable is true), or
+    // timeout_seconds pass; consumes the wake. With readable false the
+    // socket's readiness is ignored. Returns true when woken or readable.
+    bool (*wait)( void * driver, bool readable, double timeout_seconds );
     // optional, with wait; any thread. Sets the level-triggered wake, so a
     // wait in progress or the next wait returns at once.
     void (*wake)( void * driver );
@@ -134,6 +140,7 @@ const char * rocketnet_driver_name( int driver );
 const char * rocketnet_driver_names();
 const char * rocketnet_driver_discovering_names();
 bool rocketnet_driver_discovers_bound_port( int driver );
+bool rocketnet_driver_pin_only( int driver );
 const int * rocketnet_server_driver_availability( int * num_available );
 const int * rocketnet_client_driver_availability( int * num_available );
 

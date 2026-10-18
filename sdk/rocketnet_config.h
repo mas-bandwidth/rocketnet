@@ -146,12 +146,12 @@ bool rocketnet_driver_ladder_parse( const char * value, const int * available, i
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from:
 //
-//               server                  client
-//   linux       xdp, gso, portable      portable
-//   macOS       msgx, portable          msgx, portable
-//   iOS         portable                portable
-//   windows     portable                portable
-//   BSDs        portable                portable
+//               server                            client
+//   linux       xdp, gso, io_uring, portable      portable
+//   macOS       msgx, portable                    msgx, portable
+//   iOS         portable                          portable
+//   windows     portable                          portable
+//   BSDs        portable                          portable
 //
 // (the staged linux drivers are server-side machinery; the client is the
 // platform socket everywhere, with the darwin batch pump where granted)

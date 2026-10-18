@@ -15,6 +15,7 @@
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // tla/RNWindow.tla).
 
+// tla/RNWindow.tla WritePacket
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
     if ( region && region->counters )
@@ -307,10 +308,10 @@ static void rn_window_ack_refresh_oldest( rn_window_ack_t * ack, double fallback
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
         if ( descriptor->in_use && rn_descriptor_has_first_send( descriptor ) )
             first_send = rn_descriptor_get_first_send( descriptor );
-        else if ( slot->last_send > 0.0 )
+        else if ( slot->last_send >= 0.0 )
             first_send = slot->last_send;
     }
-    else if ( slot->last_send > 0.0 )
+    else if ( slot->last_send >= 0.0 )
     {
         first_send = slot->last_send;
     }
@@ -447,6 +448,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 // tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
+// tla/RNReceipts.tla EmitAck
 static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, uint32_t status )
 {
     if ( serial == 0 )
@@ -484,6 +486,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
+// tla/RNReceipts.tla WritePacket
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -508,10 +511,10 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         const uint32_t slot_index = (uint32_t) ( n & ( W - 1 ) );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
-        if ( slot->last_send == 0.0 )
+        if ( rn_send_number_never_sent( slot->last_send ) )
             rn_window_ack_record_first_send( ack, slot, now );
 #if ROCKETNET_DEVELOPMENT
-        if ( slot->last_send > 0.0 )                        // a resend: not a first send, not a failed send's retry
+        if ( slot->last_send >= 0.0 )                       // a resend: not a first send, not a failed send's retry
             rn_window_ack_gaps_measure( ack, slot_index, slot->last_send, now );
 #endif // #if ROCKETNET_DEVELOPMENT
         slot->last_send = now;
@@ -567,6 +570,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     rn_sent_index_insert( region, packet_id, entry_index );
 }
 
+// tla/RNReceipts.tla WritePacket
 void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now )
 {
     rn_window_ack_commit( ack, packet_id, numbers, count, NULL, 0, now );
@@ -671,6 +675,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     return 1;
 }
 
+// tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -682,6 +687,7 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
     ack->receipt_visible_tail = ack->receipt_head;
 }
 
+// tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -707,6 +713,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     }
 }
 
+// tla/RNReceipts.tla TakeReceipt
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !ack || !out || capacity < 1 )
@@ -761,7 +768,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
         const uint32_t slot_index = (uint32_t) ( n & ( W - 1 ) );
         rn_send_number_t * slot = &region->send_numbers[slot_index];
         rocketnet_assert( slot->number == n );
-        if ( slot->last_send == 0.0 )
+        if ( rn_send_number_never_sent( slot->last_send ) )
             rn_window_ack_record_first_send( ack, slot, now );
         slot->last_send = due_now_sentinel;
         if ( !slot->acked )
