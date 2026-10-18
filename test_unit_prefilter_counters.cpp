@@ -33,6 +33,7 @@ static const int prefilter_kernel_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_INVALID_TYPE,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH,
     ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION,
+    ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
 };
 
 static void prefilter_counters_map_each_kernel_counter()
@@ -65,7 +66,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        5, 6, 7, 8, 9, 10, 11,
+        5, 6, 7, 8, 9, 10, 11, 12,
     };
     rocketnet_counters_apply_prefilter( &counters, prefilter );
     rocketnet_counters_apply_prefilter( &counters, prefilter );
@@ -74,7 +75,7 @@ static void prefilter_counters_are_assigned_not_added()
 
     const uint64_t smaller[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
     {
-        1, 2, 3, 4, 5, 6, 7,
+        1, 2, 3, 4, 5, 6, 7, 8,
     };
     rocketnet_counters_apply_prefilter( &counters, smaller );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
