@@ -627,11 +627,11 @@ wire representation.
    range for every message send, and a message endpoint MUST refuse a send
    with a channel outside it. The configured count MUST NOT exceed the row
    num channels maximum.
-2. A record with code 1, 3 or 4 MUST carry the channel field in [m3 Record
-   format](#m3). Receipt types use their base codes from [m1.3 Reliability
-   types](#m1.3): type 7 uses code 3 and carries a channel; types 5 and 6 use
-   codes 0 and 2 and carry none. A promoted type-5 send uses code 2 and carries
-   no channel.
+2. A record with code 1, 3 or 4 MUST carry the channel field in
+   [m3 Record format](#m3). Receipt types use their base codes from
+   [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
+   types 5 and 6 use codes 0 and 2 and carry none. A promoted type-5 send uses
+   code 2 and carries no channel.
 3. A sender MUST encode a channel that fits in u8 as one byte. A sender MUST
    encode a larger channel as a little-endian u16 and MUST set WIDE if and only
    if it uses that u16 encoding. A receiver MUST reject WIDE when the channel
