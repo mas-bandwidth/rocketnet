@@ -335,11 +335,10 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const uint64_t token_now = (uint64_t) time( NULL );
-
     for ( int i = 0; i < num_clients; i++ )
     {
         uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        const uint64_t token_now = (uint64_t) time( NULL );
         if ( !rocketnet_write_dev_connect_token( server_address, (uint64_t) ( i + 1 ), token_now, connect_token ) )
         {
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
