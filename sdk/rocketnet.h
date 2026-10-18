@@ -41,6 +41,9 @@
 
 #endif // !ROCKETNET_DEVELOPMENT
 
+/** @brief Maximum client count supported by the server configuration.
+ * @details Server max_clients accepts values from 1 through this compile-time limit.
+ */
 #define ROCKETNET_MAX_CLIENTS                                       1000
 
 
@@ -52,7 +55,13 @@
 // wire header (rocketnet_wire.h) derives the same two numbers from the same
 // MTU, and rocketnet_constants.h asserts they agree.
 
+/** @brief Maximum UDP payload size in bytes for the IPv4 receive ceiling.
+ * @details This is 1472 bytes: a 1500-byte MTU minus the 20-byte IPv4 and 8-byte UDP headers.
+ */
 #define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 20 - 8 )
+/** @brief Maximum UDP payload size in bytes for the IPv6 send budget.
+ * @details This is 1452 bytes: a 1500-byte MTU minus the 40-byte IPv6 and 8-byte UDP headers.
+ */
 #define ROCKETNET_MAX_PACKET_BYTES_IPV6                ( 1500 - 40 - 8 )
 
 // a compile-time assert that also builds in C compilers without C11 mode
@@ -81,6 +90,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES_IPV6 <= ROCKETNET_MAX_PACKET
 #define ROCKETNET_ADDRESS_IPV4                                         1
 #define ROCKETNET_ADDRESS_IPV6                                         2
 
+/** @brief Capacity in bytes of address strings stored in transport configurations.
+ * @details The capacity includes the terminating NUL byte.
+ */
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                          256
 
 #define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
@@ -540,7 +552,13 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 // are internal constants this header cannot see: the values are written here
 // with their derivation, and rocketnet_constants.h asserts each equals it.
 
+/** @brief Default maximum send payload size in bytes before fragmentation.
+ * @details The value is the largest multiple of eight within the IPv6 send budget after fixed packet and minimum acknowledgement overhead.
+ */
 #define ROCKETNET_MAX_PAYLOAD_BYTES                        1416    // ( ( 1452 - 26 - 7 ) / 8 ) * 8
+/** @brief Maximum receive payload size in bytes accepted by this build.
+ * @details The value is the IPv4 receive ceiling after fixed packet and minimum acknowledgement overhead.
+ */
 #define ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES                1439    // 1472 - 26 - 7
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PAYLOAD_BYTES % 8 == 0, "the payload capacity is a multiple of eight" );
@@ -636,6 +654,10 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 
 /** @brief Defines the client transport settings and their defaults.
  * @details The table supplies field storage, environment overrides, range validation, and default values. Zero in the two integer fields selects the built-in value.
+ * @param INT_FIELD Expands an integer field with its name, default, minimum, maximum, and flags.
+ * @param UINT64_FIELD Expands a 64-bit integer field with its name, default, and flags.
+ * @param BYTES_FIELD Expands a fixed-size byte field with its name, size, default, and flags.
+ * @param STRING_FIELD Expands a fixed-capacity string field with its name, capacity, default, and flags.
  */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     /** @brief Per-title 4-byte filter discriminator; defaults to ROCKETNET_TEST_FILTER_VALUE. A mismatch prevents peers configured for different titles from accepting one another. */ \
@@ -665,13 +687,30 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
 
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 
-// Internal to the SDK: the one read and the one write every sized entry point
-// makes (docs/ABI-EVOLUTION.md 3). write copies the first config_bytes of
-// defaults into config; read sets config to defaults, then copies the first
-// source_bytes of source over it. Each returns 1, or 0 with a log line naming
-// type when the size is not in known (and then write leaves config untouched,
-// read leaves it at the defaults).
+/** @brief Copy a known-sized prefix of defaults into a configuration.
+ * @details Returns zero and logs the type if config_bytes is not a size listed in known or exceeds defaults_bytes; on success copies exactly config_bytes. The pointers must reference valid storage of the stated sizes.
+ * @param type Configuration type name used in the refusal log.
+ * @param config Writable destination buffer with at least config_bytes bytes.
+ * @param config_bytes Number of destination bytes to write; must be a known size.
+ * @param defaults Source defaults buffer with at least defaults_bytes bytes.
+ * @param defaults_bytes Size of the defaults buffer.
+ * @param known Array of accepted configuration sizes.
+ * @param num_known Number of entries in known.
+ * @return 1 when the size is accepted and the prefix is copied; otherwise 0 and config is unchanged.
+ */
 int rocketnet_config_write_sized( const char * type, void * config, size_t config_bytes, const void * defaults, size_t defaults_bytes, const size_t * known, int num_known );
+/** @brief Initialize a configuration from defaults and overlay a known-sized prefix.
+ * @details First copies defaults_bytes from defaults to config. If source_bytes is not listed in known or exceeds defaults_bytes, it logs the type and returns zero with config left at defaults; otherwise it overlays source_bytes from source. The pointers must reference valid storage of the stated sizes.
+ * @param type Configuration type name used in the refusal log.
+ * @param config Writable destination buffer with at least defaults_bytes bytes.
+ * @param defaults Source defaults buffer with at least defaults_bytes bytes.
+ * @param defaults_bytes Size of the defaults and destination buffers.
+ * @param source Configuration prefix buffer with at least source_bytes bytes.
+ * @param source_bytes Number of source bytes to overlay; must be a known size.
+ * @param known Array of accepted configuration sizes.
+ * @param num_known Number of entries in known.
+ * @return 1 when the source size is accepted and overlaid; otherwise 0 and config contains defaults.
+ */
 int rocketnet_config_read_sized( const char * type, void * config, const void * defaults, size_t defaults_bytes, const void * source, size_t source_bytes, const size_t * known, int num_known );
 
 // The client connects with a token, never an address: the token names the
@@ -979,6 +1018,10 @@ typedef int (*rocketnet_server_admission_callback_t)( void * context, const stru
 // The handshake deadline is fixed at the challenge, never refreshed, and discharged on connect.
 /** @brief Defines the server transport settings and their defaults.
  * @details The table supplies field storage, environment overrides, range validation, and default values. Zero for queue, CPU, payload, or slot counts selects the built-in value. Driver-specific limits are checked at creation and refused, never clamped.
+ * @param INT_FIELD Expands an integer field with its name, default, minimum, maximum, and flags.
+ * @param UINT64_FIELD Expands a 64-bit integer field with its name, default, and flags.
+ * @param BYTES_FIELD Expands a fixed-size byte field with its name, size, default, and flags.
+ * @param STRING_FIELD Expands a fixed-capacity string field with its name, capacity, default, and flags.
  */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     /** @brief Protocol identifier embedded in connection authentication; defaults to zero. Peers with a different identifier cannot connect. */ \
@@ -1590,10 +1633,10 @@ namespace rocketnet
 // config, and the sizing of one connection's region, callable before any
 // connect. The client and server objects follow the counters below.
 
+#ifndef ROCKETNET_MAX_CHANNELS
 /** @brief Maximum channel count accepted by this build.
  * @details Defaults to 32 and may be overridden at compile time from 1 through 65536. Both endpoints must use compatible message configuration.
  */
-#ifndef ROCKETNET_MAX_CHANNELS
 #define ROCKETNET_MAX_CHANNELS                                         32
 #endif // #ifndef ROCKETNET_MAX_CHANNELS
 
@@ -1677,6 +1720,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 
 /** @brief Defines message-layer settings, defaults, and validation ranges.
  * @details Fields marked WIRE must match at both endpoints. Validation refuses range and cross-field violations instead of clamping.
+ * @param INT_FIELD Expands an integer field with its name, default, minimum, maximum, and flags.
+ * @param UINT64_FIELD Expands a 64-bit integer field with its name, default, and flags.
+ * @param BYTES_FIELD Expands a fixed-size byte field with its name, size, default, and flags.
+ * @param STRING_FIELD Expands a fixed-capacity string field with its name, capacity, default, and flags.
  */
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     /** @brief Number of message channels; defaults to 32 and must be 1 through ROCKETNET_MAX_CHANNELS. This wire field must agree at both endpoints; invalid values are refused. */ \
