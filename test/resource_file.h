@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <stdio.h>
 #include <string>
 
@@ -37,19 +38,25 @@ inline std::string rocketnet_test_wide_to_utf8( const wchar_t * text, int length
         return "";
     return utf8;
 }
+#else
+inline std::wstring rocketnet_test_utf8_to_wide( const std::string & text )
+{
+    return std::wstring( text.begin(), text.end() );
+}
+#endif
 
 inline std::wstring rocketnet_test_wide_path( const std::string & path )
 {
     std::wstring wide = rocketnet_test_utf8_to_wide( path );
-    if ( wide.size() >= MAX_PATH && wide.compare( 0, 4, L"\\\\?\\" ) != 0 )
-    {
-        if ( wide.compare( 0, 2, L"\\\\" ) == 0 )
-            return L"\\\\?\\UNC" + wide.substr( 1 );
-        return L"\\\\?\\" + wide;
-    }
-    return wide;
+    if ( wide.empty() || wide.compare( 0, 4, L"\\\\?\\" ) == 0 )
+        return wide;
+    std::replace( wide.begin(), wide.end(), L'/', L'\\' );
+    if ( wide.compare( 0, 4, L"\\\\?\\" ) == 0 )
+        return wide;
+    if ( wide.compare( 0, 2, L"\\\\" ) == 0 )
+        return L"\\\\?\\UNC" + wide.substr( 1 );
+    return L"\\\\?\\" + wide;
 }
-#endif
 
 inline FILE * rocketnet_test_fopen( const std::string & path, const char * mode )
 {

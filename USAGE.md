@@ -330,6 +330,14 @@ docs/CHANNELS.md, section 11.5 for what is built.
 `rocketnet_server_transport_client_stats` report rtt and jitter in milliseconds,
 packet loss as a percentage, and trailing rates.
 
+Both those calls, and `rocketnet_server_transport_stats`, also report
+cumulative wire totals: `packets_sent`, `packets_received`, `bytes_sent` and
+`bytes_received`, in datagrams and bytes including the IP and UDP headers the
+send budget counts. The client's totals cover its current connection; the
+server's per-client totals cover the slot's current connection and reset when
+a new connection takes the slot; the server's own totals cover the transport's
+lifetime.
+
 **Read the rtt number for what it is: a floor, not a current reading.** Sampling
 is continuous — since #84 closed, the first ack block acknowledging each sent
 sequence yields a sample — but the published figure is not the latest sample. It
