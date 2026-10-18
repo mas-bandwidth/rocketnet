@@ -5539,6 +5539,74 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
     rocketnet_platform_socket_destroy( sender );
 }
 
+// The Linux client's mmsg batch send/receive (#client-io-linux-mmsg): two
+// loopback sockets, 100 datagrams of distinct sizes 20..119 in one
+// send_packets_mmsg call, receive_packets_mmsg with max 64 returning them
+// in order over two calls byte-exact with the sender's address, and an
+// empty socket returning 0. A real socket pair, so this case lives in the
+// functional tier.
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_address_parse( &bind_address, "0.0.0.0" );
+    rocketnet_platform_socket_t * receiver = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( receiver );
+
+    rocketnet_address_t sender_bind;
+    rocketnet_address_parse( &sender_bind, "127.0.0.1" );
+    rocketnet_platform_socket_t * sender = rocketnet_platform_socket_create( NULL, &sender_bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 64*1024, 64*1024 );
+    rocketnet_check( sender );
+
+    const int num_packets = 100;
+    const int stride = 256;
+    static uint8_t send_data[100][128];
+    static uint8_t receive_data[100][stride];
+    static rocketnet_address_t from[100];
+    static int packet_bytes[100];
+
+    struct rocketnet_platform_send_t sends[100];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        const int bytes = 20 + i;
+        for ( int j = 0; j < bytes; j++ )
+            send_data[i][j] = (uint8_t) ( i + j );
+        sends[i].to = &bind_address;
+        sends[i].packet_data = send_data[i];
+        sends[i].packet_bytes = bytes;
+    }
+    rocketnet_platform_socket_send_packets_mmsg( sender, sends, num_packets );
+
+    int received = 0;
+    double start_time = rocketnet_platform_time();
+    while ( received < num_packets && rocketnet_platform_time() - start_time < 5.0 )
+    {
+        const int got = rocketnet_platform_socket_receive_packets_mmsg( receiver, from + received, receive_data[received], stride, packet_bytes + received, 64 );
+        if ( got == 0 )
+            rocketnet_platform_sleep( 0.001 );
+        received += got;
+    }
+    rocketnet_check( received == num_packets );
+
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        rocketnet_check( rocketnet_address_equal( &from[i], &sender_bind ) );
+        const int bytes = 20 + i;
+        rocketnet_check( packet_bytes[i] == bytes );
+        for ( int j = 0; j < bytes; j++ )
+            rocketnet_check( receive_data[i][j] == (uint8_t) ( i + j ) );
+    }
+
+    rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
+
+    rocketnet_platform_socket_destroy( sender );
+    rocketnet_platform_socket_destroy( receiver );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 // The kqueue wake beside a real socket on macOS and iOS: the EVFILT_USER
 // trigger is set and consumed, the socket's EVFILT_READ is seen only when
 // readable is true (the filter is disabled and enabled in the wait's own
@@ -5657,6 +5725,7 @@ ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_driver_pump_alias, "test_dr
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_linux_wakes_and_reads, "platform_wake_linux_wakes_and_reads", "linux only: the eventfd wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_handoff_round_trip, "client_io_linux_handoff_round_trip", "linux only: the portable client I/O wake is not built on this platform" )
 ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_platform_wake_apple_wakes_and_reads, "platform_wake_apple_wakes_and_reads", "mac and ios only: the kqueue wake is not built on this platform" )
+ROCKETNET_FUNCTIONAL_SKIP( rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip, "client_io_linux_mmsg_batch_round_trip", "linux only: the mmsg batch pump is not built on this platform" )
 
 
 // A maximum-size packet crosses a 1500-MTU link, whole and unfragmented, on
@@ -5884,6 +5953,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "platform_wake_linux_wakes_and_reads", rocketnet_test_platform_wake_linux_wakes_and_reads },
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "platform_wake_linux_wakes_and_reads", rocketnet_functional_skip_platform_wake_linux_wakes_and_reads },
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "client_io_linux_mmsg_batch_round_trip", rocketnet_test_client_io_linux_mmsg_batch_round_trip },
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "client_io_linux_mmsg_batch_round_trip", rocketnet_functional_skip_client_io_linux_mmsg_batch_round_trip },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "platform_wake_apple_wakes_and_reads", rocketnet_test_platform_wake_apple_wakes_and_reads },
