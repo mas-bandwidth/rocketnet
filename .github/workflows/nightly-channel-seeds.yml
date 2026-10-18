@@ -21,9 +21,14 @@ jobs:
   channel-seed-sweep:
     runs-on: ["self-hosted", "Linux", "X64", "fleet"]
     timeout-minutes: 60
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Build
         run: make
@@ -37,6 +42,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: channel-seed-sweep-log
+          name: channel-seed-sweep-log-${{ replace(matrix.ref, '/', '-') }}
           path: channel-seed-sweep.log
           if-no-files-found: ignore
