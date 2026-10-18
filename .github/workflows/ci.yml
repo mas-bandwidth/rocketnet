@@ -65,7 +65,7 @@
 #   big-endian              the suite on real big-endian bytes (s390x), the
 #                           only leg that can see an endianness break before
 #                           a customer does
-#   conformance             STANDARD.md against the implementation
+#   conformance             STANDARD.md and standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
 #                           control -- once per OS, on the Release build,
@@ -245,7 +245,14 @@ jobs:
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
-        run: ROCKETNET_DRIVER=portable ./bin/functional
+        env:
+          ROCKETNET_SERVER_DRIVER: portable
+          ROCKETNET_CLIENT_DRIVER: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
@@ -459,8 +466,12 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_DRIVER: iocp
-        run: ./bin/Release/functional.exe
+          ROCKETNET_SERVER_DRIVER: iocp
+        run: |
+          set -o pipefail
+          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run lifecycle unit binary
         if: matrix.leg == 'a'
@@ -968,6 +979,14 @@ jobs:
 
       - name: Verify STANDARD.md against the implementation
         run: python3 tools/conformance/check_standard.py
+
+      # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
+      # standard/STYLE.md, every pinned constant against the compiler, every
+      # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
+      # the cross-references and the normative language. Pending sections are
+      # listed, not failed. One compile; well under ten seconds.
+      - name: Verify the RocketNet standard against the implementation
+        run: python3 tools/conformance/check_rn_standard.py
 
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
