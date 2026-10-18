@@ -567,7 +567,16 @@
     /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
     /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
     /* appended: indices are the contract. */ \
-    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE ) \
+    \
+    /* An UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT send */ \
+    /* too big for one packet's record is promoted to its reliable twin, as */ \
+    /* RakNet's ReliabilityLayer does. EXPECTED: promotion is the normal path */ \
+    /* for a large unreliable send, one count per send. appended: indices are */ \
+    /* the contract. */ \
+    X( MESSAGE_PROMOTED_UNRELIABLE, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED, EXPECTED, NONE ) \
+    X( MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT, EXPECTED, NONE )
 
 enum
 {
