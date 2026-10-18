@@ -12232,7 +12232,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_level( empty_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function );
 
-    rocketnet_check( config.max_clients == 64 );
+    rocketnet_check( config.max_clients == 1000 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
 #else // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -12562,7 +12562,7 @@ void rocketnet_test_config_override_logging()
     // secret's encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 64)" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY=(redacted)" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces (redacted))" ) != NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );
