@@ -12,13 +12,14 @@
 
 #include <stdint.h>
 
-/** An internet endpoint with an IPv4 or IPv6 address and a host-order port.
- * @details IPv4 bytes are in network order; IPv6 words are host-order 16-bit groups. Callers synchronize concurrent access to a shared address object.
- */
 #ifndef ROCKETNET_ADDRESS_ALREADY_DEFINED
 #define ROCKETNET_ADDRESS_ALREADY_DEFINED
+/** @brief An internet endpoint with an IPv4 or IPv6 address and a host-order port.
+ * @details IPv4 bytes are in network order; IPv6 words are host-order 16-bit groups. Callers synchronize concurrent access to a shared address object.
+ */
 struct rocketnet_address_t
 {
+    /** @brief Storage for the address selected by type. */
     union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data; ///< Address bytes or groups selected by type.
     uint16_t port; ///< Port from 0 through 65535; zero means no explicit port.
     uint8_t type; ///< ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6.
