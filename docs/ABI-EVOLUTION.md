@@ -169,7 +169,8 @@ declarations before its first call. They pin this rule three ways:
 
 ## 7. Not Yet Sized
 
-The config-reading queries (`rocketnet_server_transport_required_memory`,
+The config-reading queries (`rocketnet_client_transport_required_memory`,
+`rocketnet_server_transport_required_memory`,
 `rocketnet_server_transport_dev_config`, `rocketnet_message_validate_config`,
 `rocketnet_message_connection_bytes`, `rocketnet_message_connection_sizing`,
 `rocketnet_message_print_connection_sizing`,
@@ -178,3 +179,9 @@ The config-reading queries (`rocketnet_server_transport_required_memory`,
 revision 1 they read exactly the struct a caller has; the revision that first
 grows a config struct gives each of them a sized form by this rule, in the
 same change.
+
+The status-reporting creates (`rocketnet_client_transport_create_ex` and
+`rocketnet_server_transport_create_ex`) have no sized form either: the sized
+creates write no status code, a size refusal included, and
+`rocketnet_server_transport_create_sized` creates at time 0.0 as the unsized
+create does. A sized `_ex` form follows the same rule when a caller needs both.
