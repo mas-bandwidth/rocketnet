@@ -23,17 +23,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nightly-leaks-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   leaks:
     name: asan + ubsan + lsan (full suite)
     runs-on: [self-hosted, Linux, X64, fleet]
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-leaks-${{ matrix.ref }}
+      cancel-in-progress: true
     steps:
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Install dependencies
         if: runner.environment == 'github-hosted'
@@ -84,7 +88,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-leaks-logs
+          name: nightly-leaks-logs-${{ replace(matrix.ref, '/', '-') }}
           path: |
             test.log
             test_portable.log
