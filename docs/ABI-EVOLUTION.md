@@ -110,7 +110,7 @@ macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 
 | Struct | Direction | Revision 1 | Revision 1 last field | Sized |
 | :--- | :--- | ---: | :--- | :--- |
-| `rocketnet_client_transport_config_t` | in | 88 | `state_change_callback` | yes |
+| `rocketnet_client_transport_config_t` | in | 96 | `time_callback` | yes |
 | `rocketnet_server_transport_config_t` | in | 456 | `handshake_deadline_seconds` | yes |
 | `rocketnet_message_config_t` | in | 60 | `reliable_timeout_ms` | yes |
 | `rocketnet_client_transport_stats_t` | out | 28 | `bandwidth_received_kbps` | no |
@@ -121,9 +121,15 @@ macOS arm64, Windows x86_64; `docs/PLATFORMS.md`). On any target,
 | `rocketnet_message_receipt_t` | out, in an array | 8 | `status` | no |
 
 The client transport config's table (`ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE`)
-is followed by `state_change_callback`, a pointer outside the table. A field
-added to that config goes after `state_change_callback`, never into the table
-in front of it, because the table's fields are not the end of the struct.
+is followed by `state_change_callback` and `time_callback`, pointers outside
+the table. A field added to that config goes after `time_callback`, never into
+the table in front of it, because the table's fields are not the end of the
+struct.
+
+Revision 1 is the layout of the first release that carries the sized entry
+points. `time_callback` joins the client config before that release, so it is
+part of revision 1, not a revision of its own; a revision is added only for a
+layout that a release has already shipped with the sized entry points.
 
 The structs marked "no" have no sized entry points, so their revision 1 layout
 is frozen: a field added to one of them is an incompatible change until its

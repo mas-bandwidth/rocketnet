@@ -122,6 +122,7 @@ static void sized_config_accepts_every_known_size()
         check( memcmp( read.filter_value, defaults.filter_value, sizeof( read.filter_value ) ) == 0 );
         check( strcmp( read.driver, defaults.driver ) == 0 );
         check( read.state_change_callback == NULL );
+        check( read.time_callback == NULL );
     }
 
     // the current size reads the whole struct

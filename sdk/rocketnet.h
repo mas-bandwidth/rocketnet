@@ -694,7 +694,7 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_default_config( struct roc
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_client_transport_required_memory( const struct rocketnet_client_transport_config_t * config, const char * driver );
 
 // docs/ABI-EVOLUTION.md 4: the sizes this struct has had, oldest first.
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, state_change_callback ) + sizeof( void * ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ), sizeof( void * ) )
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1
 
 // the defaults for a caller whose struct is config_bytes long, one of the
