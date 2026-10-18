@@ -55,9 +55,9 @@
            --unwinding-assertions
     Unwinding: 64. The longest loop on these paths is the 32-byte key
     write in the associated data writer.
-    Solver: --arrays-uf-always. Without it the payload, record and
-    dispatcher harnesses exhaust 30 GB of memory on the symbolic-length
-    copies out of the 1472-byte opened buffer.
+    Solver: --arrays-uf-always and --slice-formula (results.md says why:
+    memory on the payload copies without the first, a CBMC 6.6.0 internal
+    failure on the dispatcher with the first alone).
 
     Reversed witnesses: built with -DPROOF_WITNESS, every harness must fail
     exactly its witness assertions (proof.mk checks it), so each accepting
@@ -128,6 +128,13 @@ static void proof_assert_function( const char * condition, const char * function
 
 void ( * rocketnet_assert_function_pointer )( const char * condition, const char * function, const char * file, int line ) = proof_assert_function;
 
+/* the outcome of the last model call, so a harness can assert that an
+   accepted packet passed the check the model stands for */
+
+static int proof_last_memcmp = 1;
+static int proof_last_decrypt = 1;
+static int proof_last_block_bytes = -1;
+
 /* logging: the readers' log calls do nothing */
 
 void rocketnet_info( const char * format, ... ) { (void) format; }
@@ -159,6 +166,7 @@ int sodium_memcmp( const void * const b1_, const void * const b2_, size_t len )
     __CPROVER_assert( PROOF_R_OK( b2_, len ), "memcmp reads its second buffer" );
     int result = nondet_int();
     __CPROVER_assume( result == 0 || result == -1 );
+    proof_last_memcmp = result;
     return result;
 }
 
@@ -195,6 +203,7 @@ int crypto_aead_chacha20poly1305_ietf_decrypt( unsigned char * m, unsigned long 
 
     int ok = nondet_int();
     __CPROVER_assume( ok == 0 || ok == -1 );
+    proof_last_decrypt = ok;
     if ( ok != 0 )
         return -1;
 
@@ -209,6 +218,8 @@ int crypto_aead_chacha20poly1305_ietf_decrypt( unsigned char * m, unsigned long 
 int crypto_generichash( unsigned char * out, size_t outlen, const unsigned char * in, unsigned long long inlen,
                         const unsigned char * key, size_t keylen )
 {
+    __CPROVER_assert( outlen >= 16 && outlen <= 64, "generichash output length is in libsodium's range" );
+    __CPROVER_assert( keylen <= 64, "generichash key length is in libsodium's range" );
     __CPROVER_assert( PROOF_R_OK( in, inlen ), "generichash reads its input" );
     __CPROVER_assert( PROOF_R_OK( key, keylen ), "generichash reads its key" );
     __CPROVER_assert( PROOF_W_OK( out, outlen ), "generichash writes its output" );
@@ -250,6 +261,7 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
     __CPROVER_assert( data_bytes >= 0, "block read is given a length that is not negative" );
     __CPROVER_assert( PROOF_R_OK( data, data_bytes ), "block read may read only the opened plaintext" );
 
+    proof_last_block_bytes = 0;
     if ( data_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || nondet_int() )
         return 0;
 
@@ -271,6 +283,7 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
     block->largest = largest;
     block->first_range_length = first_range_length;
     block->num_ranges = num_ranges;
+    proof_last_block_bytes = block_bytes;
     return block_bytes;
 }
 
@@ -298,6 +311,7 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     __CPROVER_assert( block->largest == 0 || ( block->first_range_length >= 1 && block->first_range_length <= block->largest ),
         "process block is given a first range the read validated" );
     __CPROVER_assert( acked_capacity >= 0, "process block capacity is not negative" );
+    __CPROVER_assert( *acked_count >= 0 && *acked_count <= acked_capacity, "process block is given an acked count inside its batch" );
     __CPROVER_assert( PROOF_W_OK( acked_packet_ids, (size_t) acked_capacity * sizeof(uint64_t) ), "process block can write its acked batch" );
     __CPROVER_assert( PROOF_W_OK( acked_count, sizeof(int) ), "process block writes its acked count" );
     __CPROVER_assert( PROOF_W_OK( unknown_sequence_counter, sizeof(uint64_t) ), "process block writes its unknown counter" );
@@ -430,10 +444,13 @@ void harness_process_cookie( void )
          state_before != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
         __CPROVER_assert( result == 0 && client->state == state_before, "a cookie in the wrong state is refused and changes nothing" );
     if ( result == 1 )
+        __CPROVER_assert( proof_last_memcmp == 0, "a cookie is accepted only when its echoed salt matches" );
+    if ( result == 1 )
         __CPROVER_assert( client->has_cookie == 1 &&
                           client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST,
                           "an accepted cookie is stored and the client sends requests" );
     PROOF_REACHED( result == 1, "a cookie is accepted" );
+    PROOF_REACHED( result == 1 && state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE, "a cookie moves the client out of requesting cookie" );
 }
 
 /* challenge: accepted only at exactly 66 bytes in sending connection request */
@@ -445,7 +462,18 @@ void harness_process_challenge( void )
     uint8_t * packet = proof_packet( &packet_bytes );
     const int state_before = client->state;
 
+    const uint64_t highest_before = client->replay_handshake.highest_opened;
+    proof_last_decrypt = 1;
+
     const int result = rocketnet_client_process_challenge( client, packet, packet_bytes, 1000.0 );
+
+    if ( result == 1 )
+    {
+        const uint8_t * q = packet + ROCKETNET_PREFILTER_BYTES;
+        __CPROVER_assert( rocketnet_reconstruct_sequence( rocketnet_read_uint32( &q ), highest_before ) != 0,
+                          "a challenge at sequence zero is refused" );
+        __CPROVER_assert( proof_last_decrypt == 0, "a challenge that does not open is refused" );
+    }
 
     __CPROVER_assert( result == 0 || result == 1, "challenge returns 0 or 1" );
     if ( packet_bytes != ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
@@ -468,7 +496,18 @@ void harness_process_denied( void )
     uint8_t * packet = proof_packet( &packet_bytes );
     const int state_before = client->state;
 
+    const uint64_t highest_before = client->replay_handshake.highest_opened;
+    proof_last_decrypt = 1;
+
     const int result = rocketnet_client_process_denied( client, packet, packet_bytes, 1000.0 );
+
+    if ( result == 1 )
+    {
+        const uint8_t * q = packet + ROCKETNET_PREFILTER_BYTES;
+        __CPROVER_assert( rocketnet_reconstruct_sequence( rocketnet_read_uint32( &q ), highest_before ) != 0,
+                          "a denied at sequence zero is refused" );
+        __CPROVER_assert( proof_last_decrypt == 0, "a denied that does not open is refused" );
+    }
 
     __CPROVER_assert( result == 0 || result == 1, "denied returns 0 or 1" );
     if ( packet_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
@@ -536,6 +575,20 @@ void harness_open_session_packet( void )
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = -1;
 
+    /* the sequence this packet names and whether the window already holds
+       it, both read before the call moves the window */
+    uint64_t named_sequence = 0;
+    int named_already_received = 0;
+    if ( packet_bytes >= ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES )
+    {
+        const uint8_t * q = packet + ROCKETNET_PREFILTER_BYTES;
+        named_sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &q ), client->replay_session.highest_opened );
+        if ( named_sequence != 0 )
+            named_already_received = rocketnet_replay_already_received( &client->replay_session, named_sequence );
+    }
+    proof_last_decrypt = 1;
+    proof_last_block_bytes = -1;
+
     const int type_data_bytes = rocketnet_client_open_session_packet( client, packet_type, &type_counters,
                                                                       min_wire_bytes, expected_type_data_bytes,
                                                                       packet, packet_bytes, 1000.0,
@@ -548,6 +601,19 @@ void harness_open_session_packet( void )
         __CPROVER_assert( type_data_bytes == -1 && client->state == state_before, "a session packet outside the session states is refused" );
     if ( type_data_bytes >= 0 )
     {
+        __CPROVER_assert( named_sequence != 0, "a session packet at sequence zero is refused" );
+        __CPROVER_assert( !named_already_received, "a replayed session packet is refused" );
+        __CPROVER_assert( proof_last_decrypt == 0, "a session packet that does not open is refused" );
+        __CPROVER_assert( proof_last_block_bytes > 0 && proof_last_block_bytes == type_data_offset,
+                          "a session packet whose ack block is refused is refused" );
+        if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
+        {
+            const uint8_t * q = opened + type_data_offset;
+            const int index = (int) rocketnet_read_uint32( &q );
+            const int slots = (int) rocketnet_read_uint32( &q );
+            __CPROVER_assert( index >= 0 && index < slots && slots <= ROCKETNET_MAX_CLIENTS,
+                              "a keep-alive with an invalid index or slot count is refused" );
+        }
         __CPROVER_assert( type_data_offset >= ROCKETNET_ACK_BLOCK_MIN_BYTES, "the type data follows at least the minimum ack block" );
         __CPROVER_assert( type_data_offset + type_data_bytes == packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES,
                           "the block and the type data fill the opened plaintext exactly" );
@@ -588,6 +654,7 @@ void harness_process_keep_alive( void )
                           client->max_clients <= ROCKETNET_MAX_CLIENTS,
                           "the first keep-alive connects with a valid slot" );
     PROOF_REACHED( result == 1, "a keep-alive is accepted" );
+    PROOF_REACHED( result == 1 && state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE, "a keep-alive connects the client" );
 }
 
 void harness_process_payload( void )

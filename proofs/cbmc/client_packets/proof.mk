@@ -4,7 +4,9 @@
 # the readers on the nightly list. Each harness runs on the full bound,
 # 0..ROCKETNET_MAX_PACKET_BYTES bytes; results.md records each result.
 # Each harness then runs again with -DPROOF_WITNESS, where it must fail
-# exactly its "witness:" assertions: its accepting path is reachable.
+# exactly its "witness:" assertions (its accepting paths are reachable);
+# otherwise its one line reads VERIFICATION FAILED. A timeout also reads
+# VERIFICATION FAILED, with the reason.
 
 NIGHTLY += proofs-client_packets
 
@@ -44,11 +46,10 @@ proofs-client_packets:
 	    elif grep -q "VERIFICATION FAILED" "$$output"; then \
 	        verdict="VERIFICATION FAILED"; cat "$$output"; \
 	    elif [ $$status -eq 124 ]; then \
-	        verdict="TIMED OUT after $(CLIENT_PACKETS_TIMEOUT)s"; \
+	        verdict="VERIFICATION FAILED (timed out after $(CLIENT_PACKETS_TIMEOUT)s)"; \
 	    else \
-	        verdict="FAILED (exit $$status)"; cat "$$output"; \
+	        verdict="VERIFICATION FAILED (cbmc exit $$status)"; cat "$$output"; \
 	    fi; \
-	    echo "$$harness $$verdict"; \
 	    rm -f "$$output"; \
 	    if [ $$status -ne 0 ]; then failed=1; fi; \
 	    output=$$(mktemp); \
@@ -58,11 +59,13 @@ proofs-client_packets:
 	        $(CLIENT_PACKETS_SOURCE) > "$$output" 2>&1 || status=$$?; \
 	    failures=$$(grep -c ": FAILURE$$" "$$output"); \
 	    witnesses=$$(grep ": FAILURE$$" "$$output" | grep -c "witness: "); \
-	    if [ $$status -eq 10 ] && [ $$failures -ge 1 ] && [ $$failures -eq $$witnesses ]; then \
-	        echo "$$harness witness reached"; \
-	    else \
-	        cat "$$output"; echo "$$harness witness NOT reached (exit $$status)"; failed=1; \
+	    if [ $$status -ne 10 ] || [ $$failures -lt 1 ] || [ $$failures -ne $$witnesses ]; then \
+	        cat "$$output"; failed=1; \
+	        if [ "$$verdict" = "VERIFICATION SUCCESSFUL" ]; then \
+	            verdict="VERIFICATION FAILED (a witness was not reached)"; \
+	        fi; \
 	    fi; \
 	    rm -f "$$output"; \
+	    echo "$$harness $$verdict"; \
 	done; \
 	exit $$failed

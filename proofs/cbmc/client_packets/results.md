@@ -31,14 +31,16 @@
 - Reversed witnesses: `proof.mk` runs every harness a second time with
   `-DPROOF_WITNESS`. In that build, each harness asserts that its accepting
   path never runs. The run must fail exactly those `witness:` assertions and
-  nothing else. All eleven do, so no harness passes vacuously. The payload
+  nothing else. All eleven do, so no harness passes vacuously. Extra
+  witnesses cover the cookie leaving requesting cookie and the keep-alive
+  that connects the client. The payload
   witness reaches a delivered payload of 1439 bytes
   (`ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES`), which means the full packet size
   is actually reached.
 
 ## Results (amd-1, 2026-10-18)
 
-CBMC reports "0 of 4854 failed" for each harness. 4854 is every property
+CBMC reports "0 of 4891 failed" for each harness. 4891 is every property
 instrumented in the translation unit, and that total includes code the
 harness never reaches. Each row below lists the harness's own assertions on
 top of the shared bounds, pointer, overflow, division-by-zero, unwinding and
@@ -46,10 +48,10 @@ top of the shared bounds, pointer, overflow, division-by-zero, unwinding and
 
 | harness | result | time | harness assertions |
 |---|---|---|---|
-| harness_process_cookie | proved | 6 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; an accepted cookie is stored and the client moves to sending connection request |
-| harness_process_challenge | proved | 6 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; an accepted challenge moves the client to sending connection response |
-| harness_process_denied | proved | 8 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; an accepted denied ends the attempt as denied |
-| harness_open_session_packet | proved | 17 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
+| harness_process_cookie | proved | 6 s | returns 0/1; the wrong size (not 38) is refused; the wrong state is refused with the state unchanged; a salt mismatch is refused; an accepted cookie is stored and the client moves to sending connection request |
+| harness_process_challenge | proved | 6 s | returns 0/1; the wrong size (not 66) is refused; any state but sending connection request is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted challenge moves the client to sending connection response |
+| harness_process_denied | proved | 8 s | returns 0/1; the wrong size (not 34) is refused; any state but sending connection request or response is refused with the state unchanged; a zero sequence or a packet that does not open is refused; an accepted denied ends the attempt as denied |
+| harness_open_session_packet | proved | 17 s | covers every session type's floor and size rule (keep-alive with its validator, disconnect, ack, fragment, payload): a packet below the floor is refused; outside sending connection response and connected the packet is refused; a zero sequence, a replayed sequence (read from the window before the call), a packet that does not open, and a packet whose ack block the read refuses are all refused; a keep-alive with an invalid index or slot count is refused; an opened packet's block plus type data fill exactly packet_bytes - 26; a fixed-size type opens only at its size, a ranged type only above its floor |
 | harness_process_keep_alive | proved | 21 s | the session reader asserts below; the first keep-alive connects with 0 <= index < max_clients <= 1000 |
 | harness_process_payload | proved | 21 s | the session reader asserts below; a refused payload delivers 0 bytes; a delivered payload is 1..packet_bytes - 33 bytes and at most 1439 |
 | harness_process_ack | proved | 8 s | the session reader asserts below |
@@ -106,6 +108,13 @@ Assumptions, each a bound the code keeps elsewhere:
   `sdk/rocketnet_client_protocol.cpp:960` on a record that the I/O thread
   cannot produce. The fault is in the harness's input, not in the sdk.
 - The verdict is one of the six the I/O thread writes (0..5).
+- The ack debt stays below 2^63. The debt goes back to zero on every
+  session send, so `ack_debt++` (`rocketnet_client_protocol.cpp:859`)
+  cannot overflow.
+- The acked count is in 0..`ROCKETNET_SENT_PACKET_BUFFER_SIZE`, the batch
+  capacity. The process-block model asserts this on entry.
+- The rtt estimate is not negative. It starts at 0 and only takes
+  non-negative samples.
 
 ## What is modelled, not proved, here
 
@@ -115,7 +124,7 @@ Each model checks its own buffer arguments with `__CPROVER_r_ok` and
 - libsodium: `crypto_aead_chacha20poly1305_ietf_decrypt`/`_encrypt`,
   `crypto_generichash`, `crypto_scalarmult`, `crypto_shorthash_siphash24`,
   `sodium_memcmp`, `sodium_memzero`. Each model checks the lengths
-  libsodium documents, writes nondet bytes, and returns nondet success or
+  libsodium documents (generichash: output 16..64 bytes, key at most 64), writes nondet bytes, and returns nondet success or
   failure.
 - `rocketnet_replay_advance`. The model asserts its precondition (a nonzero
   sequence, not already received), havocs the window, and raises the
@@ -137,6 +146,22 @@ Each model checks its own buffer arguments with `__CPROVER_r_ok` and
   6-byte header plus one byte. The reassembly is the subject of
   rocketnet-cbmc-fragment-reassembly.
 - The logging calls do nothing.
+
+The replay-advance, ack-reset and record-received models leave out writes
+the real code makes: the window bit, the endpoint zeroing, and the received
+high-water mark. No reader on these paths reads those fields afterwards.
+
+Refusals this card does not prove, because a model stands for the check:
+
+- what makes an ack block malformed: the read model refuses
+  nondeterministically, and this card proves that a refusal refuses the
+  packet
+- what makes an AEAD tag wrong: the decrypt model fails nondeterministically
+- what makes a salt mismatch: the memcmp model mismatches
+  nondeterministically
+
+For each of these, the harnesses prove that an accepted packet is one the
+model passed.
 
 ## ESBMC
 
