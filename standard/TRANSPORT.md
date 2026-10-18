@@ -513,16 +513,20 @@ packet type, which key seals which type; sealed vectors.
 <a id="t10"></a>
 ## t10. Receive processing
 
-A receiver MUST process every received datagram through the ordered list
-below. Each check MUST reject exactly the packets named for it, MUST
-increment exactly the counter named for it in
+A client MUST drop a datagram whose source is not the server it dialed
+before applying this list. A client protocol call with insufficient output
+capacity MUST be refused before this list and MUST increment
+`RECEIVE_CURSOR_TOO_SMALL`; it does not increment `PACKETS_RECEIVED`.
+A receiver MUST process every datagram that reaches this list through the
+ordered checks below. Each check MUST reject exactly the packets named for
+it, MUST increment exactly the counter named for it in
 [t18 Error handling and counters](#t18), and MUST leave the packet's other
 state unchanged. A receiver MUST NOT examine a packet beyond the first check
 that rejects it. The list is the same for both ends; a row marked server or
 client applies only at that end.
 
-1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry, before
-   any check.
+1. A receiver MUST count the datagram as `PACKETS_RECEIVED` on entry to this
+   list, before any check.
 2. A receiver MUST apply the prefilter of [t5 Prefilter header](#t5). A
    datagram shorter than the prefilter header is `PREFILTER_TOO_SHORT`; a
    datagram longer than the receive ceiling is `PREFILTER_TOO_LARGE`; an
