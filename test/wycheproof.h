@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "resource_file.h"
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -339,7 +341,7 @@ inline std::string wycheproof_path( const char * file_name )
 inline bool wycheproof_read_file( const std::string & path, std::string & out )
 {
     out.clear();
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return false;
     char buffer[4096];

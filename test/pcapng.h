@@ -21,6 +21,8 @@
 #ifndef ROCKETNET_TEST_PCAPNG_H
 #define ROCKETNET_TEST_PCAPNG_H
 
+#include "resource_file.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -386,7 +388,7 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
 inline int rocketnet_pcapng_read_file( const std::string & path, std::vector<uint8_t> & image )
 {
     image.clear();
-    FILE * file = fopen( path.c_str(), "rb" );
+    FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return ROCKETNET_PCAPNG_CANNOT_OPEN;
     uint8_t chunk[4096];
@@ -439,16 +441,17 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
 {
     names.clear();
 #if defined(_WIN32)
-    struct _finddata_t found;
-    intptr_t handle = _findfirst( ( directory + "\\*.pcapng" ).c_str(), &found );
-    if ( handle != -1 )
+    const std::wstring pattern = rocketnet_test_wide_path( directory + "\\*.pcapng" );
+    WIN32_FIND_DATAW found;
+    const HANDLE handle = FindFirstFileW( pattern.c_str(), &found );
+    if ( handle != INVALID_HANDLE_VALUE )
     {
         do
         {
-            if ( !( found.attrib & _A_SUBDIR ) )
-                names.push_back( found.name );
-        } while ( _findnext( handle, &found ) == 0 );
-        _findclose( handle );
+            if ( !( found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) )
+                names.push_back( rocketnet_test_wide_to_utf8( found.cFileName, (int) wcslen( found.cFileName ) ) );
+        } while ( FindNextFileW( handle, &found ) );
+        FindClose( handle );
     }
 #else
     DIR * dir = opendir( directory.c_str() );

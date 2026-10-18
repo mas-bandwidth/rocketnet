@@ -10,6 +10,7 @@
 // File input only: the seeds are read beside this source, no sockets, no time.
 
 #include "test_unit_registry.h"
+#include "test/resource_file.h"
 
 #include "rocketnet.h"
 #include "rocketnet_protocol.h"
@@ -58,7 +59,7 @@ static void fuzz_prefilter_seed_names_match_outcomes()
     for ( size_t i = 0; i < sizeof(prefilter_seeds) / sizeof(prefilter_seeds[0]); i++ )
     {
         const prefilter_seed_t & seed = prefilter_seeds[i];
-        FILE * file = fopen( prefilter_seed_path( seed.name ).c_str(), "rb" );
+        FILE * file = rocketnet_test_fopen( prefilter_seed_path( seed.name ), "rb" );
         if ( !file )
             printf( "fuzz prefilter seed %s is missing\n", seed.name );
         check( file != NULL );

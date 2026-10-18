@@ -31,6 +31,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include "resource_file.h"
 #else
 #include <errno.h>
 #include <signal.h>
@@ -67,11 +68,18 @@ struct suite_result
 inline std::string suite_executable_path()
 {
 #if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD n = GetModuleFileNameA( NULL, buf, MAX_PATH );
-    if ( n == 0 || n >= MAX_PATH )
-        return "";
-    return std::string( buf, buf + n );
+    std::vector<wchar_t> buf( MAX_PATH );
+    for ( ;; )
+    {
+        const DWORD n = GetModuleFileNameW( NULL, buf.data(), (DWORD) buf.size() );
+        if ( n == 0 )
+            return "";
+        if ( n < buf.size() )
+            return rocketnet_test_wide_to_utf8( buf.data(), (int) n );
+        if ( buf.size() >= 32768 )
+            return "";
+        buf.resize( buf.size() * 2 );
+    }
 #elif defined(__APPLE__)
     char buf[4096];
     uint32_t size = (uint32_t) sizeof( buf );
@@ -98,11 +106,19 @@ inline std::string suite_directory_of( const std::string & path )
 
 inline bool suite_file_exists( const std::string & path )
 {
+#if defined(_WIN32)
+    const std::wstring wide = rocketnet_test_wide_path( path );
+    if ( wide.empty() )
+        return false;
+    const DWORD attributes = GetFileAttributesW( wide.c_str() );
+    return attributes != INVALID_FILE_ATTRIBUTES && !( attributes & FILE_ATTRIBUTE_DIRECTORY );
+#else
     FILE * file = fopen( path.c_str(), "rb" );
     if ( !file )
         return false;
     fclose( file );
     return true;
+#endif
 }
 
 inline int suite_job_count()
@@ -446,17 +462,18 @@ inline int suite_main( int argc, char ** argv,
                 continue;
             }
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
-            std::string command = "\"" + path + "\"";
+            const std::wstring wide_path = rocketnet_test_wide_path( path );
+            std::wstring command = L"\"" + wide_path + L"\"";
             if ( item.exec_path.empty() )
-                command += " --run " + item.name;
-            std::vector<char> mutable_command( command.begin(), command.end() );
-            mutable_command.push_back( '\0' );
-            STARTUPINFOA startup;
+                command += L" --run " + rocketnet_test_utf8_to_wide( item.name );
+            std::vector<wchar_t> mutable_command( command.begin(), command.end() );
+            mutable_command.push_back( L'\0' );
+            STARTUPINFOW startup;
             std::memset( &startup, 0, sizeof( startup ) );
             startup.cb = sizeof( startup );
             PROCESS_INFORMATION info;
             std::memset( &info, 0, sizeof( info ) );
-            if ( !CreateProcessA( NULL, mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
+            if ( wide_path.empty() || !CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info ) )
             {
                 suite_result result;
                 result.name = item.name;

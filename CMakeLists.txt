@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(rocketnet VERSION 1.0.0 LANGUAGES C CXX)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
