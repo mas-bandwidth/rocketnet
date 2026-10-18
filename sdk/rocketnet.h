@@ -516,17 +516,29 @@ ROCKETNET_EXPORT_FUNC size_t rocketnet_copy_string( char * dest, const char * so
 //                                  client
 // -----------------------------------------
 
+/** @brief The connect token is outside its valid time interval. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
+/** @brief The connect token is malformed or fails cryptographic validation. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN         -6
+/** @brief The established connection has timed out. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT          -5
+/** @brief The server did not answer the connection response in time. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
+/** @brief The server did not answer the connection request in time. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT  -3
+/** @brief The server did not answer the cookie request in time. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT      -2
+/** @brief The server denied the connection. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED             -1
+/** @brief The client is disconnected or has not started connecting. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED                   0
+/** @brief The client is requesting a connection cookie. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE              1
+/** @brief The client is sending its connection request. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST     2
+/** @brief The client is answering the server's challenge. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE    3
+/** @brief The client connection is established. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED                      4
 
 // The send-side payload capacity: the send budget (ROCKETNET_MAX_PACKET_BYTES_IPV6,
@@ -560,12 +572,18 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_RECEIVE_PAYLOAD_BYTES - ROCKETNET_MAX_PAY
 #define ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES                16384
 #define ROCKETNET_DEFAULT_REASSEMBLY_SLOTS                 8
 
+/** @brief Return the stable text name for a client transport state.
+ * @param state [in] One of the ROCKETNET_CLIENT_TRANSPORT_STATE_* values.
+ * @return A static string naming a known state. An unknown value asserts in assertion builds and returns `???`; do not free the result.
+ */
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_state_name( int state );
 
+/** Opaque client endpoint created and destroyed by the transport API. */
 struct rocketnet_client_transport_t;
 struct rocketnet_counters_t;
 struct rocketnet_packet_context_t;      // defined below, with the send surface
 
+/** @brief Byte size of a complete connect token. */
 #define ROCKETNET_CONNECT_TOKEN_BYTES 768
 
 // -----------------------------------------
@@ -709,21 +727,40 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_client_transport_required_memory( const
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_default_config_sized( struct rocketnet_client_transport_config_t * config, size_t config_bytes );
 
 #if ROCKETNET_DEVELOPMENT
-// a NULL server_address_string or connect_token is a counted no-op that returns 0.
+/** @brief Mint a local development token for a numeric server address.
+ * @param server_address_string [in] Non-NULL numeric address accepted by rocketnet_address_parse.
+ * @param client_id [in] Application client identifier.
+ * @param unix_timestamp [in] Current Unix timestamp in seconds.
+ * @param connect_token [out] Non-NULL buffer of at least ROCKETNET_CONNECT_TOKEN_BYTES.
+ * @return 1 when token creation succeeds; 0 for a NULL required pointer, invalid address, or cryptographic failure. Uses public development credentials and is unsuitable for production.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_write_dev_connect_token( const char * server_address_string, uint64_t client_id, uint64_t unix_timestamp, uint8_t * connect_token );
 #endif // #if ROCKETNET_DEVELOPMENT
 
-// time is the game's clock, a double in seconds, monotonic; pass the same
-// clock to every call that takes one. The library never reads a clock of
-// its own on these paths, so a game owns time and a test can hold it still.
-
-// a NULL connect_token is a counted no-op that returns NULL; a NULL config is
-// the default shape.
+/** @brief Create a client transport using the standard NULL-or-pointer result.
+ * @param context [in] Allocator and callback context for the initialized library.
+ * @param connect_token [in] Non-NULL complete token of ROCKETNET_CONNECT_TOKEN_BYTES; NULL is a counted no-op and returns NULL.
+ * @param config [in] Optional full configuration; NULL selects defaults.
+ * @param time [in] Finite monotonic time in seconds.
+ * @return A caller-owned transport or NULL on any creation failure. Use create_ex to obtain the specific refusal status.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
 
-// The _ex form: same contract, and when status is not NULL it is written with
-// ROCKETNET_STATUS_OK on success and the section-2.1 code of the refusal on
-// every failure exit. The non-_ex form is a thin wrapper passing NULL.
+/** @brief Create a client transport and report the exact refusal status.
+ * @param context [in] Allocator and callback context retained by the transport; must match the initialized library context.
+ * @param connect_token [in] Non-NULL complete token buffer of ROCKETNET_CONNECT_TOKEN_BYTES.
+ * @param config [in] Optional full config; NULL selects defaults.
+ * @param time [in] Finite, monotonic time in seconds for the initial update clock.
+ * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_DRIVER_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, DRIVER_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. Call rocketnet_init first and correct the reported cause before retrying.
+ * @code
+ * // token, context, config, time, and status are supplied by the game.
+ * rocketnet_init(NULL);
+ * struct rocketnet_client_transport_t *client = rocketnet_client_transport_create_ex(context, token, config, time, &status);
+ * if (client) { rocketnet_client_transport_update(client, time); rocketnet_client_transport_destroy(client); }
+ * rocketnet_term();
+ * @endcode
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
@@ -732,9 +769,17 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_tra
 ROCKETNET_EXPORT_FUNC struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, double time );
 
 // a NULL client_transport is a counted no-op.
-ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );      // disconnect and pump a few updates first
+/** @brief Release a client transport and its owned resources.
+ * @param client_transport [in] Transport returned by a create function; NULL is a counted no-op.
+ * @return Nothing. Disconnect and update to drain the connection before destroying when graceful remote shutdown is required.
+ */
+ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_destroy( struct rocketnet_client_transport_t * client_transport );
 
-// a NULL client_transport is a counted no-op.
+/** @brief Advance client networking and publish the next receive and acknowledgement batches.
+ * @param client_transport [in,out] Created transport; NULL is a counted no-op.
+ * @param time [in] Finite monotonic time in seconds, using the same game clock as other timed transport calls.
+ * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_update( struct rocketnet_client_transport_t * client_transport, double time );
 
 // a NULL client_transport or packet_data is a counted no-op.
@@ -797,7 +842,10 @@ ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_abort_packet( struct rocke
 // a NULL client_transport is a counted no-op.
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_send_packets( struct rocketnet_client_transport_t * client_transport );
 
-// a NULL client_transport is a counted no-op that returns 0.
+/** @brief Read the client's current connection state.
+ * @param client_transport [in] Created client transport; NULL is a counted no-op.
+ * @return A ROCKETNET_CLIENT_TRANSPORT_STATE_* value. NULL returns DISCONNECTED. Read on the main thread outside concurrent update work.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_client_transport_t * client_transport );
 
 // the granted driver, request-vs-granted style: the name of the candidate
@@ -807,10 +855,16 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_state( struct rocketnet_cli
 // a NULL client_transport is a counted no-op that returns NULL.
 ROCKETNET_EXPORT_FUNC const char * rocketnet_client_transport_driver( struct rocketnet_client_transport_t * client_transport );
 
-// a NULL client_transport is a counted no-op that returns 0.
+/** @brief Read the server-assigned index of the connected client.
+ * @param client_transport [in] Created client transport; NULL is a counted no-op.
+ * @return The assigned index when connected, -1 before a connection is assigned, and 0 for NULL. Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_client_index( struct rocketnet_client_transport_t * client_transport );
 
-// a NULL client_transport is a counted no-op.
+/** @brief Begin a client disconnect and stage its disconnect packets.
+ * @param client_transport [in,out] Created transport; NULL is a counted no-op.
+ * @return Nothing. Call on the main thread, never during a packet-fill phase.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_client_transport_disconnect( struct rocketnet_client_transport_t * client_transport );
 
 // a NULL client_transport is a counted no-op that returns NULL.
@@ -860,10 +914,14 @@ ROCKETNET_EXPORT_FUNC int rocketnet_client_transport_acked_packets( struct rocke
 //                                  server
 // -----------------------------------------
 
+/** @brief The server receives and processes traffic. */
 #define ROCKETNET_SERVER_TRANSPORT_RUNNING                    0
+/** @brief The server is stopping and will finish that transition during update. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPING                   1
+/** @brief The server has stopped processing traffic. */
 #define ROCKETNET_SERVER_TRANSPORT_STOPPED                    2
 
+/** Opaque server endpoint created and destroyed by the transport API. */
 struct rocketnet_server_transport_t;
 struct rocketnet_address_t;
 
@@ -878,8 +936,17 @@ struct rocketnet_address_t;
 // is about admission, not session policing. The callback runs on the receive
 // thread and must be fast and thread-safe.
 
+/** @brief Admit a source packet for normal protocol processing. */
 #define ROCKETNET_SERVER_ADMISSION_ADMIT 0
+/** @brief Drop a source packet before protocol cryptography runs. */
 #define ROCKETNET_SERVER_ADMISSION_DROP  1
+/** @brief Decide whether an unmapped source packet reaches protocol processing.
+ * @param context [in] Application pointer installed with the callback; may be NULL.
+ * @param from [in] Non-NULL source address for this packet.
+ * @param packet_data [in] Packet bytes; read-only and valid only for the callback duration.
+ * @param packet_bytes [in] Packet length in bytes.
+ * @return ROCKETNET_SERVER_ADMISSION_ADMIT or ROCKETNET_SERVER_ADMISSION_DROP. Runs on the receive thread and must be fast and thread-safe.
+ */
 typedef int (*rocketnet_server_admission_callback_t)( void * context, const struct rocketnet_address_t * from, const uint8_t * packet_data, int packet_bytes );
 
 // The server is configured explicitly. rocketnet_server_transport_default_config gives
@@ -1004,14 +1071,29 @@ struct rocketnet_host_memory_estimate_t
 
 ROCKETNET_EXPORT_FUNC bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config, const char * driver, struct rocketnet_host_memory_estimate_t * estimate );
 
-// a NULL public_address_string is a counted no-op that returns NULL; a NULL
-// config is the default shape.
+/** @brief Create a server transport using the standard NULL-or-pointer result.
+ * @param context [in] Allocator context for the initialized library.
+ * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected driver.
+ * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
+ * @return A caller-owned transport or NULL on any creation failure. Use create_ex to obtain the specific refusal status.
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config);
 
-// As rocketnet_server_transport_create, with the exact section-2.1 code
-// written to *status on every return path when status is not NULL
-// (ROCKETNET_STATUS_OK on success, a non-zero ROCKETNET_STATUS_* on failure).
-// A failure also logs one rocketnet_error line; the non-_ex form passes NULL.
+/** @brief Create a server transport and report the exact refusal status.
+ * @param context [in] Allocator context retained by the transport; it must match the initialized library context.
+ * @param public_address_string [in] Non-NULL numeric bind/public address with optional port; port zero requests a dynamically assigned port when the selected driver supports it.
+ * @param config [in] Optional full server configuration; NULL selects defaults, which require application keys.
+ * @param time [in] Finite monotonic initial time in seconds.
+ * @param status [out] Optional status destination; receives OK or the specific refusal code.
+ * @return A caller-owned server transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, MISSING_KEYS, INVALID_PROTOCOL_ID, DEV_KEYS_IN_RELEASE, INVALID_DRIVER_LIST, INVALID_ADDRESS, DRIVER_PORT_ZERO_UNSUPPORTED, DRIVER_LADDER_EXHAUSTED, OUT_OF_MEMORY, or THREAD_CREATE_FAILED. Correct the reported cause before retrying. A failure logs an error line.
+ * @code
+ * // context, address, config, status, time, and dt are supplied by the game.
+ * rocketnet_init(NULL);
+ * struct rocketnet_server_transport_t *server = rocketnet_server_transport_create_ex(context, address, config, time, &status);
+ * if (server) { rocketnet_server_transport_stop(server); while (rocketnet_server_transport_state(server) != ROCKETNET_SERVER_TRANSPORT_STOPPED) { time += dt; rocketnet_server_transport_update(server, time); } rocketnet_server_transport_destroy(server); }
+ * rocketnet_term();
+ * @endcode
+ */
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, double time, int * status );
 // create with a config config_bytes long: a known size is read over the
 // defaults and created as above; an unknown size is refused with a log line and
@@ -1020,41 +1102,28 @@ ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_tra
 ROCKETNET_EXPORT_FUNC struct rocketnet_server_transport_t * rocketnet_server_transport_create_sized( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config, size_t config_bytes );
 
 // a NULL server_transport is a counted no-op.
-ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );      // stop and wait for stopped first
+/** @brief Release a stopped server transport and its owned resources.
+ * @param server_transport [in] Transport returned by a create function; NULL is a counted no-op.
+ * @return Nothing. Call stop, then update until state is STOPPED before destroying.
+ */
+ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport );
 
-// a NULL server_transport is a counted no-op.
+/** @brief Request an orderly server stop.
+ * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
+ * @return Nothing. Call update until the state becomes STOPPED, then destroy.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
 
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Read the server lifecycle state.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @return RUNNING, STOPPING, or STOPPED; NULL returns RUNNING's numeric value (zero). Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_state( struct rocketnet_server_transport_t * server_transport );
 
-// The port the transport actually bound. A public address string carrying
-// port zero asks the kernel for an ephemeral port at create; the granted
-// port is adopted into the advertised address -- so connect tokens minted
-// for it validate -- and this reads it back. Tests and single-box tools
-// build their token address from it instead of hardcoding a port and
-// racing every other process on the machine; production servers know
-// their public address already.
-//
-// Port-zero discovery is a per-driver property, and since #109 the ladder
-// enforces it rather than documenting it: a driver whose create binds the
-// port it is given and discovers nothing -- the XDP driver -- cannot serve
-// a port-zero address, so that rung REFUSES one at create, loudly, naming
-// the rule, before it binds anything. It is an ordinary rung refusal: an
-// "auto" ladder falls past it to a driver that does discover, and only a
-// PIN on a non-discovering driver refuses the create outright. The
-// portable, msgx and GSO drivers discover; the XDP driver does not
-// (rocketnet_driver_discovers_bound_port is the table).
-//
-// So this returns a real port by one of two routes, not one: either the
-// public address carried a port, and that is the port -- including on an
-// XDP grant, which binds what it was given and discovers nothing -- or it
-// carried zero, in which case the rule above guarantees the granting
-// driver was one that discovers. The port-zero route is asserted for
-// every discovering driver a platform has by
-// rocketnet_test_server_port_zero_needs_a_discovering_driver.
-
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Return the port the server transport bound.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @return The bound port in host byte order; zero for NULL. A configured port of zero is supported only by drivers that can discover the bound port.
+ */
 ROCKETNET_EXPORT_FUNC uint16_t rocketnet_server_transport_port( struct rocketnet_server_transport_t * server_transport );
 
 // the granted driver, request-vs-granted style: the name of the candidate
@@ -1073,14 +1142,19 @@ ROCKETNET_EXPORT_FUNC const char * rocketnet_server_transport_driver( struct roc
 
 ROCKETNET_EXPORT_FUNC void rocketnet_forbid_xdp_commit( void );
 
-// a NULL server_transport is a counted no-op.
+/** @brief Advance server networking and publish this update's payload and acknowledgement batches.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @param time [in] Finite monotonic time in seconds, from the same application clock used for other timed calls.
+ * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
 
-// The admission gate, set per transport (see the callback type above). NULL
-// callback -- the default -- admits every source: the connect ladder alone
-// decides. May be set or cleared at any time between updates.
-
-// a NULL server_transport is a counted no-op.
+/** @brief Install or clear the callback that gates packets from unmapped sources.
+ * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
+ * @param callback [in] Callback, or NULL to admit every source through this gate.
+ * @param context [in] Opaque application pointer passed to callback; may be NULL. The caller retains ownership.
+ * @return Nothing. The callback runs on the receive thread and must be fast and thread-safe; mapped sources bypass it. Set the callback on the main thread between updates.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_set_admission_callback( struct rocketnet_server_transport_t * server_transport, rocketnet_server_admission_callback_t callback, void * context );
 
 // The payloads delivered by the last update, valid until the next update.
@@ -1229,15 +1303,31 @@ ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_send_packet( struct rocket
 // fill relies on.
 
 // a NULL server_transport is a counted no-op.
+/** @brief Disconnect a connected client and release its slot.
+ * @param server_transport [in,out] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1. A free or out-of-range slot is ignored.
+ * @return Nothing. Runs on the main thread, never during packet fill; staged disconnects leave on the next send_packets flush.
+ */
 ROCKETNET_EXPORT_FUNC void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Count connected client slots.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @return Number of connected slots, from 0 through configured max_clients. Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
 
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Check whether a slot currently holds a connected client.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @return 1 when connected, 0 when free or out of range; NULL transport returns 0. Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC int rocketnet_server_transport_is_client_connected( struct rocketnet_server_transport_t * server_transport, int client_index );
 
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Read the client identifier currently assigned to a slot.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @return The connected client's identifier, or zero for a free or invalid slot. Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
 // The connection that holds the slot now: nonzero and unique for each
@@ -1246,7 +1336,11 @@ ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_id( struct rock
 // update, has a new id; compare it with the per-entry ids of the payload and
 // acked batches to tell whose an entry is.
 
-// a NULL server_transport is a counted no-op that returns 0.
+/** @brief Read the unique identifier of the connection currently holding a slot.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @return A nonzero identifier for a live connection, or zero for a free or invalid slot. A reconnect receives a new identifier. Read on the main thread outside update work.
+ */
 ROCKETNET_EXPORT_FUNC uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
 // a NULL server_transport is a counted no-op that returns NULL.
