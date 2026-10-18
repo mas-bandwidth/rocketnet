@@ -13,12 +13,18 @@
 (*   MCRNSendBudgetBrokenOverspend.cfg        CheckBudget   NeverOverspend *)
 (*   MCRNSendBudgetBrokenUnreliableFirst.cfg  ReliableFirst                *)
 (*                                     EveryReliableEventuallySent         *)
+(*   MCRNSendBudgetBrokenUncapped.cfg   UncapHonoured <- BrokenUncap       *)
+(*                                     UncappedNeverDropsOrWaits           *)
 (***************************************************************************)
 EXTENDS RNSendBudget
+
+\* the reversal MCRNSendBudgetBrokenUncapped.cfg substitutes for UncapHonoured
+BrokenUncap == FALSE
 
 \* every safety invariant at once, for a run that wants one name
 SafetyInvariants ==
     /\ TypeOK /\ NeverOverspend /\ ReliableNeverDropped
     /\ UnreliableDroppedOnlyOverBudget /\ ClassOrder
+    /\ UncappedNeverDropsOrWaits
 
 =============================================================================

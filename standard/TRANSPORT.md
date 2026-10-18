@@ -363,12 +363,110 @@ f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
 <a id="t4"></a>
 ## t4. Wire encoding primitives
 
-Status: pending
+1. A sender MUST write the packet sequence in the `sequence` field of
+   [t3 Constants and registries](#t3) as the low half of the 64-bit sequence,
+   least-significant byte first. A sender MUST NOT emit a packet whose
+   sequence is zero.
+2. A receiver MUST reconstruct the 64-bit sequence from that field before any
+   replay check or AEAD open. Let `expected` be the highest sequence the
+   receiver has successfully opened in that direction and key phase, plus
+   one; when nothing has been opened, `expected` is one. Among all 64-bit
+   values whose low half equals the wire field, the receiver MUST take the
+   value nearest to `expected`, and on an exact tie it MUST take the larger.
+3. A receiver MUST ignore a packet whose reconstructed sequence is zero.
+   Zero is never a valid sequence and is never sent.
+4. An address on the wire is one family byte, the address bytes and the port,
+   packed with no padding. A sender MUST write family `1` with the four IPv4
+   octets in order, or family `2` with the eight IPv6 groups as sixteen-bit
+   values, each group little-endian, and MUST NOT write any other family. The
+   port is a sixteen-bit value, little-endian.
 
-Scope: integer encodings by type name; the 4-byte wire sequence and its
-reconstruction to 64 bits against the highest opened sequence, with the tie
-rule; sequence zero never valid; address encoding (family flag, IPv4 four
-octets then port, IPv6 eight groups then port, all little-endian).
+The sequence field of a sealed packet:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                    sequence, low half (u32)                   |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| sequence | 0 | 4 | u32 | low half of the packet sequence | any; a reconstructed value of zero is ignored |
+
+The address encoding:
+
+       0                   1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |    family     |                                               |
+      +-+-+-+-+-+-+-+-+                                               +
+      |                    address (4 or 16 bytes)                    |
+      +                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                               |             port              |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+| Name | Offset | Size | Type | Meaning | Valid values |
+|---|---|---|---|---|---|
+| family | 0 | 1 | u8 | address family | `1` (IPv4), `2` (IPv6) |
+| address | 1 | 4 or 16 | bytes[4] or bytes[16] | four IPv4 octets in order, or eight IPv6 groups little-endian | 4 bytes for family `1`, 16 for family `2` |
+| port | 5 or 17 | 2 | u16 | UDP port | any |
+
+| Name | Value | Unit | Meaning |
+|---|---|---|---|
+| address family IPv4 | `1` | number | family byte of an IPv4 address |
+| address family IPv6 | `2` | number | family byte of an IPv6 address |
+| encoded IPv4 address | `7` | bytes | family byte, four address octets, port |
+| encoded IPv6 address | `19` | bytes | family byte, eight address groups, port |
+
+The sequence is reconstructed at the start of a key phase:
+
+```vector t4.sequence-start
+input: highest opened sequence 0, wire field 1
+01 00 00 00 00 00 00 00
+```
+
+In steady state:
+
+```vector t4.sequence-steady
+input: highest opened sequence 999, wire field 1000
+e8 03 00 00 00 00 00 00
+```
+
+At an exact tie of half the field's range in each direction, the larger wins:
+
+```vector t4.sequence-tie
+input: highest opened sequence 0x17fffffff, wire field 0
+00 00 00 00 02 00 00 00
+```
+
+Across the field's wrap:
+
+```vector t4.sequence-wrap
+input: highest opened sequence 0xffffffff, wire field 0
+00 00 00 00 01 00 00 00
+```
+
+A wire field of zero with nothing opened reconstructs to zero and is ignored:
+
+```vector t4.sequence-zero
+input: highest opened sequence 0, wire field 0
+00 00 00 00 00 00 00 00
+```
+
+An IPv4 address, 198.51.100.7 port 56789:
+
+```vector t4.address-ipv4
+input: address 198.51.100.7, port 56789
+01 c6 33 64 07 d5 dd
+```
+
+An IPv6 address, 2001:db8::7 port 56789:
+
+```vector t4.address-ipv6
+input: address 2001:db8::7, port 56789
+02 01 20 b8 0d 00 00 00 00 00 00 00 00 00 00 07
+00 d5 dd
+```
 
 <a id="t5"></a>
 ## t5. Prefilter header
@@ -577,7 +675,7 @@ one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
 elapsed value produces no sample. The sample measures local elapsed time and
 does not subtract peer processing or acknowledgement aggregation delay. The
-reported RTT is the minimum retained first-ack sample, in milliseconds.
+reported RTT is the minimum strictly positive retained first-ack sample, in milliseconds; if no strictly positive first-ack sample is retained, it is zero.
 
 <a id="t15.6"></a>
 ### t15.6. Vectors
@@ -739,6 +837,13 @@ It is generated; the bytes are in the sections.
 | Section | Vector |
 |---|---|
 | [t3 Constants and registries](#t3) | `t3.token-identifier` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv4` |
+| [t4 Wire encoding primitives](#t4) | `t4.address-ipv6` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-start` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-steady` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-tie` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-wrap` |
+| [t4 Wire encoding primitives](#t4) | `t4.sequence-zero` |
 | [t15 Acknowledgement](#t15) | `t15.fresh` |
 | [t15 Acknowledgement](#t15) | `t15.fully-received` |
 | [t15 Acknowledgement](#t15) | `t15.invalid-first-too-long` |
@@ -759,13 +864,78 @@ It is generated; the bytes are in the sections.
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
 
-Status: pending
+This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
+the bytes on the wire and in the decisions a receiver makes. It states no
+requirements; each difference is specified by the section named in its row.
 
-Scope: a list of facts, one per difference on the wire or in processing.
+| Area | netcode 1.02 | RN-1 |
+|---|---|---|
+| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
+| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
+| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
+| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the source address whose connection response first opened under it, and admits one live connection ([t12 Handshake: server](#t12)). |
+| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
+| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
+| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
+| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
+| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
+| Fragmentation | No fragment packet type. | The fragment packet type carries a fragment, with reassembly slots and an abandonment rule ([t16 Fragmentation and reassembly](#t16)). |
+| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
 
-Status: pending
+This appendix is informative. It records implementation choices that the wire
+format does not require; a conforming implementation may choose otherwise.
+Each note points to the section whose rule it serves.
 
-Scope: informative notes for implementers; no requirements.
+### Transport selection
+
+An implementation offers a set of transports for one endpoint role on one
+platform, and `auto` expands to its documented order for that role and
+platform. An explicit list is tried in order, nothing is appended or
+reordered, and a list of one name is a pin that refuses rather than falls.
+The endpoint reports the transport that carries it and logs each earlier
+candidate's skip or refusal. A transport never changes a byte on the wire, so
+transport selection is a deployment and diagnosis surface rather than a
+protocol one. See [t2.4 Transport selection](#t2.4).
+
+### Kernel prefilter and XDP
+
+A Linux server may place the prefilter and an early replay check in an XDP
+program so that traffic the connection layer would refuse is dropped before
+it is queued to userspace. The kernel path may perform any prefix of the
+receive checks; it rejects no more and no less than the full sequence, and the
+userspace path still performs the checks on what survives. Traffic the kernel
+does not see is not counted there, so the transport imports the kernel
+counters beside its own. See [t10 Receive processing](#t10) and
+[t14 Replay protection](#t14).
+
+### Check placement
+
+Every check this standard specifies is defined by what it rejects and in what
+order, never by where it runs. A transport may perform any prefix of the
+sequence as early as it can, including in a kernel program, and a transport
+without such a path performs the same checks in userspace. Pushing work down
+reduces the volume that reaches userspace rather than removing the check from
+it, which keeps one implementation of the logic rather than one per transport.
+See [t10 Receive processing](#t10).
+
+### Configuration surface
+
+Each configuration field is declared once with its type, default and valid
+range, and the environment variable name derives from the field name. The
+precedence is default, then configuration struct, then environment; every
+override is logged with the value it displaced, and an out-of-range or
+unparsable value refuses the create rather than being clamped or corrected.
+The message layer's fields follow the same surface in the section that owns
+each one. See [t2.3 Configuration surface](#t2.3).
+
+### Counters per execution context
+
+A multithreaded implementation keeps a counter block per execution context,
+padded and aligned so that no two contexts share a cache line, and sums the
+blocks at readout. In a kernel dataplane the context is a CPU; in userspace
+it is a thread. Counters are monotonic and never reset, so a rate is derived
+by differencing two snapshots and a zero still means that the event never
+happened. See [t18 Error handling and counters](#t18).

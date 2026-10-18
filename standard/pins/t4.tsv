@@ -1,0 +1,6 @@
+# The rows of RN-1 t4 (TRANSPORT.md): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+address family IPv4	ROCKETNET_ADDRESS_IPV4	1
+address family IPv6	ROCKETNET_ADDRESS_IPV6	2
+encoded IPv4 address	ROCKETNET_ADDRESS_BYTES_IPV4	7
+encoded IPv6 address	ROCKETNET_ADDRESS_BYTES_IPV6	19
