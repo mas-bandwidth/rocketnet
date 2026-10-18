@@ -229,7 +229,7 @@ verifies, and with room for the server's UMEM and queues (the default guest
 memory runs out and the server is killed):
 
 ```sh
-vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 2G --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
+vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
 ```
 
 A reply frame's destination MAC is the source MAC of the newest packet from
