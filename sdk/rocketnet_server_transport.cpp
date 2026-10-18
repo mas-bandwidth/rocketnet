@@ -480,7 +480,8 @@ static uint64_t rocketnet_server_thread_stack_bytes()
 // are the ones the drivers pass: the portable and msgx socket and every gso
 // queue socket set SO_SNDBUF/SO_RCVBUF to ROCKETNET_SOCKET_SEND_BUFFER_SIZE and
 // ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE (rocketnet_driver_builtin.cpp,
-// rocketnet_server_gso_linux.cpp), as does the iocp socket
+// rocketnet_server_gso_linux.cpp), as do every io_uring queue socket
+// (rocketnet_server_uring_linux.cpp) and the iocp socket
 // (rocketnet_server_iocp_windows.cpp); each xdp queue's AF_XDP socket asks for
 // ROCKETNET_XDP_RECV_QUEUE_SIZE RX and ROCKETNET_XDP_SEND_QUEUE_SIZE TX
 // descriptors and sets no socket buffer (rocketnet_server_socket_linux.cpp).
@@ -545,6 +546,8 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
         excluded[count++] = "AF_XDP fill and completion rings (the umem config leaves their sizes to libxdp), ring headers and page rounding";
         excluded[count++] = "libbpf/libxdp allocations, the XDP program and its maps";
     }
+    if ( strcmp( driver, "io_uring" ) == 0 )
+        excluded[count++] = "io_uring submission and completion rings and the provided buffer rings (kernel and liburing mappings outside the SDK allocator)";
     if ( plan.worker_threads > 0 )
         excluded[count++] = "thread guard pages, thread-local storage and kernel thread structures; stacks count reserved address space, not resident pages";
     excluded[count++] = "kernel page tables and loader/shared-library memory";

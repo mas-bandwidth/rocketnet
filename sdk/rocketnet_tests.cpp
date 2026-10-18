@@ -13555,7 +13555,7 @@ static uint64_t rocketnet_test_host_memory_sum( const struct rocketnet_host_memo
 
 void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 {
-    const char * drivers[] = { "portable", "msgx", "gso", "xdp", "iocp" };
+    const char * drivers[] = { "portable", "msgx", "gso", "io_uring", "xdp", "iocp" };
     int estimated = 0;
     for ( const char * driver : drivers )
     {
