@@ -245,7 +245,14 @@ jobs:
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
         timeout-minutes: 20
-        run: ROCKETNET_DRIVER=portable ./bin/functional
+        env:
+          ROCKETNET_SERVER_DRIVER: portable
+          ROCKETNET_CLIENT_DRIVER: portable
+        run: |
+          set -o pipefail
+          ./bin/functional | tee functional-pinned.log
+          grep -qx 'driver_env_pin_is_honoured' functional-pinned.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-pinned.log
 
       - name: Run lifecycle unit binary
         if: contains(matrix.leg, 'a')
@@ -459,8 +466,12 @@ jobs:
         timeout-minutes: 20
         shell: bash
         env:
-          ROCKETNET_DRIVER: iocp
-        run: ./bin/Release/functional.exe
+          ROCKETNET_SERVER_DRIVER: iocp
+        run: |
+          set -o pipefail
+          ./bin/Release/functional.exe | tr -d '\r' | tee functional-iocp.log
+          grep -qx 'driver_env_pin_is_honoured' functional-iocp.log
+          ! grep -q '^driver_env_pin_is_honoured \[SKIPPED' functional-iocp.log
 
       - name: Run lifecycle unit binary
         if: matrix.leg == 'a'
