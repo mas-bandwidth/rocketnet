@@ -8,6 +8,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <cmath>
+using std::isfinite;
 
 #define __CPROVER__ 1
 
