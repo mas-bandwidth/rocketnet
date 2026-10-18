@@ -972,12 +972,15 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                                  memcmp( config->backend_public_key, rocketnet_dev_backend_public_key, 32 ) == 0;
     if ( development_keys )
     {
+        // The published development keys are public and not for production: an
+        // implementation must warn on every start that uses them.
+        rocketnet_warn( "development keys are public and not for production" );
 #if ROCKETNET_DEVELOPMENT
-        rocketnet_info( "development keys detected; running in development mode" );
 #else // !ROCKETNET_DEVELOPMENT
+        // A release build must refuse the published development keys outright.
         if ( status )
             *status = ROCKETNET_STATUS_DEV_KEYS_IN_RELEASE;
-        rocketnet_error( "development keys detected in release build; refusing to start" );
+        rocketnet_error( "development keys in release build; refusing to start" );
         rocketnet_free( context, server_transport );
         return NULL;
 #endif // ROCKETNET_DEVELOPMENT
