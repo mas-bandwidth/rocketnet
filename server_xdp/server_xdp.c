@@ -67,10 +67,10 @@ struct {
 } server_xdp_stats_map SEC(".maps");
 
 // The kernel replay map: one entry per live source address and port, the
-// highest sequence userspace has opened for it. Userspace writes it once per
-// server update and nothing else does; this program only looks entries up
-// (tla/RNXdpReplay.tla, KernelNeverWrites). Not pinned: until userspace pins
-// and writes it, every lookup misses.
+// highest sequence userspace has opened for it. Only userspace writes it,
+// once per server update, and that writer and the pin are not built yet;
+// this program only looks entries up (tla/RNXdpReplay.tla,
+// KernelNeverWrites). Unpinned and unwritten, every lookup misses.
 
 struct {
     __uint( type, BPF_MAP_TYPE_HASH );
