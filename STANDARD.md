@@ -2700,6 +2700,10 @@ In this exact order, on a _connection request packet_:
 * If the version is not 0x4E7C1A93, ignore it.
 * If the protocol id does not match the server's, ignore it.
 * If the expire timestamp is <= the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the create timestamp is more
+  than five seconds ahead of the current time, ignore it.
+* If `max_token_lifetime_seconds` is above 0 and the token's lifetime
+  (`expire - create`) exceeds that maximum, ignore it.
 * If the timeout seconds field is zero, ignore it; if it is negative and the
   server is not explicitly configured to accept negative timeouts, ignore it.
   A positive value above the server's configured maximum is clamped, not
@@ -3366,6 +3370,8 @@ order:
 | `..._WRONG_VERSION` | version mismatch |
 | `..._WRONG_PROTOCOL_ID` | protocol id mismatch |
 | `..._TOKEN_EXPIRED` | expire timestamp has passed |
+| `..._TOKEN_CREATED_IN_FUTURE` | create timestamp more than five seconds ahead, while `max_token_lifetime_seconds` is above 0 |
+| `..._TOKEN_LIFETIME_TOO_LONG` | `expire - create` exceeds `max_token_lifetime_seconds`, while that maximum is above 0 |
 | `..._TIMEOUT_INVALID` | timeout seconds zero, or negative and not accepted |
 | `..._BAD_ADDRESS_FLAGS` | reserved bits set, or no family named |
 | `..._ADDRESS_NOT_ADVERTISED` | names no address this server answers at |

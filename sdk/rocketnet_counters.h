@@ -567,7 +567,16 @@
     /* (sdk/rocketnet_wire.h): a session packet behind the replay map's */ \
     /* high-water window, surfaced by rocketnet_counters_apply_prefilter. */ \
     /* appended: indices are the contract. */ \
-    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE )
+    X( XDP_KERNEL_DROPPED_REPLAYED, REFUSAL, NONE ) \
+    \
+    /* The two token-time refusals that were merged into */ \
+    /* CONNECTION_REQUEST_TOKEN_EXPIRED, split out so each refusal reason has */ \
+    /* its own counter (STANDARD.md, Counters: refusal reasons are never */ \
+    /* merged; Processing Connection Requests, the request order). They sit */ \
+    /* beside TOKEN_EXPIRED in class and parent, and are appended here because */ \
+    /* the indices are the contract. */ \
+    X( CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
+    X( CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG, REFUSAL, CONNECTION_REQUEST_RECEIVED )
 
 enum
 {

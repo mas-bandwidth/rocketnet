@@ -13381,10 +13381,10 @@ void rocketnet_test_token_lifetime_bounded()
     int response_bytes = 0;
     int result = rocketnet_test_process( &test, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, response, &response_bytes );
 
-    // After the fix: the token should be refused due to exceeding max lifetime
-    // The test expects ROCKETNET_SERVER_PROCESS_IGNORED with TOKEN_EXPIRED counter
+    // After the fix: the token is refused for exceeding the max lifetime, with
+    // its own counter (the refusal reasons are never merged)
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
-    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 1 );
 
     rocketnet_test_server_teardown( &test );
 }
