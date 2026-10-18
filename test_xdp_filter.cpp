@@ -4,8 +4,8 @@
 //
 // Loads server_xdp/server_xdp.c through the verifier and runs crafted frames
 // through it with BPF_PROG_TEST_RUN: the kernel returns the program's verdict
-// on each frame and transmits nothing. No socket, no interface and no packet
-// traffic is involved, and no XDP program is attached anywhere.
+// on each frame and transmits nothing. The filter cases involve no socket, no
+// interface and no packet traffic, and no XDP program is attached anywhere.
 //
 // bpf_redirect_map only returns XDP_REDIRECT when the map slot is populated,
 // and an XSKMAP slot needs an AF_XDP socket. This test changes the program's
@@ -18,16 +18,28 @@
 //
 //     sudo ./bin/test_xdp_filter [-v] [server_xdp.o]
 //
-// -v prints the last line of the verifier's log for the load. Exit 0: every case passed. Exit 1: a case failed. Exit 2: the object did
+// One case binds a real AF_XDP socket, and only inside a virtme-ng guest:
+// xsk_bind_falls_back_to_copy creates its own veth pair in the guest, binds on
+// it with the server's bind config (sdk/rocketnet_xdp_socket_config.h), sees
+// the zero-copy bind refused (veth has no zero-copy support) and the copy bind
+// succeed, reads the bound mode back, and removes the pair. Outside a guest the
+// case skips with its reason and creates nothing, so no host interface is touched.
+//
+// -v prints the last line of the verifier's log for the load. Exit 0: every case passed or skipped with its reason. Exit 1: a case failed. Exit 2: the object did
 // not load (the verifier log tail is printed) or the process lacks privilege.
 
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_replay_marks.h"
+#include "rocketnet_xdp_socket_config.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>
 #include <net/if.h>
+#include <linux/if_xdp.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -906,6 +918,192 @@ static bool replay_key_layout_matches_header( filter_t * filter )
     return ok;
 }
 
+// The AF_XDP bind on a veth pair the case owns, inside the virtme-ng guest only.
+
+static const char * zc_veth = "rnxsk0";
+static const char * case_skip_reason = NULL;
+static const char * zc_veth_peer = "rnxsk1";
+
+static bool inside_virtme_guest()
+{
+    FILE * file = fopen( "/proc/cmdline", "r" );
+    if ( !file )
+        return false;
+    char line[4096];
+    const bool read = fgets( line, sizeof(line), file ) != NULL;
+    fclose( file );
+    return read && strstr( line, "virtme" ) != NULL;
+}
+
+// One AF_XDP socket with its umem and rings, bound with the config's bind
+// flags on queue 0. Returns true when the bind succeeds and fills zero_copy
+// from getsockopt(SOL_XDP, XDP_OPTIONS); else errno_out holds the refusal.
+
+static bool xsk_raw_bind( int ifindex, const struct xsk_socket_config & config, bool * zero_copy, int * errno_out )
+{
+    const size_t frame_size = 4096;
+    const size_t frames = 64;
+    const int ring_size = 64;
+
+    *zero_copy = false;
+    *errno_out = 0;
+
+    void * area = mmap( NULL, frame_size * frames, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0 );
+    if ( area == MAP_FAILED )
+    {
+        *errno_out = errno;
+        return false;
+    }
+
+    bool bound = false;
+    int fd = socket( AF_XDP, SOCK_RAW, 0 );
+    if ( fd < 0 )
+    {
+        *errno_out = errno;
+        munmap( area, frame_size * frames );
+        return false;
+    }
+
+    struct xdp_umem_reg reg;
+    memset( &reg, 0, sizeof(reg) );
+    reg.addr = (uint64_t) (uintptr_t) area;
+    reg.len = frame_size * frames;
+    reg.chunk_size = (uint32_t) frame_size;
+    reg.headroom = 0;
+
+    const int fill_size = ring_size, complete_size = ring_size;
+    const int rx_size = (int) config.rx_size, tx_size = (int) config.tx_size;
+
+    if ( setsockopt( fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_UMEM_FILL_RING, &fill_size, sizeof(fill_size) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &complete_size, sizeof(complete_size) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_RX_RING, &rx_size, sizeof(rx_size) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_TX_RING, &tx_size, sizeof(tx_size) ) != 0 )
+    {
+        *errno_out = errno;
+        printf( "  socket setup refused: %s\n", strerror( *errno_out ) );
+    }
+    else
+    {
+        struct sockaddr_xdp address;
+        memset( &address, 0, sizeof(address) );
+        address.sxdp_family = AF_XDP;
+        address.sxdp_ifindex = (uint32_t) ifindex;
+        address.sxdp_queue_id = 0;
+        address.sxdp_flags = config.bind_flags;
+
+        if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) != 0 )
+        {
+            *errno_out = errno;
+        }
+        else
+        {
+            struct xdp_options options;
+            memset( &options, 0, sizeof(options) );
+            socklen_t length = sizeof(options);
+            if ( getsockopt( fd, SOL_XDP, XDP_OPTIONS, &options, &length ) != 0 )
+            {
+                *errno_out = errno;
+                printf( "  getsockopt XDP_OPTIONS refused: %s\n", strerror( *errno_out ) );
+            }
+            else
+            {
+                *zero_copy = ( options.flags & XDP_OPTIONS_ZEROCOPY ) != 0;
+                bound = true;
+            }
+        }
+    }
+
+    close( fd );
+    munmap( area, frame_size * frames );
+    return bound;
+}
+
+static bool xsk_bind_on_veth( const char * name )
+{
+    const int ifindex = (int) if_nametoindex( name );
+    if ( ifindex == 0 )
+    {
+        printf( "  %s has no ifindex\n", name );
+        return false;
+    }
+
+    struct xsk_socket_config config;
+
+    // the first attempt asks for zero copy: veth refuses it
+
+    rocketnet_xdp_socket_config( &config, 64, 64, true );
+    if ( config.xdp_flags != 0 || ( config.bind_flags & XDP_ZEROCOPY ) == 0 )
+    {
+        printf( "  the zero copy config does not ask for zero copy at bind (xdp_flags %u bind_flags %u)\n", config.xdp_flags, config.bind_flags );
+        return false;
+    }
+
+    bool zero_copy = false;
+    int refusal = 0;
+    if ( xsk_raw_bind( ifindex, config, &zero_copy, &refusal ) )
+    {
+        printf( "  the zero copy bind on %s succeeded (zero_copy %d); veth should refuse it\n", name, zero_copy ? 1 : 0 );
+        return false;
+    }
+    printf( "  zero copy bind on %s refused: %s\n", name, strerror( refusal ) );
+
+    // the fallback asks for copy and binds
+
+    rocketnet_xdp_socket_config( &config, 64, 64, false );
+    if ( config.xdp_flags != 0 || ( config.bind_flags & XDP_COPY ) == 0 || ( config.bind_flags & XDP_ZEROCOPY ) != 0 )
+    {
+        printf( "  the fallback config does not ask for copy at bind (xdp_flags %u bind_flags %u)\n", config.xdp_flags, config.bind_flags );
+        return false;
+    }
+
+    if ( !xsk_raw_bind( ifindex, config, &zero_copy, &refusal ) )
+    {
+        printf( "  the copy bind on %s was refused: %s\n", name, strerror( refusal ) );
+        return false;
+    }
+
+    printf( "  copy bind on %s bound; XDP_OPTIONS reads %s\n", name, zero_copy ? "zero copy" : "copy" );
+    return !zero_copy;
+}
+
+static bool xsk_bind_falls_back_to_copy( filter_t * )
+{
+    if ( !inside_virtme_guest() )
+    {
+        case_skip_reason = "not inside a virtme-ng guest: this case creates a veth pair and runs only in the VM";
+        return true;
+    }
+
+    // a failed add means the pair is not ours (the name may already be taken), so nothing is removed
+
+    char command[256];
+    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s", zc_veth, zc_veth_peer );
+    if ( system( command ) != 0 )
+    {
+        printf( "  could not create the veth pair %s/%s; nothing removed\n", zc_veth, zc_veth_peer );
+        return false;
+    }
+
+    // from here the pair is ours and is removed on every exit path
+
+    snprintf( command, sizeof(command), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_peer );
+    const bool up = system( command ) == 0;
+    if ( !up )
+        printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_peer );
+
+    const bool ok = up && xsk_bind_on_veth( zc_veth );
+
+    // deleting one end removes the pair
+
+    snprintf( command, sizeof(command), "ip link del %s", zc_veth );
+    const bool removed = system( command ) == 0;
+    if ( !removed )
+        printf( "  could not remove the veth pair %s/%s\n", zc_veth, zc_veth_peer );
+
+    return ok && removed;
+}
+
 struct case_t
 {
     const char * name;
@@ -927,6 +1125,7 @@ static const case_t cases[] =
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },
     { "replay_key_layout_matches_header", replay_key_layout_matches_header },
+    { "xsk_bind_falls_back_to_copy", xsk_bind_falls_back_to_copy },
 };
 
 int main( int argc, char ** argv )
@@ -960,9 +1159,17 @@ int main( int argc, char ** argv )
     }
 
     int failed = 0;
+    int skipped = 0;
     for ( int i = 0; i < (int) ( sizeof(cases) / sizeof(cases[0]) ); i++ )
     {
+        case_skip_reason = NULL;
         const bool ok = cases[i].function( &filter );
+        if ( ok && case_skip_reason )
+        {
+            printf( "%s: skipped (%s)\n", cases[i].name, case_skip_reason );
+            skipped++;
+            continue;
+        }
         printf( "%s: %s\n", cases[i].name, ok ? "ok" : "FAILED" );
         if ( !ok )
             failed++;
@@ -976,6 +1183,10 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    printf( "test_xdp_filter: %d cases passed\n", (int) ( sizeof(cases) / sizeof(cases[0]) ) );
+    const int total = (int) ( sizeof(cases) / sizeof(cases[0]) );
+    if ( skipped )
+        printf( "test_xdp_filter: %d cases passed, %d skipped\n", total - skipped, skipped );
+    else
+        printf( "test_xdp_filter: %d cases passed\n", total );
     return 0;
 }
