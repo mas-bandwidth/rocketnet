@@ -47,7 +47,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured"}'
           - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message"}'
     concurrency:
-      group: fuzz-nightly-${{ matrix.ref }}
+      group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
